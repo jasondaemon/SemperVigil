@@ -67,6 +67,7 @@ The system must preserve traceability:
 - store enough metadata to explain why an item was included/excluded
 - store ingest diagnostics per source: last fetch time, HTTP status, parse counts, errors
 
+
 ---
 
 ## Containers & Separation of Concerns
