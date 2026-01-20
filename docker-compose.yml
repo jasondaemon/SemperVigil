@@ -1,0 +1,52 @@
+services:
+  # 1) Ingest / processing service
+  ingest:
+    build:
+      context: .
+      dockerfile: docker/ingest/Dockerfile
+    container_name: sempervigil-ingest
+    env_file:
+      - .env
+    environment:
+      # These are defaults; config.yml controls most behavior
+      SV_ENV: ${SV_ENV:-dev}
+      SV_DATA_DIR: ${SV_DATA_DIR:-/data}
+      SV_CONFIG_PATH: ${SV_CONFIG_PATH:-/config/config.yml}
+      SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
+    volumes:
+      - ./config:/config:ro
+      - ./data:/data
+      - ./site:/site
+    # Later you can add a small internal UI on a private port.
+    # ports:
+    #   - "127.0.0.1:8090:8090"
+    networks:
+      - svnet
+
+  # 2) Hugo builder (runs on demand)
+  hugo:
+    image: klakegg/hugo:0.121.2-ext
+    container_name: sempervigil-hugo
+    working_dir: /site
+    volumes:
+      - ./site:/site
+    command: ["hugo", "--minify"]
+    networks:
+      - svnet
+
+  # 3) Static site server
+  web:
+    image: nginx:alpine
+    container_name: sempervigil-web
+    depends_on:
+      - hugo
+    ports:
+      - "8080:80"
+    volumes:
+      - ./site/public:/usr/share/nginx/html:ro
+    networks:
+      - svnet
+
+networks:
+  svnet:
+    driver: bridge

@@ -1,0 +1,100 @@
+# SemperVigil configuration
+# Copy to config.yml (or mount as /config/config.yml in docker)
+
+app:
+  name: SemperVigil
+  timezone: America/New_York
+
+paths:
+  data_dir: /data
+  output_dir: /site/content/posts
+  state_db: /data/state.sqlite3
+  run_reports_dir: /data/reports
+
+publishing:
+  format: hugo_markdown
+  hugo_section: posts
+  write_json_index: true
+  json_index_path: /site/static/sempervigil/index.json
+
+ingest:
+  http:
+    timeout_seconds: 20
+    user_agent: "SemperVigil/0.1 (+https://github.com/jasondaemon/SemperVigil)"
+    max_retries: 2
+    backoff_seconds: 2
+  dedupe:
+    enabled: true
+    # stable id is typically derived from canonical url
+    strategy: canonical_url_hash
+  filters:
+    # applied after parsing; optional
+    allow_keywords: []
+    deny_keywords: []
+  scheduling:
+    # used by cron / orchestrator later; not required for manual runs
+    default_run_interval_minutes: 60
+
+llm:
+  enabled: false
+  provider: openai
+  # API key must come from env var OPENAI_API_KEY
+  openai:
+    model: gpt-4o-mini
+    temperature: 0.2
+    max_tokens: 400
+  tasks:
+    summarize: true
+    tag: true
+
+sources:
+  - id: "cisa-alerts"
+    name: "CISA Alerts"
+    type: "rss"
+    enabled: true
+    url: "https://www.cisa.gov/uscert/ncas/alerts.xml"
+    tags: ["cisa", "advisory"]
+    overrides:
+      http_headers: {}
+      parse:
+        # for rss this usually isn't needed; kept here for consistency
+        prefer_entry_summary: true
+
+  - id: "bleepingcomputer"
+    name: "BleepingComputer"
+    type: "rss"
+    enabled: true
+    url: "https://www.bleepingcomputer.com/feed/"
+    tags: ["news"]
+    overrides:
+      http_headers: {}
+
+  - id: "example-html-source"
+    name: "Example HTML Source"
+    type: "html"
+    enabled: false
+    url: "https://example.com/security"
+    tags: ["example"]
+    overrides:
+      http_headers: {}
+      parse:
+        # placeholder for future CSS selector based parsing
+        article_selector: "article"
+        title_selector: "h1,h2"
+        link_selector: "a"
+        date_selector: "time"
+        max_items: 20
+
+per_source_tweaks:
+  # This is where we keep “nuances” that are common pain points:
+  # - some feeds have wrong dates, some need canonicalization, etc.
+  date_parsing:
+    prefer_updated_if_published_missing: true
+  url_normalization:
+    strip_tracking_params: true
+    tracking_params:
+      - utm_source
+      - utm_medium
+      - utm_campaign
+      - utm_term
+      - utm_content

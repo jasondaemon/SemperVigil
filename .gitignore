@@ -1,0 +1,42 @@
+# --- OS / Editor ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+pip-wheel-metadata/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Env / Secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Runtime data (local state) ---
+data/
+.cache/
+logs/
+
+# --- Generated site output ---
+site/public/
+site/resources/
+site/.hugo_build.lock
+
+# --- Docker ---
+*.pid
+
+# --- Local Config ---
+config/config.yml
