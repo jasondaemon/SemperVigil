@@ -25,7 +25,7 @@ services:
 
   # 2) Hugo builder (runs on demand)
   hugo:
-    image: klakegg/hugo:0.121.2-ext
+    image: klakegg/hugo:ext
     container_name: sempervigil-hugo
     working_dir: /site
     volumes:

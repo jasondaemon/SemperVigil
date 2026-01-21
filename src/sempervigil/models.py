@@ -24,3 +24,14 @@ class Source:
     enabled: bool
     tags: list[str]
     overrides: dict[str, object]
+
+
+@dataclass(frozen=True)
+class Decision:
+    decision: str
+    reasons: list[str]
+    normalized_url: str | None
+    stable_id: str | None
+    published_at: str | None
+    title: str
+    original_url: str | None

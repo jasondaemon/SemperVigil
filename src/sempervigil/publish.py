@@ -4,6 +4,7 @@ import os
 from typing import Iterable
 
 import yaml
+import json
 
 from .models import Article
 from .utils import slugify
@@ -25,7 +26,7 @@ def write_hugo_markdown(articles: Iterable[Article], output_dir: str) -> list[st
             "title": article.title,
             "date": article.published_at or article.fetched_at,
             "source": article.source_id,
-            "url": article.url,
+            "source_url": article.url,
             "tags": article.tags,
         }
         summary = article.summary or ""

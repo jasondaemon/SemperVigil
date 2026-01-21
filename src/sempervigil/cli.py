@@ -160,26 +160,63 @@ def _cmd_test_source(args: argparse.Namespace, logger: logging.Logger) -> int:
     log_event(
         logger,
         logging.INFO,
-        "test_source_result",
+        "source_health",
         source_id=source.id,
         status=result.status,
-        found_count=result.found_count,
-        accepted_count=result.accepted_count,
+        http_status=result.http_status,
+        error=result.error,
     )
 
-    for item in result.preview:
-        log_event(
-            logger,
-            logging.INFO,
-            "source_item",
-            source_id=source.id,
-            accepted=item.get("accepted"),
-            title=item.get("title"),
-            url=item.get("url"),
-            reasons=",".join(item.get("reasons") or []),
-        )
+    if result.status != "ok":
+        return 1
 
-    return 0 if result.status == "ok" else 1
+    _log_test_source_report(logger, source.id, result, args.limit, args.verbose, args.show_raw)
+    return 0
+
+
+def _log_test_source_report(
+    logger: logging.Logger,
+    source_id: str,
+    result,
+    limit: int,
+    verbose: bool,
+    show_raw: bool,
+) -> None:
+    logger.info("Test Source Report")
+    logger.info("-" * 60)
+    logger.info("Source: %s", source_id)
+    logger.info("Status: %s", result.status)
+    logger.info("HTTP: %s", result.http_status if result.http_status is not None else "n/a")
+    logger.info("")
+    logger.info("Counts")
+    logger.info("-" * 60)
+    logger.info("Found: %d", result.found_count)
+    logger.info("Accepted: %d", result.accepted_count)
+    logger.info("Skipped (duplicates): %d", result.skipped_duplicates)
+    logger.info("Skipped (filters): %d", result.skipped_filters)
+    logger.info("Skipped (missing url): %d", result.skipped_missing_url)
+    logger.info("")
+    logger.info("Preview (limit=%d)", limit)
+    logger.info("-" * 60)
+
+    preview = result.decisions[:limit]
+    for decision in preview:
+        reasons = ", ".join(decision.reasons) if decision.reasons else "-"
+        logger.info("[%s] %s", decision.decision, decision.title)
+        logger.info("  reasons: %s", reasons)
+        logger.info("  url: %s", decision.normalized_url or "n/a")
+        if verbose:
+            logger.info("  original_url: %s", decision.original_url or "n/a")
+            logger.info("  stable_id: %s", decision.stable_id or "n/a")
+            logger.info("  published_at: %s", decision.published_at or "n/a")
+    if show_raw:
+        logger.info("")
+        logger.info("Raw entry (first item)")
+        logger.info("-" * 60)
+        if result.raw_entry:
+            logger.info("%s", json.dumps(result.raw_entry, indent=2, sort_keys=True))
+        else:
+            logger.info("n/a")
 
 
 def _cmd_report(args: argparse.Namespace, logger: logging.Logger) -> int:
@@ -283,6 +320,15 @@ def build_parser() -> argparse.ArgumentParser:
         "test-source", help="Fetch/parse a single source with diagnostics"
     )
     test_parser.add_argument("source_id", help="Source id to test")
+    test_parser.add_argument("--limit", type=int, default=10, help="Preview item limit")
+    test_parser.add_argument(
+        "--verbose", action="store_true", help="Print normalization details"
+    )
+    test_parser.add_argument(
+        "--show-raw",
+        action="store_true",
+        help="Print raw entry fields for the first item only",
+    )
     test_parser.set_defaults(func=_cmd_test_source)
 
     report_parser = subparsers.add_parser("report", help="Print last run summary")

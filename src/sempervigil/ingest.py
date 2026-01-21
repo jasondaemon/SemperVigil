@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 import feedparser
 
 from .config import Config
-from .models import Article, Source
+from .models import Article, Decision, Source
 from .storage import article_exists
 from .utils import log_event, normalize_url, parse_entry_date, stable_id_from_url, utc_now_iso
 
@@ -23,9 +23,13 @@ class SourceResult:
     http_status: int | None
     found_count: int
     accepted_count: int
+    skipped_duplicates: int
+    skipped_filters: int
+    skipped_missing_url: int
     error: str | None
     articles: list[Article]
-    preview: list[dict[str, Any]]
+    decisions: list[Decision]
+    raw_entry: dict[str, Any] | None
 
 
 def _fetch_url(
@@ -66,6 +70,88 @@ def _keyword_match(text: str, keywords: list[str]) -> list[str]:
     return [keyword for keyword in keywords if keyword.lower() in lowered]
 
 
+def evaluate_entry(
+    entry: Any,
+    source: Source,
+    config: Config,
+    conn,
+    seen_ids: set[str],
+) -> tuple[Decision, Article | None]:
+    title = (entry.get("title") or "").strip()
+    link = entry.get("link") or entry.get("id")
+    summary = _entry_summary(
+        entry, bool((source.overrides.get("parse") or {}).get("prefer_entry_summary", True))
+    )
+    combined_text = f"{title} {summary or ''}".strip()
+    reasons: list[str] = []
+
+    if not link:
+        decision = Decision(
+            decision="SKIP",
+            reasons=["missing_url"],
+            normalized_url=None,
+            stable_id=None,
+            published_at=None,
+            title=title,
+            original_url=None,
+        )
+        return decision, None
+
+    url_norm_cfg = config.per_source_tweaks.url_normalization
+    normalized_url = normalize_url(
+        link,
+        strip_tracking_params=url_norm_cfg.strip_tracking_params,
+        tracking_params=url_norm_cfg.tracking_params,
+    )
+    stable_id = stable_id_from_url(normalized_url)
+
+    denied_matches = _keyword_match(combined_text, config.ingest.filters.deny_keywords)
+    allowed_matches = (
+        _keyword_match(combined_text, config.ingest.filters.allow_keywords)
+        if config.ingest.filters.allow_keywords
+        else []
+    )
+
+    if denied_matches:
+        reasons.append(f"deny_keywords:{','.join(denied_matches)}")
+    if config.ingest.filters.allow_keywords and not allowed_matches:
+        reasons.append("allow_keywords:miss")
+
+    if stable_id in seen_ids:
+        reasons.append("dedupe_run")
+    elif config.ingest.dedupe.enabled and article_exists(conn, stable_id):
+        reasons.append("dedupe")
+
+    accepted = not reasons
+    published_at = parse_entry_date(
+        entry, config.per_source_tweaks.date_parsing.prefer_updated_if_published_missing
+    )
+    decision = Decision(
+        decision="ACCEPT" if accepted else "SKIP",
+        reasons=reasons,
+        normalized_url=normalized_url,
+        stable_id=stable_id,
+        published_at=published_at,
+        title=title or normalized_url,
+        original_url=link,
+    )
+
+    if not accepted:
+        return decision, None
+
+    article = Article(
+        id=stable_id,
+        title=title or normalized_url,
+        url=normalized_url,
+        source_id=source.id,
+        published_at=published_at,
+        fetched_at=utc_now_iso(),
+        summary=summary,
+        tags=source.tags,
+    )
+    return decision, article
+
+
 def process_source(
     source: Source,
     config: Config,
@@ -81,9 +167,13 @@ def process_source(
             http_status=None,
             found_count=0,
             accepted_count=0,
+            skipped_duplicates=0,
+            skipped_filters=0,
+            skipped_missing_url=0,
             error="HTML sources not implemented",
             articles=[],
-            preview=[],
+            decisions=[],
+            raw_entry=None,
         )
 
     overrides = source.overrides or {}
@@ -117,9 +207,13 @@ def process_source(
             http_status=http_status,
             found_count=0,
             accepted_count=0,
+            skipped_duplicates=0,
+            skipped_filters=0,
+            skipped_missing_url=0,
             error=error or "empty response",
             articles=[],
-            preview=[],
+            decisions=[],
+            raw_entry=None,
         )
 
     parsed = feedparser.parse(content)
@@ -133,79 +227,29 @@ def process_source(
             error=str(parsed.bozo_exception),
         )
 
-    allow_keywords = config.ingest.filters.allow_keywords
-    deny_keywords = config.ingest.filters.deny_keywords
-    prefer_entry_summary = bool(
-        (overrides.get("parse") or {}).get("prefer_entry_summary", True)
-    )
-
-    url_norm_cfg = config.per_source_tweaks.url_normalization
-    prefer_updated = config.per_source_tweaks.date_parsing.prefer_updated_if_published_missing
-
     accepted: list[Article] = []
-    preview: list[dict[str, Any]] = []
+    decisions: list[Decision] = []
     seen_ids: set[str] = set()
+    skipped_duplicates = 0
+    skipped_filters = 0
+    skipped_missing_url = 0
+    raw_entry = dict(entries[0]) if test_mode and entries else None
 
     for entry in entries:
-        title = (entry.get("title") or "").strip()
-        link = entry.get("link") or entry.get("id")
-        summary = _entry_summary(entry, prefer_entry_summary)
-        combined_text = f"{title} {summary or ''}".strip()
-        reasons: list[str] = []
-
-        if not link:
-            reasons.append("missing_url")
-            preview.append({
-                "title": title,
-                "url": None,
-                "accepted": False,
-                "reasons": reasons,
-            })
-            continue
-
-        normalized_url = normalize_url(
-            link,
-            strip_tracking_params=url_norm_cfg.strip_tracking_params,
-            tracking_params=url_norm_cfg.tracking_params,
-        )
-        article_id = stable_id_from_url(normalized_url)
-
-        denied_matches = _keyword_match(combined_text, deny_keywords)
-        allowed_matches = _keyword_match(combined_text, allow_keywords) if allow_keywords else []
-
-        if denied_matches:
-            reasons.append(f"deny_keywords:{','.join(denied_matches)}")
-        if allow_keywords and not allowed_matches:
-            reasons.append("allow_keywords:miss")
-
-        if article_id in seen_ids:
-            reasons.append("dedupe_run")
-        elif config.ingest.dedupe.enabled and article_exists(conn, article_id):
-            reasons.append("dedupe")
-
-        accepted_flag = not reasons
-        if accepted_flag:
-            seen_ids.add(article_id)
-            article = Article(
-                id=article_id,
-                title=title or normalized_url,
-                url=normalized_url,
-                source_id=source.id,
-                published_at=parse_entry_date(entry, prefer_updated),
-                fetched_at=utc_now_iso(),
-                summary=summary,
-                tags=source.tags,
-            )
+        decision, article = evaluate_entry(entry, source, config, conn, seen_ids)
+        decisions.append(decision)
+        if decision.decision == "ACCEPT" and article:
+            seen_ids.add(article.id)
             accepted.append(article)
-
-        preview.append(
-            {
-                "title": title,
-                "url": normalized_url,
-                "accepted": accepted_flag,
-                "reasons": reasons,
-            }
-        )
+            continue
+        if "missing_url" in decision.reasons:
+            skipped_missing_url += 1
+        if any(reason.startswith("deny_keywords") for reason in decision.reasons) or (
+            "allow_keywords:miss" in decision.reasons
+        ):
+            skipped_filters += 1
+        if "dedupe" in decision.reasons or "dedupe_run" in decision.reasons:
+            skipped_duplicates += 1
 
     log_event(
         logger,
@@ -222,7 +266,7 @@ def process_source(
             logging.INFO,
             "source_preview",
             source_id=source.id,
-            preview=json.dumps(preview[:20]),
+            preview=json.dumps([decision.__dict__ for decision in decisions[:20]]),
         )
 
     return SourceResult(
@@ -231,7 +275,11 @@ def process_source(
         http_status=http_status,
         found_count=len(entries),
         accepted_count=len(accepted),
+        skipped_duplicates=skipped_duplicates,
+        skipped_filters=skipped_filters,
+        skipped_missing_url=skipped_missing_url,
         error=None,
         articles=accepted,
-        preview=preview,
+        decisions=decisions,
+        raw_entry=raw_entry,
     )
