@@ -6,6 +6,7 @@ import logging
 import re
 import unicodedata
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -54,14 +55,48 @@ def slugify(text: str, max_length: int = 80) -> str:
     return cleaned[:max_length].strip("-") or "untitled"
 
 
-def parse_entry_date(entry: Any, prefer_updated: bool) -> str | None:
-    parsed = entry.get("published_parsed")
-    if parsed is None and prefer_updated:
-        parsed = entry.get("updated_parsed")
-    if parsed is None:
+def _normalize_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _parse_date_value(value: Any) -> datetime | None:
+    if value is None:
         return None
-    dt = datetime.fromtimestamp(calendar.timegm(parsed), tz=timezone.utc)
-    return dt.isoformat()
+    if hasattr(value, "tm_year"):
+        return datetime.fromtimestamp(calendar.timegm(value), tz=timezone.utc)
+    if isinstance(value, datetime):
+        return _normalize_datetime(value)
+    if isinstance(value, str):
+        try:
+            parsed = parsedate_to_datetime(value)
+            return _normalize_datetime(parsed)
+        except (TypeError, ValueError):
+            try:
+                parsed = datetime.fromisoformat(value)
+                return _normalize_datetime(parsed)
+            except ValueError:
+                return None
+    return None
+
+
+def extract_published_at(entry: Any, fetched_at: str) -> tuple[str, str]:
+    published = _parse_date_value(entry.get("published_parsed") or entry.get("published"))
+    if published:
+        return published.isoformat(), "published"
+
+    updated = _parse_date_value(entry.get("updated_parsed") or entry.get("updated"))
+    if updated:
+        return updated.isoformat(), "updated"
+
+    dc_date = _parse_date_value(
+        entry.get("dc_date") or entry.get("dc:date") or entry.get("dc_date_parsed")
+    )
+    if dc_date:
+        return dc_date.isoformat(), "dc_date"
+
+    return fetched_at, "fallback_fetched_at"
 
 
 def utc_now_iso() -> str:

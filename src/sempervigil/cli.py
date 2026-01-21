@@ -9,7 +9,7 @@ from dataclasses import asdict
 
 from .config import ConfigError, load_config, load_sources_file
 from .ingest import process_source
-from .publish import write_hugo_markdown, write_json_index
+from .publish import write_hugo_markdown, write_json_index, write_tag_indexes
 from .storage import (
     get_source,
     init_db,
@@ -18,6 +18,7 @@ from .storage import (
     record_source_run,
     upsert_source,
 )
+from .tagger import normalize_tag
 from .utils import log_event, utc_now_iso
 
 
@@ -28,6 +29,26 @@ def _setup_logging() -> logging.Logger:
         format="%(asctime)s %(levelname)s %(message)s",
     )
     return logging.getLogger("sempervigil")
+
+
+def _normalize_tag_list(values: list[str]) -> list[str]:
+    return [normalize_tag(value) for value in values if value and normalize_tag(value)]
+
+
+def _filter_articles_by_tags(articles, include_tags: list[str], exclude_tags: list[str]):
+    include_set = set(include_tags)
+    exclude_set = set(exclude_tags)
+    if not include_set and not exclude_set:
+        return list(articles)
+    filtered = []
+    for article in articles:
+        tag_set = set(article.tags or [])
+        if include_set and not tag_set.intersection(include_set):
+            continue
+        if exclude_set and tag_set.intersection(exclude_set):
+            continue
+        filtered.append(article)
+    return filtered
 
 
 def _write_run_report(report_dir: str, report: dict) -> str:
@@ -89,9 +110,15 @@ def _cmd_run(args: argparse.Namespace, logger: logging.Logger) -> int:
         "items_found": 0,
         "items_accepted": 0,
         "items_written": 0,
+        "skipped_duplicates": 0,
+        "skipped_filters": 0,
+        "skipped_missing_url": 0,
     }
     written_paths: list[str] = []
     all_articles = []
+    output_articles = []
+    include_tags = _normalize_tag_list(args.include_tag)
+    exclude_tags = _normalize_tag_list(args.exclude_tag)
 
     for source in enabled_sources:
         source_started_at = utc_now_iso()
@@ -109,6 +136,9 @@ def _cmd_run(args: argparse.Namespace, logger: logging.Logger) -> int:
 
         totals["items_found"] += result.found_count
         totals["items_accepted"] += result.accepted_count
+        totals["skipped_duplicates"] += result.skipped_duplicates
+        totals["skipped_filters"] += result.skipped_filters
+        totals["skipped_missing_url"] += result.skipped_missing_url
 
         if result.status != "ok":
             totals["sources_error"] += 1
@@ -117,12 +147,16 @@ def _cmd_run(args: argparse.Namespace, logger: logging.Logger) -> int:
         totals["sources_ok"] += 1
         all_articles.extend(result.articles)
         insert_articles(conn, result.articles)
-        written_paths.extend(write_hugo_markdown(result.articles, config.paths.output_dir))
+        filtered = _filter_articles_by_tags(result.articles, include_tags, exclude_tags)
+        output_articles.extend(filtered)
+        written_paths.extend(write_hugo_markdown(filtered, config.paths.output_dir))
 
     totals["items_written"] = len(written_paths)
 
     if config.publishing.write_json_index:
-        write_json_index(all_articles, config.publishing.json_index_path)
+        write_json_index(output_articles, config.publishing.json_index_path)
+
+    write_tag_indexes(output_articles, config.paths.output_dir, config.publishing.hugo_section)
 
     run_report = {
         "run_started_at": run_started_at,
@@ -155,7 +189,14 @@ def _cmd_test_source(args: argparse.Namespace, logger: logging.Logger) -> int:
         else:
             log_event(logger, logging.ERROR, "source_not_found", source_id=args.source_id)
         return 1
-    result = process_source(source, config, logger, conn, test_mode=True)
+    result = process_source(
+        source,
+        config,
+        logger,
+        conn,
+        test_mode=True,
+        ignore_dedupe=args.ignore_dedupe,
+    )
 
     log_event(
         logger,
@@ -170,7 +211,15 @@ def _cmd_test_source(args: argparse.Namespace, logger: logging.Logger) -> int:
     if result.status != "ok":
         return 1
 
-    _log_test_source_report(logger, source.id, result, args.limit, args.verbose, args.show_raw)
+    _log_test_source_report(
+        logger,
+        source.id,
+        result,
+        args.limit,
+        args.verbose,
+        args.show_raw,
+        args.ignore_dedupe,
+    )
     return 0
 
 
@@ -181,6 +230,7 @@ def _log_test_source_report(
     limit: int,
     verbose: bool,
     show_raw: bool,
+    ignore_dedupe: bool,
 ) -> None:
     logger.info("Test Source Report")
     logger.info("-" * 60)
@@ -195,9 +245,19 @@ def _log_test_source_report(
     logger.info("Skipped (duplicates): %d", result.skipped_duplicates)
     logger.info("Skipped (filters): %d", result.skipped_filters)
     logger.info("Skipped (missing url): %d", result.skipped_missing_url)
+    if ignore_dedupe:
+        logger.info("Already seen (duplicates ignored): %d", result.already_seen_count)
     logger.info("")
     logger.info("Preview (limit=%d)", limit)
     logger.info("-" * 60)
+
+    source_counts: dict[str, int] = {}
+    timestamp_counts: dict[str, int] = {}
+    for decision in result.decisions:
+        source_key = decision.published_at_source or "unknown"
+        source_counts[source_key] = source_counts.get(source_key, 0) + 1
+        if decision.published_at:
+            timestamp_counts[decision.published_at] = timestamp_counts.get(decision.published_at, 0) + 1
 
     preview = result.decisions[:limit]
     for decision in preview:
@@ -205,6 +265,8 @@ def _log_test_source_report(
         logger.info("[%s] %s", decision.decision, decision.title)
         logger.info("  reasons: %s", reasons)
         logger.info("  url: %s", decision.normalized_url or "n/a")
+        logger.info("  published_at_source: %s", decision.published_at_source or "unknown")
+        logger.info("  tags: %s", ", ".join(decision.tags) if decision.tags else "n/a")
         if verbose:
             logger.info("  original_url: %s", decision.original_url or "n/a")
             logger.info("  stable_id: %s", decision.stable_id or "n/a")
@@ -217,6 +279,22 @@ def _log_test_source_report(
             logger.info("%s", json.dumps(result.raw_entry, indent=2, sort_keys=True))
         else:
             logger.info("n/a")
+
+    logger.info("")
+    logger.info("Published_at_source summary")
+    logger.info("-" * 60)
+    for key in sorted(source_counts):
+        logger.info("%s: %d", key, source_counts[key])
+
+    total = len(result.decisions)
+    if total > 0 and timestamp_counts:
+        max_count = max(timestamp_counts.values())
+        if max_count / total >= 0.8:
+            logger.warning(
+                "Date warning: %d/%d items share the same published_at",
+                max_count,
+                total,
+            )
 
 
 def _cmd_report(args: argparse.Namespace, logger: logging.Logger) -> int:
@@ -314,6 +392,18 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run_parser = subparsers.add_parser("run", help="Fetch enabled sources and write outputs")
+    run_parser.add_argument(
+        "--include-tag",
+        action="append",
+        default=[],
+        help="Only write items with matching tags (repeatable)",
+    )
+    run_parser.add_argument(
+        "--exclude-tag",
+        action="append",
+        default=[],
+        help="Skip items with matching tags (repeatable)",
+    )
     run_parser.set_defaults(func=_cmd_run)
 
     test_parser = subparsers.add_parser(
@@ -328,6 +418,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--show-raw",
         action="store_true",
         help="Print raw entry fields for the first item only",
+    )
+    test_parser.add_argument(
+        "--ignore-dedupe",
+        action="store_true",
+        help="Ignore dedupe checks for preview decisions",
     )
     test_parser.set_defaults(func=_cmd_test_source)
 

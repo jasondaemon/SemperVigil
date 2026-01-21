@@ -20,6 +20,8 @@ def init_db(path: str) -> sqlite3.Connection:
             title TEXT NOT NULL,
             source_id TEXT NOT NULL,
             published_at TEXT,
+            published_at_source TEXT,
+            tags_json TEXT,
             fetched_at TEXT NOT NULL
         )
         """
@@ -54,6 +56,7 @@ def init_db(path: str) -> sqlite3.Connection:
         """
     )
     conn.commit()
+    _ensure_articles_schema(conn)
     return conn
 
 
@@ -135,27 +138,62 @@ def article_exists(conn: sqlite3.Connection, article_id: str) -> bool:
 
 
 def insert_articles(conn: sqlite3.Connection, articles: Iterable[Article]) -> int:
-    rows = [
-        (
+    columns = _articles_columns(conn)
+    has_published_source = "published_at_source" in columns
+    has_tags = "tags_json" in columns
+    rows = []
+    for article in articles:
+        row = [
             article.id,
             article.url,
             article.title,
             article.source_id,
             article.published_at,
-            article.fetched_at,
-        )
-        for article in articles
-    ]
+        ]
+        if has_published_source:
+            row.append(article.published_at_source)
+        if has_tags:
+            row.append(json.dumps(article.tags))
+        row.append(article.fetched_at)
+        rows.append(tuple(row))
     if not rows:
         return 0
-    conn.executemany(
-        """
-        INSERT OR IGNORE INTO articles
-            (id, url, title, source_id, published_at, fetched_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        rows,
-    )
+    if has_published_source and has_tags:
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO articles
+                (id, url, title, source_id, published_at, published_at_source, tags_json, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+    elif has_published_source:
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO articles
+                (id, url, title, source_id, published_at, published_at_source, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+    elif has_tags:
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO articles
+                (id, url, title, source_id, published_at, tags_json, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+    else:
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO articles
+                (id, url, title, source_id, published_at, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
     conn.commit()
     return len(rows)
 
@@ -208,6 +246,20 @@ def _row_to_source(row: sqlite3.Row | tuple) -> Source:
         tags=tags if isinstance(tags, list) else [],
         overrides=overrides if isinstance(overrides, dict) else {},
     )
+
+
+def _articles_columns(conn: sqlite3.Connection) -> set[str]:
+    cursor = conn.execute("PRAGMA table_info(articles)")
+    return {row[1] for row in cursor.fetchall()}
+
+
+def _ensure_articles_schema(conn: sqlite3.Connection) -> None:
+    columns = _articles_columns(conn)
+    if "published_at_source" not in columns:
+        conn.execute("ALTER TABLE articles ADD COLUMN published_at_source TEXT")
+    if "tags_json" not in columns:
+        conn.execute("ALTER TABLE articles ADD COLUMN tags_json TEXT")
+    conn.commit()
 
 
 def _source_from_dict(source_dict: dict[str, object]) -> Source:

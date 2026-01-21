@@ -10,6 +10,7 @@ class Article:
     url: str
     source_id: str
     published_at: str | None
+    published_at_source: str | None
     fetched_at: str
     summary: str | None
     tags: list[str]
@@ -33,5 +34,7 @@ class Decision:
     normalized_url: str | None
     stable_id: str | None
     published_at: str | None
+    published_at_source: str | None
     title: str
     original_url: str | None
+    tags: list[str]

@@ -12,8 +12,9 @@ import feedparser
 
 from .config import Config
 from .models import Article, Decision, Source
+from .tagger import derive_tags
 from .storage import article_exists
-from .utils import log_event, normalize_url, parse_entry_date, stable_id_from_url, utc_now_iso
+from .utils import extract_published_at, log_event, normalize_url, stable_id_from_url, utc_now_iso
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ class SourceResult:
     skipped_duplicates: int
     skipped_filters: int
     skipped_missing_url: int
+    already_seen_count: int
     error: str | None
     articles: list[Article]
     decisions: list[Decision]
@@ -76,24 +78,30 @@ def evaluate_entry(
     config: Config,
     conn,
     seen_ids: set[str],
+    fetched_at: str,
+    ignore_dedupe: bool = False,
 ) -> tuple[Decision, Article | None]:
     title = (entry.get("title") or "").strip()
     link = entry.get("link") or entry.get("id")
     summary = _entry_summary(
         entry, bool((source.overrides.get("parse") or {}).get("prefer_entry_summary", True))
     )
+    derived_tags = derive_tags(source, title, summary)
     combined_text = f"{title} {summary or ''}".strip()
     reasons: list[str] = []
-
+    skip_reasons: list[str] = []
     if not link:
+        published_at, published_at_source = extract_published_at(entry, fetched_at)
         decision = Decision(
             decision="SKIP",
             reasons=["missing_url"],
             normalized_url=None,
             stable_id=None,
-            published_at=None,
+            published_at=published_at,
+            published_at_source=published_at_source,
             title=title,
             original_url=None,
+            tags=derived_tags,
         )
         return decision, None
 
@@ -113,27 +121,38 @@ def evaluate_entry(
     )
 
     if denied_matches:
-        reasons.append(f"deny_keywords:{','.join(denied_matches)}")
+        reason = f"deny_keywords:{','.join(denied_matches)}"
+        reasons.append(reason)
+        skip_reasons.append(reason)
     if config.ingest.filters.allow_keywords and not allowed_matches:
         reasons.append("allow_keywords:miss")
+        skip_reasons.append("allow_keywords:miss")
 
     if stable_id in seen_ids:
-        reasons.append("dedupe_run")
+        if ignore_dedupe:
+            reasons.append("already_seen")
+        else:
+            reasons.append("duplicate")
+            skip_reasons.append("duplicate")
     elif config.ingest.dedupe.enabled and article_exists(conn, stable_id):
-        reasons.append("dedupe")
+        if ignore_dedupe:
+            reasons.append("already_seen")
+        else:
+            reasons.append("duplicate")
+            skip_reasons.append("duplicate")
 
-    accepted = not reasons
-    published_at = parse_entry_date(
-        entry, config.per_source_tweaks.date_parsing.prefer_updated_if_published_missing
-    )
+    accepted = not skip_reasons
+    published_at, published_at_source = extract_published_at(entry, fetched_at)
     decision = Decision(
         decision="ACCEPT" if accepted else "SKIP",
         reasons=reasons,
         normalized_url=normalized_url,
         stable_id=stable_id,
         published_at=published_at,
+        published_at_source=published_at_source,
         title=title or normalized_url,
         original_url=link,
+        tags=derived_tags,
     )
 
     if not accepted:
@@ -145,9 +164,10 @@ def evaluate_entry(
         url=normalized_url,
         source_id=source.id,
         published_at=published_at,
-        fetched_at=utc_now_iso(),
+        published_at_source=published_at_source,
+        fetched_at=fetched_at,
         summary=summary,
-        tags=source.tags,
+        tags=derived_tags,
     )
     return decision, article
 
@@ -158,6 +178,7 @@ def process_source(
     logger: logging.Logger,
     conn,
     test_mode: bool = False,
+    ignore_dedupe: bool = False,
 ) -> SourceResult:
     if source.type == "html":
         log_event(logger, logging.WARNING, "source_not_implemented", source_id=source.id)
@@ -170,6 +191,7 @@ def process_source(
             skipped_duplicates=0,
             skipped_filters=0,
             skipped_missing_url=0,
+            already_seen_count=0,
             error="HTML sources not implemented",
             articles=[],
             decisions=[],
@@ -210,6 +232,7 @@ def process_source(
             skipped_duplicates=0,
             skipped_filters=0,
             skipped_missing_url=0,
+            already_seen_count=0,
             error=error or "empty response",
             articles=[],
             decisions=[],
@@ -233,22 +256,29 @@ def process_source(
     skipped_duplicates = 0
     skipped_filters = 0
     skipped_missing_url = 0
+    already_seen_count = 0
     raw_entry = dict(entries[0]) if test_mode and entries else None
 
+    fetched_at = utc_now_iso()
     for entry in entries:
-        decision, article = evaluate_entry(entry, source, config, conn, seen_ids)
+        decision, article = evaluate_entry(
+            entry, source, config, conn, seen_ids, fetched_at, ignore_dedupe=ignore_dedupe
+        )
         decisions.append(decision)
+        if "already_seen" in decision.reasons:
+            already_seen_count += 1
         if decision.decision == "ACCEPT" and article:
             seen_ids.add(article.id)
             accepted.append(article)
             continue
-        if "missing_url" in decision.reasons:
+        if decision.decision == "SKIP" and "missing_url" in decision.reasons:
             skipped_missing_url += 1
-        if any(reason.startswith("deny_keywords") for reason in decision.reasons) or (
-            "allow_keywords:miss" in decision.reasons
+        if decision.decision == "SKIP" and (
+            any(reason.startswith("deny_keywords") for reason in decision.reasons)
+            or "allow_keywords:miss" in decision.reasons
         ):
             skipped_filters += 1
-        if "dedupe" in decision.reasons or "dedupe_run" in decision.reasons:
+        if decision.decision == "SKIP" and "duplicate" in decision.reasons:
             skipped_duplicates += 1
 
     log_event(
@@ -278,6 +308,7 @@ def process_source(
         skipped_duplicates=skipped_duplicates,
         skipped_filters=skipped_filters,
         skipped_missing_url=skipped_missing_url,
+        already_seen_count=already_seen_count,
         error=None,
         articles=accepted,
         decisions=decisions,
