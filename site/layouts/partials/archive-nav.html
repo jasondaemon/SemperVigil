@@ -1,0 +1,41 @@
+{{/* layouts/partials/archive-nav.html */}}
+{{- $taxMonths := .Site.Taxonomies.months -}}
+{{- $taxYears := .Site.Taxonomies.years -}}
+
+<div class="archive-nav" style="margin: 1rem 0; padding: 0.75rem 1rem; border: 1px solid rgba(0,0,0,.08); border-radius: 0.75rem;">
+  <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
+    <strong style="margin-right:.25rem;">Jump:</strong>
+
+    <a href="{{ "/posts/" | relURL }}">Posts</a>
+    <span style="opacity:.5;">·</span>
+    <a href="{{ "/months/" | relURL }}">Months</a>
+    <span style="opacity:.5;">·</span>
+    <a href="{{ "/years/" | relURL }}">Years</a>
+  </div>
+
+  {{ if $taxYears }}
+  <div style="margin-top:.5rem;">
+    <strong>Years:</strong>
+    {{ range $year, $pages := $taxYears }}
+      {{- $u := (printf "/years/%s/" $year) | relURL -}}
+      <a href="{{ $u }}" style="margin-left:.4rem;">{{ $year }}</a>
+    {{ end }}
+  </div>
+  {{ end }}
+
+  {{ if $taxMonths }}
+  <div style="margin-top:.35rem;">
+    <strong>Months:</strong>
+    {{- $monthTerms := slice -}}
+    {{- range $m, $_ := $taxMonths -}}
+      {{- $monthTerms = $monthTerms | append $m -}}
+    {{- end -}}
+    {{- $monthTerms = sort $monthTerms "value" "desc" -}}
+    {{- range $monthTerms -}}
+      {{- $m := . -}}
+      {{- $u := (printf "/months/%s/" $m) | relURL -}}
+      <a href="{{ $u }}" style="margin-left:.4rem;">{{ $m }}</a>
+    {{- end }}
+  </div>
+  {{ end }}
+</div>

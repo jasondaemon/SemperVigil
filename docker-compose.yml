@@ -17,20 +17,16 @@ services:
       - ./config:/config:ro
       - ./data:/data
       - ./site:/site
-    # Later you can add a small internal UI on a private port.
-    # ports:
-    #   - "127.0.0.1:8090:8090"
     networks:
       - svnet
 
   # 2) Hugo builder (runs on demand)
   hugo:
-    image: klakegg/hugo:ext
-    container_name: sempervigil-hugo
+    image: hugomods/hugo:exts
     working_dir: /site
     volumes:
       - ./site:/site
-    command: ["hugo", "--minify"]
+    command: ["build", "--minify", "--gc", "--cleanDestinationDir", "--logLevel", "info"]
     networks:
       - svnet
 

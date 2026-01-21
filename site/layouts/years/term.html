@@ -1,0 +1,26 @@
+{{ define "main" }}
+  <header style="margin-bottom: 1rem;">
+    <h1>Year: {{ .Title }}</h1>
+    <p>Posts for this year, grouped by month.</p>
+  </header>
+
+  {{ partial "archive-nav.html" . }}
+
+  {{- $pages := .Pages.ByDate.Reverse -}}
+  {{ if not $pages }}
+    <p><em>No posts found for this year.</em></p>
+  {{ else }}
+    {{- $groups := $pages.GroupByDate "2006-01" -}}
+    {{ range $groups }}
+      <h2 style="margin-top: 1.25rem;">{{ .Key }}</h2>
+      <ul>
+        {{ range .Pages }}
+          <li>
+            <a href="{{ .RelPermalink }}">{{ .Title }}</a>
+            {{ with .Date }}<span style="opacity:.65;"> — {{ .Format "2006-01-02" }}</span>{{ end }}
+          </li>
+        {{ end }}
+      </ul>
+    {{ end }}
+  {{ end }}
+{{ end }}

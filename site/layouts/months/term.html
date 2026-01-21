@@ -1,0 +1,22 @@
+{{ define "main" }}
+  <header style="margin-bottom: 1rem;">
+    <h1>Month: {{ .Title }}</h1>
+    <p>Posts tagged for this month.</p>
+  </header>
+
+  {{ partial "archive-nav.html" . }}
+
+  {{ $pages := .Pages.ByDate.Reverse }}
+  {{ if not $pages }}
+    <p><em>No posts found for this month.</em></p>
+  {{ else }}
+    <ul>
+      {{ range $pages }}
+        <li>
+          <a href="{{ .RelPermalink }}">{{ .Title }}</a>
+          {{ with .Date }}<span style="opacity:.65;"> — {{ .Format "2006-01-02" }}</span>{{ end }}
+        </li>
+      {{ end }}
+    </ul>
+  {{ end }}
+{{ end }}

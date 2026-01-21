@@ -1,0 +1,22 @@
+{{ define "main" }}
+<main class="max-w-3xl mx-auto px-4 py-6">
+  <header class="mb-6">
+    <h1 class="text-3xl font-bold">{{ .Title }}</h1>
+    {{ with .Content }}
+      <div class="prose mt-4">{{ . }}</div>
+    {{ end }}
+  </header>
+
+  {{ partial "archive-nav.html" . }}
+
+  <section class="mt-6">
+    <ul>
+      {{ range .RegularPages.ByDate.Reverse }}
+        <li style="margin: 0.35rem 0;">
+          <a href="{{ .RelPermalink }}">{{ .Title }}</a>
+        </li>
+      {{ end }}
+    </ul>
+  </section>
+</main>
+{{ end }}

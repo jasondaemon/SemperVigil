@@ -1,0 +1,55 @@
+{{/* layouts/partials/posts/archive-menu.html */}}
+
+{{ $years := .Site.Taxonomies.years }}
+{{ $months := .Site.Taxonomies.months }}
+
+{{ if or $years $months }}
+<div class="mb-8 rounded-2xl border border-neutral-200/60 dark:border-neutral-700/60 p-5">
+  <div class="text-lg font-semibold mb-3">Archive</div>
+
+  {{/* ---- Years ---- */}}
+  {{ if $years }}
+    <div class="mb-4">
+      <div class="text-sm font-semibold uppercase tracking-wide opacity-70 mb-2">Years</div>
+      <div class="flex flex-wrap gap-2">
+        {{ range $k, $_ := $years }}
+          {{/* $k is the term, like "2025" */}}
+        {{ end }}
+
+        {{/* render in descending order */}}
+        {{ $yearKeys := slice }}
+        {{ range $k, $_ := $years }}{{ $yearKeys = $yearKeys | append $k }}{{ end }}
+        {{ $yearKeys = sort $yearKeys "value" "desc" }}
+
+        {{ range $yearKeys }}
+          <a class="px-3 py-1 rounded-full border border-neutral-200/70 dark:border-neutral-700/70 hover:underline"
+             href="{{ (printf "/years/%s/" .) | relURL }}">
+            {{ . }}
+          </a>
+        {{ end }}
+      </div>
+    </div>
+  {{ end }}
+
+  {{/* ---- Recent months (latest 12) ---- */}}
+  {{ if $months }}
+    <div>
+      <div class="text-sm font-semibold uppercase tracking-wide opacity-70 mb-2">Months</div>
+
+      {{ $monthKeys := slice }}
+      {{ range $k, $_ := $months }}{{ $monthKeys = $monthKeys | append $k }}{{ end }}
+      {{/* Expecting YYYY-MM, lexicographic sort works */}}
+      {{ $monthKeys = sort $monthKeys "value" "desc" }}
+
+      <div class="flex flex-wrap gap-2">
+        {{ range first 12 $monthKeys }}
+          <a class="px-3 py-1 rounded-full border border-neutral-200/70 dark:border-neutral-700/70 hover:underline"
+             href="{{ (printf "/months/%s/" .) | relURL }}">
+            {{ . }}
+          </a>
+        {{ end }}
+      </div>
+    </div>
+  {{ end }}
+</div>
+{{ end }}

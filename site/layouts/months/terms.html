@@ -1,0 +1,30 @@
+{{ define "main" }}
+  <header style="margin-bottom: 1rem;">
+    <h1>Archive by Month</h1>
+    <p>Select a month to view posts. Use the jump links to switch years/months quickly.</p>
+  </header>
+
+  {{ partial "archive-nav.html" . }}
+
+  {{- $tax := .Site.Taxonomies.months -}}
+  {{ if not $tax }}
+    <p><em>No month taxonomy terms found yet. Ensure posts have <code>months = ["YYYY-MM"]</code> in frontmatter.</em></p>
+  {{ else }}
+    {{- $terms := slice -}}
+    {{- range $k, $_ := $tax -}}
+      {{- $terms = $terms | append $k -}}
+    {{- end -}}
+    {{- $terms = sort $terms "value" "desc" -}}
+
+    <ul>
+      {{- range $terms -}}
+        {{- $term := . -}}
+        {{- $p := index $tax $term -}}
+        <li>
+          <a href="{{ (printf "/months/%s/" $term) | relURL }}">{{ $term }}</a>
+          <span style="opacity:.65;">({{ len $p.Pages }} posts)</span>
+        </li>
+      {{- end -}}
+    </ul>
+  {{ end }}
+{{ end }}

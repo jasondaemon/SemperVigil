@@ -1,0 +1,10 @@
+name = "Jason Daemon"
+headline = "Cyber Risk · Technology · Music · Faith"
+bio = "Senior Cyber Risk Advisor focused on enterprise risk, security architecture, and creative technology."
+
+image = "img/avatar.png"
+
+links = [
+  { github = "https://github.com/jasondaemon" },
+  { email = "mailto:jason@jasondaemon.net" }
+]
