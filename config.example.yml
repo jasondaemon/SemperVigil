@@ -1,5 +1,6 @@
 # SemperVigil configuration
 # Copy to config.yml (or mount as /config/config.yml in docker)
+# Sources live in a separate file; see config/sources.example.yml
 
 app:
   name: SemperVigil
@@ -46,44 +47,6 @@ llm:
   tasks:
     summarize: true
     tag: true
-
-sources:
-  - id: "cisa-alerts"
-    name: "CISA Alerts"
-    type: "rss"
-    enabled: true
-    url: "https://www.cisa.gov/uscert/ncas/alerts.xml"
-    tags: ["cisa", "advisory"]
-    overrides:
-      http_headers: {}
-      parse:
-        # for rss this usually isn't needed; kept here for consistency
-        prefer_entry_summary: true
-
-  - id: "bleepingcomputer"
-    name: "BleepingComputer"
-    type: "rss"
-    enabled: true
-    url: "https://www.bleepingcomputer.com/feed/"
-    tags: ["news"]
-    overrides:
-      http_headers: {}
-
-  - id: "example-html-source"
-    name: "Example HTML Source"
-    type: "html"
-    enabled: false
-    url: "https://example.com/security"
-    tags: ["example"]
-    overrides:
-      http_headers: {}
-      parse:
-        # placeholder for future CSS selector based parsing
-        article_selector: "article"
-        title_selector: "h1,h2"
-        link_selector: "a"
-        date_selector: "time"
-        max_items: 20
 
 per_source_tweaks:
   # This is where we keep “nuances” that are common pain points:
