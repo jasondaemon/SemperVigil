@@ -1,4 +1,7 @@
-from sempervigil.cve_sync import process_cve_item
+import json
+
+from sempervigil import cve_sync
+from sempervigil.cve_sync import process_cve_item, sync_cves, CveSyncConfig
 from sempervigil.storage import init_db
 
 
@@ -114,3 +117,29 @@ def test_idempotent_rerun(tmp_path):
     process_cve_item(conn, item, prefer_v4=True)
     assert conn.execute("SELECT COUNT(*) FROM cve_snapshots").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM cve_changes").fetchone()[0] == 0
+
+
+def test_cve_sync_result_is_json_serializable(tmp_path, monkeypatch):
+    conn = init_db(str(tmp_path / "state.sqlite3"))
+    item = _make_cve_item("CVE-2025-6666", 6.0, "MEDIUM", "AV:N/AC:L")
+
+    def _fake_fetch_page(config, last_modified_start, last_modified_end, start_index):
+        if start_index > 0:
+            return {"vulnerabilities": [], "totalResults": 1, "resultsPerPage": 1}
+        return {"vulnerabilities": [{"cve": item}], "totalResults": 1, "resultsPerPage": 1}
+
+    monkeypatch.setattr(cve_sync, "_fetch_page", _fake_fetch_page)
+    result = sync_cves(
+        conn,
+        CveSyncConfig(
+            results_per_page=1,
+            rate_limit_seconds=0.0,
+            backoff_seconds=0.0,
+            max_retries=0,
+            prefer_v4=True,
+            api_key=None,
+        ),
+        last_modified_start="2025-01-01T00:00:00Z",
+        last_modified_end="2025-01-02T00:00:00Z",
+    )
+    json.dumps(result)

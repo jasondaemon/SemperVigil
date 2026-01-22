@@ -102,6 +102,7 @@ These documents are the **source of truth** for implementation decisions.
 ### 1) Copy example config
 
 ```bash
+cp .env.example .env
 cp config.example.yml config/config.yml
 ```
 
@@ -112,6 +113,7 @@ Adjust as needed for your environment.
 ### 2) Import example sources into the state DB
 
 ```bash
+docker compose run --rm worker sempervigil db migrate
 docker compose run --rm worker \
   sempervigil sources import /config/sources.example.yml
 ```
@@ -123,7 +125,6 @@ Sources are stored in the database, not in static config files.
 ### 3) Start internal services (admin, worker, web)
 
 ```bash
-cp .env.example .env
 docker compose up -d --build admin worker web
 ```
 
@@ -191,6 +192,14 @@ docker compose run --rm builder
 ```
 
 After build, verify: `site/public/index.html`
+
+---
+
+### Verify Web Output
+
+```bash
+curl -i http://127.0.0.1:8080/ | head
+```
 
 ---
 

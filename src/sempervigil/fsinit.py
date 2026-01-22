@@ -5,8 +5,11 @@ from pathlib import Path
 from typing import Iterable
 
 
-def ensure_runtime_dirs(paths: Iterable[str]) -> None:
+def set_umask_from_env() -> None:
     _apply_umask()
+
+
+def ensure_runtime_dirs(paths: Iterable[str]) -> None:
     for path in paths:
         if not path:
             continue
@@ -14,7 +17,7 @@ def ensure_runtime_dirs(paths: Iterable[str]) -> None:
 
 
 def build_default_paths(data_dir: str, output_dir: str) -> list[str]:
-    paths = [data_dir, "/site", "/site/public"]
+    paths = [data_dir, "/site", "/site/public", "/site/static/sempervigil"]
     output_path = Path(output_dir)
     content_root = output_path.parent if output_path.name == "posts" else output_path
     paths.extend(

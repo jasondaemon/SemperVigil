@@ -9,7 +9,7 @@ from datetime import datetime, timezone, timedelta
 from .config import ConfigError, load_config
 from .ingest import process_source
 from .cve_sync import CveSyncConfig, isoformat_utc, sync_cves
-from .fsinit import build_default_paths, ensure_runtime_dirs
+from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .publish import write_hugo_markdown, write_json_index, write_tag_indexes
 from .signals import build_cve_evidence, extract_cve_ids
 from .storage import (
@@ -51,6 +51,7 @@ def run_once(config_path: str | None, worker_id: str) -> int:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
 
+    set_umask_from_env()
     ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir))
     conn = init_db(config.paths.state_db)
     _maybe_enqueue_cve_sync(conn, config, logger)

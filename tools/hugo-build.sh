@@ -1,10 +1,13 @@
 #!/bin/sh
 set -e
 
-UMASK_VALUE="${SV_UMASK:-002}"
-umask "${UMASK_VALUE}" || umask 002
+/tools/ensure-dirs.sh
 
-mkdir -p /site/public /site/content/posts /site/content/events /site/content/cves
-chmod 775 /site/public /site/content /site/content/posts /site/content/events /site/content/cves || true
+hugo -s /site -d /site/public --minify --gc --cleanDestinationDir --logLevel info
 
-exec hugo -s /site -d /site/public --minify --gc --cleanDestinationDir --logLevel info --baseURL "${SV_HUGO_BASEURL:-http://localhost:18080/}"
+echo "Hugo output:"
+ls -la /site/public || true
+
+if [ ! -f /site/public/index.html ]; then
+  echo "warning: /site/public/index.html not found"
+fi

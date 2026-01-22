@@ -12,7 +12,7 @@
 #   docker compose run --rm builder   # run a one-off Hugo build
 #
 # Optional:
-#   export SV_WEB_PORT=18080   # if 8080 is already used
+#   export SV_WEB_PORT=8080   # default below
 #   export SV_ADMIN_PORT=8001  # default below
 
 services:
@@ -30,7 +30,7 @@ services:
       SV_CONFIG_PATH: ${SV_CONFIG_PATH:-/config/config.yml}
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
       SV_UMASK: ${SV_UMASK:-002}
-    command: ["uvicorn", "sempervigil.admin:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["sh", "-lc", "/tools/ensure-dirs.sh && uvicorn sempervigil.admin:app --host 0.0.0.0 --port 8000"]
     ports:
       # Default: internal-only on host. Change to "0.0.0.0:8001:8000" if you want LAN access.
       - "127.0.0.1:${SV_ADMIN_PORT:-8001}:8000"
@@ -38,6 +38,7 @@ services:
     volumes:
       - ./config:/config:ro
       - ./data:/data
+      - ./tools:/tools:ro
     networks:
       - svnet
     restart: unless-stopped
@@ -56,12 +57,13 @@ services:
       SV_CONFIG_PATH: ${SV_CONFIG_PATH:-/config/config.yml}
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
       SV_UMASK: ${SV_UMASK:-002}
-    command: ["sempervigil-worker"]
+    command: ["sh", "-lc", "/tools/ensure-dirs.sh && sempervigil-worker"]
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - ./config:/config:ro
       - ./data:/data
       - ./site:/site
+      - ./tools:/tools:ro
     networks:
       - svnet
     restart: unless-stopped
@@ -74,7 +76,7 @@ services:
       - .env
     environment:
       SV_UMASK: ${SV_UMASK:-002}
-      SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-http://localhost:${SV_WEB_PORT:-18080}/}
+      SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-http://localhost:${SV_WEB_PORT:-8080}/}
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - ./config:/config:ro
@@ -91,7 +93,7 @@ services:
     container_name: sempervigil-web
     ports:
       # Make this configurable so we don't collide with NPM / other stacks.
-      - "${SV_WEB_PORT:-18080}:8080"
+      - "${SV_WEB_PORT:-8080}:8080"
     volumes:
       - ./site/public:/usr/share/nginx/html:ro
     networks:

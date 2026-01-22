@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from .config import ConfigError, load_config
-from .fsinit import build_default_paths, ensure_runtime_dirs
+from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .storage import enqueue_job, get_source_run_streaks, init_db, list_jobs
 from .utils import log_event
 
@@ -30,6 +30,7 @@ def _startup() -> None:
         config = load_config(None)
     except ConfigError:
         return
+    set_umask_from_env()
     ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir))
 
 
