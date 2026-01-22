@@ -1,3 +1,20 @@
+# docker-compose.yml
+#
+# Repo-level fixes baked in:
+# - builder uses modern Hugo (hugomods/hugo:exts) and runs "hugo" (not "hugo build")
+# - admin port is loopback-only by default to avoid stomping other services; change if you want LAN access
+# - web port is configurable via SV_WEB_PORT to avoid NPM collisions
+# - consistent UID/GID for NFS/root_squash friendliness
+# - builder is "on-demand" (profile: ["build"]) so it won't constantly rebuild unless you run it
+#
+# Usage:
+#   docker compose up -d web admin worker
+#   docker compose --profile build run --rm builder   # run a one-off Hugo build
+#
+# Optional:
+#   export SV_WEB_PORT=18080   # if 8080 is already used
+#   export SV_ADMIN_BIND=127.0.0.1:8001  # default below
+
 services:
   # 1) Admin API (internal)
   admin:
@@ -12,15 +29,18 @@ services:
       SV_DATA_DIR: ${SV_DATA_DIR:-/data}
       SV_CONFIG_PATH: ${SV_CONFIG_PATH:-/config/config.yml}
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
+      SV_UMASK: ${SV_UMASK:-002}
     command: ["uvicorn", "sempervigil.admin:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
-      - "127.0.0.1:8001:8000"
+      # Default: internal-only on host. Change to "0.0.0.0:8001:8000" if you want LAN access.
+      - "${SV_ADMIN_BIND:-127.0.0.1:8001}:8000"
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - ./config:/config:ro
       - ./data:/data
     networks:
       - svnet
+    restart: unless-stopped
 
   # 2) Worker (internal)
   worker:
@@ -35,6 +55,7 @@ services:
       SV_DATA_DIR: ${SV_DATA_DIR:-/data}
       SV_CONFIG_PATH: ${SV_CONFIG_PATH:-/config/config.yml}
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
+      SV_UMASK: ${SV_UMASK:-002}
     command: ["sempervigil-worker"]
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
@@ -43,43 +64,25 @@ services:
       - ./site:/site
     networks:
       - svnet
+    restart: unless-stopped
 
-  # 3) Builder (internal) — FIXED: use modern Hugo (Blowfish requires >= 0.141)
+  # 3) Builder (internal) — modern Hugo for Blowfish
   #
-  # Why: your current builder image is using Hugo v0.131.0, which fails on Blowfish
-  # with: function "try" not defined.
-  #
-  # This swaps builder to hugomods/hugo:exts and runs a deterministic build into /site/public.
+  # On-demand by default: run with:
+  #   docker compose --profile build run --rm builder
   builder:
     image: hugomods/hugo:exts
     container_name: sempervigil-builder
+    profiles: ["build"]
     env_file:
       - .env
     environment:
-      SV_ENV: ${SV_ENV:-dev}
-      SV_DATA_DIR: ${SV_DATA_DIR:-/data}
-      SV_CONFIG_PATH: ${SV_CONFIG_PATH:-/config/config.yml}
-      SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
-      # baseURL used by Hugo unless overridden in site config
-      SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-http://localhost:8080/}
+      SV_UMASK: ${SV_UMASK:-002}
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     working_dir: /site
     volumes:
-      - ./config:/config:ro
-      - ./data:/data
       - ./site:/site
-    # IMPORTANT: Hugo CLI is "hugo" (not "hugo build")
-    command:
-      [
-        "hugo",
-        "-s", "/site",
-        "-d", "/site/public",
-        "--minify",
-        "--gc",
-        "--cleanDestinationDir",
-        "--logLevel", "info",
-        "--baseURL", "${SV_HUGO_BASEURL:-http://localhost:8080/}"
-      ]
+    command: ["hugo", "-s", "/site", "-d", "/site/public", "--minify", "--gc", "--cleanDestinationDir", "--logLevel", "info"]
     networks:
       - svnet
 
@@ -88,11 +91,13 @@ services:
     image: nginxinc/nginx-unprivileged:alpine
     container_name: sempervigil-web
     ports:
-      - "8080:8080"
+      # Make this configurable so we don't collide with NPM / other stacks.
+      - "${SV_WEB_PORT:-8080}:8080"
     volumes:
       - ./site/public:/usr/share/nginx/html:ro
     networks:
       - svnet
+    restart: unless-stopped
 
 networks:
   svnet:
