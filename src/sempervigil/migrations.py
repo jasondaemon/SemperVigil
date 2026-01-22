@@ -21,6 +21,7 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
     migrations = [
         ("001_initial_schema", _migration_initial_schema),
         ("002_jobs_table", _migration_jobs_table),
+        ("003_jobs_result_json", _migration_jobs_result_json),
     ]
     applied = {
         row[0]
@@ -151,6 +152,7 @@ def _migration_jobs_table(conn: sqlite3.Connection) -> None:
             job_type TEXT NOT NULL,
             status TEXT NOT NULL,
             payload_json TEXT NULL,
+            result_json TEXT NULL,
             requested_at TEXT NOT NULL,
             started_at TEXT NULL,
             finished_at TEXT NULL,
@@ -166,6 +168,15 @@ def _migration_jobs_table(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_jobs_locked ON jobs(locked_by, locked_at)"
     )
+
+
+def _migration_jobs_result_json(conn: sqlite3.Connection) -> None:
+    if not _table_exists(conn, "jobs"):
+        return
+    columns = _table_columns(conn, "jobs")
+    if "result_json" in columns:
+        return
+    conn.execute("ALTER TABLE jobs ADD COLUMN result_json TEXT NULL")
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:

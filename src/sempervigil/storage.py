@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 import uuid
+from datetime import datetime, timezone, timedelta
 from typing import Iterable
 
 from .migrations import apply_migrations
@@ -104,6 +105,24 @@ def list_sources(conn: sqlite3.Connection, enabled_only: bool = True) -> list[So
             """
         )
     return [_row_to_source(row) for row in cursor.fetchall()]
+
+
+def list_due_sources(conn: sqlite3.Connection, now_iso: str) -> list[Source]:
+    sources = list_sources(conn, enabled_only=True)
+    due: list[Source] = []
+    last_runs = _last_run_map(conn)
+    now_dt = _parse_iso(now_iso)
+    for source in sources:
+        if source.pause_until and _parse_iso(source.pause_until) > now_dt:
+            continue
+        last_run = last_runs.get(source.id)
+        if not last_run:
+            due.append(source)
+            continue
+        last_dt = _parse_iso(last_run)
+        if last_dt + timedelta(minutes=source.default_frequency_minutes) <= now_dt:
+            due.append(source)
+    return due
 
 
 def list_tactics(conn: sqlite3.Connection, source_id: str) -> list[SourceTactic]:
@@ -264,15 +283,16 @@ def enqueue_job(
     conn.execute(
         """
         INSERT INTO jobs
-            (id, job_type, status, payload_json, requested_at, started_at, finished_at,
-             locked_by, locked_at, error)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, job_type, status, payload_json, result_json, requested_at, started_at,
+             finished_at, locked_by, locked_at, error)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             job_id,
             job_type,
             "queued",
             json.dumps(payload) if payload else None,
+            None,
             now,
             None,
             None,
@@ -288,8 +308,8 @@ def enqueue_job(
 def list_jobs(conn: sqlite3.Connection, limit: int = 50) -> list[Job]:
     cursor = conn.execute(
         """
-        SELECT id, job_type, status, payload_json, requested_at, started_at, finished_at,
-               locked_by, locked_at, error
+        SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
+               finished_at, locked_by, locked_at, error
         FROM jobs
         ORDER BY requested_at DESC
         LIMIT ?
@@ -299,18 +319,34 @@ def list_jobs(conn: sqlite3.Connection, limit: int = 50) -> list[Job]:
     return [_row_to_job(row) for row in cursor.fetchall()]
 
 
-def claim_next_job(conn: sqlite3.Connection, worker_id: str) -> Job | None:
+def claim_next_job(
+    conn: sqlite3.Connection, worker_id: str, allowed_types: list[str] | None = None
+) -> Job | None:
     conn.execute("BEGIN IMMEDIATE")
-    cursor = conn.execute(
-        """
-        SELECT id, job_type, status, payload_json, requested_at, started_at, finished_at,
-               locked_by, locked_at, error
-        FROM jobs
-        WHERE status = 'queued' AND locked_by IS NULL
-        ORDER BY requested_at ASC
-        LIMIT 1
-        """
-    )
+    if allowed_types:
+        placeholders = ",".join("?" for _ in allowed_types)
+        cursor = conn.execute(
+            f"""
+            SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
+                   finished_at, locked_by, locked_at, error
+            FROM jobs
+            WHERE status = 'queued' AND locked_by IS NULL AND job_type IN ({placeholders})
+            ORDER BY requested_at ASC
+            LIMIT 1
+            """,
+            tuple(allowed_types),
+        )
+    else:
+        cursor = conn.execute(
+            """
+            SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
+                   finished_at, locked_by, locked_at, error
+            FROM jobs
+            WHERE status = 'queued' AND locked_by IS NULL
+            ORDER BY requested_at ASC
+            LIMIT 1
+            """
+        )
     row = cursor.fetchone()
     if not row:
         conn.execute("COMMIT")
@@ -332,6 +368,7 @@ def claim_next_job(conn: sqlite3.Connection, worker_id: str) -> Job | None:
         job_type=job.job_type,
         status="running",
         payload=job.payload,
+        result=job.result,
         requested_at=job.requested_at,
         started_at=now,
         finished_at=job.finished_at,
@@ -341,15 +378,18 @@ def claim_next_job(conn: sqlite3.Connection, worker_id: str) -> Job | None:
     )
 
 
-def complete_job(conn: sqlite3.Connection, job_id: str) -> None:
+
+def complete_job(
+    conn: sqlite3.Connection, job_id: str, result: dict[str, object] | None = None
+) -> None:
     now = utc_now_iso()
     conn.execute(
         """
         UPDATE jobs
-        SET status = 'succeeded', finished_at = ?, error = NULL
+        SET status = 'succeeded', finished_at = ?, error = NULL, result_json = ?
         WHERE id = ?
         """,
-        (now, job_id),
+        (now, json.dumps(result) if result else None, job_id),
     )
     conn.commit()
 
@@ -427,6 +467,7 @@ def _row_to_job(row: tuple) -> Job:
         job_type,
         status,
         payload_json,
+        result_json,
         requested_at,
         started_at,
         finished_at,
@@ -438,11 +479,16 @@ def _row_to_job(row: tuple) -> Job:
         payload = json.loads(payload_json) if payload_json else {}
     except json.JSONDecodeError:
         payload = {}
+    try:
+        result = json.loads(result_json) if result_json else None
+    except json.JSONDecodeError:
+        result = None
     return Job(
         id=job_id,
         job_type=job_type,
         status=status,
         payload=payload,
+        result=result,
         requested_at=requested_at,
         started_at=started_at,
         finished_at=finished_at,
@@ -536,3 +582,20 @@ def _source_from_dict(source_dict: dict[str, object]) -> Source:
         paused_reason=str(paused_reason) if paused_reason else None,
         robots_notes=str(robots_notes) if robots_notes else None,
     )
+
+
+def _last_run_map(conn: sqlite3.Connection) -> dict[str, str]:
+    cursor = conn.execute(
+        """
+        SELECT source_id, MAX(started_at) AS last_run
+        FROM source_runs
+        GROUP BY source_id
+        """
+    )
+    return {row[0]: row[1] for row in cursor.fetchall() if row[1]}
+
+
+def _parse_iso(value: str) -> datetime:
+    if value.endswith("Z"):
+        value = value.replace("Z", "+00:00")
+    return datetime.fromisoformat(value).astimezone(timezone.utc)

@@ -50,6 +50,7 @@ class Job:
     job_type: str
     status: str
     payload: dict[str, object]
+    result: dict[str, object] | None
     requested_at: str
     started_at: str | None
     finished_at: str | None

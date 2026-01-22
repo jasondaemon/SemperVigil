@@ -548,6 +548,10 @@ def _cmd_jobs_list(args: argparse.Namespace, logger: logging.Logger) -> int:
             job_type=job.job_type,
             status=job.status,
             requested_at=job.requested_at,
+            started_at=job.started_at,
+            finished_at=job.finished_at,
+            error=job.error,
+            result=job.result,
         )
     return 0
 

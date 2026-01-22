@@ -1,4 +1,10 @@
-from sempervigil.storage import claim_next_job, enqueue_job, init_db, list_jobs
+from sempervigil.storage import (
+    claim_next_job,
+    complete_job,
+    enqueue_job,
+    init_db,
+    list_jobs,
+)
 
 
 def test_enqueue_and_claim_job(tmp_path):
@@ -26,3 +32,21 @@ def test_debounce_build_job(tmp_path):
     jobs = list_jobs(conn, limit=10)
     assert any(job.id == first for job in jobs)
     assert first == second
+
+
+def test_job_lifecycle_records_result(tmp_path):
+    db_path = tmp_path / "state.sqlite3"
+    conn = init_db(str(db_path))
+
+    job_id = enqueue_job(conn, "test_source", {"source_id": "cisa-alerts"})
+    claimed = claim_next_job(conn, "worker-1")
+
+    assert claimed is not None
+    assert claimed.id == job_id
+
+    result = {"status": "ok", "found_count": 5}
+    complete_job(conn, job_id, result=result)
+
+    jobs = list_jobs(conn, limit=1)
+    assert jobs[0].status == "succeeded"
+    assert jobs[0].result == result
