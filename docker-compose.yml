@@ -100,6 +100,20 @@ services:
       - svnet
     restart: unless-stopped
 
+  test:
+    build:
+      context: .
+      dockerfile: docker/ingest/Dockerfile
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - ./data:/data
+      - ./site:/site
+    working_dir: /app
+    command: ["python", "-m", "pytest"]
+
+
 networks:
   svnet:
     driver: bridge
