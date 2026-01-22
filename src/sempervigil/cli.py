@@ -4,14 +4,17 @@ import argparse
 import json
 import logging
 import os
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from .config import ConfigError, load_config, load_sources_file
+from .cve_sync import CveSyncConfig, isoformat_utc, sync_cves
 from .ingest import process_source
 from .models import SourceTactic
 from .publish import write_hugo_markdown, write_json_index, write_tag_indexes
 from .storage import (
     get_source,
+    get_setting,
     init_db,
     insert_articles,
     list_sources,
@@ -556,6 +559,44 @@ def _cmd_jobs_list(args: argparse.Namespace, logger: logging.Logger) -> int:
     return 0
 
 
+def _parse_iso(value: str) -> datetime:
+    if value.endswith("Z"):
+        value = value.replace("Z", "+00:00")
+    return datetime.fromisoformat(value).astimezone(timezone.utc)
+
+
+def _cmd_cve_sync(args: argparse.Namespace, logger: logging.Logger) -> int:
+    try:
+        config = load_config(args.config)
+    except ConfigError as exc:
+        log_event(logger, logging.ERROR, "config_error", error=str(exc))
+        return 1
+    if not config.cve.enabled:
+        log_event(logger, logging.WARNING, "cve_sync_disabled")
+        return 0
+    conn = init_db(config.paths.state_db)
+    now = datetime.now(tz=timezone.utc)
+    last_sync = get_setting(conn, "cve.last_successful_sync_at", None)
+    start = _parse_iso(last_sync) if isinstance(last_sync, str) else None
+    if not start:
+        start = now - timedelta(minutes=config.cve.sync_interval_minutes)
+    result = sync_cves(
+        conn,
+        CveSyncConfig(
+            results_per_page=config.cve.results_per_page,
+            rate_limit_seconds=config.cve.rate_limit_seconds,
+            backoff_seconds=config.cve.backoff_seconds,
+            max_retries=config.cve.max_retries,
+            prefer_v4=config.cve.prefer_v4,
+            api_key=os.environ.get("NVD_API_KEY"),
+        ),
+        last_modified_start=isoformat_utc(start),
+        last_modified_end=isoformat_utc(now),
+    )
+    log_event(logger, logging.INFO, "cve_sync_complete", **result)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sempervigil", description="SemperVigil CLI")
     parser.add_argument(
@@ -663,7 +704,7 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_enqueue = jobs_subparsers.add_parser("enqueue", help="Enqueue a job")
     jobs_enqueue.add_argument(
         "job_type",
-        choices=["ingest_source", "ingest_due_sources", "test_source", "build_site"],
+        choices=["ingest_source", "ingest_due_sources", "test_source", "build_site", "cve_sync"],
         help="Job type to enqueue",
     )
     jobs_enqueue.add_argument("--source-id", help="Source id for source-scoped jobs")
@@ -677,6 +718,12 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_list = jobs_subparsers.add_parser("list", help="List recent jobs")
     jobs_list.add_argument("--limit", type=int, default=20, help="Number of jobs to show")
     jobs_list.set_defaults(func=_cmd_jobs_list)
+
+    cve_parser = subparsers.add_parser("cve", help="CVE ingestion commands")
+    cve_subparsers = cve_parser.add_subparsers(dest="cve_command", required=True)
+
+    cve_sync = cve_subparsers.add_parser("sync", help="Run CVE sync now")
+    cve_sync.set_defaults(func=_cmd_cve_sync)
 
     return parser
 

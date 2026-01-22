@@ -163,6 +163,17 @@ This is the primary troubleshooting tool.
 
 ---
 
+### CVE Sync (Deterministic)
+
+```bash
+docker compose run --rm worker \
+  sempervigil cve sync
+```
+
+Set `NVD_API_KEY` in your environment for higher rate limits.
+
+---
+
 ## Internal Services
 
 - admin: FastAPI API for managing sources and enqueueing jobs (binds to `127.0.0.1:8001` by default)

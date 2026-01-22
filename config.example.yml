@@ -40,6 +40,15 @@ jobs:
   # reclaim jobs if a worker crashes without releasing a lock
   lock_timeout_seconds: 600
 
+cve:
+  enabled: true
+  sync_interval_minutes: 60
+  results_per_page: 2000
+  rate_limit_seconds: 1.0
+  backoff_seconds: 2.0
+  max_retries: 3
+  prefer_v4: true
+
 llm:
   enabled: false
   provider: openai

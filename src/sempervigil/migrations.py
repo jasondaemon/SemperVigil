@@ -24,6 +24,7 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
         ("002_jobs_table", _migration_jobs_table),
         ("003_jobs_result_json", _migration_jobs_result_json),
         ("004_health_alerts", _migration_health_alerts),
+        ("005_cve_tables", _migration_cve_tables),
     ]
     applied = {
         row[0]
@@ -195,6 +196,77 @@ def _migration_health_alerts(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_health_alerts_source ON health_alerts(source_id, created_at)"
+    )
+
+
+def _migration_cve_tables(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cves (
+            cve_id TEXT PRIMARY KEY,
+            published_at TEXT NULL,
+            last_modified_at TEXT NULL,
+            preferred_cvss_version TEXT NULL,
+            preferred_base_score REAL NULL,
+            preferred_base_severity TEXT NULL,
+            preferred_vector TEXT NULL,
+            cvss_v40_json TEXT NULL,
+            cvss_v31_json TEXT NULL,
+            cwe_ids_json TEXT NULL,
+            vuln_tags_json TEXT NULL,
+            affected_products_json TEXT NULL,
+            affected_cpes_json TEXT NULL,
+            reference_domains_json TEXT NULL,
+            description_text TEXT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cve_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cve_id TEXT NOT NULL REFERENCES cves(cve_id),
+            observed_at TEXT NOT NULL,
+            nvd_last_modified_at TEXT NULL,
+            preferred_cvss_version TEXT NULL,
+            preferred_base_score REAL NULL,
+            preferred_base_severity TEXT NULL,
+            preferred_vector TEXT NULL,
+            cvss_v40_json TEXT NULL,
+            cvss_v31_json TEXT NULL,
+            snapshot_hash TEXT NOT NULL,
+            UNIQUE(cve_id, snapshot_hash)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cve_changes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cve_id TEXT NOT NULL REFERENCES cves(cve_id),
+            change_at TEXT NOT NULL,
+            cvss_version TEXT NULL,
+            change_type TEXT NOT NULL,
+            from_score REAL NULL,
+            to_score REAL NULL,
+            from_severity TEXT NULL,
+            to_severity TEXT NULL,
+            vector_from TEXT NULL,
+            vector_to TEXT NULL,
+            metrics_changed_json TEXT NULL,
+            note TEXT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cves_last_modified ON cves(last_modified_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cve_snapshots_cve ON cve_snapshots(cve_id, observed_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cve_changes_cve ON cve_changes(cve_id, change_at DESC)"
     )
 
 

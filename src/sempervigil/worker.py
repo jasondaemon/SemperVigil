@@ -4,10 +4,11 @@ import argparse
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from .config import ConfigError, load_config
 from .ingest import process_source
+from .cve_sync import CveSyncConfig, isoformat_utc, sync_cves
 from .publish import write_hugo_markdown, write_json_index, write_tag_indexes
 from .signals import build_cve_evidence, extract_cve_ids
 from .storage import (
@@ -29,7 +30,7 @@ from .storage import (
 )
 from .utils import log_event, utc_now_iso
 
-WORKER_JOB_TYPES = ["ingest_source", "ingest_due_sources", "test_source"]
+WORKER_JOB_TYPES = ["ingest_source", "ingest_due_sources", "test_source", "cve_sync"]
 
 
 def _setup_logging() -> logging.Logger:
@@ -50,6 +51,7 @@ def run_once(config_path: str | None, worker_id: str) -> int:
         return 1
 
     conn = init_db(config.paths.state_db)
+    _maybe_enqueue_cve_sync(conn, config, logger)
     job = claim_next_job(
         conn,
         worker_id,
@@ -73,6 +75,8 @@ def run_once(config_path: str | None, worker_id: str) -> int:
             result = _handle_ingest_due_sources(conn, logger)
         elif job.job_type == "test_source":
             result = _handle_test_source(conn, config, job.payload, logger)
+        elif job.job_type == "cve_sync":
+            result = _handle_cve_sync(conn, config, logger)
         else:
             fail_job(conn, job.id, f"unsupported job type {job.job_type}")
             return 1
@@ -239,6 +243,49 @@ def _handle_ingest_due_sources(conn, logger: logging.Logger) -> dict[str, object
         count=len(enqueued),
     )
     return {"enqueued_count": len(enqueued), "source_ids": enqueued}
+
+
+def _handle_cve_sync(conn, config, logger: logging.Logger) -> dict[str, object]:
+    if not config.cve.enabled:
+        return {"status": "disabled"}
+    now = datetime.now(tz=timezone.utc)
+    last_sync = get_setting(conn, "cve.last_successful_sync_at", None)
+    start = _parse_iso(last_sync) if isinstance(last_sync, str) else None
+    if not start:
+        start = now - timedelta(minutes=config.cve.sync_interval_minutes)
+    start_iso = isoformat_utc(start)
+    end_iso = isoformat_utc(now)
+    api_key = os.environ.get("NVD_API_KEY")
+    result = sync_cves(
+        conn,
+        CveSyncConfig(
+            results_per_page=config.cve.results_per_page,
+            rate_limit_seconds=config.cve.rate_limit_seconds,
+            backoff_seconds=config.cve.backoff_seconds,
+            max_retries=config.cve.max_retries,
+            prefer_v4=config.cve.prefer_v4,
+            api_key=api_key,
+        ),
+        last_modified_start=start_iso,
+        last_modified_end=end_iso,
+    )
+    result["start"] = start_iso
+    result["end"] = end_iso
+    return result
+
+
+def _maybe_enqueue_cve_sync(conn, config, logger: logging.Logger) -> None:
+    if not config.cve.enabled:
+        return
+    last_sync = get_setting(conn, "cve.last_successful_sync_at", None)
+    now = datetime.now(tz=timezone.utc)
+    if isinstance(last_sync, str):
+        last_dt = _parse_iso(last_sync)
+    else:
+        last_dt = now - timedelta(minutes=config.cve.sync_interval_minutes + 1)
+    due = last_dt + timedelta(minutes=config.cve.sync_interval_minutes) <= now
+    if due:
+        enqueue_job(conn, "cve_sync", None, debounce=True)
 
 
 def _maybe_pause_source(conn, source_id: str, logger: logging.Logger | None) -> None:

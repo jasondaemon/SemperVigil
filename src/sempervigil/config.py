@@ -67,6 +67,17 @@ class JobsConfig:
 
 
 @dataclass(frozen=True)
+class CveConfig:
+    enabled: bool
+    sync_interval_minutes: int
+    results_per_page: int
+    rate_limit_seconds: float
+    backoff_seconds: float
+    max_retries: int
+    prefer_v4: bool
+
+
+@dataclass(frozen=True)
 class UrlNormalizationConfig:
     strip_tracking_params: bool
     tracking_params: list[str]
@@ -90,6 +101,7 @@ class Config:
     publishing: PublishingConfig
     ingest: IngestConfig
     jobs: JobsConfig
+    cve: CveConfig
     llm: dict[str, Any]
     sources: list[Source]
     per_source_tweaks: PerSourceTweaks
@@ -130,6 +142,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "jobs": {
         "lock_timeout_seconds": 600,
+    },
+    "cve": {
+        "enabled": True,
+        "sync_interval_minutes": 60,
+        "results_per_page": 2000,
+        "rate_limit_seconds": 1.0,
+        "backoff_seconds": 2.0,
+        "max_retries": 3,
+        "prefer_v4": True,
     },
     "llm": {
         "enabled": False,
@@ -250,6 +271,7 @@ def load_config(path: str | None = None) -> Config:
     publishing_cfg = merged.get("publishing") or {}
     ingest_cfg = merged.get("ingest") or {}
     jobs_cfg = merged.get("jobs") or {}
+    cve_cfg = merged.get("cve") or {}
     tweaks_cfg = merged.get("per_source_tweaks") or {}
 
     app = AppConfig(
@@ -326,6 +348,27 @@ def load_config(path: str | None = None) -> Config:
             jobs_cfg.get("lock_timeout_seconds", DEFAULT_CONFIG["jobs"]["lock_timeout_seconds"])
         )
     )
+    cve = CveConfig(
+        enabled=bool(cve_cfg.get("enabled", DEFAULT_CONFIG["cve"]["enabled"])),
+        sync_interval_minutes=int(
+            cve_cfg.get(
+                "sync_interval_minutes", DEFAULT_CONFIG["cve"]["sync_interval_minutes"]
+            )
+        ),
+        results_per_page=int(
+            cve_cfg.get("results_per_page", DEFAULT_CONFIG["cve"]["results_per_page"])
+        ),
+        rate_limit_seconds=float(
+            cve_cfg.get("rate_limit_seconds", DEFAULT_CONFIG["cve"]["rate_limit_seconds"])
+        ),
+        backoff_seconds=float(
+            cve_cfg.get("backoff_seconds", DEFAULT_CONFIG["cve"]["backoff_seconds"])
+        ),
+        max_retries=int(
+            cve_cfg.get("max_retries", DEFAULT_CONFIG["cve"]["max_retries"])
+        ),
+        prefer_v4=bool(cve_cfg.get("prefer_v4", DEFAULT_CONFIG["cve"]["prefer_v4"])),
+    )
 
     url_norm_cfg = (tweaks_cfg.get("url_normalization") or {})
     date_parsing_cfg = (tweaks_cfg.get("date_parsing") or {})
@@ -368,6 +411,7 @@ def load_config(path: str | None = None) -> Config:
         publishing=publishing,
         ingest=ingest,
         jobs=jobs,
+        cve=cve,
         llm=merged.get("llm") or DEFAULT_CONFIG["llm"],
         sources=sources,
         per_source_tweaks=per_source_tweaks,

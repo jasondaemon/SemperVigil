@@ -324,6 +324,175 @@ def get_setting(conn: sqlite3.Connection, key: str, default: object) -> object:
         return default
 
 
+def set_setting(conn: sqlite3.Connection, key: str, value: object) -> None:
+    payload = json.dumps(value)
+    now = utc_now_iso()
+    conn.execute(
+        """
+        INSERT INTO settings (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+        """,
+        (key, payload, now),
+    )
+    conn.commit()
+
+
+def upsert_cve(
+    conn: sqlite3.Connection,
+    cve_id: str,
+    published_at: str | None,
+    last_modified_at: str | None,
+    preferred_cvss_version: str | None,
+    preferred_base_score: float | None,
+    preferred_base_severity: str | None,
+    preferred_vector: str | None,
+    cvss_v40_json: dict[str, object] | None,
+    cvss_v31_json: dict[str, object] | None,
+    description_text: str | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO cves
+            (cve_id, published_at, last_modified_at, preferred_cvss_version,
+             preferred_base_score, preferred_base_severity, preferred_vector,
+             cvss_v40_json, cvss_v31_json, description_text, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(cve_id) DO UPDATE SET
+            published_at=excluded.published_at,
+            last_modified_at=excluded.last_modified_at,
+            preferred_cvss_version=excluded.preferred_cvss_version,
+            preferred_base_score=excluded.preferred_base_score,
+            preferred_base_severity=excluded.preferred_base_severity,
+            preferred_vector=excluded.preferred_vector,
+            cvss_v40_json=excluded.cvss_v40_json,
+            cvss_v31_json=excluded.cvss_v31_json,
+            description_text=excluded.description_text,
+            updated_at=excluded.updated_at
+        """,
+        (
+            cve_id,
+            published_at,
+            last_modified_at,
+            preferred_cvss_version,
+            preferred_base_score,
+            preferred_base_severity,
+            preferred_vector,
+            json.dumps(cvss_v40_json) if cvss_v40_json else None,
+            json.dumps(cvss_v31_json) if cvss_v31_json else None,
+            description_text,
+            utc_now_iso(),
+        ),
+    )
+    conn.commit()
+
+
+def insert_cve_snapshot(
+    conn: sqlite3.Connection,
+    cve_id: str,
+    observed_at: str,
+    nvd_last_modified_at: str | None,
+    preferred_cvss_version: str | None,
+    preferred_base_score: float | None,
+    preferred_base_severity: str | None,
+    preferred_vector: str | None,
+    cvss_v40_json: dict[str, object] | None,
+    cvss_v31_json: dict[str, object] | None,
+    snapshot_hash: str,
+) -> bool:
+    cursor = conn.execute(
+        """
+        INSERT OR IGNORE INTO cve_snapshots
+            (cve_id, observed_at, nvd_last_modified_at, preferred_cvss_version,
+             preferred_base_score, preferred_base_severity, preferred_vector,
+             cvss_v40_json, cvss_v31_json, snapshot_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            cve_id,
+            observed_at,
+            nvd_last_modified_at,
+            preferred_cvss_version,
+            preferred_base_score,
+            preferred_base_severity,
+            preferred_vector,
+            json.dumps(cvss_v40_json) if cvss_v40_json else None,
+            json.dumps(cvss_v31_json) if cvss_v31_json else None,
+            snapshot_hash,
+        ),
+    )
+    conn.commit()
+    return cursor.rowcount == 1
+
+
+def get_latest_cve_snapshot(conn: sqlite3.Connection, cve_id: str) -> dict[str, object] | None:
+    cursor = conn.execute(
+        """
+        SELECT preferred_cvss_version, preferred_base_score, preferred_base_severity,
+               preferred_vector, cvss_v40_json, cvss_v31_json, nvd_last_modified_at
+        FROM cve_snapshots
+        WHERE cve_id = ?
+        ORDER BY observed_at DESC
+        LIMIT 1
+        """,
+        (cve_id,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        return None
+    cvss_v40 = json.loads(row[4]) if row[4] else None
+    cvss_v31 = json.loads(row[5]) if row[5] else None
+    return {
+        "preferred_cvss_version": row[0],
+        "preferred_base_score": row[1],
+        "preferred_base_severity": row[2],
+        "preferred_vector": row[3],
+        "cvss_v40_json": cvss_v40,
+        "cvss_v31_json": cvss_v31,
+        "nvd_last_modified_at": row[6],
+    }
+
+
+def insert_cve_change(
+    conn: sqlite3.Connection,
+    cve_id: str,
+    change_at: str,
+    cvss_version: str | None,
+    change_type: str,
+    from_score: float | None,
+    to_score: float | None,
+    from_severity: str | None,
+    to_severity: str | None,
+    vector_from: str | None,
+    vector_to: str | None,
+    metrics_changed_json: dict[str, object] | None,
+    note: str | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO cve_changes
+            (cve_id, change_at, cvss_version, change_type, from_score, to_score,
+             from_severity, to_severity, vector_from, vector_to, metrics_changed_json, note)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            cve_id,
+            change_at,
+            cvss_version,
+            change_type,
+            from_score,
+            to_score,
+            from_severity,
+            to_severity,
+            vector_from,
+            vector_to,
+            json.dumps(metrics_changed_json) if metrics_changed_json else None,
+            note,
+        ),
+    )
+    conn.commit()
+
+
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     cursor = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name = ?", (table,)
