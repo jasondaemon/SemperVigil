@@ -742,7 +742,14 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_enqueue = jobs_subparsers.add_parser("enqueue", help="Enqueue a job")
     jobs_enqueue.add_argument(
         "job_type",
-        choices=["ingest_source", "ingest_due_sources", "test_source", "build_site", "cve_sync"],
+        choices=[
+            "ingest_source",
+            "ingest_due_sources",
+            "test_source",
+            "build_site",
+            "cve_sync",
+            "write_article_markdown",
+        ],
         help="Job type to enqueue",
     )
     jobs_enqueue.add_argument("--source-id", help="Source id for source-scoped jobs")

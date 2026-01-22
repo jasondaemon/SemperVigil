@@ -17,38 +17,43 @@ def _safe_filename(article: Article) -> str:
     return f"{date_part}-{slug}-{article.stable_id[:8]}.md"
 
 
+def write_article_markdown(article: Article, output_dir: str) -> str:
+    os.makedirs(output_dir, exist_ok=True)
+    filename = _safe_filename(article)
+    path = os.path.join(output_dir, filename)
+    frontmatter = {
+        "title": article.title,
+        "date": article.published_at or article.ingested_at,
+        "tags": article.tags,
+        "summary": article.summary or "",
+        "draft": False,
+        "source_url": article.normalized_url,
+    }
+    summary = article.summary or ""
+    body = "\n".join(
+        [
+            summary.strip(),
+            "",
+            f"[Read more]({article.normalized_url})",
+            "",
+        ]
+    )
+    content = "---\n"
+    content += yaml.safe_dump(
+        frontmatter, sort_keys=False, allow_unicode=False, default_flow_style=False
+    )
+    content += "---\n\n"
+    content += body
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(content)
+    return path
+
+
 def write_hugo_markdown(articles: Iterable[Article], output_dir: str) -> list[str]:
     os.makedirs(output_dir, exist_ok=True)
     written: list[str] = []
     for article in articles:
-        filename = _safe_filename(article)
-        path = os.path.join(output_dir, filename)
-        frontmatter = {
-            "title": article.title,
-            "date": article.published_at or article.ingested_at,
-            "source": article.source_id,
-            "source_url": article.normalized_url,
-            "tags": article.tags,
-            "published_at_source": article.published_at_source,
-        }
-        summary = article.summary or ""
-        body = "\n".join(
-            [
-                summary.strip(),
-                "",
-                f"[Read more]({article.normalized_url})",
-                "",
-            ]
-        )
-        content = "---\n"
-        content += yaml.safe_dump(
-            frontmatter, sort_keys=False, allow_unicode=False, default_flow_style=False
-        )
-        content += "---\n\n"
-        content += body
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(content)
-        written.append(path)
+        written.append(write_article_markdown(article, output_dir))
     return written
 
 

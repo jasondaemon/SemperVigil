@@ -8,9 +8,10 @@ from datetime import datetime, timezone, timedelta
 
 from .config import ConfigError, load_config
 from .ingest import process_source
+from .models import Article
 from .cve_sync import CveSyncConfig, isoformat_utc, sync_cves
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
-from .publish import write_hugo_markdown, write_json_index, write_tag_indexes
+from .publish import write_article_markdown, write_hugo_markdown, write_json_index, write_tag_indexes
 from .signals import build_cve_evidence, extract_cve_ids
 from .storage import (
     claim_next_job,
@@ -31,7 +32,13 @@ from .storage import (
 )
 from .utils import log_event, utc_now_iso
 
-WORKER_JOB_TYPES = ["ingest_source", "ingest_due_sources", "test_source", "cve_sync"]
+WORKER_JOB_TYPES = [
+    "ingest_source",
+    "ingest_due_sources",
+    "test_source",
+    "cve_sync",
+    "write_article_markdown",
+]
 
 
 def _setup_logging() -> logging.Logger:
@@ -155,20 +162,31 @@ def _handle_ingest_source(
             [article.title, article.summary or "", article.original_url]
         )
         if not cve_ids:
-            continue
-        article_id = get_article_id(conn, article.source_id, article.stable_id)
-        if article_id is None:
-            continue
-        evidence = build_cve_evidence(article, cve_ids)
-        upsert_cve_links(conn, article_id, cve_ids, evidence)
+            article_id = None
+        else:
+            article_id = get_article_id(conn, article.source_id, article.stable_id)
+            if article_id is not None:
+                evidence = build_cve_evidence(article, cve_ids)
+                upsert_cve_links(conn, article_id, cve_ids, evidence)
+        enqueue_job(
+            conn,
+            "write_article_markdown",
+            {
+                "stable_id": article.stable_id,
+                "title": article.title,
+                "source_id": article.source_id,
+                "published_at": article.published_at,
+                "published_at_source": article.published_at_source,
+                "ingested_at": article.ingested_at,
+                "summary": article.summary,
+                "tags": article.tags,
+                "original_url": article.original_url,
+                "normalized_url": article.normalized_url,
+            },
+        )
     # TODO: attach event correlation hooks (events/event_mentions) once implemented.
-    write_hugo_markdown(result.articles, config.paths.output_dir)
-
     if config.publishing.write_json_index:
         write_json_index(result.articles, config.publishing.json_index_path)
-
-    write_tag_indexes(result.articles, config.paths.output_dir, config.publishing.hugo_section)
-    enqueue_job(conn, "build_site", None, debounce=True)
     _maybe_pause_source(conn, source.id, logger)
     return {
         "source_id": source.id,
@@ -213,6 +231,29 @@ def _handle_test_source(
         "skipped_missing_url": result.skipped_missing_url,
         "preview": preview,
     }
+
+
+def _handle_write_article_markdown(
+    conn, config, payload: dict[str, object], logger: logging.Logger
+) -> dict[str, object]:
+    if not payload:
+        raise ValueError("write_article_markdown requires payload")
+    article = Article(
+        id=None,
+        stable_id=str(payload.get("stable_id")),
+        original_url=str(payload.get("original_url")),
+        normalized_url=str(payload.get("normalized_url")),
+        title=str(payload.get("title")),
+        source_id=str(payload.get("source_id")),
+        published_at=payload.get("published_at") or None,
+        published_at_source=payload.get("published_at_source") or None,
+        ingested_at=str(payload.get("ingested_at")),
+        summary=payload.get("summary") or None,
+        tags=list(payload.get("tags") or []),
+    )
+    path = write_article_markdown(article, config.paths.output_dir)
+    log_event(logger, logging.INFO, "article_markdown_written", path=path)
+    return {"path": path}
 
 
 def _handle_ingest_due_sources(conn, logger: logging.Logger) -> dict[str, object]:
@@ -349,6 +390,8 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         return _handle_test_source(conn, config, job.payload, logger)
     if job.job_type == "cve_sync":
         return _handle_cve_sync(conn, config, logger)
+    if job.job_type == "write_article_markdown":
+        return _handle_write_article_markdown(conn, config, job.payload, logger)
     raise ValueError(f"unsupported job type {job.job_type}")
 
 
