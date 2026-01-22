@@ -44,11 +44,14 @@ services:
     networks:
       - svnet
 
-  # 3) Builder (internal)
+  # 3) Builder (internal) — FIXED: use modern Hugo (Blowfish requires >= 0.141)
+  #
+  # Why: your current builder image is using Hugo v0.131.0, which fails on Blowfish
+  # with: function "try" not defined.
+  #
+  # This swaps builder to hugomods/hugo:exts and runs a deterministic build into /site/public.
   builder:
-    build:
-      context: .
-      dockerfile: docker/builder/Dockerfile
+    image: hugomods/hugo:exts
     container_name: sempervigil-builder
     env_file:
       - .env
@@ -57,12 +60,26 @@ services:
       SV_DATA_DIR: ${SV_DATA_DIR:-/data}
       SV_CONFIG_PATH: ${SV_CONFIG_PATH:-/config/config.yml}
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
-    command: ["sempervigil-builder"]
+      # baseURL used by Hugo unless overridden in site config
+      SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-http://localhost:8080/}
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
+    working_dir: /site
     volumes:
       - ./config:/config:ro
       - ./data:/data
       - ./site:/site
+    # IMPORTANT: Hugo CLI is "hugo" (not "hugo build")
+    command:
+      [
+        "hugo",
+        "-s", "/site",
+        "-d", "/site/public",
+        "--minify",
+        "--gc",
+        "--cleanDestinationDir",
+        "--logLevel", "info",
+        "--baseURL", "${SV_HUGO_BASEURL:-http://localhost:8080/}"
+      ]
     networks:
       - svnet
 
