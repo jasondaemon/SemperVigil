@@ -1,0 +1,39 @@
+.jd-columns{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  align-items: start;
+}
+
+/* Mobile stack */
+@media (max-width: 900px){
+  .jd-columns{
+    grid-template-columns: 1fr;
+  }
+}/* Remove Blowfish prose width clamp for main content */
+main .max-w-prose,
+main .prose {
+  max-width: none;
+}
+
+/* Constrain to a reasonable readable width instead of full viewport */
+main > div,
+main section {
+  max-width: 90rem;   /* try 80rem / 90rem / 100rem */
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 2rem;
+  padding-right: 2rem;
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3rem;
+}
+
+@media (max-width: 768px) {
+  .columns {
+    grid-template-columns: 1fr;
+  }
+}

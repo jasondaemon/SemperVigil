@@ -81,20 +81,38 @@ def _parse_date_value(value: Any) -> datetime | None:
     return None
 
 
-def extract_published_at(entry: Any, fetched_at: str) -> tuple[str, str]:
+def extract_published_at(
+    entry: Any,
+    fetched_at: str,
+    strategy: str = "published_then_updated",
+    allow_dc_date: bool = True,
+) -> tuple[str, str]:
     published = _parse_date_value(entry.get("published_parsed") or entry.get("published"))
-    if published:
-        return published.isoformat(), "published"
-
     updated = _parse_date_value(entry.get("updated_parsed") or entry.get("updated"))
-    if updated:
-        return updated.isoformat(), "updated"
 
-    dc_date = _parse_date_value(
-        entry.get("dc_date") or entry.get("dc:date") or entry.get("dc_date_parsed")
-    )
-    if dc_date:
-        return dc_date.isoformat(), "dc_date"
+    if strategy == "updated_then_published":
+        if updated:
+            return updated.isoformat(), "updated"
+        if published:
+            return published.isoformat(), "published"
+    elif strategy == "published_only":
+        if published:
+            return published.isoformat(), "published"
+    elif strategy == "updated_only":
+        if updated:
+            return updated.isoformat(), "updated"
+    else:
+        if published:
+            return published.isoformat(), "published"
+        if updated:
+            return updated.isoformat(), "updated"
+
+    if allow_dc_date:
+        dc_date = _parse_date_value(
+            entry.get("dc_date") or entry.get("dc:date") or entry.get("dc_date_parsed")
+        )
+        if dc_date:
+            return dc_date.isoformat(), "dc_date"
 
     return fetched_at, "fallback_fetched_at"
 

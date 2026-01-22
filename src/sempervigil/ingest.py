@@ -12,6 +12,7 @@ import feedparser
 
 from .config import Config
 from .models import Article, Decision, Source
+from .policy import resolve_policy
 from .tagger import derive_tags
 from .storage import article_exists
 from .utils import extract_published_at, log_event, normalize_url, stable_id_from_url, utc_now_iso
@@ -75,6 +76,7 @@ def _keyword_match(text: str, keywords: list[str]) -> list[str]:
 def evaluate_entry(
     entry: Any,
     source: Source,
+    policy: dict[str, Any],
     config: Config,
     conn,
     seen_ids: set[str],
@@ -83,10 +85,9 @@ def evaluate_entry(
 ) -> tuple[Decision, Article | None]:
     title = (entry.get("title") or "").strip()
     link = entry.get("link") or entry.get("id")
-    summary = _entry_summary(
-        entry, bool((source.overrides.get("parse") or {}).get("prefer_entry_summary", True))
-    )
-    derived_tags = derive_tags(source, title, summary)
+    prefer_entry_summary = bool(policy.get("parse", {}).get("prefer_entry_summary", True))
+    summary = _entry_summary(entry, prefer_entry_summary)
+    derived_tags = derive_tags(source, policy, title, summary)
     combined_text = f"{title} {summary or ''}".strip()
     reasons: list[str] = []
     skip_reasons: list[str] = []
@@ -105,11 +106,11 @@ def evaluate_entry(
         )
         return decision, None
 
-    url_norm_cfg = config.per_source_tweaks.url_normalization
+    url_norm_cfg = policy.get("canonical_url", {})
     normalized_url = normalize_url(
         link,
-        strip_tracking_params=url_norm_cfg.strip_tracking_params,
-        tracking_params=url_norm_cfg.tracking_params,
+        strip_tracking_params=bool(url_norm_cfg.get("strip_tracking_params", True)),
+        tracking_params=list(url_norm_cfg.get("tracking_params", [])),
     )
     stable_id = stable_id_from_url(normalized_url)
 
@@ -134,7 +135,7 @@ def evaluate_entry(
         else:
             reasons.append("duplicate")
             skip_reasons.append("duplicate")
-    elif config.ingest.dedupe.enabled and article_exists(conn, stable_id):
+    elif policy.get("dedupe", {}).get("enabled", True) and article_exists(conn, stable_id):
         if ignore_dedupe:
             reasons.append("already_seen")
         else:
@@ -142,7 +143,13 @@ def evaluate_entry(
             skip_reasons.append("duplicate")
 
     accepted = not skip_reasons
-    published_at, published_at_source = extract_published_at(entry, fetched_at)
+    date_cfg = policy.get("date", {})
+    published_at, published_at_source = extract_published_at(
+        entry,
+        fetched_at,
+        strategy=str(date_cfg.get("strategy", "published_then_updated")),
+        allow_dc_date=bool(date_cfg.get("allow_dc_date", True)),
+    )
     decision = Decision(
         decision="ACCEPT" if accepted else "SKIP",
         reasons=reasons,
@@ -180,7 +187,17 @@ def process_source(
     test_mode: bool = False,
     ignore_dedupe: bool = False,
 ) -> SourceResult:
-    if source.type == "html":
+    policy = resolve_policy(source.policy, logger)
+    dedupe_strategy = policy.get("dedupe", {}).get("strategy")
+    if dedupe_strategy and dedupe_strategy != "canonical_url_hash":
+        log_event(
+            logger,
+            logging.DEBUG,
+            "dedupe_strategy_unsupported",
+            source_id=source.id,
+            strategy=dedupe_strategy,
+        )
+    if source.kind == "html":
         log_event(logger, logging.WARNING, "source_not_implemented", source_id=source.id)
         return SourceResult(
             source_id=source.id,
@@ -198,8 +215,7 @@ def process_source(
             raw_entry=None,
         )
 
-    overrides = source.overrides or {}
-    headers = overrides.get("http_headers") or {}
+    headers = policy.get("fetch", {}).get("headers") or {}
     if not isinstance(headers, dict):
         headers = {}
 
@@ -262,7 +278,14 @@ def process_source(
     fetched_at = utc_now_iso()
     for entry in entries:
         decision, article = evaluate_entry(
-            entry, source, config, conn, seen_ids, fetched_at, ignore_dedupe=ignore_dedupe
+            entry,
+            source,
+            policy,
+            config,
+            conn,
+            seen_ids,
+            fetched_at,
+            ignore_dedupe=ignore_dedupe,
         )
         decisions.append(decision)
         if "already_seen" in decision.reasons:

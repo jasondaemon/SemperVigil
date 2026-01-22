@@ -187,10 +187,10 @@ def _parse_sources_list(sources_raw: Any) -> list[Source]:
         if source_id in source_ids:
             raise ConfigError(f"Duplicate source id '{source_id}'")
         source_ids.add(source_id)
-        source_type = _require(source.get("type"), f"sources[{index}].type")
-        if source_type not in {"rss", "atom", "html"}:
+        source_kind = _require(source.get("type"), f"sources[{index}].type")
+        if source_kind not in {"rss", "atom", "html"}:
             raise ConfigError(
-                f"sources[{index}].type must be one of rss, atom, html (got {source_type})"
+                f"sources[{index}].type must be one of rss, atom, html (got {source_kind})"
             )
         url = _require(source.get("url"), f"sources[{index}].url")
         if not isinstance(url, str) or not url.strip():
@@ -201,15 +201,25 @@ def _parse_sources_list(sources_raw: Any) -> list[Source]:
         overrides = source.get("overrides") or {}
         if overrides and not isinstance(overrides, dict):
             raise ConfigError(f"sources[{index}].overrides must be a mapping")
+        section = source.get("section") or "posts"
+        policy: dict[str, Any] = {}
+        if tags:
+            policy["tag_defaults"] = tags
+        if overrides.get("parse", {}).get("prefer_entry_summary") is not None:
+            policy.setdefault("parse", {})["prefer_entry_summary"] = overrides["parse"][
+                "prefer_entry_summary"
+            ]
+        if overrides.get("http_headers"):
+            policy.setdefault("fetch", {})["headers"] = overrides["http_headers"]
         sources.append(
             Source(
                 id=source_id,
                 name=name,
-                type=source_type,
+                kind=source_kind,
                 enabled=enabled,
                 url=url,
-                tags=tags,
-                overrides=overrides,
+                section=section,
+                policy=policy,
             )
         )
     return sources

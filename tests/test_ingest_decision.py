@@ -21,15 +21,23 @@ def test_decision_missing_url(tmp_path):
     source = Source(
         id="s1",
         name="Source",
-        type="rss",
+        kind="rss",
         url="https://example.com/feed",
         enabled=True,
-        tags=[],
-        overrides={},
+        section="posts",
+        policy={},
     )
     entry = {"title": "No link"}
 
-    decision, article = evaluate_entry(entry, source, config, conn, set(), \"2024-01-01T00:00:00+00:00\")
+    decision, article = evaluate_entry(
+        entry,
+        source,
+        source.policy,
+        config,
+        conn,
+        set(),
+        "2024-01-01T00:00:00+00:00",
+    )
 
     assert decision.decision == "SKIP"
     assert "missing_url" in decision.reasons
@@ -42,15 +50,23 @@ def test_decision_deny_keyword(tmp_path):
     source = Source(
         id="s1",
         name="Source",
-        type="rss",
+        kind="rss",
         url="https://example.com/feed",
         enabled=True,
-        tags=[],
-        overrides={},
+        section="posts",
+        policy={},
     )
     entry = {"title": "Blocked item", "link": "https://example.com/1"}
 
-    decision, article = evaluate_entry(entry, source, config, conn, set(), \"2024-01-01T00:00:00+00:00\")
+    decision, article = evaluate_entry(
+        entry,
+        source,
+        source.policy,
+        config,
+        conn,
+        set(),
+        "2024-01-01T00:00:00+00:00",
+    )
 
     assert decision.decision == "SKIP"
     assert any(reason.startswith("deny_keywords") for reason in decision.reasons)

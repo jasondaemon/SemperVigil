@@ -40,21 +40,30 @@ def test_ignore_dedupe_accepts_duplicate(tmp_path):
     source = Source(
         id="s1",
         name="Source",
-        type="rss",
+        kind="rss",
         url="https://example.com/feed",
         enabled=True,
-        tags=[],
-        overrides={},
+        section="posts",
+        policy={},
     )
     entry = {"title": "Existing", "link": url}
 
-    decision, _ = evaluate_entry(entry, source, config, conn, set(), "2024-01-01T00:00:00+00:00")
+    decision, _ = evaluate_entry(
+        entry,
+        source,
+        source.policy,
+        config,
+        conn,
+        set(),
+        "2024-01-01T00:00:00+00:00",
+    )
     assert decision.decision == "SKIP"
     assert "duplicate" in decision.reasons
 
     decision, _ = evaluate_entry(
         entry,
         source,
+        source.policy,
         config,
         conn,
         set(),
@@ -92,16 +101,17 @@ def test_ignore_dedupe_counts_preview(tmp_path):
     source = Source(
         id="s1",
         name="Source",
-        type="rss",
+        kind="rss",
         url="https://example.com/feed",
         enabled=True,
-        tags=[],
-        overrides={},
+        section="posts",
+        policy={},
     )
     entry = {"title": "Existing", "link": url}
     decision, article = evaluate_entry(
         entry,
         source,
+        source.policy,
         config,
         conn,
         set(),

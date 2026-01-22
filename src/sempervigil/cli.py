@@ -372,11 +372,114 @@ def _cmd_sources_list(args: argparse.Namespace, logger: logging.Logger) -> int:
             "source",
             source_id=source.id,
             enabled=source.enabled,
-            type=source.type,
+            kind=source.kind,
             url=source.url,
         )
 
     log_event(logger, logging.INFO, "sources_listed", count=len(sources))
+    return 0
+
+
+def _cmd_sources_add(args: argparse.Namespace, logger: logging.Logger) -> int:
+    try:
+        config = load_config(args.config)
+    except ConfigError as exc:
+        log_event(logger, logging.ERROR, "config_error", error=str(exc))
+        return 1
+
+    conn = init_db(config.paths.state_db)
+    source_dict = {
+        "id": args.id,
+        "name": args.name,
+        "kind": args.kind,
+        "url": args.url,
+        "enabled": args.enabled,
+        "section": args.section,
+        "policy": {},
+    }
+    try:
+        upsert_source(conn, source_dict)
+    except ValueError as exc:
+        log_event(logger, logging.ERROR, "source_add_error", error=str(exc))
+        return 1
+    log_event(logger, logging.INFO, "source_added", source_id=args.id)
+    return 0
+
+
+def _cmd_sources_show(args: argparse.Namespace, logger: logging.Logger) -> int:
+    try:
+        config = load_config(args.config)
+    except ConfigError as exc:
+        log_event(logger, logging.ERROR, "config_error", error=str(exc))
+        return 1
+
+    conn = init_db(config.paths.state_db)
+    source = get_source(conn, args.source_id)
+    if source is None:
+        log_event(logger, logging.ERROR, "source_not_found", source_id=args.source_id)
+        return 1
+
+    logger.info(json.dumps(source.__dict__, indent=2, sort_keys=True))
+    return 0
+
+
+def _cmd_sources_set_policy(args: argparse.Namespace, logger: logging.Logger) -> int:
+    try:
+        config = load_config(args.config)
+    except ConfigError as exc:
+        log_event(logger, logging.ERROR, "config_error", error=str(exc))
+        return 1
+
+    conn = init_db(config.paths.state_db)
+    source = get_source(conn, args.source_id)
+    if source is None:
+        log_event(logger, logging.ERROR, "source_not_found", source_id=args.source_id)
+        return 1
+
+    try:
+        with open(args.file, "r", encoding="utf-8") as handle:
+            policy = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        log_event(logger, logging.ERROR, "policy_load_error", error=str(exc))
+        return 1
+
+    source_dict = {
+        "id": source.id,
+        "name": source.name,
+        "kind": source.kind,
+        "url": source.url,
+        "enabled": source.enabled,
+        "section": source.section,
+        "policy": policy,
+    }
+    try:
+        upsert_source(conn, source_dict)
+    except ValueError as exc:
+        log_event(logger, logging.ERROR, "source_policy_error", error=str(exc))
+        return 1
+
+    log_event(logger, logging.INFO, "source_policy_updated", source_id=source.id)
+    return 0
+
+
+def _cmd_sources_export(args: argparse.Namespace, logger: logging.Logger) -> int:
+    try:
+        config = load_config(args.config)
+    except ConfigError as exc:
+        log_event(logger, logging.ERROR, "config_error", error=str(exc))
+        return 1
+
+    conn = init_db(config.paths.state_db)
+    sources = list_sources(conn, enabled_only=False)
+    payload = [source.__dict__ for source in sources]
+    try:
+        with open(args.out, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+    except OSError as exc:
+        log_event(logger, logging.ERROR, "sources_export_error", error=str(exc))
+        return 1
+
+    log_event(logger, logging.INFO, "sources_exported", count=len(sources), path=args.out)
     return 0
 
 
@@ -438,6 +541,44 @@ def build_parser() -> argparse.ArgumentParser:
 
     sources_list = sources_subparsers.add_parser("list", help="List sources")
     sources_list.set_defaults(func=_cmd_sources_list)
+
+    sources_add = sources_subparsers.add_parser("add", help="Add or update a source")
+    sources_add.add_argument("--id", required=True, help="Source id")
+    sources_add.add_argument("--name", required=True, help="Source name")
+    sources_add.add_argument("--kind", required=True, choices=["rss", "atom", "html"], help="Source kind")
+    sources_add.add_argument("--url", required=True, help="Source URL")
+    sources_add.add_argument(
+        "--enabled",
+        dest="enabled",
+        action="store_true",
+        default=True,
+        help="Enable the source",
+    )
+    sources_add.add_argument(
+        "--disabled",
+        dest="enabled",
+        action="store_false",
+        help="Disable the source",
+    )
+    sources_add.add_argument("--section", default="posts", help="Hugo section")
+    sources_add.set_defaults(func=_cmd_sources_add)
+
+    sources_show = sources_subparsers.add_parser("show", help="Show a source")
+    sources_show.add_argument("source_id", help="Source id")
+    sources_show.set_defaults(func=_cmd_sources_show)
+
+    sources_set_policy = sources_subparsers.add_parser(
+        "set-policy", help="Set policy JSON for a source"
+    )
+    sources_set_policy.add_argument("source_id", help="Source id")
+    sources_set_policy.add_argument("--file", required=True, help="Path to policy JSON file")
+    sources_set_policy.set_defaults(func=_cmd_sources_set_policy)
+
+    sources_export = sources_subparsers.add_parser(
+        "export", help="Export sources to JSON"
+    )
+    sources_export.add_argument("--out", required=True, help="Output JSON path")
+    sources_export.set_defaults(func=_cmd_sources_export)
 
     return parser
 

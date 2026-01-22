@@ -6,13 +6,13 @@ def test_tag_normalization_alias():
     source = Source(
         id="s1",
         name="Source",
-        type="rss",
+        kind="rss",
         url="https://example.com/feed",
         enabled=True,
-        tags=["0 day"],
-        overrides={"tag_normalize": {"0-day": "zero-day"}},
+        section="posts",
+        policy={"tags": {"tag_defaults": ["0 day"], "tag_normalize": {"0-day": "zero-day"}}},
     )
-    tags = derive_tags(source, "", "")
+    tags = derive_tags(source, source.policy, "", "")
     assert "zero-day" in tags
 
 
@@ -20,13 +20,13 @@ def test_include_rule_adds_tag():
     source = Source(
         id="s1",
         name="Source",
-        type="rss",
+        kind="rss",
         url="https://example.com/feed",
         enabled=True,
-        tags=[],
-        overrides={"tag_rules": {"include_if": {"ransomware": ["Ransomware"]}}},
+        section="posts",
+        policy={"tags": {"tag_rules": {"include_if": {"ransomware": ["Ransomware"]}}}},
     )
-    tags = derive_tags(source, "New ransomware campaign", "")
+    tags = derive_tags(source, source.policy, "New ransomware campaign", "")
     assert "ransomware" in tags
 
 
@@ -34,13 +34,18 @@ def test_exclude_rule_removes_tag():
     source = Source(
         id="s1",
         name="Source",
-        type="rss",
+        kind="rss",
         url="https://example.com/feed",
         enabled=True,
-        tags=["microsoft"],
-        overrides={"tag_rules": {"exclude_if": {"windows": ["microsoft"]}}},
+        section="posts",
+        policy={
+            "tags": {
+                "tag_defaults": ["microsoft"],
+                "tag_rules": {"exclude_if": {"windows": ["microsoft"]}},
+            }
+        },
     )
-    tags = derive_tags(source, "Windows update", "")
+    tags = derive_tags(source, source.policy, "Windows update", "")
     assert "microsoft" not in tags
 
 

@@ -45,11 +45,11 @@ def init_db(path: str) -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS sources (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
-            type TEXT NOT NULL,
+            kind TEXT NOT NULL,
             url TEXT NOT NULL,
             enabled INTEGER NOT NULL,
-            tags_json TEXT NOT NULL,
-            overrides_json TEXT NOT NULL,
+            section TEXT NOT NULL,
+            policy_json TEXT NOT NULL,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
@@ -57,6 +57,7 @@ def init_db(path: str) -> sqlite3.Connection:
     )
     conn.commit()
     _ensure_articles_schema(conn)
+    _ensure_sources_schema(conn)
     return conn
 
 
@@ -69,26 +70,26 @@ def upsert_source(conn: sqlite3.Connection, source_dict: dict[str, object]) -> N
     conn.execute(
         """
         INSERT INTO sources
-            (id, name, type, url, enabled, tags_json, overrides_json, created_at, updated_at)
+            (id, name, kind, url, enabled, section, policy_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name=excluded.name,
-            type=excluded.type,
+            kind=excluded.kind,
             url=excluded.url,
             enabled=excluded.enabled,
-            tags_json=excluded.tags_json,
-            overrides_json=excluded.overrides_json,
+            section=excluded.section,
+            policy_json=excluded.policy_json,
             created_at=excluded.created_at,
             updated_at=excluded.updated_at
         """,
         (
             source.id,
             source.name,
-            source.type,
+            source.kind,
             source.url,
             1 if source.enabled else 0,
-            json.dumps(source.tags),
-            json.dumps(source.overrides),
+            source.section,
+            json.dumps(source.policy),
             created_at,
             updated_at,
         ),
@@ -99,7 +100,7 @@ def upsert_source(conn: sqlite3.Connection, source_dict: dict[str, object]) -> N
 def get_source(conn: sqlite3.Connection, source_id: str) -> Source | None:
     cursor = conn.execute(
         """
-        SELECT id, name, type, url, enabled, tags_json, overrides_json
+        SELECT id, name, kind, url, enabled, section, policy_json, tags_json, overrides_json, type
         FROM sources
         WHERE id = ?
         """,
@@ -115,7 +116,7 @@ def list_sources(conn: sqlite3.Connection, enabled_only: bool = True) -> list[So
     if enabled_only:
         cursor = conn.execute(
             """
-            SELECT id, name, type, url, enabled, tags_json, overrides_json
+            SELECT id, name, kind, url, enabled, section, policy_json, tags_json, overrides_json, type
             FROM sources
             WHERE enabled = 1
             ORDER BY id
@@ -124,7 +125,7 @@ def list_sources(conn: sqlite3.Connection, enabled_only: bool = True) -> list[So
     else:
         cursor = conn.execute(
             """
-            SELECT id, name, type, url, enabled, tags_json, overrides_json
+            SELECT id, name, kind, url, enabled, section, policy_json, tags_json, overrides_json, type
             FROM sources
             ORDER BY id
             """
@@ -228,23 +229,27 @@ def record_source_run(
 
 
 def _row_to_source(row: sqlite3.Row | tuple) -> Source:
-    source_id, name, source_type, url, enabled, tags_json, overrides_json = row
-    try:
-        tags = json.loads(tags_json) if tags_json else []
-    except json.JSONDecodeError:
-        tags = []
-    try:
-        overrides = json.loads(overrides_json) if overrides_json else {}
-    except json.JSONDecodeError:
-        overrides = {}
+    (
+        source_id,
+        name,
+        kind,
+        url,
+        enabled,
+        section,
+        policy_json,
+        tags_json,
+        overrides_json,
+        legacy_type,
+    ) = row
+    policy = _policy_from_row(policy_json, tags_json, overrides_json)
     return Source(
         id=source_id,
         name=name,
-        type=source_type,
+        kind=kind or legacy_type or "rss",
         url=url,
         enabled=bool(enabled),
-        tags=tags if isinstance(tags, list) else [],
-        overrides=overrides if isinstance(overrides, dict) else {},
+        section=section or "posts",
+        policy=policy,
     )
 
 
@@ -264,28 +269,84 @@ def _ensure_articles_schema(conn: sqlite3.Connection) -> None:
 
 def _source_from_dict(source_dict: dict[str, object]) -> Source:
     source_id = source_dict.get("id")
-    source_type = source_dict.get("type")
+    source_kind = source_dict.get("kind") or source_dict.get("type")
     url = source_dict.get("url")
     name = source_dict.get("name") or source_id
     enabled = source_dict.get("enabled", True)
+    section = source_dict.get("section") or "posts"
+    policy = source_dict.get("policy_json") or source_dict.get("policy") or {}
     tags = source_dict.get("tags") or []
     overrides = source_dict.get("overrides") or {}
     if not isinstance(source_id, str) or not source_id.strip():
         raise ValueError("source.id is required")
-    if source_type not in {"rss", "atom", "html"}:
-        raise ValueError("source.type must be one of rss, atom, html")
+    if source_kind not in {"rss", "atom", "html"}:
+        raise ValueError("source.kind must be one of rss, atom, html")
     if not isinstance(url, str) or not url.strip():
         raise ValueError("source.url is required")
-    if not isinstance(tags, list):
+    if not isinstance(section, str) or not section.strip():
+        raise ValueError("source.section must be a non-empty string")
+    if not isinstance(policy, dict):
+        raise ValueError("source.policy_json must be a mapping")
+    if tags and not isinstance(tags, list):
         raise ValueError("source.tags must be a list")
-    if not isinstance(overrides, dict):
+    if overrides and not isinstance(overrides, dict):
         raise ValueError("source.overrides must be a mapping")
     return Source(
         id=source_id,
         name=str(name),
-        type=str(source_type),
+        kind=str(source_kind),
         url=str(url),
         enabled=bool(enabled),
-        tags=[str(tag) for tag in tags],
-        overrides={str(k): v for k, v in overrides.items()},
+        section=str(section),
+        policy=_policy_from_row(json.dumps(policy), json.dumps(tags), json.dumps(overrides)),
     )
+
+
+def _policy_from_row(
+    policy_json: str | None,
+    tags_json: str | None,
+    overrides_json: str | None,
+) -> dict[str, object]:
+    try:
+        policy = json.loads(policy_json) if policy_json else {}
+    except json.JSONDecodeError:
+        policy = {}
+    if policy:
+        return policy if isinstance(policy, dict) else {}
+    try:
+        tags = json.loads(tags_json) if tags_json else []
+    except json.JSONDecodeError:
+        tags = []
+    try:
+        overrides = json.loads(overrides_json) if overrides_json else {}
+    except json.JSONDecodeError:
+        overrides = {}
+    policy: dict[str, object] = {}
+    if isinstance(tags, list) and tags:
+        policy["tags"] = {"tag_defaults": tags}
+    if isinstance(overrides, dict) and overrides:
+        if overrides.get("parse", {}).get("prefer_entry_summary") is not None:
+            policy.setdefault("parse", {})["prefer_entry_summary"] = overrides["parse"][
+                "prefer_entry_summary"
+            ]
+        if overrides.get("http_headers"):
+            policy.setdefault("fetch", {})["headers"] = overrides["http_headers"]
+    return policy
+
+
+def _ensure_sources_schema(conn: sqlite3.Connection) -> None:
+    cursor = conn.execute("PRAGMA table_info(sources)")
+    columns = {row[1] for row in cursor.fetchall()}
+    if "kind" not in columns:
+        conn.execute("ALTER TABLE sources ADD COLUMN kind TEXT")
+    if "section" not in columns:
+        conn.execute("ALTER TABLE sources ADD COLUMN section TEXT")
+    if "policy_json" not in columns:
+        conn.execute("ALTER TABLE sources ADD COLUMN policy_json TEXT")
+    if "tags_json" not in columns:
+        conn.execute("ALTER TABLE sources ADD COLUMN tags_json TEXT")
+    if "overrides_json" not in columns:
+        conn.execute("ALTER TABLE sources ADD COLUMN overrides_json TEXT")
+    if "type" not in columns:
+        conn.execute("ALTER TABLE sources ADD COLUMN type TEXT")
+    conn.commit()

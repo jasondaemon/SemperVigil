@@ -20,11 +20,11 @@ class Article:
 class Source:
     id: str
     name: str
-    type: str
+    kind: str
     url: str
     enabled: bool
-    tags: list[str]
-    overrides: dict[str, object]
+    section: str
+    policy: dict[str, object]
 
 
 @dataclass(frozen=True)

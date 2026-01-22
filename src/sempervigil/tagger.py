@@ -27,13 +27,17 @@ def _normalize_tags(tags: Iterable[str], alias_map: dict[str, str]) -> list[str]
     return normalized
 
 
-def derive_tags(source: Source, title: str | None, summary: str | None) -> list[str]:
-    overrides = source.overrides or {}
+def derive_tags(
+    source: Source, policy: dict[str, object], title: str | None, summary: str | None
+) -> list[str]:
+    tags_cfg = policy.get("tags") if isinstance(policy, dict) else {}
+    if not tags_cfg and isinstance(policy, dict):
+        tags_cfg = policy
     text = f"{title or ''}\n{summary or ''}"
 
-    tag_defaults = overrides.get("tag_defaults") or []
-    tag_normalize = overrides.get("tag_normalize") or {}
-    tag_rules = overrides.get("tag_rules") or {}
+    tag_defaults = tags_cfg.get("tag_defaults") or []
+    tag_normalize = tags_cfg.get("tag_normalize") or {}
+    tag_rules = tags_cfg.get("tag_rules") or {}
     include_rules = tag_rules.get("include_if") or {}
     exclude_rules = tag_rules.get("exclude_if") or {}
 
@@ -44,7 +48,6 @@ def derive_tags(source: Source, title: str | None, summary: str | None) -> list[
     }
 
     tags: list[str] = []
-    tags.extend(_normalize_tags(source.tags, alias_map))
     tags.extend(_normalize_tags(tag_defaults, alias_map))
 
     for pattern, include_tags in include_rules.items():
