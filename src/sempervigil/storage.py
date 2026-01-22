@@ -162,7 +162,7 @@ def upsert_tactic(conn: sqlite3.Connection, tactic: SourceTactic) -> None:
             tactic.tactic_type,
             1 if tactic.enabled else 0,
             tactic.priority,
-            json.dumps(tactic.config),
+            json_dumps(tactic.config),
             tactic.last_success_at,
             tactic.last_error_at,
             tactic.error_streak,
@@ -259,8 +259,8 @@ def upsert_cve_links(
                 "cve_id": cve_id,
                 "confidence": 1.0,
                 "confidence_band": "linked",
-                "reasons_json": json.dumps(["rule.cve.explicit"]),
-                "evidence_json": json.dumps(evidence),
+                "reasons_json": json_dumps(["rule.cve.explicit"]),
+                "evidence_json": json_dumps(evidence),
                 "created_at": now,
                 "matched_by": "explicit",
                 "inference_level": "explicit",
@@ -308,7 +308,7 @@ def _append_article_cves_meta(
     meta["cve_links"] = list(links.values())
     conn.execute(
         "UPDATE articles SET meta_json = ?, updated_at = ? WHERE id = ?",
-        (json.dumps(meta), utc_now_iso(), article_id),
+        (json_dumps(meta), utc_now_iso(), article_id),
     )
     conn.commit()
 
@@ -325,7 +325,7 @@ def get_setting(conn: sqlite3.Connection, key: str, default: object) -> object:
 
 
 def set_setting(conn: sqlite3.Connection, key: str, value: object) -> None:
-    payload = json.dumps(value)
+    payload = json_dumps(value)
     now = utc_now_iso()
     conn.execute(
         """
@@ -378,8 +378,8 @@ def upsert_cve(
             preferred_base_score,
             preferred_base_severity,
             preferred_vector,
-            json.dumps(cvss_v40_json) if cvss_v40_json else None,
-            json.dumps(cvss_v31_json) if cvss_v31_json else None,
+            json_dumps(cvss_v40_json) if cvss_v40_json else None,
+            json_dumps(cvss_v31_json) if cvss_v31_json else None,
             description_text,
             utc_now_iso(),
         ),
@@ -416,8 +416,8 @@ def insert_cve_snapshot(
             preferred_base_score,
             preferred_base_severity,
             preferred_vector,
-            json.dumps(cvss_v40_json) if cvss_v40_json else None,
-            json.dumps(cvss_v31_json) if cvss_v31_json else None,
+            json_dumps(cvss_v40_json) if cvss_v40_json else None,
+            json_dumps(cvss_v31_json) if cvss_v31_json else None,
             snapshot_hash,
         ),
     )
@@ -486,7 +486,7 @@ def insert_cve_change(
             to_severity,
             vector_from,
             vector_to,
-            json.dumps(metrics_changed_json) if metrics_changed_json else None,
+            json_dumps(metrics_changed_json) if metrics_changed_json else None,
             note,
         ),
     )
@@ -539,7 +539,7 @@ def record_source_run(
             skipped_filters,
             skipped_missing_url,
             error,
-            json.dumps(notes) if notes else None,
+            json_dumps(notes) if notes else None,
             started_at,
         ),
     )

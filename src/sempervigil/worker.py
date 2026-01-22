@@ -11,7 +11,7 @@ from .ingest import process_source
 from .models import Article
 from .cve_sync import CveSyncConfig, isoformat_utc, sync_cves
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
-from .publish import write_article_markdown, write_hugo_markdown, write_json_index, write_tag_indexes
+from .publish import write_article_markdown, write_json_index
 from .signals import build_cve_evidence, extract_cve_ids
 from .storage import (
     claim_next_job,
@@ -184,6 +184,8 @@ def _handle_ingest_source(
                 "normalized_url": article.normalized_url,
             },
         )
+    if result.articles:
+        enqueue_job(conn, "build_site", None, debounce=True)
     # TODO: attach event correlation hooks (events/event_mentions) once implemented.
     if config.publishing.write_json_index:
         write_json_index(result.articles, config.publishing.json_index_path)

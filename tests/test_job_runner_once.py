@@ -1,4 +1,4 @@
-from sempervigil.storage import claim_next_job, enqueue_job, init_db, list_jobs
+from sempervigil.storage import claim_next_job, complete_job, enqueue_job, init_db, list_jobs
 
 
 def test_job_runner_claims_one_job_fifo(tmp_path):
@@ -13,3 +13,4 @@ def test_job_runner_claims_one_job_fifo(tmp_path):
     remaining = list_jobs(conn, limit=10)
     remaining_ids = [item.id for item in remaining if item.status == "queued"]
     assert second in remaining_ids
+    assert complete_job(conn, first, result={"ok": True}) is True

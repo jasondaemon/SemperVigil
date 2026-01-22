@@ -5,9 +5,9 @@ import logging
 import os
 import subprocess
 import time
-from pathlib import Path
 
 from .config import ConfigError, load_config
+from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .storage import claim_next_job, complete_job, fail_job, init_db
 from .utils import log_event
 
@@ -21,28 +21,10 @@ def _setup_logging() -> logging.Logger:
     return logging.getLogger("sempervigil")
 
 
-def _resolve_site_dir(output_dir: str) -> Path:
-    output_path = Path(output_dir)
-    if output_path.name == "posts" and output_path.parent.name == "content":
-        return output_path.parent.parent
-    if output_path.name == "content":
-        return output_path.parent
-    return Path("/site")
-
-
-def _run_hugo(site_dir: Path) -> tuple[int, str]:
-    cmd = [
-        "hugo",
-        "build",
-        "--minify",
-        "--gc",
-        "--cleanDestinationDir",
-        "--logLevel",
-        "info",
-    ]
+def _run_hugo() -> tuple[int, str]:
+    cmd = ["/bin/sh", "/tools/hugo-build.sh"]
     result = subprocess.run(
         cmd,
-        cwd=str(site_dir),
         check=False,
         capture_output=True,
         text=True,
@@ -59,6 +41,8 @@ def run_once(config_path: str | None, builder_id: str) -> int:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
 
+    set_umask_from_env()
+    ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir))
     conn = init_db(config.paths.state_db)
     job = claim_next_job(
         conn,
@@ -69,10 +53,9 @@ def run_once(config_path: str | None, builder_id: str) -> int:
     if not job:
         return 0
 
-    site_dir = _resolve_site_dir(config.paths.output_dir)
-    log_event(logger, logging.INFO, "build_claimed", job_id=job.id, site_dir=str(site_dir))
+    log_event(logger, logging.INFO, "build_claimed", job_id=job.id)
     try:
-        returncode, output = _run_hugo(site_dir)
+        returncode, output = _run_hugo()
     except Exception as exc:  # noqa: BLE001
         fail_job(conn, job.id, str(exc))
         log_event(logger, logging.ERROR, "build_failed", job_id=job.id, error=str(exc))
@@ -83,7 +66,7 @@ def run_once(config_path: str | None, builder_id: str) -> int:
         log_event(logger, logging.ERROR, "build_failed", job_id=job.id, output=output)
         return 1
 
-    if complete_job(conn, job.id, result={"site_dir": str(site_dir)}):
+    if complete_job(conn, job.id, result={"output": output}):
         log_event(logger, logging.INFO, "build_succeeded", job_id=job.id)
     else:
         log_event(logger, logging.ERROR, "build_complete_failed", job_id=job.id)

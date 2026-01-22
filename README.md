@@ -156,6 +156,31 @@ docker compose run --rm worker \
 
 ---
 
+### 6) Build the site output
+
+The ingest run enqueues a `build_site` job automatically when new articles are accepted.
+
+```bash
+docker compose run --rm builder
+```
+
+If no build job is queued, you can enqueue one manually:
+
+```bash
+docker compose run --rm worker \
+  sempervigil jobs enqueue build_site
+```
+
+---
+
+### Run Tests (Docker)
+
+```bash
+docker compose run --rm test
+```
+
+---
+
 ### Test a Single Source
 
 To diagnose parsing, filtering, or health issues:

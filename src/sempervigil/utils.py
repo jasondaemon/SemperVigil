@@ -7,7 +7,8 @@ import json
 import logging
 import re
 import unicodedata
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
+from enum import Enum
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
@@ -29,13 +30,24 @@ def json_dumps(value: Any) -> str:
 def _json_default(value: Any) -> Any:
     if dataclasses.is_dataclass(value):
         return dataclasses.asdict(value)
+    if isinstance(value, Enum):
+        return value.value
     if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
         return value.isoformat()
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, UUID):
         return str(value)
-    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+    if hasattr(value, "model_dump"):
+        try:
+            return value.model_dump()
+        except TypeError:
+            return value.model_dump(mode="json")
+    if isinstance(value, (set, tuple)):
+        return list(value)
+    return str(value)
 
 
 def normalize_url(url: str, strip_tracking_params: bool, tracking_params: list[str]) -> str:
