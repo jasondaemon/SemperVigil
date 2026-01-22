@@ -60,7 +60,8 @@ Ordered sequence for a single article batch:
    - meta-event grouping rules.
 5) Decision:
    - attach to best existing event if threshold met.
-   - else create a new event.
+   - create or attach to meta-event when grouping rules fire.
+   - otherwise create a new event or leave unassigned (deterministic rules below).
 6) Persist:
    - event links (article↔event, event↔CVE, article↔CVE).
    - confidence + reasons + evidence.
@@ -105,7 +106,12 @@ Score components (0–1), additive:
 - +0.3 product match
 - +0.2 version match
 - +0.2 vuln-type keyword match
-- -0.3 ambiguity penalty if competing events close in score
+- -0.3 ambiguity penalty if competing events are within 0.10 score delta
+
+Scoring rules:
+- cap final confidence at 1.0
+- missing components contribute 0 (no negative default)
+- ambiguity penalty applies when top two candidates are within 0.10
 
 Thresholds:
 - >= 0.85: linked
@@ -114,7 +120,7 @@ Thresholds:
 
 Store:
 - confidence
-- confidence_band
+- confidence_band (linked|linked_inferred|unlinked)
 - reasons[]
 
 ---
@@ -139,6 +145,19 @@ Triggers for “update” posts:
 - CVSS severity upgrade or vector change
 - vendor patch/mitigation change
 
+State transition clock:
+- use last_event_update_at as the primary clock
+- update it when new evidence is linked (not for routine coverage below threshold)
+
+Update evidence vs routine coverage:
+- update evidence: linked or linked_inferred with new signals (CVE, severity change, vendor patch)
+- routine coverage: low-confidence or redundant coverage without new signals
+
+Severity upgrade trigger (deterministic):
+- CVSS v3.1 base score crosses severity band, or
+- vector string changes, or
+- CVSS v4 becomes available and preferred severity differs
+
 ---
 
 ## 7) Data Sources for Signals
@@ -155,7 +174,81 @@ LLM usage:
 
 ---
 
-## 8) Testing Strategy (Future)
+## 8) Event vs Meta-event Creation Rules (Deterministic)
+
+Create/attach event:
+- attach to existing event if score >= threshold
+- otherwise create a new event when:
+  - explicit CVE mention, or
+  - incident keywords + org name + at least 2 independent sources, or
+  - high incident confidence with corroboration rule satisfied
+
+Create/attach meta-event:
+- create meta-event when:
+  - 2+ active events share a common incident root term, or
+  - multiple CVE-centered events are linked by a shared campaign keyword
+- attach child events to meta-event when overlap rules match
+
+Tie-breaker when multiple events score similarly:
+- prefer CVE-matched event over vendor/product-only event
+- otherwise pick the newest event within the active window
+
+New event vs unassigned (deterministic):
+- create new event when rules above are met and confidence >= 0.60
+- leave unassigned when:
+  - commercial/noise rules match, or
+  - ambiguity remains after tie-breaker, or
+  - confidence < 0.60 and no corroboration
+
+---
+
+## 9) Deterministic Commercial/Noise Filter
+
+Commercial/noise indicators:
+- press releases
+- vendor marketing pages
+- affiliate or sponsored content
+- product launch announcements
+
+Rules:
+- default behavior excludes these from event linking
+- still included in daily breadth posts unless config denies
+- tag `commercial=true` and down-weight event confidence if included
+
+---
+
+## 10) Audit Trace Schema (Design-Only)
+
+evidence_json structure:
+- extracted_signals:
+  - cve_ids: list[str]
+  - vendors: list[str]
+  - products: list[str]
+  - incident_keywords: list[str]
+- candidate_cves:
+  - cve_id
+  - component_scores {explicit, vendor, product, version, vuln_type}
+  - confidence
+- candidate_events:
+  - event_id
+  - component_scores {cve_match, vendor, product, version, vuln_type}
+  - confidence
+- final_decision:
+  - decision (linked|linked_inferred|unlinked)
+  - event_id (if any)
+  - confidence
+  - confidence_band
+  - rule_ids[]
+  - thresholds_used {linked, linked_inferred}
+- citations:
+  - urls[]
+
+Rule identifiers:
+- store stable strings for each rule (e.g., "rule.cve.explicit", "rule.vendor.match")
+
+---
+
+## 11) Testing Strategy (Future)
 
 Unit tests:
 - CVE regex extraction
@@ -173,7 +266,7 @@ No live network calls in tests.
 
 ---
 
-## 9) Rollout Sequence (Future)
+## 12) Rollout Sequence (Future)
 
 Phase 1:
 - implement signal extraction + CVE matching
