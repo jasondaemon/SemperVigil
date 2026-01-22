@@ -16,6 +16,8 @@ test = ["pytest>=7.4"]
 
 [project.scripts]
 sempervigil = "sempervigil.cli:main"
+sempervigil-worker = "sempervigil.worker:main"
+sempervigil-builder = "sempervigil.builder:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
