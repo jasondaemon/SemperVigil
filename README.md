@@ -172,6 +172,14 @@ This is the primary troubleshooting tool.
 
 All orchestration is DB-driven; containers do not shell out to Docker.
 
+Flow:
+- admin -> jobs table -> worker -> jobs table -> builder -> web
+
+Why DB-backed jobs?
+- deterministic orchestration without container-to-container shelling
+- durable state for retries, audits, and crash recovery
+- clear separation between ingest, build, and publish concerns
+
 
 ## Configuration Philosophy
 

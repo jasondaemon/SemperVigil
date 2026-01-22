@@ -5,7 +5,7 @@ import hashlib
 import logging
 import re
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -119,3 +119,7 @@ def extract_published_at(
 
 def utc_now_iso() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
+
+
+def utc_now_iso_offset(*, seconds: int) -> str:
+    return (datetime.now(tz=timezone.utc) + timedelta(seconds=seconds)).isoformat()

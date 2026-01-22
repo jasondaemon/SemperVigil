@@ -9,7 +9,7 @@ from typing import Iterable
 
 from .migrations import apply_migrations
 from .models import Article, Job, Source, SourceTactic
-from .utils import utc_now_iso
+from .utils import utc_now_iso, utc_now_iso_offset
 
 
 def init_db(path: str) -> sqlite3.Connection:
@@ -228,6 +228,17 @@ def insert_articles(conn: sqlite3.Connection, articles: Iterable[Article]) -> in
     return len(rows)
 
 
+def get_setting(conn: sqlite3.Connection, key: str, default: object) -> object:
+    cursor = conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
+    row = cursor.fetchone()
+    if not row:
+        return default
+    try:
+        return json.loads(row[0])
+    except json.JSONDecodeError:
+        return default
+
+
 def record_source_run(
     conn: sqlite3.Connection,
     source_id: str,
@@ -268,6 +279,71 @@ def record_source_run(
         ),
     )
     conn.commit()
+
+
+def pause_source(
+    conn: sqlite3.Connection, source_id: str, reason: str, pause_minutes: int
+) -> None:
+    pause_until = utc_now_iso_offset(seconds=pause_minutes * 60)
+    conn.execute(
+        """
+        UPDATE sources
+        SET enabled = 0,
+            pause_until = ?,
+            paused_reason = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (pause_until, reason, utc_now_iso(), source_id),
+    )
+    conn.commit()
+
+
+def record_health_alert(conn: sqlite3.Connection, source_id: str, alert_type: str, message: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO health_alerts (source_id, alert_type, message, created_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (source_id, alert_type, message, utc_now_iso()),
+    )
+    conn.commit()
+
+
+def get_source_run_streaks(conn: sqlite3.Connection, source_id: str, limit: int = 20) -> dict[str, int]:
+    cursor = conn.execute(
+        """
+        SELECT status, items_accepted
+        FROM source_runs
+        WHERE source_id = ?
+        ORDER BY started_at DESC
+        LIMIT ?
+        """,
+        (source_id, limit),
+    )
+    consecutive_errors = 0
+    consecutive_zero = 0
+    for status, items_accepted in cursor.fetchall():
+        if status == "error":
+            consecutive_errors += 1
+            continue
+        break
+    cursor = conn.execute(
+        """
+        SELECT status, items_accepted
+        FROM source_runs
+        WHERE source_id = ?
+        ORDER BY started_at DESC
+        LIMIT ?
+        """,
+        (source_id, limit),
+    )
+    for status, items_accepted in cursor.fetchall():
+        if status == "ok" and int(items_accepted) == 0:
+            consecutive_zero += 1
+            continue
+        break
+    return {"consecutive_errors": consecutive_errors, "consecutive_zero": consecutive_zero}
 
 
 def enqueue_job(
@@ -320,9 +396,26 @@ def list_jobs(conn: sqlite3.Connection, limit: int = 50) -> list[Job]:
 
 
 def claim_next_job(
-    conn: sqlite3.Connection, worker_id: str, allowed_types: list[str] | None = None
+    conn: sqlite3.Connection,
+    worker_id: str,
+    allowed_types: list[str] | None = None,
+    lock_timeout_seconds: int | None = None,
 ) -> Job | None:
     conn.execute("BEGIN IMMEDIATE")
+    if lock_timeout_seconds is not None:
+        cutoff = utc_now_iso_offset(seconds=-lock_timeout_seconds)
+        conn.execute(
+            """
+            UPDATE jobs
+            SET status = 'queued',
+                locked_by = NULL,
+                locked_at = NULL,
+                started_at = NULL,
+                error = 'stale_lock_requeued'
+            WHERE status = 'running' AND locked_at IS NOT NULL AND locked_at < ?
+            """,
+            (cutoff,),
+        )
     if allowed_types:
         placeholders = ",".join("?" for _ in allowed_types)
         cursor = conn.execute(
@@ -353,14 +446,17 @@ def claim_next_job(
         return None
     job_id = row[0]
     now = utc_now_iso()
-    conn.execute(
+    result = conn.execute(
         """
         UPDATE jobs
         SET status = 'running', started_at = ?, locked_by = ?, locked_at = ?
-        WHERE id = ?
+        WHERE id = ? AND status = 'queued' AND locked_by IS NULL
         """,
         (now, worker_id, now, job_id),
     )
+    if result.rowcount == 0:
+        conn.execute("COMMIT")
+        return None
     conn.execute("COMMIT")
     job = _row_to_job(row)
     return Job(
@@ -381,30 +477,32 @@ def claim_next_job(
 
 def complete_job(
     conn: sqlite3.Connection, job_id: str, result: dict[str, object] | None = None
-) -> None:
+) -> bool:
     now = utc_now_iso()
-    conn.execute(
+    cursor = conn.execute(
         """
         UPDATE jobs
         SET status = 'succeeded', finished_at = ?, error = NULL, result_json = ?
-        WHERE id = ?
+        WHERE id = ? AND status = 'running'
         """,
         (now, json.dumps(result) if result else None, job_id),
     )
     conn.commit()
+    return cursor.rowcount == 1
 
 
-def fail_job(conn: sqlite3.Connection, job_id: str, error: str) -> None:
+def fail_job(conn: sqlite3.Connection, job_id: str, error: str) -> bool:
     now = utc_now_iso()
-    conn.execute(
+    cursor = conn.execute(
         """
         UPDATE jobs
         SET status = 'failed', finished_at = ?, error = ?
-        WHERE id = ?
+        WHERE id = ? AND status = 'running'
         """,
         (now, error, job_id),
     )
     conn.commit()
+    return cursor.rowcount == 1
 
 
 def _row_to_source(row: tuple) -> Source:

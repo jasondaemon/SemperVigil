@@ -22,6 +22,7 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
         ("001_initial_schema", _migration_initial_schema),
         ("002_jobs_table", _migration_jobs_table),
         ("003_jobs_result_json", _migration_jobs_result_json),
+        ("004_health_alerts", _migration_health_alerts),
     ]
     applied = {
         row[0]
@@ -177,6 +178,23 @@ def _migration_jobs_result_json(conn: sqlite3.Connection) -> None:
     if "result_json" in columns:
         return
     conn.execute("ALTER TABLE jobs ADD COLUMN result_json TEXT NULL")
+
+
+def _migration_health_alerts(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS health_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_id TEXT NOT NULL REFERENCES sources(id),
+            alert_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_health_alerts_source ON health_alerts(source_id, created_at)"
+    )
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:

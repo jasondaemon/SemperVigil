@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 import time
+from datetime import datetime, timezone
 
 from .config import ConfigError, load_config
 from .ingest import process_source
@@ -14,10 +15,14 @@ from .storage import (
     enqueue_job,
     fail_job,
     get_source,
+    get_setting,
     init_db,
     insert_articles,
     list_due_sources,
+    pause_source,
+    record_health_alert,
     record_source_run,
+    get_source_run_streaks,
 )
 from .utils import log_event, utc_now_iso
 
@@ -42,7 +47,12 @@ def run_once(config_path: str | None, worker_id: str) -> int:
         return 1
 
     conn = init_db(config.paths.state_db)
-    job = claim_next_job(conn, worker_id, allowed_types=WORKER_JOB_TYPES)
+    job = claim_next_job(
+        conn,
+        worker_id,
+        allowed_types=WORKER_JOB_TYPES,
+        lock_timeout_seconds=config.jobs.lock_timeout_seconds,
+    )
     if not job:
         return 0
 
@@ -68,8 +78,10 @@ def run_once(config_path: str | None, worker_id: str) -> int:
         log_event(logger, logging.ERROR, "job_failed", job_id=job.id, error=str(exc))
         return 1
 
-    complete_job(conn, job.id, result=result)
-    log_event(logger, logging.INFO, "job_succeeded", job_id=job.id)
+    if complete_job(conn, job.id, result=result):
+        log_event(logger, logging.INFO, "job_succeeded", job_id=job.id)
+    else:
+        log_event(logger, logging.ERROR, "job_complete_failed", job_id=job.id)
     return 0
 
 
@@ -90,6 +102,31 @@ def _handle_ingest_source(
         raise ValueError(f"Source not found: {source_id}")
 
     started_at = utc_now_iso()
+    now_dt = _parse_iso(started_at)
+    if not source.enabled or (source.pause_until and _parse_iso(source.pause_until) > now_dt):
+        record_source_run(
+            conn,
+            source_id=source.id,
+            started_at=started_at,
+            finished_at=utc_now_iso(),
+            status="paused" if source.pause_until else "skipped",
+            http_status=None,
+            items_found=0,
+            items_accepted=0,
+            skipped_duplicates=0,
+            skipped_filters=0,
+            skipped_missing_url=0,
+            error=source.paused_reason or "source_disabled",
+            notes=None,
+        )
+        return {
+            "source_id": source.id,
+            "status": "paused" if source.pause_until else "skipped",
+            "error": source.paused_reason or "source_disabled",
+            "found_count": 0,
+            "accepted_count": 0,
+        }
+
     result = process_source(source, config, logger, conn)
     finished_at = utc_now_iso()
 
@@ -110,6 +147,7 @@ def _handle_ingest_source(
     )
 
     if result.status != "ok":
+        _maybe_pause_source(conn, source.id, logger)
         return {
             "source_id": source.id,
             "status": result.status,
@@ -119,6 +157,7 @@ def _handle_ingest_source(
         }
 
     insert_articles(conn, result.articles)
+    # TODO: attach event correlation hooks (events/event_mentions) once implemented.
     write_hugo_markdown(result.articles, config.paths.output_dir)
 
     if config.publishing.write_json_index:
@@ -126,6 +165,7 @@ def _handle_ingest_source(
 
     write_tag_indexes(result.articles, config.paths.output_dir, config.publishing.hugo_section)
     enqueue_job(conn, "build_site", None, debounce=True)
+    _maybe_pause_source(conn, source.id, logger)
     return {
         "source_id": source.id,
         "status": result.status,
@@ -185,6 +225,48 @@ def _handle_ingest_due_sources(conn, logger: logging.Logger) -> dict[str, object
         count=len(enqueued),
     )
     return {"enqueued_count": len(enqueued), "source_ids": enqueued}
+
+
+def _maybe_pause_source(conn, source_id: str, logger: logging.Logger | None) -> None:
+    enabled = bool(get_setting(conn, "alerts.pause_on_failure.enabled", True))
+    if not enabled:
+        return
+    error_threshold = int(get_setting(conn, "alerts.pause_on_failure.error_streak", 5))
+    pause_minutes = int(get_setting(conn, "alerts.pause_on_failure.pause_minutes", 1440))
+    zero_threshold = int(
+        get_setting(conn, "alerts.pause_on_failure.zero_streak", error_threshold)
+    )
+    streaks = get_source_run_streaks(conn, source_id)
+    if streaks["consecutive_errors"] >= error_threshold:
+        reason = f"auto_pause:error_streak:{streaks['consecutive_errors']}"
+        pause_source(conn, source_id, reason, pause_minutes)
+        record_health_alert(conn, source_id, "error_streak", reason)
+        if logger:
+            log_event(
+                logger,
+                logging.WARNING,
+                "source_auto_paused",
+                source_id=source_id,
+                reason=reason,
+            )
+    elif streaks["consecutive_zero"] >= zero_threshold:
+        reason = f"auto_pause:zero_streak:{streaks['consecutive_zero']}"
+        pause_source(conn, source_id, reason, pause_minutes)
+        record_health_alert(conn, source_id, "zero_streak", reason)
+        if logger:
+            log_event(
+                logger,
+                logging.WARNING,
+                "source_auto_paused",
+                source_id=source_id,
+                reason=reason,
+            )
+
+
+def _parse_iso(value: str) -> datetime:
+    if value.endswith("Z"):
+        value = value.replace("Z", "+00:00")
+    return datetime.fromisoformat(value).astimezone(timezone.utc)
 
 
 def build_parser() -> argparse.ArgumentParser:

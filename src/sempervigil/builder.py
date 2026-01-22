@@ -60,7 +60,12 @@ def run_once(config_path: str | None, builder_id: str) -> int:
         return 1
 
     conn = init_db(config.paths.state_db)
-    job = claim_next_job(conn, builder_id, allowed_types=["build_site"])
+    job = claim_next_job(
+        conn,
+        builder_id,
+        allowed_types=["build_site"],
+        lock_timeout_seconds=config.jobs.lock_timeout_seconds,
+    )
     if not job:
         return 0
 
@@ -78,8 +83,10 @@ def run_once(config_path: str | None, builder_id: str) -> int:
         log_event(logger, logging.ERROR, "build_failed", job_id=job.id, output=output)
         return 1
 
-    complete_job(conn, job.id, result={"site_dir": str(site_dir)})
-    log_event(logger, logging.INFO, "build_succeeded", job_id=job.id)
+    if complete_job(conn, job.id, result={"site_dir": str(site_dir)}):
+        log_event(logger, logging.INFO, "build_succeeded", job_id=job.id)
+    else:
+        log_event(logger, logging.ERROR, "build_complete_failed", job_id=job.id)
     return 0
 
 

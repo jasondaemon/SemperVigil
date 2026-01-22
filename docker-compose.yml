@@ -68,10 +68,10 @@ services:
 
   # 4) Static site server (public)
   web:
-    image: nginx:alpine
+    image: nginxinc/nginx-unprivileged:alpine
     container_name: sempervigil-web
     ports:
-      - "8080:80"
+      - "8080:8080"
     volumes:
       - ./site/public:/usr/share/nginx/html:ro
     networks:

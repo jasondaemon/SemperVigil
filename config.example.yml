@@ -36,6 +36,10 @@ ingest:
     # used by cron / orchestrator later; not required for manual runs
     default_run_interval_minutes: 60
 
+jobs:
+  # reclaim jobs if a worker crashes without releasing a lock
+  lock_timeout_seconds: 600
+
 llm:
   enabled: false
   provider: openai

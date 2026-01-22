@@ -62,6 +62,11 @@ class IngestConfig:
 
 
 @dataclass(frozen=True)
+class JobsConfig:
+    lock_timeout_seconds: int
+
+
+@dataclass(frozen=True)
 class UrlNormalizationConfig:
     strip_tracking_params: bool
     tracking_params: list[str]
@@ -84,6 +89,7 @@ class Config:
     paths: PathsConfig
     publishing: PublishingConfig
     ingest: IngestConfig
+    jobs: JobsConfig
     llm: dict[str, Any]
     sources: list[Source]
     per_source_tweaks: PerSourceTweaks
@@ -121,6 +127,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "allow_keywords": [],
             "deny_keywords": [],
         },
+    },
+    "jobs": {
+        "lock_timeout_seconds": 600,
     },
     "llm": {
         "enabled": False,
@@ -240,6 +249,7 @@ def load_config(path: str | None = None) -> Config:
     paths_cfg = merged.get("paths") or {}
     publishing_cfg = merged.get("publishing") or {}
     ingest_cfg = merged.get("ingest") or {}
+    jobs_cfg = merged.get("jobs") or {}
     tweaks_cfg = merged.get("per_source_tweaks") or {}
 
     app = AppConfig(
@@ -311,6 +321,11 @@ def load_config(path: str | None = None) -> Config:
     )
 
     ingest = IngestConfig(http=http, dedupe=dedupe, filters=filters)
+    jobs = JobsConfig(
+        lock_timeout_seconds=int(
+            jobs_cfg.get("lock_timeout_seconds", DEFAULT_CONFIG["jobs"]["lock_timeout_seconds"])
+        )
+    )
 
     url_norm_cfg = (tweaks_cfg.get("url_normalization") or {})
     date_parsing_cfg = (tweaks_cfg.get("date_parsing") or {})
@@ -352,6 +367,7 @@ def load_config(path: str | None = None) -> Config:
         paths=paths,
         publishing=publishing,
         ingest=ingest,
+        jobs=jobs,
         llm=merged.get("llm") or DEFAULT_CONFIG["llm"],
         sources=sources,
         per_source_tweaks=per_source_tweaks,
