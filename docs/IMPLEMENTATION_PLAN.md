@@ -179,7 +179,7 @@ LLM usage:
 Create/attach event:
 - attach to existing event if score >= threshold
 - otherwise create a new event when:
-  - explicit CVE mention, or
+  - explicit CVE mention (force create), or
   - incident keywords + org name + at least 2 independent sources, or
   - high incident confidence with corroboration rule satisfied
 
@@ -194,7 +194,7 @@ Tie-breaker when multiple events score similarly:
 - otherwise pick the newest event within the active window
 
 New event vs unassigned (deterministic):
-- create new event when rules above are met and confidence >= 0.60
+- create new event when rules above are met and confidence >= 0.60 or explicit CVE mention
 - leave unassigned when:
   - commercial/noise rules match, or
   - ambiguity remains after tie-breaker, or
@@ -214,6 +214,11 @@ Rules:
 - default behavior excludes these from event linking
 - still included in daily breadth posts unless config denies
 - tag `commercial=true` and down-weight event confidence if included
+
+Commercial/noise overrides (config knobs, design-only):
+- per-source allowlist of domains/paths eligible for event linking
+- per-source denylist of domains/paths excluded from event linking
+- per-source toggle: commercial_eligible_for_events (default false)
 
 ---
 
@@ -248,7 +253,38 @@ Rule identifiers:
 
 ---
 
-## 11) Testing Strategy (Future)
+## 11) Corroboration & Incident Confidence (Deterministic)
+
+Independent sources:
+- distinct source_id and distinct eTLD+1
+- corroboration window: 72 hours
+
+Single-source exceptions (can satisfy corroboration):
+- explicit CVE mention
+- advisory-class sources (government/vendor advisories)
+
+Incident confidence (deterministic):
+- start at 0
+- +0.5 incident keyword match
+- +0.3 named org match
+- +0.2 high-severity keyword match (e.g., "breach", "exploitation", "ransomware")
+- cap at 1.0
+- high incident confidence = >= 0.70
+
+---
+
+## 12) Ambiguity Routing (Deterministic)
+
+Ambiguity remains when:
+- after tie-breaker, top two candidates are within 0.05, and
+- neither candidate has CVE match
+
+Action:
+- do not link; route to inference_suggestions with full evidence_json
+
+---
+
+## 13) Testing Strategy (Future)
 
 Unit tests:
 - CVE regex extraction
@@ -266,7 +302,7 @@ No live network calls in tests.
 
 ---
 
-## 12) Rollout Sequence (Future)
+## 14) Rollout Sequence (Future)
 
 Phase 1:
 - implement signal extraction + CVE matching
