@@ -17,7 +17,7 @@ from .storage import (
     set_setting,
     upsert_cve,
 )
-from .utils import utc_now_iso
+from .utils import json_dumps, utc_now_iso
 
 NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
@@ -342,7 +342,7 @@ def _severity_rank(value: str | None) -> int:
 
 
 def _snapshot_hash(payload: dict[str, Any]) -> str:
-    encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
+    encoded = json_dumps(payload).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 

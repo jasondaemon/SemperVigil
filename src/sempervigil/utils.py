@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import calendar
+import dataclasses
 import hashlib
+import json
 import logging
 import re
 import unicodedata
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from uuid import UUID
 
 
 def log_event(logger: logging.Logger, level: int, event: str, **fields: Any) -> None:
@@ -16,6 +20,22 @@ def log_event(logger: logging.Logger, level: int, event: str, **fields: Any) -> 
     for key, value in fields.items():
         parts.append(f"{key}={value}")
     logger.log(level, " ".join(parts))
+
+
+def json_dumps(value: Any) -> str:
+    return json.dumps(value, default=_json_default, sort_keys=True)
+
+
+def _json_default(value: Any) -> Any:
+    if dataclasses.is_dataclass(value):
+        return dataclasses.asdict(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, UUID):
+        return str(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 def normalize_url(url: str, strip_tracking_params: bool, tracking_params: list[str]) -> str:

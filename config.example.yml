@@ -1,6 +1,6 @@
 # SemperVigil configuration
 # Copy to config.yml (or mount as /config/config.yml in docker)
-# Sources live in a separate file; see config/sources.example.yml
+# Sources live in a separate file; copy config/sources.example.yml to config/sources.yml
 
 app:
   name: SemperVigil

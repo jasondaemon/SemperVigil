@@ -1,8 +1,14 @@
 import json
 
 from sempervigil import cve_sync
-from sempervigil.cve_sync import process_cve_item, sync_cves, CveSyncConfig
-from sempervigil.storage import init_db
+from sempervigil.cve_sync import (
+    CveSyncConfig,
+    PreferredMetrics,
+    _snapshot_hash,
+    process_cve_item,
+    sync_cves,
+)
+from sempervigil.storage import claim_next_job, complete_job, enqueue_job, init_db
 
 
 def _make_cve_item(
@@ -143,3 +149,16 @@ def test_cve_sync_result_is_json_serializable(tmp_path, monkeypatch):
         last_modified_end="2025-01-02T00:00:00Z",
     )
     json.dumps(result)
+
+    job_id = enqueue_job(conn, "cve_sync", None)
+    job = claim_next_job(conn, "worker-1")
+    assert job is not None
+    assert job.id == job_id
+    assert complete_job(conn, job_id, result=result) is True
+
+
+def test_snapshot_hash_accepts_preferred_metrics():
+    metrics = PreferredMetrics(version="3.1", base_score=7.5, base_severity="HIGH", vector="AV:N")
+    payload = {"preferred": metrics, "v31": {"baseScore": 7.5}, "v40": None}
+    digest = _snapshot_hash(payload)
+    assert isinstance(digest, str)

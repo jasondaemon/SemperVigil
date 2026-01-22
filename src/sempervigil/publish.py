@@ -25,6 +25,7 @@ def write_article_markdown(article: Article, output_dir: str) -> str:
         "title": article.title,
         "date": article.published_at or article.ingested_at,
         "tags": article.tags,
+        "categories": article.tags,
         "summary": article.summary or "",
         "draft": False,
         "source_url": article.normalized_url,

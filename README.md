@@ -104,18 +104,19 @@ These documents are the **source of truth** for implementation decisions.
 ```bash
 cp .env.example .env
 cp config.example.yml config/config.yml
+cp config/sources.example.yml config/sources.yml
 ```
 
 Adjust as needed for your environment.
 
 ---
 
-### 2) Import example sources into the state DB
+### 2) Import sources into the state DB
 
 ```bash
 docker compose run --rm worker sempervigil db migrate
 docker compose run --rm worker \
-  sempervigil sources import /config/sources.example.yml
+  sempervigil sources import /config/sources.yml
 ```
 
 Sources are stored in the database, not in static config files.

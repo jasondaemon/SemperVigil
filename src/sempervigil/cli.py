@@ -105,7 +105,7 @@ def _cmd_run(args: argparse.Namespace, logger: logging.Logger) -> int:
             logger,
             logging.ERROR,
             "no_sources",
-            hint="Import sources with `sempervigil sources import /path/to/sources.yml`",
+            hint="Import sources with `sempervigil sources import /config/sources.yml`",
         )
         return 1
     if not enabled_sources:
@@ -199,7 +199,7 @@ def _cmd_test_source(args: argparse.Namespace, logger: logging.Logger) -> int:
                 logger,
                 logging.ERROR,
                 "no_sources",
-                hint="Import sources with `sempervigil sources import /path/to/sources.yml`",
+                hint="Import sources with `sempervigil sources import /config/sources.yml`",
             )
         else:
             log_event(logger, logging.ERROR, "source_not_found", source_id=args.source_id)
@@ -336,8 +336,24 @@ def _cmd_sources_import(args: argparse.Namespace, logger: logging.Logger) -> int
         return 1
 
     conn = init_db(config.paths.state_db)
+    sources_path = args.path
+    if sources_path is None:
+        if os.path.exists("/config/sources.yml"):
+            sources_path = "/config/sources.yml"
+        elif os.path.exists("/config/sources.example.yml"):
+            sources_path = "/config/sources.example.yml"
+        else:
+            log_event(
+                logger,
+                logging.ERROR,
+                "sources_import_error",
+                error="no sources.yml found",
+                hint="Copy config/sources.example.yml to config/sources.yml",
+            )
+            return 1
+    log_event(logger, logging.INFO, "sources_import_path", path=sources_path)
     try:
-        sources = load_sources_file(args.path)
+        sources = load_sources_file(sources_path)
     except ConfigError as exc:
         log_event(logger, logging.ERROR, "sources_import_error", error=str(exc))
         return 1
@@ -414,7 +430,7 @@ def _cmd_sources_list(args: argparse.Namespace, logger: logging.Logger) -> int:
             logger,
             logging.WARNING,
             "no_sources",
-            hint="Import sources with `sempervigil sources import /path/to/sources.yml`",
+            hint="Import sources with `sempervigil sources import /config/sources.yml`",
         )
         return 1
 
@@ -688,7 +704,7 @@ def build_parser() -> argparse.ArgumentParser:
     sources_subparsers = sources_parser.add_subparsers(dest="sources_command", required=True)
 
     sources_import = sources_subparsers.add_parser("import", help="Import sources from YAML")
-    sources_import.add_argument("path", help="Path to sources YAML file")
+    sources_import.add_argument("path", nargs="?", help="Path to sources YAML file")
     sources_import.set_defaults(func=_cmd_sources_import)
 
     sources_list = sources_subparsers.add_parser("list", help="List sources")

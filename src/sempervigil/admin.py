@@ -4,6 +4,7 @@ import logging
 import os
 
 from fastapi import FastAPI, HTTPException
+from datetime import datetime, timezone
 from pydantic import BaseModel
 
 from .config import ConfigError, load_config
@@ -19,9 +20,18 @@ class JobRequest(BaseModel):
     source_id: str | None = None
 
 
+@app.get("/")
+def root() -> dict[str, str]:
+    return {"service": "SemperVigil Admin API"}
+
+
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, object]:
+    return {
+        "ok": True,
+        "version": _get_version(),
+        "time": datetime.now(tz=timezone.utc).isoformat(),
+    }
 
 
 @app.on_event("startup")
@@ -143,3 +153,12 @@ def _setup_logging() -> None:
 
 
 _setup_logging()
+
+
+def _get_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("sempervigil")
+    except Exception:  # noqa: BLE001
+        return "unknown"

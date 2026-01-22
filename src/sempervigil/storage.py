@@ -9,7 +9,7 @@ from typing import Iterable
 
 from .migrations import apply_migrations
 from .models import Article, Job, Source, SourceTactic
-from .utils import utc_now_iso, utc_now_iso_offset
+from .utils import json_dumps, utc_now_iso, utc_now_iso_offset
 
 
 def init_db(path: str) -> sqlite3.Connection:
@@ -632,7 +632,7 @@ def enqueue_job(
             job_id,
             job_type,
             "queued",
-            json.dumps(payload) if payload else None,
+            json_dumps(payload) if payload else None,
             None,
             now,
             None,
@@ -750,7 +750,7 @@ def complete_job(
         SET status = 'succeeded', finished_at = ?, error = NULL, result_json = ?
         WHERE id = ? AND status = 'running'
         """,
-        (now, json.dumps(result) if result else None, job_id),
+        (now, json_dumps(result) if result else None, job_id),
     )
     conn.commit()
     return cursor.rowcount == 1

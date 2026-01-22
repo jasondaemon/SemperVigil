@@ -27,3 +27,4 @@ def test_write_article_markdown(tmp_path):
     assert data["summary"] == "Summary text"
     assert data["draft"] is False
     assert data["source_url"] == "https://example.com/cve-1"
+    assert data["categories"] == ["tag1", "tag2"]
