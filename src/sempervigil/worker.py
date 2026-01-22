@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from .config import ConfigError, load_config
 from .ingest import process_source
 from .publish import write_hugo_markdown, write_json_index, write_tag_indexes
+from .signals import build_cve_evidence, extract_cve_ids
 from .storage import (
     claim_next_job,
     complete_job,
@@ -16,12 +17,14 @@ from .storage import (
     fail_job,
     get_source,
     get_setting,
+    get_article_id,
     init_db,
     insert_articles,
     list_due_sources,
     pause_source,
     record_health_alert,
     record_source_run,
+    upsert_cve_links,
     get_source_run_streaks,
 )
 from .utils import log_event, utc_now_iso
@@ -157,6 +160,17 @@ def _handle_ingest_source(
         }
 
     insert_articles(conn, result.articles)
+    for article in result.articles:
+        cve_ids = extract_cve_ids(
+            [article.title, article.summary or "", article.original_url]
+        )
+        if not cve_ids:
+            continue
+        article_id = get_article_id(conn, article.source_id, article.stable_id)
+        if article_id is None:
+            continue
+        evidence = build_cve_evidence(article, cve_ids)
+        upsert_cve_links(conn, article_id, cve_ids, evidence)
     # TODO: attach event correlation hooks (events/event_mentions) once implemented.
     write_hugo_markdown(result.articles, config.paths.output_dir)
 

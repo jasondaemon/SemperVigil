@@ -181,6 +181,10 @@ def article_exists(conn: sqlite3.Connection, source_id: str, stable_id: str) -> 
     return cursor.fetchone() is not None
 
 
+def get_article_id(conn: sqlite3.Connection, source_id: str, stable_id: str) -> int | None:
+    return _get_article_id(conn, source_id, stable_id)
+
+
 def insert_articles(conn: sqlite3.Connection, articles: Iterable[Article]) -> int:
     rows = [
         (
@@ -228,6 +232,87 @@ def insert_articles(conn: sqlite3.Connection, articles: Iterable[Article]) -> in
     return len(rows)
 
 
+def upsert_cve_links(
+    conn: sqlite3.Connection,
+    article_id: int,
+    cve_ids: list[str],
+    evidence: dict[str, object],
+) -> None:
+    if not cve_ids:
+        return
+    now = utc_now_iso()
+    if _table_exists(conn, "cves"):
+        for cve_id in cve_ids:
+            conn.execute(
+                """
+                INSERT INTO cves (cve_id, created_at, last_seen_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(cve_id) DO UPDATE SET last_seen_at = excluded.last_seen_at
+                """,
+                (cve_id, now, now),
+            )
+    if _table_exists(conn, "article_cves"):
+        columns = _table_columns(conn, "article_cves")
+        for cve_id in cve_ids:
+            payload = {
+                "article_id": article_id,
+                "cve_id": cve_id,
+                "confidence": 1.0,
+                "confidence_band": "linked",
+                "reasons_json": json.dumps(["rule.cve.explicit"]),
+                "evidence_json": json.dumps(evidence),
+                "created_at": now,
+                "matched_by": "explicit",
+                "inference_level": "explicit",
+            }
+            cols = [key for key in payload if key in columns]
+            values = [payload[col] for col in cols]
+            placeholders = ", ".join("?" for _ in cols)
+            conn.execute(
+                f"""
+                INSERT OR IGNORE INTO article_cves ({", ".join(cols)})
+                VALUES ({placeholders})
+                """,
+                values,
+            )
+        conn.commit()
+        return
+    _append_article_cves_meta(conn, article_id, cve_ids, evidence)
+
+
+def _append_article_cves_meta(
+    conn: sqlite3.Connection,
+    article_id: int,
+    cve_ids: list[str],
+    evidence: dict[str, object],
+) -> None:
+    cursor = conn.execute("SELECT meta_json FROM articles WHERE id = ?", (article_id,))
+    row = cursor.fetchone()
+    meta = {}
+    if row and row[0]:
+        try:
+            meta = json.loads(row[0])
+        except json.JSONDecodeError:
+            meta = {}
+    links = {item.get("cve_id"): item for item in meta.get("cve_links", []) if item}
+    for cve_id in cve_ids:
+        links[cve_id] = {
+            "cve_id": cve_id,
+            "confidence": 1.0,
+            "confidence_band": "linked",
+            "matched_by": "explicit",
+            "inference_level": "explicit",
+            "reasons": ["rule.cve.explicit"],
+            "evidence": evidence,
+        }
+    meta["cve_links"] = list(links.values())
+    conn.execute(
+        "UPDATE articles SET meta_json = ?, updated_at = ? WHERE id = ?",
+        (json.dumps(meta), utc_now_iso(), article_id),
+    )
+    conn.commit()
+
+
 def get_setting(conn: sqlite3.Connection, key: str, default: object) -> object:
     cursor = conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
     row = cursor.fetchone()
@@ -237,6 +322,17 @@ def get_setting(conn: sqlite3.Connection, key: str, default: object) -> object:
         return json.loads(row[0])
     except json.JSONDecodeError:
         return default
+
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    cursor = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = ?", (table,)
+    )
+    return cursor.fetchone() is not None
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
 def record_source_run(
