@@ -29,6 +29,9 @@ def test_debounce_build_job(tmp_path):
     conn = init_db(str(db_path))
 
     first = enqueue_job(conn, "build_site", None, debounce=True)
+    claimed = claim_next_job(conn, "worker-1")
+    assert claimed is not None
+    assert claimed.id == first
     second = enqueue_job(conn, "build_site", None, debounce=True)
 
     jobs = list_jobs(conn, limit=10)

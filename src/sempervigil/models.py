@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# Schema stable as of v0.1 — future changes via migrations only.
+
 
 @dataclass(frozen=True)
 class Article:

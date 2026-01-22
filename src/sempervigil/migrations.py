@@ -10,6 +10,7 @@ Migration = Callable[[sqlite3.Connection], None]
 
 
 def apply_migrations(conn: sqlite3.Connection) -> None:
+    # Schema stable as of v0.1 — future changes via migrations only.
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS schema_migrations (

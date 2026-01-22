@@ -180,6 +180,19 @@ Why DB-backed jobs?
 - durable state for retries, audits, and crash recovery
 - clear separation between ingest, build, and publish concerns
 
+---
+
+## Job State Machine (Contributor Notes)
+
+States:
+- queued -> running -> succeeded|failed
+
+Recovery:
+- running jobs with stale locks are requeued on claim attempts
+
+Auto-pause:
+- error streaks or consecutive zero-article runs pause a source and record a health alert
+
 
 ## Configuration Philosophy
 
