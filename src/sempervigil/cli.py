@@ -5,10 +5,10 @@ import json
 import logging
 import os
 from pathlib import Path
-from dataclasses import asdict
 
 from .config import ConfigError, load_config, load_sources_file
 from .ingest import process_source
+from .models import SourceTactic
 from .publish import write_hugo_markdown, write_json_index, write_tag_indexes
 from .storage import (
     get_source,
@@ -17,6 +17,7 @@ from .storage import (
     list_sources,
     record_source_run,
     upsert_source,
+    upsert_tactic,
 )
 from .tagger import normalize_tag
 from .utils import log_event, utc_now_iso
@@ -127,11 +128,16 @@ def _cmd_run(args: argparse.Namespace, logger: logging.Logger) -> int:
             conn,
             source_id=source.id,
             started_at=source_started_at,
+            finished_at=utc_now_iso(),
             status=result.status,
             http_status=result.http_status,
-            found_count=result.found_count,
-            accepted_count=result.accepted_count,
+            items_found=result.found_count,
+            items_accepted=result.accepted_count,
+            skipped_duplicates=result.skipped_duplicates,
+            skipped_filters=result.skipped_filters,
+            skipped_missing_url=result.skipped_missing_url,
             error=result.error,
+            notes={"tactics": result.notes} if result.notes else None,
         )
 
         totals["items_found"] += result.found_count
@@ -332,13 +338,51 @@ def _cmd_sources_import(args: argparse.Namespace, logger: logging.Logger) -> int
 
     for source in sources:
         try:
-            upsert_source(conn, asdict(source))
+            source_id = source.get("id")
+            source_dict = {
+                "id": source_id,
+                "name": source.get("name") or source_id,
+                "enabled": source.get("enabled", True),
+                "base_url": source.get("base_url") or source.get("url"),
+                "default_frequency_minutes": int(source.get("default_frequency_minutes", 60)),
+            }
+            upsert_source(conn, source_dict)
+
+            tactic_type = source.get("type")
+            feed_url = source.get("url")
+            if tactic_type and feed_url:
+                policy: dict[str, object] = {}
+                tags = source.get("tags") or []
+                overrides = source.get("overrides") or {}
+                if tags:
+                    policy.setdefault("tags", {})["tag_defaults"] = tags
+                if isinstance(overrides, dict):
+                    if overrides.get("parse", {}).get("prefer_entry_summary") is not None:
+                        policy.setdefault("parse", {})["prefer_entry_summary"] = overrides[
+                            "parse"
+                        ]["prefer_entry_summary"]
+                    if overrides.get("http_headers"):
+                        policy.setdefault("fetch", {})["headers"] = overrides["http_headers"]
+
+                config = {"feed_url": feed_url, **policy}
+                tactic = SourceTactic(
+                    id=None,
+                    source_id=source_id,
+                    tactic_type=tactic_type,
+                    enabled=bool(source.get("enabled", True)),
+                    priority=int(source.get("priority", 100)),
+                    config=config,
+                    last_success_at=None,
+                    last_error_at=None,
+                    error_streak=0,
+                )
+                upsert_tactic(conn, tactic)
         except ValueError as exc:
             log_event(
                 logger,
                 logging.ERROR,
                 "sources_import_error",
-                source_id=source.id,
+                source_id=source.get("id"),
                 error=str(exc),
             )
             return 1
@@ -372,8 +416,8 @@ def _cmd_sources_list(args: argparse.Namespace, logger: logging.Logger) -> int:
             "source",
             source_id=source.id,
             enabled=source.enabled,
-            kind=source.kind,
-            url=source.url,
+            base_url=source.base_url,
+            frequency_minutes=source.default_frequency_minutes,
         )
 
     log_event(logger, logging.INFO, "sources_listed", count=len(sources))
@@ -391,14 +435,24 @@ def _cmd_sources_add(args: argparse.Namespace, logger: logging.Logger) -> int:
     source_dict = {
         "id": args.id,
         "name": args.name,
-        "kind": args.kind,
-        "url": args.url,
         "enabled": args.enabled,
-        "section": args.section,
-        "policy": {},
+        "base_url": args.url,
+        "default_frequency_minutes": args.frequency_minutes,
     }
     try:
         upsert_source(conn, source_dict)
+        tactic = SourceTactic(
+            id=None,
+            source_id=args.id,
+            tactic_type=args.kind,
+            enabled=True,
+            priority=100,
+            config={"feed_url": args.url},
+            last_success_at=None,
+            last_error_at=None,
+            error_streak=0,
+        )
+        upsert_tactic(conn, tactic)
     except ValueError as exc:
         log_event(logger, logging.ERROR, "source_add_error", error=str(exc))
         return 1
@@ -423,43 +477,6 @@ def _cmd_sources_show(args: argparse.Namespace, logger: logging.Logger) -> int:
     return 0
 
 
-def _cmd_sources_set_policy(args: argparse.Namespace, logger: logging.Logger) -> int:
-    try:
-        config = load_config(args.config)
-    except ConfigError as exc:
-        log_event(logger, logging.ERROR, "config_error", error=str(exc))
-        return 1
-
-    conn = init_db(config.paths.state_db)
-    source = get_source(conn, args.source_id)
-    if source is None:
-        log_event(logger, logging.ERROR, "source_not_found", source_id=args.source_id)
-        return 1
-
-    try:
-        with open(args.file, "r", encoding="utf-8") as handle:
-            policy = json.load(handle)
-    except (OSError, json.JSONDecodeError) as exc:
-        log_event(logger, logging.ERROR, "policy_load_error", error=str(exc))
-        return 1
-
-    source_dict = {
-        "id": source.id,
-        "name": source.name,
-        "kind": source.kind,
-        "url": source.url,
-        "enabled": source.enabled,
-        "section": source.section,
-        "policy": policy,
-    }
-    try:
-        upsert_source(conn, source_dict)
-    except ValueError as exc:
-        log_event(logger, logging.ERROR, "source_policy_error", error=str(exc))
-        return 1
-
-    log_event(logger, logging.INFO, "source_policy_updated", source_id=source.id)
-    return 0
 
 
 def _cmd_sources_export(args: argparse.Namespace, logger: logging.Logger) -> int:
@@ -480,6 +497,18 @@ def _cmd_sources_export(args: argparse.Namespace, logger: logging.Logger) -> int
         return 1
 
     log_event(logger, logging.INFO, "sources_exported", count=len(sources), path=args.out)
+    return 0
+
+
+def _cmd_db_migrate(args: argparse.Namespace, logger: logging.Logger) -> int:
+    try:
+        config = load_config(args.config)
+    except ConfigError as exc:
+        log_event(logger, logging.ERROR, "config_error", error=str(exc))
+        return 1
+
+    init_db(config.paths.state_db)
+    log_event(logger, logging.INFO, "db_migrated", path=config.paths.state_db)
     return 0
 
 
@@ -545,8 +574,8 @@ def build_parser() -> argparse.ArgumentParser:
     sources_add = sources_subparsers.add_parser("add", help="Add or update a source")
     sources_add.add_argument("--id", required=True, help="Source id")
     sources_add.add_argument("--name", required=True, help="Source name")
-    sources_add.add_argument("--kind", required=True, choices=["rss", "atom", "html"], help="Source kind")
-    sources_add.add_argument("--url", required=True, help="Source URL")
+    sources_add.add_argument("--kind", required=True, choices=["rss", "atom", "html"], help="Tactic type")
+    sources_add.add_argument("--url", required=True, help="Source base/feed URL")
     sources_add.add_argument(
         "--enabled",
         dest="enabled",
@@ -560,25 +589,29 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
         help="Disable the source",
     )
-    sources_add.add_argument("--section", default="posts", help="Hugo section")
+    sources_add.add_argument(
+        "--frequency-minutes",
+        type=int,
+        default=60,
+        help="Default frequency in minutes",
+    )
     sources_add.set_defaults(func=_cmd_sources_add)
 
     sources_show = sources_subparsers.add_parser("show", help="Show a source")
     sources_show.add_argument("source_id", help="Source id")
     sources_show.set_defaults(func=_cmd_sources_show)
 
-    sources_set_policy = sources_subparsers.add_parser(
-        "set-policy", help="Set policy JSON for a source"
-    )
-    sources_set_policy.add_argument("source_id", help="Source id")
-    sources_set_policy.add_argument("--file", required=True, help="Path to policy JSON file")
-    sources_set_policy.set_defaults(func=_cmd_sources_set_policy)
-
     sources_export = sources_subparsers.add_parser(
         "export", help="Export sources to JSON"
     )
     sources_export.add_argument("--out", required=True, help="Output JSON path")
     sources_export.set_defaults(func=_cmd_sources_export)
+
+    db_parser = subparsers.add_parser("db", help="Database maintenance")
+    db_subparsers = db_parser.add_subparsers(dest="db_command", required=True)
+
+    db_migrate = db_subparsers.add_parser("migrate", help="Apply database migrations")
+    db_migrate.set_defaults(func=_cmd_db_migrate)
 
     return parser
 

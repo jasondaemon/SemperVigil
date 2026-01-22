@@ -24,13 +24,15 @@ def test_ignore_dedupe_accepts_duplicate(tmp_path):
         conn,
         [
             Article(
-                id=article_id,
-                title="Existing",
-                url=url,
+                id=None,
                 source_id="s1",
+                stable_id=article_id,
+                original_url=url,
+                normalized_url=url,
+                title="Existing",
                 published_at="2024-01-01T00:00:00+00:00",
                 published_at_source="published",
-                fetched_at="2024-01-01T00:00:00+00:00",
+                ingested_at="2024-01-01T00:00:00+00:00",
                 summary=None,
                 tags=[],
             )
@@ -40,18 +42,20 @@ def test_ignore_dedupe_accepts_duplicate(tmp_path):
     source = Source(
         id="s1",
         name="Source",
-        kind="rss",
-        url="https://example.com/feed",
         enabled=True,
-        section="posts",
-        policy={},
+        base_url="https://example.com",
+        topic_key=None,
+        default_frequency_minutes=60,
+        pause_until=None,
+        paused_reason=None,
+        robots_notes=None,
     )
     entry = {"title": "Existing", "link": url}
 
     decision, _ = evaluate_entry(
         entry,
         source,
-        source.policy,
+        {},
         config,
         conn,
         set(),
@@ -63,7 +67,7 @@ def test_ignore_dedupe_accepts_duplicate(tmp_path):
     decision, _ = evaluate_entry(
         entry,
         source,
-        source.policy,
+        {},
         config,
         conn,
         set(),
@@ -85,13 +89,15 @@ def test_ignore_dedupe_counts_preview(tmp_path):
         conn,
         [
             Article(
-                id=article_id,
-                title="Existing",
-                url=url,
+                id=None,
                 source_id="s1",
+                stable_id=article_id,
+                original_url=url,
+                normalized_url=url,
+                title="Existing",
                 published_at="2024-01-01T00:00:00+00:00",
                 published_at_source="published",
-                fetched_at="2024-01-01T00:00:00+00:00",
+                ingested_at="2024-01-01T00:00:00+00:00",
                 summary=None,
                 tags=[],
             )
@@ -101,17 +107,19 @@ def test_ignore_dedupe_counts_preview(tmp_path):
     source = Source(
         id="s1",
         name="Source",
-        kind="rss",
-        url="https://example.com/feed",
         enabled=True,
-        section="posts",
-        policy={},
+        base_url="https://example.com",
+        topic_key=None,
+        default_frequency_minutes=60,
+        pause_until=None,
+        paused_reason=None,
+        robots_notes=None,
     )
     entry = {"title": "Existing", "link": url}
     decision, article = evaluate_entry(
         entry,
         source,
-        source.policy,
+        {},
         config,
         conn,
         set(),

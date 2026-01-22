@@ -3,9 +3,6 @@ from __future__ import annotations
 import re
 from typing import Iterable
 
-from .models import Source
-
-
 def normalize_tag(tag: str) -> str:
     cleaned = tag.strip().lower()
     cleaned = re.sub(r"\s+", "-", cleaned)
@@ -27,12 +24,8 @@ def _normalize_tags(tags: Iterable[str], alias_map: dict[str, str]) -> list[str]
     return normalized
 
 
-def derive_tags(
-    source: Source, policy: dict[str, object], title: str | None, summary: str | None
-) -> list[str]:
-    tags_cfg = policy.get("tags") if isinstance(policy, dict) else {}
-    if not tags_cfg and isinstance(policy, dict):
-        tags_cfg = policy
+def derive_tags(tags_cfg: dict[str, object], title: str | None, summary: str | None) -> list[str]:
+    tags_cfg = tags_cfg if isinstance(tags_cfg, dict) else {}
     text = f"{title or ''}\n{summary or ''}"
 
     tag_defaults = tags_cfg.get("tag_defaults") or []

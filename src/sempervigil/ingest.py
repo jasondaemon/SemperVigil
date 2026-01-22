@@ -11,10 +11,10 @@ from urllib.request import Request, urlopen
 import feedparser
 
 from .config import Config
-from .models import Article, Decision, Source
+from .models import Article, Decision, Source, SourceTactic
 from .policy import resolve_policy
 from .tagger import derive_tags
-from .storage import article_exists
+from .storage import article_exists, list_tactics
 from .utils import extract_published_at, log_event, normalize_url, stable_id_from_url, utc_now_iso
 
 
@@ -33,6 +33,7 @@ class SourceResult:
     articles: list[Article]
     decisions: list[Decision]
     raw_entry: dict[str, Any] | None
+    notes: list[dict[str, Any]] | None = None
 
 
 def _fetch_url(
@@ -87,10 +88,11 @@ def evaluate_entry(
     link = entry.get("link") or entry.get("id")
     prefer_entry_summary = bool(policy.get("parse", {}).get("prefer_entry_summary", True))
     summary = _entry_summary(entry, prefer_entry_summary)
-    derived_tags = derive_tags(source, policy, title, summary)
+    derived_tags = derive_tags(policy.get("tags", {}), title, summary)
     combined_text = f"{title} {summary or ''}".strip()
     reasons: list[str] = []
     skip_reasons: list[str] = []
+
     if not link:
         published_at, published_at_source = extract_published_at(entry, fetched_at)
         decision = Decision(
@@ -135,7 +137,9 @@ def evaluate_entry(
         else:
             reasons.append("duplicate")
             skip_reasons.append("duplicate")
-    elif policy.get("dedupe", {}).get("enabled", True) and article_exists(conn, stable_id):
+    elif policy.get("dedupe", {}).get("enabled", True) and article_exists(
+        conn, source.id, stable_id
+    ):
         if ignore_dedupe:
             reasons.append("already_seen")
         else:
@@ -166,13 +170,15 @@ def evaluate_entry(
         return decision, None
 
     article = Article(
-        id=stable_id,
-        title=title or normalized_url,
-        url=normalized_url,
+        id=None,
         source_id=source.id,
+        stable_id=stable_id,
+        original_url=link,
+        normalized_url=normalized_url,
+        title=title or normalized_url,
         published_at=published_at,
         published_at_source=published_at_source,
-        fetched_at=fetched_at,
+        ingested_at=fetched_at,
         summary=summary,
         tags=derived_tags,
     )
@@ -187,7 +193,54 @@ def process_source(
     test_mode: bool = False,
     ignore_dedupe: bool = False,
 ) -> SourceResult:
-    policy = resolve_policy(source.policy, logger)
+    tactics = list_tactics(conn, source.id)
+    if not tactics:
+        return SourceResult(
+            source_id=source.id,
+            status="error",
+            http_status=None,
+            found_count=0,
+            accepted_count=0,
+            skipped_duplicates=0,
+            skipped_filters=0,
+            skipped_missing_url=0,
+            already_seen_count=0,
+            error="No enabled tactics for source",
+            articles=[],
+            decisions=[],
+            raw_entry=None,
+            notes=[{"tactic_type": "none", "status": "error", "error": "no tactics"}],
+        )
+
+    notes: list[dict[str, Any]] = []
+    final_result: SourceResult | None = None
+    for tactic in tactics:
+        result, note = _run_tactic(
+            source, tactic, config, logger, conn, test_mode=test_mode, ignore_dedupe=ignore_dedupe
+        )
+        notes.append(note)
+        if result.status == "ok":
+            final_result = result
+            break
+        final_result = result
+
+    if final_result is None:
+        final_result = result
+    return SourceResult(
+        **{**final_result.__dict__, "notes": notes},
+    )
+
+
+def _run_tactic(
+    source: Source,
+    tactic: SourceTactic,
+    config: Config,
+    logger: logging.Logger,
+    conn,
+    test_mode: bool,
+    ignore_dedupe: bool,
+) -> tuple[SourceResult, dict[str, Any]]:
+    policy = resolve_policy(tactic.config or {}, logger)
     dedupe_strategy = policy.get("dedupe", {}).get("strategy")
     if dedupe_strategy and dedupe_strategy != "canonical_url_hash":
         log_event(
@@ -197,22 +250,46 @@ def process_source(
             source_id=source.id,
             strategy=dedupe_strategy,
         )
-    if source.kind == "html":
-        log_event(logger, logging.WARNING, "source_not_implemented", source_id=source.id)
-        return SourceResult(
-            source_id=source.id,
-            status="not_implemented",
-            http_status=None,
-            found_count=0,
-            accepted_count=0,
-            skipped_duplicates=0,
-            skipped_filters=0,
-            skipped_missing_url=0,
-            already_seen_count=0,
-            error="HTML sources not implemented",
-            articles=[],
-            decisions=[],
-            raw_entry=None,
+
+    if tactic.tactic_type in {"html_index", "sitemap", "article_html", "jsonfeed"}:
+        return (
+            SourceResult(
+                source_id=source.id,
+                status="not_implemented",
+                http_status=None,
+                found_count=0,
+                accepted_count=0,
+                skipped_duplicates=0,
+                skipped_filters=0,
+                skipped_missing_url=0,
+                already_seen_count=0,
+                error=f"Tactic {tactic.tactic_type} not implemented",
+                articles=[],
+                decisions=[],
+                raw_entry=None,
+            ),
+            {"tactic_type": tactic.tactic_type, "status": "not_implemented"},
+        )
+
+    feed_url = tactic.config.get("feed_url") if tactic.config else None
+    if not feed_url:
+        return (
+            SourceResult(
+                source_id=source.id,
+                status="error",
+                http_status=None,
+                found_count=0,
+                accepted_count=0,
+                skipped_duplicates=0,
+                skipped_filters=0,
+                skipped_missing_url=0,
+                already_seen_count=0,
+                error="Missing feed_url in tactic config",
+                articles=[],
+                decisions=[],
+                raw_entry=None,
+            ),
+            {"tactic_type": tactic.tactic_type, "status": "error", "error": "missing feed_url"},
         )
 
     headers = policy.get("fetch", {}).get("headers") or {}
@@ -224,7 +301,7 @@ def process_source(
     request_headers.update({str(k): str(v) for k, v in headers.items()})
 
     http_status, content, error = _fetch_url(
-        source.url,
+        feed_url,
         headers=request_headers,
         timeout=http_cfg.timeout_seconds,
         max_retries=http_cfg.max_retries,
@@ -232,27 +309,28 @@ def process_source(
     )
 
     if error or not content:
-        log_event(
-            logger,
-            logging.ERROR,
-            "source_fetch_failed",
-            source_id=source.id,
-            error=error or "empty response",
-        )
-        return SourceResult(
-            source_id=source.id,
-            status="error",
-            http_status=http_status,
-            found_count=0,
-            accepted_count=0,
-            skipped_duplicates=0,
-            skipped_filters=0,
-            skipped_missing_url=0,
-            already_seen_count=0,
-            error=error or "empty response",
-            articles=[],
-            decisions=[],
-            raw_entry=None,
+        return (
+            SourceResult(
+                source_id=source.id,
+                status="error",
+                http_status=http_status,
+                found_count=0,
+                accepted_count=0,
+                skipped_duplicates=0,
+                skipped_filters=0,
+                skipped_missing_url=0,
+                already_seen_count=0,
+                error=error or "empty response",
+                articles=[],
+                decisions=[],
+                raw_entry=None,
+            ),
+            {
+                "tactic_type": tactic.tactic_type,
+                "status": "error",
+                "http_status": http_status,
+                "error": error or "empty response",
+            },
         )
 
     parsed = feedparser.parse(content)
@@ -291,7 +369,7 @@ def process_source(
         if "already_seen" in decision.reasons:
             already_seen_count += 1
         if decision.decision == "ACCEPT" and article:
-            seen_ids.add(article.id)
+            seen_ids.add(article.stable_id)
             accepted.append(article)
             continue
         if decision.decision == "SKIP" and "missing_url" in decision.reasons:
@@ -322,18 +400,27 @@ def process_source(
             preview=json.dumps([decision.__dict__ for decision in decisions[:20]]),
         )
 
-    return SourceResult(
-        source_id=source.id,
-        status="ok",
-        http_status=http_status,
-        found_count=len(entries),
-        accepted_count=len(accepted),
-        skipped_duplicates=skipped_duplicates,
-        skipped_filters=skipped_filters,
-        skipped_missing_url=skipped_missing_url,
-        already_seen_count=already_seen_count,
-        error=None,
-        articles=accepted,
-        decisions=decisions,
-        raw_entry=raw_entry,
+    return (
+        SourceResult(
+            source_id=source.id,
+            status="ok",
+            http_status=http_status,
+            found_count=len(entries),
+            accepted_count=len(accepted),
+            skipped_duplicates=skipped_duplicates,
+            skipped_filters=skipped_filters,
+            skipped_missing_url=skipped_missing_url,
+            already_seen_count=already_seen_count,
+            error=None,
+            articles=accepted,
+            decisions=decisions,
+            raw_entry=raw_entry,
+        ),
+        {
+            "tactic_type": tactic.tactic_type,
+            "status": "ok",
+            "http_status": http_status,
+            "found_count": len(entries),
+            "accepted_count": len(accepted),
+        },
     )

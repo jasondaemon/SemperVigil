@@ -12,9 +12,9 @@ from .utils import slugify
 
 
 def _safe_filename(article: Article) -> str:
-    date_part = (article.published_at or article.fetched_at).split("T")[0]
+    date_part = (article.published_at or article.ingested_at).split("T")[0]
     slug = slugify(article.title)
-    return f"{date_part}-{slug}-{article.id[:8]}.md"
+    return f"{date_part}-{slug}-{article.stable_id[:8]}.md"
 
 
 def write_hugo_markdown(articles: Iterable[Article], output_dir: str) -> list[str]:
@@ -25,9 +25,9 @@ def write_hugo_markdown(articles: Iterable[Article], output_dir: str) -> list[st
         path = os.path.join(output_dir, filename)
         frontmatter = {
             "title": article.title,
-            "date": article.published_at or article.fetched_at,
+            "date": article.published_at or article.ingested_at,
             "source": article.source_id,
-            "source_url": article.url,
+            "source_url": article.normalized_url,
             "tags": article.tags,
             "published_at_source": article.published_at_source,
         }
@@ -36,7 +36,7 @@ def write_hugo_markdown(articles: Iterable[Article], output_dir: str) -> list[st
             [
                 summary.strip(),
                 "",
-                f"[Read more]({article.url})",
+                f"[Read more]({article.normalized_url})",
                 "",
             ]
         )
@@ -57,11 +57,13 @@ def write_json_index(articles: Iterable[Article], path: str) -> None:
     payload = [
         {
             "id": article.id,
+            "stable_id": article.stable_id,
             "title": article.title,
-            "url": article.url,
+            "original_url": article.original_url,
+            "normalized_url": article.normalized_url,
             "source_id": article.source_id,
             "published_at": article.published_at,
-            "fetched_at": article.fetched_at,
+            "ingested_at": article.ingested_at,
             "tags": article.tags,
         }
         for article in articles
@@ -93,13 +95,13 @@ def write_tag_indexes(articles: Iterable[Article], output_dir: str, section: str
 
         articles_sorted = sorted(
             tag_map[tag],
-            key=lambda item: item.published_at or item.fetched_at,
+            key=lambda item: item.published_at or item.ingested_at,
             reverse=True,
         )
         for article in articles_sorted:
             filename = _safe_filename(article)
             slug = Path(filename).stem
-            date_part = (article.published_at or article.fetched_at).split("T")[0]
+            date_part = (article.published_at or article.ingested_at).split("T")[0]
             lines.append(f"- [{article.title}](/{section}/{slug}/) ({date_part})")
 
         content = "\n".join(lines) + "\n"

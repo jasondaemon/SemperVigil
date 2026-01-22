@@ -201,25 +201,18 @@ def _parse_sources_list(sources_raw: Any) -> list[Source]:
         overrides = source.get("overrides") or {}
         if overrides and not isinstance(overrides, dict):
             raise ConfigError(f"sources[{index}].overrides must be a mapping")
-        section = source.get("section") or "posts"
-        policy: dict[str, Any] = {}
-        if tags:
-            policy["tag_defaults"] = tags
-        if overrides.get("parse", {}).get("prefer_entry_summary") is not None:
-            policy.setdefault("parse", {})["prefer_entry_summary"] = overrides["parse"][
-                "prefer_entry_summary"
-            ]
-        if overrides.get("http_headers"):
-            policy.setdefault("fetch", {})["headers"] = overrides["http_headers"]
+        default_frequency_minutes = int(source.get("default_frequency_minutes", 60))
         sources.append(
             Source(
                 id=source_id,
                 name=name,
-                kind=source_kind,
                 enabled=enabled,
-                url=url,
-                section=section,
-                policy=policy,
+                base_url=url,
+                topic_key=None,
+                default_frequency_minutes=default_frequency_minutes,
+                pause_until=None,
+                paused_reason=None,
+                robots_notes=None,
             )
         )
     return sources
@@ -365,11 +358,18 @@ def load_config(path: str | None = None) -> Config:
     )
 
 
-def load_sources_file(path: str) -> list[Source]:
+def load_sources_file(path: str) -> list[dict[str, Any]]:
     if not os.path.exists(path):
         raise ConfigError(f"Sources file not found at {path}")
     with open(path, "r", encoding="utf-8") as handle:
         raw = yaml.safe_load(handle) or {}
     if isinstance(raw, dict):
         raw = raw.get("sources")
-    return _parse_sources_list(raw)
+    if not isinstance(raw, list):
+        raise ConfigError("Sources file must contain a list of sources")
+    sources: list[dict[str, Any]] = []
+    for index, source in enumerate(raw):
+        if not isinstance(source, dict):
+            raise ConfigError(f"Source entry at index {index} must be a mapping")
+        sources.append(source)
+    return sources

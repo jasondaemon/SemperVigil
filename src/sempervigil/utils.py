@@ -92,7 +92,7 @@ def extract_published_at(
 
     if strategy == "updated_then_published":
         if updated:
-            return updated.isoformat(), "updated"
+            return updated.isoformat(), "modified"
         if published:
             return published.isoformat(), "published"
     elif strategy == "published_only":
@@ -100,21 +100,21 @@ def extract_published_at(
             return published.isoformat(), "published"
     elif strategy == "updated_only":
         if updated:
-            return updated.isoformat(), "updated"
+            return updated.isoformat(), "modified"
     else:
         if published:
             return published.isoformat(), "published"
         if updated:
-            return updated.isoformat(), "updated"
+            return updated.isoformat(), "modified"
 
     if allow_dc_date:
         dc_date = _parse_date_value(
             entry.get("dc_date") or entry.get("dc:date") or entry.get("dc_date_parsed")
         )
         if dc_date:
-            return dc_date.isoformat(), "dc_date"
+            return dc_date.isoformat(), "guessed"
 
-    return fetched_at, "fallback_fetched_at"
+    return fetched_at, "guessed"
 
 
 def utc_now_iso() -> str:

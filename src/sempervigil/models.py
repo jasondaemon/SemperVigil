@@ -5,13 +5,15 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Article:
-    id: str
+    id: int | None
+    stable_id: str
+    original_url: str
+    normalized_url: str
     title: str
-    url: str
     source_id: str
     published_at: str | None
     published_at_source: str | None
-    fetched_at: str
+    ingested_at: str
     summary: str | None
     tags: list[str]
 
@@ -20,11 +22,26 @@ class Article:
 class Source:
     id: str
     name: str
-    kind: str
-    url: str
     enabled: bool
-    section: str
-    policy: dict[str, object]
+    base_url: str | None
+    topic_key: str | None
+    default_frequency_minutes: int
+    pause_until: str | None
+    paused_reason: str | None
+    robots_notes: str | None
+
+
+@dataclass(frozen=True)
+class SourceTactic:
+    id: int | None
+    source_id: str
+    tactic_type: str
+    enabled: bool
+    priority: int
+    config: dict[str, object]
+    last_success_at: str | None
+    last_error_at: str | None
+    error_streak: int
 
 
 @dataclass(frozen=True)

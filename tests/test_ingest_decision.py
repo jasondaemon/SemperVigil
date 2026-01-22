@@ -21,18 +21,20 @@ def test_decision_missing_url(tmp_path):
     source = Source(
         id="s1",
         name="Source",
-        kind="rss",
-        url="https://example.com/feed",
         enabled=True,
-        section="posts",
-        policy={},
+        base_url="https://example.com",
+        topic_key=None,
+        default_frequency_minutes=60,
+        pause_until=None,
+        paused_reason=None,
+        robots_notes=None,
     )
     entry = {"title": "No link"}
 
     decision, article = evaluate_entry(
         entry,
         source,
-        source.policy,
+        {},
         config,
         conn,
         set(),
@@ -50,18 +52,20 @@ def test_decision_deny_keyword(tmp_path):
     source = Source(
         id="s1",
         name="Source",
-        kind="rss",
-        url="https://example.com/feed",
         enabled=True,
-        section="posts",
-        policy={},
+        base_url="https://example.com",
+        topic_key=None,
+        default_frequency_minutes=60,
+        pause_until=None,
+        paused_reason=None,
+        robots_notes=None,
     )
     entry = {"title": "Blocked item", "link": "https://example.com/1"}
 
     decision, article = evaluate_entry(
         entry,
         source,
-        source.policy,
+        {},
         config,
         conn,
         set(),

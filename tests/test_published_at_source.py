@@ -17,7 +17,7 @@ def test_updated_source():
     published_at, source = extract_published_at(
         entry, "2024-01-01T00:00:00+00:00", strategy="published_then_updated"
     )
-    assert source == "updated"
+    assert source == "modified"
     assert published_at.startswith("1970-01-01T00:00:10")
 
 
@@ -26,5 +26,5 @@ def test_fallback_source():
     published_at, source = extract_published_at(
         entry, "2024-01-01T00:00:00+00:00", strategy="published_then_updated"
     )
-    assert source == "fallback_fetched_at"
+    assert source == "guessed"
     assert published_at == "2024-01-01T00:00:00+00:00"

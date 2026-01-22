@@ -15,13 +15,15 @@ def _extract_frontmatter(path):
 
 def test_frontmatter_uses_source_url(tmp_path):
     article = Article(
-        id="abc123",
-        title="Test Article",
-        url="https://example.com/story",
+        id=None,
         source_id="source",
+        stable_id="abc123",
+        original_url="https://example.com/story",
+        normalized_url="https://example.com/story",
+        title="Test Article",
         published_at="2024-01-01T00:00:00+00:00",
         published_at_source="published",
-        fetched_at="2024-01-01T00:00:00+00:00",
+        ingested_at="2024-01-01T00:00:00+00:00",
         summary="Summary",
         tags=["news"],
     )
