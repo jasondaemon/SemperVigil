@@ -20,6 +20,7 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
     )
     migrations = [
         ("001_initial_schema", _migration_initial_schema),
+        ("002_jobs_table", _migration_jobs_table),
     ]
     applied = {
         row[0]
@@ -140,6 +141,31 @@ def _migration_initial_schema(conn: sqlite3.Connection) -> None:
     _migrate_legacy_sources(conn)
     _migrate_legacy_source_runs(conn)
     _migrate_legacy_articles(conn)
+
+
+def _migration_jobs_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS jobs (
+            id TEXT PRIMARY KEY,
+            job_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            payload_json TEXT NULL,
+            requested_at TEXT NOT NULL,
+            started_at TEXT NULL,
+            finished_at TEXT NULL,
+            locked_by TEXT NULL,
+            locked_at TEXT NULL,
+            error TEXT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_status_requested ON jobs(status, requested_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_locked ON jobs(locked_by, locked_at)"
+    )
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:

@@ -45,6 +45,20 @@ class SourceTactic:
 
 
 @dataclass(frozen=True)
+class Job:
+    id: str
+    job_type: str
+    status: str
+    payload: dict[str, object]
+    requested_at: str
+    started_at: str | None
+    finished_at: str | None
+    locked_by: str | None
+    locked_at: str | None
+    error: str | None
+
+
+@dataclass(frozen=True)
 class Decision:
     decision: str
     reasons: list[str]

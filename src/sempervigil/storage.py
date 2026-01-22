@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import uuid
 from typing import Iterable
 
 from .migrations import apply_migrations
-from .models import Article, Source, SourceTactic
+from .models import Article, Job, Source, SourceTactic
 from .utils import utc_now_iso
 
 
@@ -250,6 +251,122 @@ def record_source_run(
     conn.commit()
 
 
+def enqueue_job(
+    conn: sqlite3.Connection,
+    job_type: str,
+    payload: dict[str, object] | None,
+    debounce: bool = False,
+) -> str:
+    if debounce and _has_pending_job(conn, job_type):
+        return _get_latest_job_id(conn, job_type)
+    job_id = _new_job_id()
+    now = utc_now_iso()
+    conn.execute(
+        """
+        INSERT INTO jobs
+            (id, job_type, status, payload_json, requested_at, started_at, finished_at,
+             locked_by, locked_at, error)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            job_id,
+            job_type,
+            "queued",
+            json.dumps(payload) if payload else None,
+            now,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+    )
+    conn.commit()
+    return job_id
+
+
+def list_jobs(conn: sqlite3.Connection, limit: int = 50) -> list[Job]:
+    cursor = conn.execute(
+        """
+        SELECT id, job_type, status, payload_json, requested_at, started_at, finished_at,
+               locked_by, locked_at, error
+        FROM jobs
+        ORDER BY requested_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    return [_row_to_job(row) for row in cursor.fetchall()]
+
+
+def claim_next_job(conn: sqlite3.Connection, worker_id: str) -> Job | None:
+    conn.execute("BEGIN IMMEDIATE")
+    cursor = conn.execute(
+        """
+        SELECT id, job_type, status, payload_json, requested_at, started_at, finished_at,
+               locked_by, locked_at, error
+        FROM jobs
+        WHERE status = 'queued' AND locked_by IS NULL
+        ORDER BY requested_at ASC
+        LIMIT 1
+        """
+    )
+    row = cursor.fetchone()
+    if not row:
+        conn.execute("COMMIT")
+        return None
+    job_id = row[0]
+    now = utc_now_iso()
+    conn.execute(
+        """
+        UPDATE jobs
+        SET status = 'running', started_at = ?, locked_by = ?, locked_at = ?
+        WHERE id = ?
+        """,
+        (now, worker_id, now, job_id),
+    )
+    conn.execute("COMMIT")
+    job = _row_to_job(row)
+    return Job(
+        id=job.id,
+        job_type=job.job_type,
+        status="running",
+        payload=job.payload,
+        requested_at=job.requested_at,
+        started_at=now,
+        finished_at=job.finished_at,
+        locked_by=worker_id,
+        locked_at=now,
+        error=job.error,
+    )
+
+
+def complete_job(conn: sqlite3.Connection, job_id: str) -> None:
+    now = utc_now_iso()
+    conn.execute(
+        """
+        UPDATE jobs
+        SET status = 'succeeded', finished_at = ?, error = NULL
+        WHERE id = ?
+        """,
+        (now, job_id),
+    )
+    conn.commit()
+
+
+def fail_job(conn: sqlite3.Connection, job_id: str, error: str) -> None:
+    now = utc_now_iso()
+    conn.execute(
+        """
+        UPDATE jobs
+        SET status = 'failed', finished_at = ?, error = ?
+        WHERE id = ?
+        """,
+        (now, error, job_id),
+    )
+    conn.commit()
+
+
 def _row_to_source(row: tuple) -> Source:
     (
         source_id,
@@ -302,6 +419,67 @@ def _row_to_tactic(row: tuple) -> SourceTactic:
         last_error_at=last_error_at,
         error_streak=int(error_streak),
     )
+
+
+def _row_to_job(row: tuple) -> Job:
+    (
+        job_id,
+        job_type,
+        status,
+        payload_json,
+        requested_at,
+        started_at,
+        finished_at,
+        locked_by,
+        locked_at,
+        error,
+    ) = row
+    try:
+        payload = json.loads(payload_json) if payload_json else {}
+    except json.JSONDecodeError:
+        payload = {}
+    return Job(
+        id=job_id,
+        job_type=job_type,
+        status=status,
+        payload=payload,
+        requested_at=requested_at,
+        started_at=started_at,
+        finished_at=finished_at,
+        locked_by=locked_by,
+        locked_at=locked_at,
+        error=error,
+    )
+
+
+def _has_pending_job(conn: sqlite3.Connection, job_type: str) -> bool:
+    cursor = conn.execute(
+        """
+        SELECT 1 FROM jobs
+        WHERE job_type = ? AND status IN ('queued', 'running')
+        LIMIT 1
+        """,
+        (job_type,),
+    )
+    return cursor.fetchone() is not None
+
+
+def _get_latest_job_id(conn: sqlite3.Connection, job_type: str) -> str:
+    cursor = conn.execute(
+        """
+        SELECT id FROM jobs
+        WHERE job_type = ?
+        ORDER BY requested_at DESC
+        LIMIT 1
+        """,
+        (job_type,),
+    )
+    row = cursor.fetchone()
+    return row[0] if row else _new_job_id()
+
+
+def _new_job_id() -> str:
+    return f"job_{uuid.uuid4().hex}"
 
 
 def _get_article_id(conn: sqlite3.Connection, source_id: str, stable_id: str) -> int | None:

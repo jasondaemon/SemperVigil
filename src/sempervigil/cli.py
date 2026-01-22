@@ -18,6 +18,8 @@ from .storage import (
     record_source_run,
     upsert_source,
     upsert_tactic,
+    enqueue_job,
+    list_jobs,
 )
 from .tagger import normalize_tag
 from .utils import log_event, utc_now_iso
@@ -512,6 +514,44 @@ def _cmd_db_migrate(args: argparse.Namespace, logger: logging.Logger) -> int:
     return 0
 
 
+def _cmd_jobs_enqueue(args: argparse.Namespace, logger: logging.Logger) -> int:
+    try:
+        config = load_config(args.config)
+    except ConfigError as exc:
+        log_event(logger, logging.ERROR, "config_error", error=str(exc))
+        return 1
+
+    payload = {}
+    if args.source_id:
+        payload["source_id"] = args.source_id
+    conn = init_db(config.paths.state_db)
+    job_id = enqueue_job(conn, args.job_type, payload, debounce=args.debounce)
+    log_event(logger, logging.INFO, "job_enqueued", job_id=job_id, job_type=args.job_type)
+    return 0
+
+
+def _cmd_jobs_list(args: argparse.Namespace, logger: logging.Logger) -> int:
+    try:
+        config = load_config(args.config)
+    except ConfigError as exc:
+        log_event(logger, logging.ERROR, "config_error", error=str(exc))
+        return 1
+
+    conn = init_db(config.paths.state_db)
+    jobs = list_jobs(conn, limit=args.limit)
+    for job in jobs:
+        log_event(
+            logger,
+            logging.INFO,
+            "job",
+            job_id=job.id,
+            job_type=job.job_type,
+            status=job.status,
+            requested_at=job.requested_at,
+        )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sempervigil", description="SemperVigil CLI")
     parser.add_argument(
@@ -612,6 +652,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     db_migrate = db_subparsers.add_parser("migrate", help="Apply database migrations")
     db_migrate.set_defaults(func=_cmd_db_migrate)
+
+    jobs_parser = subparsers.add_parser("jobs", help="Job queue commands")
+    jobs_subparsers = jobs_parser.add_subparsers(dest="jobs_command", required=True)
+
+    jobs_enqueue = jobs_subparsers.add_parser("enqueue", help="Enqueue a job")
+    jobs_enqueue.add_argument(
+        "job_type",
+        choices=["ingest_source", "ingest_due_sources", "test_source", "build_site"],
+        help="Job type to enqueue",
+    )
+    jobs_enqueue.add_argument("--source-id", help="Source id for source-scoped jobs")
+    jobs_enqueue.add_argument(
+        "--debounce",
+        action="store_true",
+        help="Avoid enqueuing if a job of the same type is queued/running",
+    )
+    jobs_enqueue.set_defaults(func=_cmd_jobs_enqueue)
+
+    jobs_list = jobs_subparsers.add_parser("list", help="List recent jobs")
+    jobs_list.add_argument("--limit", type=int, default=20, help="Number of jobs to show")
+    jobs_list.set_defaults(func=_cmd_jobs_list)
 
     return parser
 
