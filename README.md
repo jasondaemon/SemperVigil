@@ -107,50 +107,70 @@ cp config.example.yml config/config.yml
 
 Adjust as needed for your environment.
 
-⸻
+---
 
 ### 2) Import example sources into the state DB
 
-
-
-```docker compose run --rm ingest \
+```bash
+docker compose run --rm worker \
   sempervigil sources import /config/sources.example.yml
 ```
 
 Sources are stored in the database, not in static config files.
 
-⸻
+---
 
-### 3) Run the ingest pipeline
+### 3) Start internal services (admin, worker, builder)
 
-
-docker compose up --build ingest
+```bash
+docker compose up --build admin worker builder web
+```
 
 Outputs are written to:
-	•	Articles (Markdown):
-site/content/posts/
-	•	JSON index (if enabled):
-site/static/sempervigil/index.json
+- Articles (Markdown): `site/content/posts/`
+- JSON index (if enabled): `site/static/sempervigil/index.json`
+- Site output: `site/public/`
 
-⸻
+---
 
-Test a Single Source
+### 4) Enqueue ingest jobs
+
+```bash
+docker compose run --rm worker \
+  sempervigil jobs enqueue ingest_due_sources
+```
+
+The worker will claim and run queued jobs.
+
+---
+
+### Test a Single Source
 
 To diagnose parsing, filtering, or health issues:
 
-
-
-```docker compose run --rm ingest \
+```bash
+docker compose run --rm worker \
   sempervigil test-source cisa-alerts
 ```
 
 This command:
-	•	fetches only the specified source
-	•	shows accept / reject decisions per item
-	•	prints reasons for filtering or skipping
-	•	does not require a full pipeline run
+- fetches only the specified source
+- shows accept / reject decisions per item
+- prints reasons for filtering or skipping
+- does not require a full pipeline run
 
 This is the primary troubleshooting tool.
+
+---
+
+## Internal Services
+
+- admin: FastAPI API for managing sources and enqueueing jobs (binds to `127.0.0.1:8001` by default)
+- worker: polls the DB job queue and runs ingestion tasks
+- builder: polls the DB job queue and runs `hugo build` for site output
+- web: public static site server (nginx serving `site/public`)
+
+All orchestration is DB-driven; containers do not shell out to Docker.
 
 
 ## Configuration Philosophy

@@ -8,7 +8,9 @@ license = { text = "GPL-3.0" }
 authors = [{ name = "SemperVigil" }]
 dependencies = [
   "feedparser>=6.0.11",
+  "fastapi>=0.110",
   "PyYAML>=6.0.1",
+  "uvicorn>=0.27",
 ]
 
 [project.optional-dependencies]

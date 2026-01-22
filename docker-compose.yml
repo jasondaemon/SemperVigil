@@ -1,18 +1,42 @@
 services:
-  # 1) Ingest / processing service
-  ingest:
+  # 1) Admin API (internal)
+  admin:
     build:
       context: .
       dockerfile: docker/ingest/Dockerfile
-    container_name: sempervigil-ingest
+    container_name: sempervigil-admin
     env_file:
       - .env
     environment:
-      # These are defaults; config.yml controls most behavior
       SV_ENV: ${SV_ENV:-dev}
       SV_DATA_DIR: ${SV_DATA_DIR:-/data}
       SV_CONFIG_PATH: ${SV_CONFIG_PATH:-/config/config.yml}
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
+    command: ["uvicorn", "sempervigil.admin:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:8001:8000"
+    user: "${SV_UID:-1000}:${SV_GID:-1000}"
+    volumes:
+      - ./config:/config:ro
+      - ./data:/data
+    networks:
+      - svnet
+
+  # 2) Worker (internal)
+  worker:
+    build:
+      context: .
+      dockerfile: docker/ingest/Dockerfile
+    container_name: sempervigil-worker
+    env_file:
+      - .env
+    environment:
+      SV_ENV: ${SV_ENV:-dev}
+      SV_DATA_DIR: ${SV_DATA_DIR:-/data}
+      SV_CONFIG_PATH: ${SV_CONFIG_PATH:-/config/config.yml}
+      SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
+    command: ["sempervigil-worker"]
+    user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - ./config:/config:ro
       - ./data:/data
@@ -20,22 +44,32 @@ services:
     networks:
       - svnet
 
-  # 2) Hugo builder (runs on demand)
-  hugo:
-    image: hugomods/hugo:exts
-    working_dir: /site
+  # 3) Builder (internal)
+  builder:
+    build:
+      context: .
+      dockerfile: docker/builder/Dockerfile
+    container_name: sempervigil-builder
+    env_file:
+      - .env
+    environment:
+      SV_ENV: ${SV_ENV:-dev}
+      SV_DATA_DIR: ${SV_DATA_DIR:-/data}
+      SV_CONFIG_PATH: ${SV_CONFIG_PATH:-/config/config.yml}
+      SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
+    command: ["sempervigil-builder"]
+    user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
+      - ./config:/config:ro
+      - ./data:/data
       - ./site:/site
-    command: ["build", "--minify", "--gc", "--cleanDestinationDir", "--logLevel", "info"]
     networks:
       - svnet
 
-  # 3) Static site server
+  # 4) Static site server (public)
   web:
     image: nginx:alpine
     container_name: sempervigil-web
-    depends_on:
-      - hugo
     ports:
       - "8080:80"
     volumes:
