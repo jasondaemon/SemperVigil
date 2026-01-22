@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -101,7 +101,7 @@ def process_cve_item(conn, cve_item: dict[str, Any], prefer_v4: bool) -> Process
     preferred = _select_preferred_metrics(v31, v40, prefer_v4)
     snapshot_hash = _snapshot_hash(
         {
-            "preferred": preferred,
+            "preferred": asdict(preferred),
             "v31": v31,
             "v40": v40,
             "last_modified_at": last_modified_at,

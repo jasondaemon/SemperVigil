@@ -120,10 +120,11 @@ Sources are stored in the database, not in static config files.
 
 ---
 
-### 3) Start internal services (admin, worker, builder)
+### 3) Start internal services (admin, worker, web)
 
 ```bash
-docker compose up --build admin worker builder web
+cp .env.example .env
+docker compose up -d --build admin worker web
 ```
 
 Outputs are written to:
@@ -141,6 +142,15 @@ docker compose run --rm worker \
 ```
 
 The worker will claim and run queued jobs.
+
+---
+
+### 5) Run one job for debugging
+
+```bash
+docker compose run --rm worker \
+  sempervigil jobs run --once
+```
 
 ---
 
@@ -171,6 +181,22 @@ docker compose run --rm worker \
 ```
 
 Set `NVD_API_KEY` in your environment for higher rate limits.
+
+---
+
+### Build the Site (One-Shot)
+
+```bash
+docker compose run --rm builder
+```
+
+After build, verify: `site/public/index.html`
+
+---
+
+### NFS Notes
+
+If `./config`, `./data`, or `./site` are NFS mounts with root-squash, ensure they are owned by `SV_UID:SV_GID`. SemperVigil will create needed directories without attempting `chown`.
 
 ---
 

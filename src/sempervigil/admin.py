@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from .config import ConfigError, load_config
+from .fsinit import build_default_paths, ensure_runtime_dirs
 from .storage import enqueue_job, get_source_run_streaks, init_db, list_jobs
 from .utils import log_event
 
@@ -21,6 +22,15 @@ class JobRequest(BaseModel):
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.on_event("startup")
+def _startup() -> None:
+    try:
+        config = load_config(None)
+    except ConfigError:
+        return
+    ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir))
 
 
 @app.post("/jobs/enqueue")

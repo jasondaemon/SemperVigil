@@ -1,3 +1,5 @@
+# Deprecated: builder now uses hugomods/hugo:exts via docker-compose.
+# Keep this file only for reference; it is not used by default.
 FROM python:3.11-slim
 
 WORKDIR /app

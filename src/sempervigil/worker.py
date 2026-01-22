@@ -9,6 +9,7 @@ from datetime import datetime, timezone, timedelta
 from .config import ConfigError, load_config
 from .ingest import process_source
 from .cve_sync import CveSyncConfig, isoformat_utc, sync_cves
+from .fsinit import build_default_paths, ensure_runtime_dirs
 from .publish import write_hugo_markdown, write_json_index, write_tag_indexes
 from .signals import build_cve_evidence, extract_cve_ids
 from .storage import (
@@ -50,6 +51,7 @@ def run_once(config_path: str | None, worker_id: str) -> int:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
 
+    ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir))
     conn = init_db(config.paths.state_db)
     _maybe_enqueue_cve_sync(conn, config, logger)
     job = claim_next_job(
@@ -62,24 +64,7 @@ def run_once(config_path: str | None, worker_id: str) -> int:
         return 0
 
     try:
-        log_event(
-            logger,
-            logging.INFO,
-            "job_claimed",
-            job_id=job.id,
-            job_type=job.job_type,
-        )
-        if job.job_type == "ingest_source":
-            result = _handle_ingest_source(conn, config, job.payload, logger)
-        elif job.job_type == "ingest_due_sources":
-            result = _handle_ingest_due_sources(conn, logger)
-        elif job.job_type == "test_source":
-            result = _handle_test_source(conn, config, job.payload, logger)
-        elif job.job_type == "cve_sync":
-            result = _handle_cve_sync(conn, config, logger)
-        else:
-            fail_job(conn, job.id, f"unsupported job type {job.job_type}")
-            return 1
+        result = run_claimed_job(conn, config, job, logger)
     except Exception as exc:  # noqa: BLE001
         fail_job(conn, job.id, str(exc))
         log_event(logger, logging.ERROR, "job_failed", job_id=job.id, error=str(exc))
@@ -345,6 +330,25 @@ def main() -> int:
     if args.once:
         return run_once(args.config, args.worker_id)
     return run_loop(args.config, args.worker_id, args.sleep)
+
+
+def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, object]:
+    log_event(
+        logger,
+        logging.INFO,
+        "job_claimed",
+        job_id=job.id,
+        job_type=job.job_type,
+    )
+    if job.job_type == "ingest_source":
+        return _handle_ingest_source(conn, config, job.payload, logger)
+    if job.job_type == "ingest_due_sources":
+        return _handle_ingest_due_sources(conn, logger)
+    if job.job_type == "test_source":
+        return _handle_test_source(conn, config, job.payload, logger)
+    if job.job_type == "cve_sync":
+        return _handle_cve_sync(conn, config, logger)
+    raise ValueError(f"unsupported job type {job.job_type}")
 
 
 if __name__ == "__main__":

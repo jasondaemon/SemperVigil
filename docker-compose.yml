@@ -9,11 +9,11 @@
 #
 # Usage:
 #   docker compose up -d web admin worker
-#   docker compose --profile build run --rm builder   # run a one-off Hugo build
+#   docker compose run --rm builder   # run a one-off Hugo build
 #
 # Optional:
 #   export SV_WEB_PORT=18080   # if 8080 is already used
-#   export SV_ADMIN_BIND=127.0.0.1:8001  # default below
+#   export SV_ADMIN_PORT=8001  # default below
 
 services:
   # 1) Admin API (internal)
@@ -33,7 +33,7 @@ services:
     command: ["uvicorn", "sempervigil.admin:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       # Default: internal-only on host. Change to "0.0.0.0:8001:8000" if you want LAN access.
-      - "${SV_ADMIN_BIND:-127.0.0.1:8001}:8000"
+      - "127.0.0.1:${SV_ADMIN_PORT:-8001}:8000"
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - ./config:/config:ro
@@ -67,22 +67,21 @@ services:
     restart: unless-stopped
 
   # 3) Builder (internal) — modern Hugo for Blowfish
-  #
-  # On-demand by default: run with:
-  #   docker compose --profile build run --rm builder
   builder:
     image: hugomods/hugo:exts
     container_name: sempervigil-builder
-    profiles: ["build"]
     env_file:
       - .env
     environment:
       SV_UMASK: ${SV_UMASK:-002}
+      SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-http://localhost:${SV_WEB_PORT:-18080}/}
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
-    working_dir: /site
     volumes:
+      - ./config:/config:ro
+      - ./data:/data
       - ./site:/site
-    command: ["hugo", "-s", "/site", "-d", "/site/public", "--minify", "--gc", "--cleanDestinationDir", "--logLevel", "info"]
+      - ./tools:/tools:ro
+    command: ["/bin/sh", "/tools/hugo-build.sh"]
     networks:
       - svnet
 
@@ -92,7 +91,7 @@ services:
     container_name: sempervigil-web
     ports:
       # Make this configurable so we don't collide with NPM / other stacks.
-      - "${SV_WEB_PORT:-8080}:8080"
+      - "${SV_WEB_PORT:-18080}:8080"
     volumes:
       - ./site/public:/usr/share/nginx/html:ro
     networks:
