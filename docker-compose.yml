@@ -65,6 +65,7 @@ services:
     volumes:
       - sv_data:/data
       - sv_site:/site
+      - ./site:/hugo:ro
       - ./config:/config:ro
       - ./tools:/tools:ro
     command: ["sh", "-c", "export PATH=/venv/bin:$PATH; sh /tools/ensure-dirs.sh && sempervigil-builder --once"]    
