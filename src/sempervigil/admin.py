@@ -26,13 +26,18 @@ from .utils import log_event
 
 app = FastAPI(title="SemperVigil Admin API")
 
-ADMIN_COOKIE_NAME = "sv_admin"
+ADMIN_COOKIE_NAME = "sv_admin_token"
 
 app.mount(
     "/ui/static",
     StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")),
     name="ui-static",
 )
+
+
+@app.get("/ui")
+def ui_redirect():
+    return RedirectResponse("/ui/", status_code=307)
 
 
 def _require_admin_token(request: Request) -> None:

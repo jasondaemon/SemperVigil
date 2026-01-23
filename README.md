@@ -131,13 +131,13 @@ docker compose up -d --build admin worker web
 Admin health check:
 
 ```bash
-curl -s http://127.0.0.1:8001/health
+curl -s http://<host>:8001/health
 ```
 
 Admin UI:
 
 ```bash
-open http://127.0.0.1:8001/ui
+open http://<host>:8001/ui
 ```
 
 Add your first source in the Sources tab (DB-backed).
@@ -148,6 +148,12 @@ Optional token gate:
 - Mutating admin endpoints require either:
   - `X-Admin-Token: <token>` header (curl/scripts), or
   - an authenticated browser cookie from `/ui/login`
+
+Smoke tests:
+```bash
+curl -v http://<host>:8001/ui
+curl -v http://<host>:8001/ui/
+```
 
 Outputs are written to:
 - Articles (Markdown): `site/content/posts/`

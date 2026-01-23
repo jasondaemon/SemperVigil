@@ -13,6 +13,7 @@ services:
       SV_CONFIG_PATH: /config/config.yml
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
       SV_UMASK: ${SV_UMASK:-002}
+      SV_ADMIN_TOKEN: ${SV_ADMIN_TOKEN:-}
     command:
       - sh
       - -lc

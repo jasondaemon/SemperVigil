@@ -64,3 +64,18 @@ def test_ui_login_cookie_flow(tmp_path, monkeypatch):
 
     static = client.get("/ui/static/admin/admin.css")
     assert static.status_code == 200
+
+
+def test_ui_redirects_to_trailing_slash_without_token(tmp_path, monkeypatch):
+    cfg_path = _write_config(tmp_path)
+    monkeypatch.setenv("SV_CONFIG_PATH", str(cfg_path))
+    monkeypatch.delenv("SV_ADMIN_TOKEN", raising=False)
+
+    client = TestClient(app)
+    response = client.get("/ui", allow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == "/ui/"
+
+    page = client.get("/ui/")
+    assert page.status_code == 200
+    assert "text/html" in page.headers.get("content-type", "")
