@@ -32,4 +32,4 @@ def test_frontmatter_uses_source_url(tmp_path):
     frontmatter = _extract_frontmatter(Path(paths[0]))
 
     assert "url" not in frontmatter
-    assert frontmatter.get("source_url") == article.url
+    assert frontmatter.get("source_url") == article.normalized_url

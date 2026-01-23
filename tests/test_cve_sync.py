@@ -1,6 +1,8 @@
 import json
 
 from sempervigil import cve_sync
+from dataclasses import asdict
+
 from sempervigil.cve_sync import (
     CveSyncConfig,
     PreferredMetrics,
@@ -8,7 +10,13 @@ from sempervigil.cve_sync import (
     process_cve_item,
     sync_cves,
 )
-from sempervigil.storage import claim_next_job, complete_job, enqueue_job, init_db
+from sempervigil.storage import (
+    claim_next_job,
+    complete_job,
+    enqueue_job,
+    init_db,
+    insert_cve_snapshot,
+)
 
 
 def _make_cve_item(
@@ -157,8 +165,24 @@ def test_cve_sync_result_is_json_serializable(tmp_path, monkeypatch):
     assert complete_job(conn, job_id, result=result) is True
 
 
-def test_snapshot_hash_accepts_preferred_metrics():
+def test_snapshot_hash_with_preferred_dict(tmp_path):
     metrics = PreferredMetrics(version="3.1", base_score=7.5, base_severity="HIGH", vector="AV:N")
-    payload = {"preferred": metrics, "v31": {"baseScore": 7.5}, "v40": None}
+    payload = {"preferred": asdict(metrics), "v31": {"baseScore": 7.5}, "v40": None}
     digest = _snapshot_hash(payload)
     assert isinstance(digest, str)
+
+    conn = init_db(str(tmp_path / "state.sqlite3"))
+    inserted = insert_cve_snapshot(
+        conn,
+        cve_id="CVE-2025-7777",
+        observed_at="2025-01-01T00:00:00Z",
+        nvd_last_modified_at="2025-01-01T00:00:00Z",
+        preferred_cvss_version=payload["preferred"]["version"],
+        preferred_base_score=payload["preferred"]["base_score"],
+        preferred_base_severity=payload["preferred"]["base_severity"],
+        preferred_vector=payload["preferred"]["vector"],
+        cvss_v40_json=None,
+        cvss_v31_json=payload["v31"],
+        snapshot_hash=digest,
+    )
+    assert inserted is True

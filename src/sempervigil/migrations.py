@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from typing import Callable
 
@@ -8,9 +9,10 @@ from .utils import json_dumps, utc_now_iso
 
 Migration = Callable[[sqlite3.Connection], None]
 
-
 def apply_migrations(conn: sqlite3.Connection) -> None:
     # Schema stable as of v0.1 — future changes via migrations only.
+    logger = logging.getLogger("sempervigil.migrations")
+    conn.execute("BEGIN IMMEDIATE")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -19,26 +21,25 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
         )
         """
     )
-    migrations = [
-        ("001_initial_schema", _migration_initial_schema),
-        ("002_jobs_table", _migration_jobs_table),
-        ("003_jobs_result_json", _migration_jobs_result_json),
-        ("004_health_alerts", _migration_health_alerts),
-        ("005_cve_tables", _migration_cve_tables),
-    ]
     applied = {
         row[0]
         for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
     }
-    for version, migration in migrations:
-        if version in applied:
-            continue
-        migration(conn)
-        conn.execute(
-            "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-            (version, utc_now_iso()),
-        )
+    try:
+        for version, migration in _get_migrations():
+            if version in applied:
+                logger.info("migration_skipped version=%s", version)
+                continue
+            migration(conn)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+                (version, utc_now_iso()),
+            )
+            logger.info("migration_applied version=%s", version)
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def _migration_initial_schema(conn: sqlite3.Connection) -> None:
@@ -279,6 +280,16 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _get_migrations() -> list[tuple[str, Migration]]:
+    return [
+        ("001_initial_schema", _migration_initial_schema),
+        ("002_jobs_table", _migration_jobs_table),
+        ("003_jobs_result_json", _migration_jobs_result_json),
+        ("004_health_alerts", _migration_health_alerts),
+        ("005_cve_tables", _migration_cve_tables),
+    ]
 
 
 def _migrate_legacy_sources(conn: sqlite3.Connection) -> None:

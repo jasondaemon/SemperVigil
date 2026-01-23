@@ -99,9 +99,10 @@ def process_cve_item(conn, cve_item: dict[str, Any], prefer_v4: bool) -> Process
     v40 = _extract_cvss(metrics.get("cvssMetricV40"))
 
     preferred = _select_preferred_metrics(v31, v40, prefer_v4)
+    preferred_dict = asdict(preferred)
     snapshot_hash = _snapshot_hash(
         {
-            "preferred": asdict(preferred),
+            "preferred": preferred_dict,
             "v31": v31,
             "v40": v40,
             "last_modified_at": last_modified_at,
@@ -148,7 +149,7 @@ def process_cve_item(conn, cve_item: dict[str, Any], prefer_v4: bool) -> Process
             cve_id,
             prev_snapshot=prev_snapshot,
             new_snapshot={
-                "preferred": preferred,
+                "preferred": preferred_dict,
                 "v31": v31,
                 "v40": v40,
             },
@@ -201,9 +202,9 @@ def _diff_snapshots(
 ) -> int:
     changes = 0
     prev_pref = prev_snapshot.get("preferred_base_severity")
-    new_pref = new_snapshot["preferred"].base_severity
+    new_pref = new_snapshot["preferred"].get("base_severity")
     prev_score = prev_snapshot.get("preferred_base_score")
-    new_score = new_snapshot["preferred"].base_score
+    new_score = new_snapshot["preferred"].get("base_score")
 
     if prev_pref and new_pref and prev_pref != new_pref:
         change_type = (
@@ -215,14 +216,14 @@ def _diff_snapshots(
             conn,
             cve_id=cve_id,
             change_at=observed_at,
-            cvss_version=new_snapshot["preferred"].version,
+            cvss_version=new_snapshot["preferred"].get("version"),
             change_type=change_type,
             from_score=prev_score,
             to_score=new_score,
             from_severity=prev_pref,
             to_severity=new_pref,
             vector_from=prev_snapshot.get("preferred_vector"),
-            vector_to=new_snapshot["preferred"].vector,
+            vector_to=new_snapshot["preferred"].get("vector"),
             metrics_changed_json=_change_evidence(
                 "rule.cve.cvss.band_change",
                 {"from": prev_pref, "to": new_pref},
@@ -231,22 +232,25 @@ def _diff_snapshots(
         )
         changes += 1
 
-    if prev_snapshot.get("preferred_vector") != new_snapshot["preferred"].vector:
+    if prev_snapshot.get("preferred_vector") != new_snapshot["preferred"].get("vector"):
         insert_cve_change(
             conn,
             cve_id=cve_id,
             change_at=observed_at,
-            cvss_version=new_snapshot["preferred"].version,
+            cvss_version=new_snapshot["preferred"].get("version"),
             change_type="vector_change",
             from_score=prev_score,
             to_score=new_score,
             from_severity=prev_pref,
             to_severity=new_pref,
             vector_from=prev_snapshot.get("preferred_vector"),
-            vector_to=new_snapshot["preferred"].vector,
+            vector_to=new_snapshot["preferred"].get("vector"),
             metrics_changed_json=_change_evidence(
                 "rule.cve.vector.changed",
-                {"from": prev_snapshot.get("preferred_vector"), "to": new_snapshot["preferred"].vector},
+                {
+                    "from": prev_snapshot.get("preferred_vector"),
+                    "to": new_snapshot["preferred"].get("vector"),
+                },
             ),
             note=None,
         )

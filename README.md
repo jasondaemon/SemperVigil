@@ -129,6 +129,12 @@ Sources are stored in the database, not in static config files.
 docker compose up -d --build admin worker web
 ```
 
+Admin health check:
+
+```bash
+curl -s http://127.0.0.1:8001/health
+```
+
 Outputs are written to:
 - Articles (Markdown): `site/content/posts/`
 - JSON index (if enabled): `site/static/sempervigil/index.json`

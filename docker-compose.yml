@@ -116,7 +116,7 @@ services:
       - ./data:/data
       - ./site:/site
     working_dir: /app
-    command: ["python", "-m", "pytest"]
+    command: ["python", "-m", "pytest", "-q"]
 
 
 networks:

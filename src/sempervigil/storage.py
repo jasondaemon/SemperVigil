@@ -242,15 +242,31 @@ def upsert_cve_links(
         return
     now = utc_now_iso()
     if _table_exists(conn, "cves"):
+        cve_columns = _table_columns(conn, "cves")
         for cve_id in cve_ids:
-            conn.execute(
-                """
-                INSERT INTO cves (cve_id, created_at, last_seen_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(cve_id) DO UPDATE SET last_seen_at = excluded.last_seen_at
-                """,
-                (cve_id, now, now),
-            )
+            if "created_at" in cve_columns and "last_seen_at" in cve_columns:
+                conn.execute(
+                    """
+                    INSERT INTO cves (cve_id, created_at, last_seen_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(cve_id) DO UPDATE SET last_seen_at = excluded.last_seen_at
+                    """,
+                    (cve_id, now, now),
+                )
+            elif "updated_at" in cve_columns:
+                conn.execute(
+                    """
+                    INSERT INTO cves (cve_id, updated_at)
+                    VALUES (?, ?)
+                    ON CONFLICT(cve_id) DO UPDATE SET updated_at = excluded.updated_at
+                    """,
+                    (cve_id, now),
+                )
+            else:
+                conn.execute(
+                    "INSERT OR IGNORE INTO cves (cve_id) VALUES (?)",
+                    (cve_id,),
+                )
     if _table_exists(conn, "article_cves"):
         columns = _table_columns(conn, "article_cves")
         for cve_id in cve_ids:

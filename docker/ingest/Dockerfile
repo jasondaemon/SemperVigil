@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 COPY . /app
@@ -7,8 +7,8 @@ ENV PYTHONUNBUFFERED=1
 ARG INSTALL_TEST_DEPS=0
 
 # System tools (sqlite3 for inspection, curl for debugging)
-RUN apt-get update \
- && apt-get install -y --no-install-recommends sqlite3 curl \
+RUN apt-get update -o Acquire::Retries=3 \
+ && apt-get install -y --no-install-recommends --fix-missing sqlite3 curl \
  && rm -rf /var/lib/apt/lists/*
 
 # Install SemperVigil + deps (from pyproject.toml)
