@@ -13,7 +13,14 @@ services:
       SV_CONFIG_PATH: /config/config.yml
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
       SV_UMASK: ${SV_UMASK:-002}
-    command: ["sh", "-lc", "/tools/ensure-dirs.sh && uvicorn sempervigil.admin:app --host 0.0.0.0 --port 8000"]
+    command:
+      - sh
+      - -lc
+      - |
+        set -e
+        umask ${SV_UMASK:-002}
+        mkdir -p /data /site /config
+        uvicorn sempervigil.admin:app --host 0.0.0.0 --port 8000
     ports:
       - "127.0.0.1:${SV_ADMIN_PORT:-8001}:8000"
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
@@ -39,7 +46,14 @@ services:
       SV_CONFIG_PATH: /config/config.yml
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
       SV_UMASK: ${SV_UMASK:-002}
-    command: ["sh", "-lc", "/tools/ensure-dirs.sh && sempervigil-worker"]
+    command:
+      - sh
+      - -lc
+      - |
+        set -e
+        umask ${SV_UMASK:-002}
+        mkdir -p /data /site /config
+        sempervigil-worker
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - sv_data:/data
@@ -77,7 +91,8 @@ services:
       - -lc
       - |
         set -e
-        sh /tools/ensure-dirs.sh
+        umask ${SV_UMASK:-002}
+        mkdir -p /site /tmp/hugo_cache /repo/site/resources
         echo "Building Hugo: source=/repo/site -> dest=/site (baseURL=${SV_HUGO_BASEURL})"
         hugo --source /repo/site --destination /site --baseURL "${SV_HUGO_BASEURL}" --noBuildLock
     networks:
