@@ -2,6 +2,8 @@ FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 COPY . /app
+# Ensure app files are readable by non-root users
+RUN chmod -R a+rX /app
 
 ENV PYTHONUNBUFFERED=1
 ARG INSTALL_TEST_DEPS=0
