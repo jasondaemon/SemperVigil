@@ -22,12 +22,11 @@ services:
         mkdir -p /data /site /config
         uvicorn sempervigil.admin:app --host 0.0.0.0 --port 8000
     ports:
-      - "0.0.0.0:${SV_ADMIN_PORT:-8001}:8000"
+      - "127.0.0.1:${SV_ADMIN_PORT:-8001}:8000"
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - sv_data:/data
       - ./config:/config:ro
-      - ./tools:/tools:ro
     networks:
       - svnet
     restart: unless-stopped
@@ -59,7 +58,6 @@ services:
       - sv_data:/data
       - sv_site:/site
       - ./config:/config:ro
-      - ./tools:/tools:ro
     networks:
       - svnet
     restart: unless-stopped
@@ -75,24 +73,23 @@ services:
     environment:
       SV_UMASK: ${SV_UMASK:-002}
       SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-http://localhost:${SV_WEB_PORT:-8080}/}
-      # writable cache location (mounted as a volume below)
       HUGO_CACHEDIR: /tmp/hugo_cache
     working_dir: /repo
     volumes:
       - .:/repo:ro
       - sv_site:/site
       - sv_hugo_cache:/tmp/hugo_cache
-      # allow Hugo to write generated resources (image pipelines, etc)
+      # Let Hugo write generated resources (image pipeline, etc.)
       - sv_hugo_resources:/repo/site/resources
-      - ./tools:/tools:ro
-      - ./config:/config:ro
+      # If your theme uses Hugo Modules, this prevents module cache pain too
+      - sv_hugo_modules:/tmp/hugo_modules
     command:
       - sh
       - -lc
       - |
         set -e
         umask ${SV_UMASK:-002}
-        mkdir -p /site /tmp/hugo_cache /repo/site/resources
+        mkdir -p /site /tmp/hugo_cache /tmp/hugo_modules
         echo "Building Hugo: source=/repo/site -> dest=/site (baseURL=${SV_HUGO_BASEURL})"
         hugo --source /repo/site --destination /site --baseURL "${SV_HUGO_BASEURL}" --noBuildLock
     networks:
@@ -131,6 +128,7 @@ volumes:
   sv_site:
   sv_hugo_cache:
   sv_hugo_resources:
+  sv_hugo_modules:
 
 networks:
   svnet:
