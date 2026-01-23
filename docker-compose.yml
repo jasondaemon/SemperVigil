@@ -51,10 +51,6 @@ services:
     restart: unless-stopped
 
   # 3) Builder (on-demand Hugo build)
-  # Key fixes:
-  # - Mount repo read-only so Hugo can't create lock files in /repo/site
-  # - Run Hugo with --source pointing at repo's site dir
-  # - Write output into the sv_site volume
   builder:
     build:
       context: .
@@ -65,10 +61,6 @@ services:
     environment:
       SV_UMASK: ${SV_UMASK:-002}
       SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-http://localhost:${SV_WEB_PORT:-8080}/}
-    # In the builder image, user mapping sometimes fights with hugo module cache.
-    # Let it run as the image default user unless you have a hard requirement.
-    # If you *must* run as 1000:1000, keep the user line and ensure /site is writable.
-    # user: "${SV_UID:-1000}:${SV_GID:-1000}"
     working_dir: /repo
     volumes:
       - .:/repo:ro
@@ -80,10 +72,10 @@ services:
       - -lc
       - |
         set -e
-        chmod +x /tools/ensure-dirs.sh || true
-        /tools/ensure-dirs.sh
+        # tools is mounted read-only; don't chmod it. Just run via sh.
+        sh /tools/ensure-dirs.sh
         echo "Building Hugo: source=/repo/site -> dest=/site (baseURL=${SV_HUGO_BASEURL})"
-        hugo --source /repo/site --destination /site --baseURL "${SV_HUGO_BASEURL}"
+        hugo --source /repo/site --destination /site --baseURL "${SV_HUGO_BASEURL}" --noBuildLock
     networks:
       - svnet
 
