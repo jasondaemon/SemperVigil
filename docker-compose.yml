@@ -1,20 +1,3 @@
-# docker-compose.yml
-#
-# Repo-level fixes baked in:
-# - builder uses modern Hugo (hugomods/hugo:exts) and runs "hugo" (not "hugo build")
-# - admin port is loopback-only by default to avoid stomping other services; change if you want LAN access
-# - web port is configurable via SV_WEB_PORT to avoid NPM collisions
-# - consistent UID/GID for NFS/root_squash friendliness
-# - builder is "on-demand" (profile: ["build"]) so it won't constantly rebuild unless you run it
-#
-# Usage:
-#   docker compose up -d web admin worker
-#   docker compose run --rm builder   # run a one-off Hugo build
-#
-# Optional:
-#   export SV_WEB_PORT=8080   # default below
-#   export SV_ADMIN_PORT=8001  # default below
-
 services:
   # 1) Admin API (internal)
   admin:
@@ -26,18 +9,17 @@ services:
       - .env
     environment:
       SV_ENV: ${SV_ENV:-dev}
-      SV_DATA_DIR: ${SV_DATA_DIR:-/data}
-      SV_CONFIG_PATH: ${SV_CONFIG_PATH:-/config/config.yml}
+      SV_DATA_DIR: /data
+      SV_CONFIG_PATH: /config/config.yml
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
       SV_UMASK: ${SV_UMASK:-002}
     command: ["sh", "-lc", "/tools/ensure-dirs.sh && uvicorn sempervigil.admin:app --host 0.0.0.0 --port 8000"]
     ports:
-      # Default: internal-only on host. Change to "0.0.0.0:8001:8000" if you want LAN access.
       - "127.0.0.1:${SV_ADMIN_PORT:-8001}:8000"
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
+      - sv_data:/data
       - ./config:/config:ro
-      - ./data:/data
       - ./tools:/tools:ro
     networks:
       - svnet
@@ -53,22 +35,22 @@ services:
       - .env
     environment:
       SV_ENV: ${SV_ENV:-dev}
-      SV_DATA_DIR: ${SV_DATA_DIR:-/data}
-      SV_CONFIG_PATH: ${SV_CONFIG_PATH:-/config/config.yml}
+      SV_DATA_DIR: /data
+      SV_CONFIG_PATH: /config/config.yml
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
       SV_UMASK: ${SV_UMASK:-002}
     command: ["sh", "-lc", "/tools/ensure-dirs.sh && sempervigil-worker"]
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
+      - sv_data:/data
+      - sv_site:/site
       - ./config:/config:ro
-      - ./data:/data
-      - ./site:/site
       - ./tools:/tools:ro
     networks:
       - svnet
     restart: unless-stopped
 
-  # 3) Builder (internal) — modern Hugo for Blowfish
+  # 3) Builder (on-demand Hugo build)
   builder:
     build:
       context: .
@@ -81,9 +63,9 @@ services:
       SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-http://localhost:${SV_WEB_PORT:-8080}/}
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
+      - sv_data:/data
+      - sv_site:/site
       - ./config:/config:ro
-      - ./data:/data
-      - ./site:/site
       - ./tools:/tools:ro
     command: ["sh", "-lc", "/tools/ensure-dirs.sh && sempervigil-builder --once"]
     networks:
@@ -94,14 +76,14 @@ services:
     image: nginxinc/nginx-unprivileged:alpine
     container_name: sempervigil-web
     ports:
-      # Make this configurable so we don't collide with NPM / other stacks.
       - "${SV_WEB_PORT:-8080}:8080"
     volumes:
-      - ./site/public:/usr/share/nginx/html:ro
+      - sv_site:/usr/share/nginx/html:ro
     networks:
       - svnet
     restart: unless-stopped
 
+  # 5) Test runner (image-only, no NFS)
   test:
     build:
       context: .
@@ -112,12 +94,14 @@ services:
       - .env
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
-      - .:/app
-      - ./data:/data
-      - ./site:/site
+      - sv_data:/data
+      - sv_site:/site
     working_dir: /app
     command: ["python", "-m", "pytest", "-q"]
 
+volumes:
+  sv_data:
+  sv_site:
 
 networks:
   svnet:
