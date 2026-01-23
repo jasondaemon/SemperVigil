@@ -4,7 +4,7 @@ import json
 import sqlite3
 from typing import Callable
 
-from .utils import utc_now_iso
+from .utils import json_dumps, utc_now_iso
 
 Migration = Callable[[sqlite3.Connection], None]
 
@@ -359,7 +359,7 @@ def _seed_tactic_from_legacy(conn: sqlite3.Connection, source_id: str) -> None:
              last_success_at, last_error_at, error_streak, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (source_id, kind, 1, 100, json.dumps(config), None, None, 0, now, now),
+        (source_id, kind, 1, 100, json_dumps(config), None, None, 0, now, now),
     )
 
 

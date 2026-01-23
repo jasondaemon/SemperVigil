@@ -660,6 +660,30 @@ def list_jobs(conn: sqlite3.Connection, limit: int = 50) -> list[Job]:
     return [_row_to_job(row) for row in cursor.fetchall()]
 
 
+def has_pending_job(
+    conn: sqlite3.Connection, job_type: str, exclude_job_id: str | None = None
+) -> bool:
+    if exclude_job_id:
+        cursor = conn.execute(
+            """
+            SELECT 1 FROM jobs
+            WHERE job_type = ? AND status IN ('queued', 'running') AND id != ?
+            LIMIT 1
+            """,
+            (job_type, exclude_job_id),
+        )
+    else:
+        cursor = conn.execute(
+            """
+            SELECT 1 FROM jobs
+            WHERE job_type = ? AND status IN ('queued', 'running')
+            LIMIT 1
+            """,
+            (job_type,),
+        )
+    return cursor.fetchone() is not None
+
+
 def claim_next_job(
     conn: sqlite3.Connection,
     worker_id: str,

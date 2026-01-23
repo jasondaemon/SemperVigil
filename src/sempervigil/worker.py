@@ -24,6 +24,7 @@ from .storage import (
     init_db,
     insert_articles,
     list_due_sources,
+    has_pending_job,
     pause_source,
     record_health_alert,
     record_source_run,
@@ -129,6 +130,22 @@ def _handle_ingest_source(
 
     result = process_source(source, config, logger, conn)
     finished_at = utc_now_iso()
+    seen_count = result.skipped_duplicates
+    filtered_count = result.skipped_filters
+    error_count = result.skipped_missing_url
+
+    log_event(
+        logger,
+        logging.INFO,
+        "ingest_counts",
+        source_id=source.id,
+        found_count=result.found_count,
+        accepted_count=result.accepted_count,
+        seen_count=seen_count,
+        filtered_count=filtered_count,
+        error_count=error_count,
+    )
+    _log_decision_samples(logger, result)
 
     record_source_run(
         conn,
@@ -154,6 +171,9 @@ def _handle_ingest_source(
             "error": result.error,
             "found_count": result.found_count,
             "accepted_count": result.accepted_count,
+            "seen_count": seen_count,
+            "filtered_count": filtered_count,
+            "error_count": error_count,
         }
 
     insert_articles(conn, result.articles)
@@ -184,8 +204,6 @@ def _handle_ingest_source(
                 "normalized_url": article.normalized_url,
             },
         )
-    if result.articles:
-        enqueue_job(conn, "build_site", None, debounce=True)
     # TODO: attach event correlation hooks (events/event_mentions) once implemented.
     if config.publishing.write_json_index:
         write_json_index(result.articles, config.publishing.json_index_path)
@@ -198,6 +216,9 @@ def _handle_ingest_source(
         "skipped_duplicates": result.skipped_duplicates,
         "skipped_filters": result.skipped_filters,
         "skipped_missing_url": result.skipped_missing_url,
+        "seen_count": seen_count,
+        "filtered_count": filtered_count,
+        "error_count": error_count,
     }
 
 
@@ -233,6 +254,43 @@ def _handle_test_source(
         "skipped_missing_url": result.skipped_missing_url,
         "preview": preview,
     }
+
+
+def _log_decision_samples(logger: logging.Logger, result: object) -> None:
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+    decisions = getattr(result, "decisions", [])
+    buckets = {
+        "accepted": [],
+        "seen": [],
+        "filtered": [],
+        "error": [],
+    }
+    for decision in decisions:
+        entry = {
+            "title": getattr(decision, "title", None),
+            "url": getattr(decision, "normalized_url", None),
+        }
+        if getattr(decision, "decision", "") == "ACCEPT":
+            buckets["accepted"].append(entry)
+            continue
+        reasons = getattr(decision, "reasons", []) or []
+        if "duplicate" in reasons:
+            buckets["seen"].append(entry)
+        elif "missing_url" in reasons:
+            buckets["error"].append(entry)
+        elif any(reason.startswith("deny_keywords") for reason in reasons) or "allow_keywords:miss" in reasons:
+            buckets["filtered"].append(entry)
+    for bucket, samples in buckets.items():
+        if not samples:
+            continue
+        log_event(
+            logger,
+            logging.DEBUG,
+            "ingest_samples",
+            bucket=bucket,
+            samples=samples[:3],
+        )
 
 
 def _handle_write_article_markdown(
@@ -393,7 +451,10 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
     if job.job_type == "cve_sync":
         return _handle_cve_sync(conn, config, logger)
     if job.job_type == "write_article_markdown":
-        return _handle_write_article_markdown(conn, config, job.payload, logger)
+        result = _handle_write_article_markdown(conn, config, job.payload, logger)
+        if not has_pending_job(conn, "write_article_markdown", exclude_job_id=job.id):
+            enqueue_job(conn, "build_site", None, debounce=True)
+        return result
     raise ValueError(f"unsupported job type {job.job_type}")
 
 

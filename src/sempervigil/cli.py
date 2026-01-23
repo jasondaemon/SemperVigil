@@ -9,14 +9,11 @@ from pathlib import Path
 
 from .config import ConfigError, load_config, load_sources_file
 from .cve_sync import CveSyncConfig, isoformat_utc, sync_cves
-from .worker import WORKER_JOB_TYPES, run_claimed_job
+from .worker import WORKER_JOB_TYPES
 from .ingest import process_source
 from .models import SourceTactic
 from .publish import write_hugo_markdown, write_json_index, write_tag_indexes
 from .storage import (
-    claim_next_job,
-    complete_job,
-    fail_job,
     get_source,
     get_setting,
     init_db,
@@ -579,39 +576,6 @@ def _cmd_jobs_list(args: argparse.Namespace, logger: logging.Logger) -> int:
     return 0
 
 
-def _cmd_jobs_run_once(args: argparse.Namespace, logger: logging.Logger) -> int:
-    try:
-        config = load_config(args.config)
-    except ConfigError as exc:
-        log_event(logger, logging.ERROR, "config_error", error=str(exc))
-        return 1
-
-    if not args.once:
-        log_event(logger, logging.ERROR, "missing_flag", hint="Use: sempervigil jobs run --once")
-        return 2
-
-    conn = init_db(config.paths.state_db)
-    job = claim_next_job(
-        conn,
-        worker_id="cli",
-        allowed_types=WORKER_JOB_TYPES,
-        lock_timeout_seconds=config.jobs.lock_timeout_seconds,
-    )
-    if not job:
-        log_event(logger, logging.INFO, "no_jobs")
-        return 0
-    try:
-        result = run_claimed_job(conn, config, job, logger)
-    except Exception as exc:  # noqa: BLE001
-        fail_job(conn, job.id, str(exc))
-        log_event(logger, logging.ERROR, "job_failed", job_id=job.id, error=str(exc))
-        return 1
-    if complete_job(conn, job.id, result=result):
-        log_event(logger, logging.INFO, "job_succeeded", job_id=job.id)
-        return 0
-    log_event(logger, logging.ERROR, "job_complete_failed", job_id=job.id)
-    return 1
-
 
 def _parse_iso(value: str) -> datetime:
     if value.endswith("Z"):
@@ -779,14 +743,6 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_list = jobs_subparsers.add_parser("list", help="List recent jobs")
     jobs_list.add_argument("--limit", type=int, default=20, help="Number of jobs to show")
     jobs_list.set_defaults(func=_cmd_jobs_list)
-
-    jobs_run = jobs_subparsers.add_parser("run", help="Run one queued job now")
-    jobs_run.add_argument(
-        "--once",
-        action="store_true",
-        help="Run a single queued job and exit",
-    )
-    jobs_run.set_defaults(func=_cmd_jobs_run_once)
 
     cve_parser = subparsers.add_parser("cve", help="CVE ingestion commands")
     cve_subparsers = cve_parser.add_subparsers(dest="cve_command", required=True)

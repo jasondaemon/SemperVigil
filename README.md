@@ -143,20 +143,17 @@ docker compose run --rm worker \
   sempervigil jobs enqueue ingest_due_sources
 ```
 
-The worker will claim and run queued jobs.
-
----
-
-### 5) Run one job for debugging
+The worker service claims and runs queued jobs continuously. To process a single
+job for debugging, you can run the worker once:
 
 ```bash
 docker compose run --rm worker \
-  sempervigil jobs run --once
+  sempervigil-worker --once
 ```
 
 ---
 
-### 6) Build the site output
+### 5) Build the site output
 
 The ingest run enqueues a `build_site` job automatically when new articles are accepted.
 
