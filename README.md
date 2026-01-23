@@ -148,6 +148,7 @@ Optional token gate:
 - Mutating admin endpoints require either:
   - `X-Admin-Token: <token>` header (curl/scripts), or
   - an authenticated browser cookie from `/ui/login`
+- `/ui/static` assets remain public; UI pages still require auth when token is set
 
 Smoke tests:
 ```bash

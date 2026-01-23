@@ -14,6 +14,7 @@ from .storage import get_source_run_streaks, init_db, list_jobs
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+ADMIN_COOKIE_NAME = "sv_admin_token"
 
 
 def ui_router(token_guard) -> APIRouter:
@@ -34,6 +35,7 @@ def ui_router(token_guard) -> APIRouter:
                 "enabled_count": enabled_count,
                 "jobs": jobs,
                 "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
+                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
             },
         )
 
@@ -48,6 +50,7 @@ def ui_router(token_guard) -> APIRouter:
                 "request": request,
                 "sources": items,
                 "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
+                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
             },
         )
 
@@ -62,6 +65,7 @@ def ui_router(token_guard) -> APIRouter:
                 "request": request,
                 "jobs": items,
                 "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
+                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
             },
         )
 
@@ -118,6 +122,7 @@ def ui_router(token_guard) -> APIRouter:
                 "request": request,
                 "health": rows,
                 "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
+                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
             },
         )
 

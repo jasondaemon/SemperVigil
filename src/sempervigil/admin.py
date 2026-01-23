@@ -93,7 +93,11 @@ def ui_login(request: Request):
     token_enabled = bool(os.environ.get("SV_ADMIN_TOKEN"))
     return TEMPLATES.TemplateResponse(
         "admin/login.html",
-        {"request": request, "token_enabled": token_enabled},
+        {
+            "request": request,
+            "token_enabled": token_enabled,
+            "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
+        },
     )
 
 

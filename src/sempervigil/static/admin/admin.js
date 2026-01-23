@@ -3,7 +3,10 @@ async function apiFetch(url, options = {}) {
     { "Content-Type": "application/json" },
     options.headers || {}
   );
-  const response = await fetch(url, Object.assign({}, options, { headers }));
+  const response = await fetch(
+    url,
+    Object.assign({}, options, { headers, credentials: "same-origin" })
+  );
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || response.statusText);
