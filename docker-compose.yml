@@ -22,7 +22,7 @@ services:
         mkdir -p /data /site /config
         uvicorn sempervigil.admin:app --host 0.0.0.0 --port 8000
     ports:
-      - "${SV_ADMIN_PORT:-8001}:8000"
+      - "0.0.0.0:${SV_ADMIN_PORT:-8001}:8000"
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - sv_data:/data
@@ -121,7 +121,7 @@ services:
       - sv_data:/data
       - sv_site:/site
     working_dir: /app
-    command: ["python", "-m", "pytest", "-q"]
+    command: ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
 
 volumes:
   sv_data:

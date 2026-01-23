@@ -1,0 +1,38 @@
+{% extends "admin/base.html" %}
+{% block content %}
+  <section class="panel">
+    <h2>Source Health</h2>
+    {% if not health %}
+      <p>No sources configured. Add your first source.</p>
+    {% else %}
+    <table>
+      <thead>
+        <tr>
+          <th>Source</th>
+          <th>Enabled</th>
+          <th>Last Status</th>
+          <th>Last Run</th>
+          <th>Items</th>
+          <th>Error</th>
+          <th>Errors</th>
+          <th>Zero Streak</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in health %}
+        <tr>
+          <td>{{ row.name }}</td>
+          <td>{{ "yes" if row.enabled else "no" }}</td>
+          <td>{{ row.last_status or "" }}</td>
+          <td>{{ row.last_run_at or "" }}</td>
+          <td>{{ row.last_items_accepted or "" }}</td>
+          <td class="truncate">{{ row.last_error or row.paused_reason or "" }}</td>
+          <td>{{ row.consecutive_errors }}</td>
+          <td>{{ row.consecutive_zero }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+{% endblock %}

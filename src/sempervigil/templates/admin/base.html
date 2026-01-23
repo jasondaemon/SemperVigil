@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>SemperVigil Admin</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/ui/static/admin/admin.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">SemperVigil Admin</div>
+      <nav class="nav">
+        <a href="/ui">Dashboard</a>
+        <a href="/ui/sources">Sources</a>
+        <a href="/ui/jobs">Jobs</a>
+        <a href="/ui/health">Health</a>
+      </nav>
+      {% if token_enabled %}
+      <form class="token-box" action="/ui/logout" method="post">
+        <button id="logout" type="submit">Logout</button>
+      </form>
+      {% endif %}
+    </header>
+    <main class="container">
+      {% block content %}{% endblock %}
+    </main>
+    <script src="/ui/static/admin/admin.js"></script>
+  </body>
+</html>

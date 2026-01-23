@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-/tools/ensure-dirs.sh
+sh /tools/ensure-dirs.sh
 
 hugo -s /site -d /site/public --minify --gc --cleanDestinationDir --logLevel info
 

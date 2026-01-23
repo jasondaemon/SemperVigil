@@ -102,7 +102,7 @@ def _cmd_run(args: argparse.Namespace, logger: logging.Logger) -> int:
             logger,
             logging.ERROR,
             "no_sources",
-            hint="Import sources with `sempervigil sources import /config/sources.yml`",
+            hint="Add sources via the Admin UI (/ui) or use `sempervigil sources import`",
         )
         return 1
     if not enabled_sources:
@@ -196,7 +196,7 @@ def _cmd_test_source(args: argparse.Namespace, logger: logging.Logger) -> int:
                 logger,
                 logging.ERROR,
                 "no_sources",
-                hint="Import sources with `sempervigil sources import /config/sources.yml`",
+                hint="Add sources via the Admin UI (/ui) or use `sempervigil sources import`",
             )
         else:
             log_event(logger, logging.ERROR, "source_not_found", source_id=args.source_id)
@@ -345,7 +345,7 @@ def _cmd_sources_import(args: argparse.Namespace, logger: logging.Logger) -> int
                 logging.ERROR,
                 "sources_import_error",
                 error="no sources.yml found",
-                hint="Copy config/sources.example.yml to config/sources.yml",
+                hint="Use the Admin UI (/ui) or provide a sources.yml path",
             )
             return 1
     log_event(logger, logging.INFO, "sources_import_path", path=sources_path)
@@ -427,7 +427,7 @@ def _cmd_sources_list(args: argparse.Namespace, logger: logging.Logger) -> int:
             logger,
             logging.WARNING,
             "no_sources",
-            hint="Import sources with `sempervigil sources import /config/sources.yml`",
+            hint="Add sources via the Admin UI (/ui) or use `sempervigil sources import`",
         )
         return 1
 

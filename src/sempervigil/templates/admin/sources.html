@@ -1,0 +1,67 @@
+{% extends "admin/base.html" %}
+{% block content %}
+  <section class="panel">
+    <h2>Add / Edit Source</h2>
+    <form id="source-form">
+      <input type="hidden" id="source-id">
+      <div class="grid">
+        <label>Name<input type="text" id="source-name" required></label>
+        <label>Kind
+          <select id="source-kind">
+            <option value="rss">rss</option>
+            <option value="html">html</option>
+          </select>
+        </label>
+        <label>URL<input type="url" id="source-url" required></label>
+        <label>Interval (min)<input type="number" id="source-interval" value="60"></label>
+        <label>Tags (comma)<input type="text" id="source-tags"></label>
+        <label class="checkbox"><input type="checkbox" id="source-enabled" checked> Enabled</label>
+      </div>
+      <div class="actions">
+        <button class="btn" type="submit">Save Source</button>
+        <button class="btn secondary" type="button" id="source-reset">Reset</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>Sources</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Enabled</th>
+          <th>Name</th>
+          <th>Kind</th>
+          <th>URL</th>
+          <th>Interval</th>
+          <th>Last OK</th>
+          <th>Last Error</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for source in sources %}
+        <tr data-source-id="{{ source.id }}">
+          <td>
+            <input type="checkbox" class="toggle-enabled" {% if source.enabled %}checked{% endif %}>
+          </td>
+          <td class="source-name">{{ source.name }}</td>
+          <td class="source-kind">{{ source.kind or "" }}</td>
+          <td class="source-url mono">{{ source.url }}</td>
+          <td class="source-interval">{{ source.interval_minutes }}</td>
+          <td>{{ source.last_ok_at or "" }}</td>
+          <td class="truncate">{{ source.last_error or "" }}</td>
+          <td>
+            <button class="btn small test-source" type="button">Test</button>
+            <button class="btn small secondary edit-source" type="button">Edit</button>
+            <button class="btn small danger delete-source" type="button">Delete</button>
+          </td>
+        </tr>
+        <tr class="test-result" data-source-id="{{ source.id }}" style="display:none;">
+          <td colspan="8" class="mono"></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

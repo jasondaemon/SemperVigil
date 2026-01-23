@@ -1,0 +1,39 @@
+{% extends "admin/base.html" %}
+{% block content %}
+  <section class="panel">
+    <div class="actions">
+      <button class="btn" data-enqueue="ingest_due_sources">Enqueue Ingest Due Sources</button>
+      <button class="btn" data-enqueue="build_site">Enqueue Build Site</button>
+      <button class="btn secondary" id="jobs-refresh">Refresh</button>
+    </div>
+  </section>
+  <section class="panel">
+    <h2>Jobs</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Job ID</th>
+          <th>Type</th>
+          <th>Status</th>
+          <th>Requested</th>
+          <th>Started</th>
+          <th>Finished</th>
+          <th>Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job in jobs %}
+        <tr>
+          <td class="mono">{{ job.id }}</td>
+          <td>{{ job.job_type }}</td>
+          <td>{{ job.status }}</td>
+          <td>{{ job.requested_at }}</td>
+          <td>{{ job.started_at or "" }}</td>
+          <td>{{ job.finished_at or "" }}</td>
+          <td class="truncate">{{ job.error or job.result or "" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

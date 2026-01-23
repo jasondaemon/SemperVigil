@@ -289,7 +289,27 @@ def _get_migrations() -> list[tuple[str, Migration]]:
         ("003_jobs_result_json", _migration_jobs_result_json),
         ("004_health_alerts", _migration_health_alerts),
         ("005_cve_tables", _migration_cve_tables),
+        ("006_sources_admin_fields", _migration_sources_admin_fields),
     ]
+
+
+def _migration_sources_admin_fields(conn: sqlite3.Connection) -> None:
+    if not _table_exists(conn, "sources"):
+        return
+    columns = _table_columns(conn, "sources")
+    to_add = {
+        "kind": "TEXT NULL",
+        "url": "TEXT NULL",
+        "interval_minutes": "INTEGER NOT NULL DEFAULT 60",
+        "tags_json": "TEXT NULL",
+        "last_checked_at": "TEXT NULL",
+        "last_ok_at": "TEXT NULL",
+        "last_error": "TEXT NULL",
+    }
+    for column, definition in to_add.items():
+        if column in columns:
+            continue
+        conn.execute(f"ALTER TABLE sources ADD COLUMN {column} {definition}")
 
 
 def _migrate_legacy_sources(conn: sqlite3.Connection) -> None:

@@ -1,0 +1,46 @@
+{% extends "admin/base.html" %}
+{% block content %}
+  <section class="cards">
+    <div class="card">
+      <div class="card-title">Sources</div>
+      <div class="card-value">{{ sources_count }}</div>
+      <div class="card-sub">Enabled: {{ enabled_count }}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Quick Actions</div>
+      <div class="card-actions">
+        <button class="btn" data-enqueue="ingest_due_sources">Enqueue Ingest Due Sources</button>
+        <button class="btn" data-enqueue="build_site">Enqueue Build Site</button>
+      </div>
+      {% if sources_count == 0 %}
+        <a class="btn secondary" href="/ui/sources">Add your first source</a>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Recent Jobs</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Job ID</th>
+          <th>Type</th>
+          <th>Status</th>
+          <th>Started</th>
+          <th>Finished</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job in jobs %}
+        <tr>
+          <td class="mono">{{ job.id }}</td>
+          <td>{{ job.job_type }}</td>
+          <td>{{ job.status }}</td>
+          <td>{{ job.started_at or "" }}</td>
+          <td>{{ job.finished_at or "" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

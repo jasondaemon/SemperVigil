@@ -1,0 +1,17 @@
+{% extends "admin/base.html" %}
+{% block content %}
+  <section class="panel">
+    <h2>Admin Login</h2>
+    {% if not token_enabled %}
+      <p>Admin token is not set. <a href="/ui">Continue</a></p>
+    {% else %}
+      <form id="login-form">
+        <label>Token<input type="password" id="login-token" placeholder="SV_ADMIN_TOKEN"></label>
+        <div class="actions">
+          <button class="btn" type="submit">Login</button>
+        </div>
+        <p class="error" id="login-error" style="display:none;"></p>
+      </form>
+    {% endif %}
+  </section>
+{% endblock %}

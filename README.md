@@ -104,19 +104,18 @@ These documents are the **source of truth** for implementation decisions.
 ```bash
 cp .env.example .env
 cp config.example.yml config/config.yml
-cp config/sources.example.yml config/sources.yml
 ```
 
 Adjust as needed for your environment.
 
+Note: `config/sources.example.yml` is documentation only. Sources live in the DB.
+
 ---
 
-### 2) Import sources into the state DB
+### 2) Initialize the state DB
 
 ```bash
 docker compose run --rm worker sempervigil db migrate
-docker compose run --rm worker \
-  sempervigil sources import /config/sources.yml
 ```
 
 Sources are stored in the database, not in static config files.
@@ -134,6 +133,21 @@ Admin health check:
 ```bash
 curl -s http://127.0.0.1:8001/health
 ```
+
+Admin UI:
+
+```bash
+open http://127.0.0.1:8001/ui
+```
+
+Add your first source in the Sources tab (DB-backed).
+
+Optional token gate:
+- Set `SV_ADMIN_TOKEN` in `.env`
+- UI access requires login at `/ui/login` (cookie-based)
+- Mutating admin endpoints require either:
+  - `X-Admin-Token: <token>` header (curl/scripts), or
+  - an authenticated browser cookie from `/ui/login`
 
 Outputs are written to:
 - Articles (Markdown): `site/content/posts/`
