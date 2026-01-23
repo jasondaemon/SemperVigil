@@ -67,7 +67,8 @@ services:
       - sv_site:/site
       - ./config:/config:ro
       - ./tools:/tools:ro
-    command: ["sh", "-c", "export PATH=/venv/bin:$PATH; sh /tools/ensure-dirs.sh && sempervigil-builder --once"]    networks:
+    command: ["sh", "-c", "export PATH=/venv/bin:$PATH; sh /tools/ensure-dirs.sh && sempervigil-builder --once"]    
+    networks:
       - svnet
 
   # 4) Static site server (public)
