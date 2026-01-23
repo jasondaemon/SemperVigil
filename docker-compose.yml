@@ -22,7 +22,7 @@ services:
         mkdir -p /data /site /config
         uvicorn sempervigil.admin:app --host 0.0.0.0 --port 8000
     ports:
-      - "127.0.0.1:${SV_ADMIN_PORT:-8001}:8000"
+      - "0.0.0.0:${SV_ADMIN_PORT:-8001}:8000"
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - sv_data:/data
