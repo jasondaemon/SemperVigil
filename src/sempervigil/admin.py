@@ -7,7 +7,10 @@ import sqlite3
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
+try:
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+except Exception:  # noqa: BLE001
+    ProxyHeadersMiddleware = None
 from datetime import datetime, timezone
 from pydantic import BaseModel
 
@@ -63,7 +66,8 @@ app = FastAPI(title="SemperVigil Admin API")
 
 ADMIN_COOKIE_NAME = "sv_admin_token"
 
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+if ProxyHeadersMiddleware:
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 app.mount(
     "/ui/static",
