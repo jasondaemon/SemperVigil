@@ -9,7 +9,16 @@ from fastapi.templating import Jinja2Templates
 
 from .config import ConfigError, load_config
 from .services.sources_service import list_sources
+from .services.ai_service import (
+    list_models,
+    list_pipeline_routing,
+    list_profiles,
+    list_prompts,
+    list_providers,
+    list_schemas,
+)
 from .storage import get_source_run_streaks, init_db, list_jobs
+from .llm import STAGE_NAMES
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -123,6 +132,26 @@ def ui_router(token_guard) -> APIRouter:
                 "health": rows,
                 "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
                 "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
+            },
+        )
+
+    @router.get("/ai", response_class=HTMLResponse)
+    def ai_config(request: Request):
+        config = load_config(None)
+        conn = init_db(config.paths.state_db)
+        return TEMPLATES.TemplateResponse(
+            "admin/ai.html",
+            {
+                "request": request,
+                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
+                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
+                "providers": list_providers(conn),
+                "models": list_models(conn),
+                "prompts": list_prompts(conn),
+                "schemas": list_schemas(conn),
+                "profiles": list_profiles(conn),
+                "routing": list_pipeline_routing(conn),
+                "stages": STAGE_NAMES,
             },
         )
 

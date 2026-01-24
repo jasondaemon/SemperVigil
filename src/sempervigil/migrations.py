@@ -290,6 +290,7 @@ def _get_migrations() -> list[tuple[str, Migration]]:
         ("004_health_alerts", _migration_health_alerts),
         ("005_cve_tables", _migration_cve_tables),
         ("006_sources_admin_fields", _migration_sources_admin_fields),
+        ("007_llm_config", _migration_llm_config),
     ]
 
 
@@ -310,6 +311,110 @@ def _migration_sources_admin_fields(conn: sqlite3.Connection) -> None:
         if column in columns:
             continue
         conn.execute(f"ALTER TABLE sources ADD COLUMN {column} {definition}")
+
+
+def _migration_llm_config(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS llm_providers (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            type TEXT NOT NULL,
+            base_url TEXT NULL,
+            is_enabled INTEGER NOT NULL DEFAULT 1,
+            timeout_s INTEGER NOT NULL DEFAULT 30,
+            retries INTEGER NOT NULL DEFAULT 2,
+            last_test_status TEXT NULL,
+            last_test_at TEXT NULL,
+            last_test_error TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS llm_provider_secrets (
+            provider_id TEXT PRIMARY KEY REFERENCES llm_providers(id),
+            key_id TEXT NOT NULL,
+            api_key_enc TEXT NOT NULL,
+            api_key_last4 TEXT NOT NULL,
+            headers_enc TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS llm_models (
+            id TEXT PRIMARY KEY,
+            provider_id TEXT NOT NULL REFERENCES llm_providers(id),
+            model_name TEXT NOT NULL,
+            max_context INTEGER NULL,
+            default_params_json TEXT NULL,
+            tags_json TEXT NULL,
+            is_enabled INTEGER NOT NULL DEFAULT 1
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS llm_prompts (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            version TEXT NOT NULL,
+            system_template TEXT NOT NULL,
+            user_template TEXT NOT NULL,
+            notes TEXT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS llm_schemas (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            version TEXT NOT NULL,
+            json_schema TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS llm_profiles (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            primary_provider_id TEXT NOT NULL REFERENCES llm_providers(id),
+            primary_model_id TEXT NOT NULL REFERENCES llm_models(id),
+            prompt_id TEXT NOT NULL REFERENCES llm_prompts(id),
+            schema_id TEXT NULL REFERENCES llm_schemas(id),
+            params_json TEXT NULL,
+            fallback_json TEXT NULL,
+            is_enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pipeline_stage_config (
+            stage_name TEXT PRIMARY KEY,
+            profile_id TEXT NOT NULL REFERENCES llm_profiles(id),
+            rules_json TEXT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_llm_models_provider ON llm_models(provider_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_llm_profiles_provider ON llm_profiles(primary_provider_id)"
+    )
 
 
 def _migrate_legacy_sources(conn: sqlite3.Connection) -> None:

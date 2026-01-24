@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 import os
+import sqlite3
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
 from datetime import datetime, timezone
 from pydantic import BaseModel
 
@@ -22,11 +24,46 @@ from .services.sources_service import (
     record_test_result,
     update_source,
 )
+from .services.ai_service import (
+    clear_provider_secret,
+    create_model,
+    create_profile,
+    create_prompt,
+    create_provider,
+    create_schema,
+    delete_model,
+    delete_profile,
+    delete_prompt,
+    delete_provider,
+    delete_schema,
+    get_model,
+    get_profile,
+    get_prompt,
+    get_provider,
+    get_schema,
+    list_models,
+    list_pipeline_routing,
+    list_profiles,
+    list_prompts,
+    list_providers,
+    list_schemas,
+    set_pipeline_routing,
+    set_provider_secret,
+    update_model,
+    update_profile,
+    update_prompt,
+    update_provider,
+    update_provider_test_status,
+    update_schema,
+)
+from .llm import STAGE_NAMES, test_profile, test_provider
 from .utils import log_event
 
 app = FastAPI(title="SemperVigil Admin API")
 
 ADMIN_COOKIE_NAME = "sv_admin_token"
+
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 app.mount(
     "/ui/static",
@@ -54,6 +91,13 @@ def _is_authorized(request: Request, token: str) -> bool:
         return True
     cookie = request.cookies.get(ADMIN_COOKIE_NAME)
     return cookie == token
+
+
+def _is_secure_request(request: Request) -> bool:
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").lower()
+    if forwarded_proto:
+        return forwarded_proto == "https"
+    return request.url.scheme == "https"
 
 
 @app.middleware("http")
@@ -116,6 +160,7 @@ async def ui_login_post(request: Request):
         ADMIN_COOKIE_NAME,
         token,
         httponly=True,
+        secure=_is_secure_request(request),
         samesite="lax",
         max_age=86400,
     )
@@ -193,6 +238,67 @@ class SourceRequest(BaseModel):
     enabled: bool | None = None
     interval_minutes: int | None = None
     tags: list[str] | str | None = None
+
+
+class ProviderRequest(BaseModel):
+    id: str | None = None
+    name: str | None = None
+    type: str | None = None
+    base_url: str | None = None
+    is_enabled: bool | None = None
+    timeout_s: int | None = None
+    retries: int | None = None
+
+
+class ProviderSecretRequest(BaseModel):
+    api_key: str
+
+
+class ModelRequest(BaseModel):
+    id: str | None = None
+    provider_id: str | None = None
+    model_name: str | None = None
+    max_context: int | None = None
+    default_params: dict[str, object] | None = None
+    tags: list[str] | str | None = None
+    is_enabled: bool | None = None
+
+
+class PromptRequest(BaseModel):
+    id: str | None = None
+    name: str | None = None
+    version: str | None = None
+    system_template: str | None = None
+    user_template: str | None = None
+    notes: str | None = None
+
+
+class SchemaRequest(BaseModel):
+    id: str | None = None
+    name: str | None = None
+    version: str | None = None
+    json_schema: dict[str, object] | None = None
+
+
+class ProfileRequest(BaseModel):
+    id: str | None = None
+    name: str | None = None
+    primary_provider_id: str | None = None
+    primary_model_id: str | None = None
+    prompt_id: str | None = None
+    schema_id: str | None = None
+    params: dict[str, object] | None = None
+    fallback: list[dict[str, object]] | None = None
+    is_enabled: bool | None = None
+
+
+class PipelineStageRequest(BaseModel):
+    stage_name: str
+    profile_id: str
+
+
+class ProfileTestRequest(BaseModel):
+    text: str
 
 
 @app.get("/sources")
@@ -396,4 +502,284 @@ def source_to_model(source: dict[str, object]):
     )
 
 
+def _get_conn() -> sqlite3.Connection:
+    try:
+        config = load_config(None)
+    except ConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return init_db(config.paths.state_db)
+
+
+ai_router = APIRouter(prefix="/admin/ai", dependencies=[Depends(_require_admin_token)])
+
+
+@ai_router.get("/providers")
+def ai_providers_list() -> list[dict[str, object]]:
+    conn = _get_conn()
+    return list_providers(conn)
+
+
+@ai_router.post("/providers")
+def ai_providers_create(payload: ProviderRequest) -> dict[str, object]:
+    conn = _get_conn()
+    try:
+        return create_provider(conn, payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@ai_router.get("/providers/{provider_id}")
+def ai_providers_get(provider_id: str) -> dict[str, object]:
+    conn = _get_conn()
+    provider = get_provider(conn, provider_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail="provider_not_found")
+    return provider
+
+
+@ai_router.put("/providers/{provider_id}")
+@ai_router.patch("/providers/{provider_id}")
+def ai_providers_update(provider_id: str, payload: ProviderRequest) -> dict[str, object]:
+    conn = _get_conn()
+    try:
+        return update_provider(conn, provider_id, payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@ai_router.delete("/providers/{provider_id}")
+def ai_providers_delete(provider_id: str) -> dict[str, str]:
+    conn = _get_conn()
+    delete_provider(conn, provider_id)
+    return {"status": "deleted"}
+
+
+@ai_router.post("/providers/{provider_id}/secret")
+def ai_providers_set_secret(
+    provider_id: str, payload: ProviderSecretRequest
+) -> dict[str, object]:
+    conn = _get_conn()
+    try:
+        return set_provider_secret(conn, provider_id, payload.api_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@ai_router.delete("/providers/{provider_id}/secret")
+def ai_providers_clear_secret(provider_id: str) -> dict[str, str]:
+    conn = _get_conn()
+    clear_provider_secret(conn, provider_id)
+    return {"status": "cleared"}
+
+
+@ai_router.post("/providers/{provider_id}/test")
+def ai_providers_test(provider_id: str) -> dict[str, object]:
+    conn = _get_conn()
+    logger = logging.getLogger("sempervigil.admin")
+    try:
+        result = test_provider(conn, provider_id, logger)
+        update_provider_test_status(conn, provider_id, "ok", None)
+        return result
+    except Exception as exc:  # noqa: BLE001
+        update_provider_test_status(conn, provider_id, "error", str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@ai_router.get("/models")
+def ai_models_list() -> list[dict[str, object]]:
+    conn = _get_conn()
+    return list_models(conn)
+
+
+@ai_router.post("/models")
+def ai_models_create(payload: ModelRequest) -> dict[str, object]:
+    conn = _get_conn()
+    try:
+        return create_model(conn, _normalize_model_payload(payload))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@ai_router.get("/models/{model_id}")
+def ai_models_get(model_id: str) -> dict[str, object]:
+    conn = _get_conn()
+    model = get_model(conn, model_id)
+    if not model:
+        raise HTTPException(status_code=404, detail="model_not_found")
+    return model
+
+
+@ai_router.put("/models/{model_id}")
+@ai_router.patch("/models/{model_id}")
+def ai_models_update(model_id: str, payload: ModelRequest) -> dict[str, object]:
+    conn = _get_conn()
+    try:
+        return update_model(conn, model_id, _normalize_model_payload(payload))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@ai_router.delete("/models/{model_id}")
+def ai_models_delete(model_id: str) -> dict[str, str]:
+    conn = _get_conn()
+    delete_model(conn, model_id)
+    return {"status": "deleted"}
+
+
+@ai_router.get("/prompts")
+def ai_prompts_list() -> list[dict[str, object]]:
+    conn = _get_conn()
+    return list_prompts(conn)
+
+
+@ai_router.post("/prompts")
+def ai_prompts_create(payload: PromptRequest) -> dict[str, object]:
+    conn = _get_conn()
+    try:
+        return create_prompt(conn, payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@ai_router.get("/prompts/{prompt_id}")
+def ai_prompts_get(prompt_id: str) -> dict[str, object]:
+    conn = _get_conn()
+    prompt = get_prompt(conn, prompt_id)
+    if not prompt:
+        raise HTTPException(status_code=404, detail="prompt_not_found")
+    return prompt
+
+
+@ai_router.put("/prompts/{prompt_id}")
+@ai_router.patch("/prompts/{prompt_id}")
+def ai_prompts_update(prompt_id: str, payload: PromptRequest) -> dict[str, object]:
+    conn = _get_conn()
+    try:
+        return update_prompt(conn, prompt_id, payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@ai_router.delete("/prompts/{prompt_id}")
+def ai_prompts_delete(prompt_id: str) -> dict[str, str]:
+    conn = _get_conn()
+    delete_prompt(conn, prompt_id)
+    return {"status": "deleted"}
+
+
+@ai_router.get("/schemas")
+def ai_schemas_list() -> list[dict[str, object]]:
+    conn = _get_conn()
+    return list_schemas(conn)
+
+
+@ai_router.post("/schemas")
+def ai_schemas_create(payload: SchemaRequest) -> dict[str, object]:
+    conn = _get_conn()
+    try:
+        return create_schema(conn, payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@ai_router.get("/schemas/{schema_id}")
+def ai_schemas_get(schema_id: str) -> dict[str, object]:
+    conn = _get_conn()
+    schema = get_schema(conn, schema_id)
+    if not schema:
+        raise HTTPException(status_code=404, detail="schema_not_found")
+    return schema
+
+
+@ai_router.put("/schemas/{schema_id}")
+@ai_router.patch("/schemas/{schema_id}")
+def ai_schemas_update(schema_id: str, payload: SchemaRequest) -> dict[str, object]:
+    conn = _get_conn()
+    try:
+        return update_schema(conn, schema_id, payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@ai_router.delete("/schemas/{schema_id}")
+def ai_schemas_delete(schema_id: str) -> dict[str, str]:
+    conn = _get_conn()
+    delete_schema(conn, schema_id)
+    return {"status": "deleted"}
+
+
+@ai_router.get("/profiles")
+def ai_profiles_list() -> list[dict[str, object]]:
+    conn = _get_conn()
+    return list_profiles(conn)
+
+
+@ai_router.post("/profiles")
+def ai_profiles_create(payload: ProfileRequest) -> dict[str, object]:
+    conn = _get_conn()
+    try:
+        return create_profile(conn, payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@ai_router.get("/profiles/{profile_id}")
+def ai_profiles_get(profile_id: str) -> dict[str, object]:
+    conn = _get_conn()
+    profile = get_profile(conn, profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="profile_not_found")
+    return profile
+
+
+@ai_router.put("/profiles/{profile_id}")
+@ai_router.patch("/profiles/{profile_id}")
+def ai_profiles_update(profile_id: str, payload: ProfileRequest) -> dict[str, object]:
+    conn = _get_conn()
+    try:
+        return update_profile(conn, profile_id, payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@ai_router.delete("/profiles/{profile_id}")
+def ai_profiles_delete(profile_id: str) -> dict[str, str]:
+    conn = _get_conn()
+    delete_profile(conn, profile_id)
+    return {"status": "deleted"}
+
+
+@ai_router.post("/profiles/{profile_id}/test")
+def ai_profiles_test(profile_id: str, payload: ProfileTestRequest) -> dict[str, object]:
+    conn = _get_conn()
+    logger = logging.getLogger("sempervigil.admin")
+    try:
+        result = test_profile(conn, profile_id, payload.text, logger)
+        return {"ok": True, **result}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@ai_router.get("/pipeline-routing")
+def ai_pipeline_list() -> dict[str, object]:
+    conn = _get_conn()
+    return {"stages": STAGE_NAMES, "routing": list_pipeline_routing(conn)}
+
+
+@ai_router.post("/pipeline-routing")
+def ai_pipeline_set(payload: PipelineStageRequest) -> dict[str, str]:
+    conn = _get_conn()
+    set_pipeline_routing(conn, payload.stage_name, payload.profile_id)
+    return {"status": "ok"}
+
+
+def _normalize_model_payload(payload: ModelRequest) -> dict[str, object]:
+    data = payload.model_dump(exclude_unset=True)
+    tags = data.get("tags")
+    if isinstance(tags, str):
+        data["tags"] = [item.strip() for item in tags.split(",") if item.strip()]
+    return data
+
+
 app.include_router(ui_router(_require_admin_token), prefix="/ui")
+app.include_router(ai_router)

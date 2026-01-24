@@ -1,0 +1,305 @@
+{% extends "admin/base.html" %}
+{% block content %}
+  <section class="panel">
+    <h2>AI Configuration</h2>
+    <details open>
+      <summary><strong>Instructions</strong></summary>
+      <div class="panel">
+        <p>SemperVigil encrypts provider API keys at rest using AES-GCM. You must set a master key in the environment.</p>
+        <p><strong>Generate a master key:</strong></p>
+        <pre class="mono">python -c "import os,base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"</pre>
+        <p><strong>Set environment:</strong></p>
+        <pre class="mono">SEMPERIVGIL_MASTER_KEY=&lt;generated&gt;
+SEMPERIVGIL_KEY_ID=v1</pre>
+        <p><strong>Warning:</strong> If you lose the master key, previously saved provider keys cannot be decrypted and must be re-entered.</p>
+      </div>
+    </details>
+  </section>
+
+  <section class="panel" id="ai-providers">
+    <h3>Providers</h3>
+    <form id="provider-form" class="grid">
+      <label>ID (optional)<input type="text" id="provider-id"></label>
+      <label>Name<input type="text" id="provider-name" required></label>
+      <label>Type
+        <select id="provider-type">
+          <option value="openai_compatible">OpenAI-compatible / vLLM</option>
+          <option value="anthropic">Anthropic (Claude)</option>
+          <option value="google">Google (Gemini)</option>
+        </select>
+      </label>
+      <label>Base URL<input type="text" id="provider-base-url" placeholder="https://api.openai.com/v1"></label>
+      <label>Timeout (s)<input type="number" id="provider-timeout" value="30"></label>
+      <label>Retries<input type="number" id="provider-retries" value="2"></label>
+      <label class="checkbox"><input type="checkbox" id="provider-enabled" checked> Enabled</label>
+      <div class="actions">
+        <button class="btn" type="submit">Save Provider</button>
+        <button class="btn secondary" type="button" id="provider-reset">Reset</button>
+      </div>
+    </form>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Base URL</th>
+          <th>Enabled</th>
+          <th>Key</th>
+          <th>Last Test</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for provider in providers %}
+        <tr data-provider-id="{{ provider.id }}">
+          <td class="provider-name">{{ provider.name }}</td>
+          <td class="provider-type">{{ provider.type }}</td>
+          <td class="provider-base-url">{{ provider.base_url or "" }}</td>
+          <td><input type="checkbox" class="toggle-provider" {% if provider.is_enabled %}checked{% endif %}></td>
+          <td class="mono">
+            {% if provider.api_key_last4 %}****{{ provider.api_key_last4 }}{% else %}not set{% endif %}
+          </td>
+          <td class="mono">{{ provider.last_test_status or "" }}</td>
+          <td class="actions">
+            <button class="btn small edit-provider" type="button">Edit</button>
+            <button class="btn small secondary set-provider-key" type="button">Set Key</button>
+            <button class="btn small danger clear-provider-key" type="button">Clear</button>
+            <button class="btn small secondary test-provider" type="button">Test</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel" id="ai-models">
+    <h3>Models</h3>
+    <form id="model-form" class="grid">
+      <label>ID (optional)<input type="text" id="model-id"></label>
+      <label>Provider
+        <select id="model-provider">
+          {% for provider in providers %}
+          <option value="{{ provider.id }}">{{ provider.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Model Name<input type="text" id="model-name" required></label>
+      <label>Max Context<input type="number" id="model-context"></label>
+      <label>Tags (comma)<input type="text" id="model-tags"></label>
+      <label>Default Params (JSON)<textarea id="model-params" rows="3"></textarea></label>
+      <label class="checkbox"><input type="checkbox" id="model-enabled" checked> Enabled</label>
+      <div class="actions">
+        <button class="btn" type="submit">Save Model</button>
+        <button class="btn secondary" type="button" id="model-reset">Reset</button>
+      </div>
+    </form>
+    <table>
+      <thead>
+        <tr>
+          <th>Provider</th>
+          <th>Model</th>
+          <th>Tags</th>
+          <th>Enabled</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for model in models %}
+        <tr data-model-id="{{ model.id }}" data-provider-id="{{ model.provider_id }}">
+          <td class="model-provider">{{ model.provider_name }}</td>
+          <td class="model-name">{{ model.model_name }}</td>
+          <td class="model-tags">{{ model.tags | join(", ") }}</td>
+          <td><input type="checkbox" class="toggle-model" {% if model.is_enabled %}checked{% endif %}></td>
+          <td class="actions">
+            <button class="btn small edit-model" type="button">Edit</button>
+            <button class="btn small danger delete-model" type="button">Delete</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel" id="ai-prompts">
+    <h3>Prompts</h3>
+    <form id="prompt-form" class="grid">
+      <label>ID (optional)<input type="text" id="prompt-id"></label>
+      <label>Name<input type="text" id="prompt-name" required></label>
+      <label>Version<input type="text" id="prompt-version" value="v1"></label>
+      <label>System Template<textarea id="prompt-system" rows="3"></textarea></label>
+      <label>User Template<textarea id="prompt-user" rows="3"></textarea></label>
+      <label>Notes<input type="text" id="prompt-notes"></label>
+      <div class="actions">
+        <button class="btn" type="submit">Save Prompt</button>
+        <button class="btn secondary" type="button" id="prompt-reset">Reset</button>
+      </div>
+    </form>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Version</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for prompt in prompts %}
+        <tr data-prompt-id="{{ prompt.id }}">
+          <td class="prompt-name">{{ prompt.name }}</td>
+          <td class="prompt-version">{{ prompt.version }}</td>
+          <td class="actions">
+            <button class="btn small edit-prompt" type="button">Edit</button>
+            <button class="btn small danger delete-prompt" type="button">Delete</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel" id="ai-schemas">
+    <h3>Schemas</h3>
+    <form id="schema-form" class="grid">
+      <label>ID (optional)<input type="text" id="schema-id"></label>
+      <label>Name<input type="text" id="schema-name" required></label>
+      <label>Version<input type="text" id="schema-version" value="v1"></label>
+      <label>JSON Schema<textarea id="schema-json" rows="4"></textarea></label>
+      <div class="actions">
+        <button class="btn" type="submit">Save Schema</button>
+        <button class="btn secondary" type="button" id="schema-reset">Reset</button>
+      </div>
+    </form>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Version</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for schema in schemas %}
+        <tr data-schema-id="{{ schema.id }}">
+          <td class="schema-name">{{ schema.name }}</td>
+          <td class="schema-version">{{ schema.version }}</td>
+          <td class="actions">
+            <button class="btn small edit-schema" type="button">Edit</button>
+            <button class="btn small danger delete-schema" type="button">Delete</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel" id="ai-profiles">
+    <h3>Profiles</h3>
+    <form id="profile-form" class="grid">
+      <label>ID (optional)<input type="text" id="profile-id"></label>
+      <label>Name<input type="text" id="profile-name" required></label>
+      <label>Provider
+        <select id="profile-provider">
+          {% for provider in providers %}
+          <option value="{{ provider.id }}">{{ provider.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Model
+        <select id="profile-model">
+          {% for model in models %}
+          <option value="{{ model.id }}">{{ model.provider_name }} / {{ model.model_name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Prompt
+        <select id="profile-prompt">
+          {% for prompt in prompts %}
+          <option value="{{ prompt.id }}">{{ prompt.name }} {{ prompt.version }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Schema
+        <select id="profile-schema">
+          <option value="">(none)</option>
+          {% for schema in schemas %}
+          <option value="{{ schema.id }}">{{ schema.name }} {{ schema.version }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Params (JSON)<textarea id="profile-params" rows="3"></textarea></label>
+      <label>Fallback (JSON list)<textarea id="profile-fallback" rows="3"></textarea></label>
+      <label class="checkbox"><input type="checkbox" id="profile-enabled" checked> Enabled</label>
+      <div class="actions">
+        <button class="btn" type="submit">Save Profile</button>
+        <button class="btn secondary" type="button" id="profile-reset">Reset</button>
+      </div>
+    </form>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Provider</th>
+          <th>Model</th>
+          <th>Prompt</th>
+          <th>Enabled</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for profile in profiles %}
+        <tr data-profile-id="{{ profile.id }}">
+          <td class="profile-name">{{ profile.name }}</td>
+          <td class="profile-provider">{{ profile.provider_name }}</td>
+          <td class="profile-model">{{ profile.model_name }}</td>
+          <td class="profile-prompt">{{ profile.prompt_name }}</td>
+          <td><input type="checkbox" class="toggle-profile" {% if profile.is_enabled %}checked{% endif %}></td>
+          <td class="actions">
+            <button class="btn small edit-profile" type="button">Edit</button>
+            <button class="btn small secondary test-profile" type="button">Test</button>
+            <button class="btn small danger delete-profile" type="button">Delete</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel" id="ai-routing">
+    <h3>Pipeline Routing</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Stage</th>
+          <th>Profile</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for stage in stages %}
+        {% set current = None %}
+        {% for row in routing %}
+          {% if row.stage_name == stage %}
+            {% set current = row.profile_id %}
+          {% endif %}
+        {% endfor %}
+        <tr data-stage-name="{{ stage }}">
+          <td class="mono">{{ stage }}</td>
+          <td>
+            <select class="route-profile">
+              <option value="">(none)</option>
+              {% for profile in profiles %}
+              <option value="{{ profile.id }}" {% if profile.id == current %}selected{% endif %}>
+                {{ profile.name }}
+              </option>
+              {% endfor %}
+            </select>
+          </td>
+          <td class="actions">
+            <button class="btn small save-route" type="button">Save</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

@@ -150,6 +150,22 @@ Optional token gate:
   - an authenticated browser cookie from `/ui/login`
 - `/ui/static` assets remain public; UI pages still require auth when token is set
 
+Reverse proxy notes (Nginx Proxy Manager):
+- Forward `X-Forwarded-Proto`, `X-Forwarded-Host`, and `X-Forwarded-For`
+- Recommended headers: `X-Frame-Options: SAMEORIGIN`, `X-Content-Type-Options: nosniff`
+- Cookies are set `Secure` only when the original scheme is HTTPS
+
+AI Configuration:
+- Use `http://<host>:8001/ui/ai` to configure providers, models, prompts, schemas, profiles, and routing
+- API keys entered in the UI are encrypted at rest using AES-GCM
+- Use the “Test” buttons in the UI to verify providers and profiles
+- Generate a master key:
+  - `python -c "import os,base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"`
+- Set environment:
+  - `SEMPERIVGIL_MASTER_KEY=<generated>`
+  - `SEMPERIVGIL_KEY_ID=v1` (optional)
+- If the master key is lost, saved provider keys cannot be decrypted and must be re-entered
+
 Smoke tests:
 ```bash
 curl -v http://<host>:8001/ui
