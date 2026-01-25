@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from dataclasses import asdict
 from typing import Any
 
@@ -62,7 +63,7 @@ def create_source(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str
         raise ValueError("name is required")
 
     if not source_id:
-        source_id = _generate_source_id(conn, name)
+        source_id = str(uuid.uuid4())
 
     kind = str(payload.get("kind") or "rss").strip()
     url = str(payload.get("url") or "").strip()

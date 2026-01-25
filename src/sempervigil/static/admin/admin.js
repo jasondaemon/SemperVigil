@@ -68,13 +68,17 @@ function wireSources() {
       tags: tagsField.value.trim(),
       enabled: enabledField.checked,
     };
-    const target = idField.value ? `/sources/${idField.value}` : "/sources";
-    const method = idField.value ? "PATCH" : "POST";
+    const hasId = Boolean(idField.value);
+    const target = hasId ? `/sources/${idField.value}` : "/sources";
+    const method = hasId ? "PUT" : "POST";
     try {
       await apiFetch(target, {
         method,
         body: JSON.stringify(payload),
       });
+      if (!hasId) {
+        resetForm();
+      }
       window.location.reload();
     } catch (err) {
       alert(err);
