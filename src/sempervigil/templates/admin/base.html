@@ -7,25 +7,9 @@
     <link rel="stylesheet" href="/ui/static/admin/admin.css">
   </head>
   <body>
-    <header class="topbar">
-      <div class="brand">SemperVigil Admin</div>
-      <nav class="nav">
-        <a href="/ui">Dashboard</a>
-        <a href="/ui/sources">Sources</a>
-        <a href="/ui/jobs">Jobs</a>
-        <a href="/ui/health">Health</a>
-        <a href="/ui/analytics">Analytics</a>
-        <a href="/ui/ai">AI Configuration</a>
-      </nav>
-      {% if token_enabled %}
-      <div class="auth-status">
-        {% if is_authenticated %}Authenticated{% else %}Not authenticated{% endif %}
-      </div>
-      <form class="token-box" action="/ui/logout" method="post">
-        <button id="logout" type="submit">Logout</button>
-      </form>
-      {% endif %}
-    </header>
+    {% if show_nav|default(true) %}
+      {% include "admin/_nav.html" %}
+    {% endif %}
     <main class="container">
       {% block content %}{% endblock %}
     </main>

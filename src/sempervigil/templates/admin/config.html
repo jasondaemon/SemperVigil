@@ -1,0 +1,17 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "system" %}
+{% set nav_subactive = "runtime_config" %}
+{% block content %}
+  <section class="panel">
+    <h2>Runtime Config</h2>
+    <p>Edit the runtime configuration stored in the database.</p>
+    <form id="runtime-config-form">
+      <label>Config JSON</label>
+      <textarea id="runtime-config-json" class="mono" rows="18">{{ config_json }}</textarea>
+      <div class="actions">
+        <button class="btn" type="submit">Save Config</button>
+      </div>
+      <p class="error" id="runtime-config-error" style="display:none;"></p>
+    </form>
+  </section>
+{% endblock %}

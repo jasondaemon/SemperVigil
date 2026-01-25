@@ -14,7 +14,14 @@ except Exception:  # noqa: BLE001
 from datetime import datetime, timezone
 from pydantic import BaseModel
 
-from .config import ConfigError, load_config
+from .config import (
+    ConfigError,
+    bootstrap_runtime_config,
+    get_runtime_config,
+    get_state_db_path,
+    load_runtime_config,
+    set_runtime_config,
+)
 from .admin_ui import TEMPLATES, ui_router
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .storage import enqueue_job, get_source_run_streaks, init_db, list_jobs
@@ -129,6 +136,10 @@ class JobRequest(BaseModel):
     source_id: str | None = None
 
 
+class RuntimeConfigRequest(BaseModel):
+    config: dict
+
+
 @app.get("/")
 def root() -> dict[str, str]:
     return {"service": "SemperVigil Admin API"}
@@ -141,6 +152,26 @@ def health() -> dict[str, object]:
         "version": _get_version(),
         "time": datetime.now(tz=timezone.utc).isoformat(),
     }
+
+
+@app.get("/admin/config/runtime", dependencies=[Depends(_require_admin_token)])
+def runtime_config_get() -> dict[str, object]:
+    conn = _get_conn()
+    try:
+        cfg = get_runtime_config(conn)
+    except ConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"config": cfg}
+
+
+@app.put("/admin/config/runtime", dependencies=[Depends(_require_admin_token)])
+def runtime_config_set(payload: RuntimeConfigRequest) -> dict[str, object]:
+    conn = _get_conn()
+    try:
+        set_runtime_config(conn, payload.config)
+    except ConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "ok"}
 
 
 @app.get("/ui/login")
@@ -188,7 +219,8 @@ def ui_logout():
 @app.on_event("startup")
 def _startup() -> None:
     try:
-        config = load_config(None)
+        conn = init_db(get_state_db_path())
+        config = load_runtime_config(conn)
     except ConfigError:
         return
     set_umask_from_env()
@@ -198,12 +230,7 @@ def _startup() -> None:
 @app.post("/jobs/enqueue")
 def enqueue(job: JobRequest, _: None = Depends(_require_admin_token)) -> dict[str, str]:
     logger = logging.getLogger("sempervigil.admin")
-    try:
-        config = load_config(None)
-    except ConfigError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    conn = init_db(config.paths.state_db)
+    conn = _get_conn()
     payload = {"source_id": job.source_id} if job.source_id else None
     job_id = enqueue_job(conn, job.job_type, payload, debounce=True)
     log_event(
@@ -218,12 +245,7 @@ def enqueue(job: JobRequest, _: None = Depends(_require_admin_token)) -> dict[st
 
 @app.get("/jobs")
 def jobs(limit: int = 20) -> list[dict[str, str]]:
-    try:
-        config = load_config(None)
-    except ConfigError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    conn = init_db(config.paths.state_db)
+    conn = _get_conn()
     rows = []
     for job in list_jobs(conn, limit=limit):
         rows.append(
@@ -334,12 +356,7 @@ def sources_list() -> list[dict[str, object]]:
 
 @app.get("/sources/health")
 def sources_health() -> list[dict[str, object]]:
-    try:
-        config = load_config(None)
-    except ConfigError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    conn = init_db(config.paths.state_db)
+    conn = _get_conn()
     cursor = conn.execute(
         """
         SELECT s.id, s.name, s.enabled, s.pause_until, s.paused_reason,
@@ -390,11 +407,7 @@ def sources_health() -> list[dict[str, object]]:
 def sources_create(
     payload: SourceRequest, _: None = Depends(_require_admin_token)
 ) -> dict[str, object]:
-    try:
-        config = load_config(None)
-    except ConfigError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    conn = init_db(config.paths.state_db)
+    conn = _get_conn()
     try:
         return create_source(conn, payload.model_dump())
     except ValueError as exc:
@@ -403,11 +416,7 @@ def sources_create(
 
 @app.get("/sources/{source_id}")
 def sources_read(source_id: str) -> dict[str, object]:
-    try:
-        config = load_config(None)
-    except ConfigError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    conn = init_db(config.paths.state_db)
+    conn = _get_conn()
     source = get_source(conn, source_id)
     if not source:
         raise HTTPException(status_code=404, detail="source_not_found")
@@ -421,11 +430,7 @@ def sources_update(
     payload: SourceRequest,
     _: None = Depends(_require_admin_token),
 ) -> dict[str, object]:
-    try:
-        config = load_config(None)
-    except ConfigError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    conn = init_db(config.paths.state_db)
+    conn = _get_conn()
     try:
         return update_source(conn, source_id, payload.model_dump(exclude_unset=True))
     except ValueError as exc:
@@ -434,11 +439,7 @@ def sources_update(
 
 @app.delete("/sources/{source_id}")
 def sources_delete(source_id: str, _: None = Depends(_require_admin_token)) -> dict[str, str]:
-    try:
-        config = load_config(None)
-    except ConfigError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    conn = init_db(config.paths.state_db)
+    conn = _get_conn()
     delete_source(conn, source_id)
     return {"status": "deleted"}
 
@@ -447,11 +448,11 @@ def sources_delete(source_id: str, _: None = Depends(_require_admin_token)) -> d
 def sources_test(
     source_id: str, _: None = Depends(_require_admin_token)
 ) -> dict[str, object]:
+    conn = _get_conn()
     try:
-        config = load_config(None)
+        config = load_runtime_config(conn)
     except ConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    conn = init_db(config.paths.state_db)
     source = get_source(conn, source_id)
     if not source:
         raise HTTPException(status_code=404, detail="source_not_found")
@@ -539,11 +540,9 @@ def source_to_model(source: dict[str, object]):
 
 
 def _get_conn() -> sqlite3.Connection:
-    try:
-        config = load_config(None)
-    except ConfigError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return init_db(config.paths.state_db)
+    conn = init_db(get_state_db_path())
+    bootstrap_runtime_config(conn)
+    return conn
 
 
 ai_router = APIRouter(prefix="/admin/ai", dependencies=[Depends(_require_admin_token)])

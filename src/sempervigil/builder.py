@@ -6,7 +6,7 @@ import os
 import subprocess
 import time
 
-from .config import ConfigError, load_config
+from .config import ConfigError, get_state_db_path, load_runtime_config
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .storage import claim_next_job, complete_job, fail_job, init_db
 from .utils import configure_logging, log_event
@@ -28,17 +28,17 @@ def _run_hugo() -> tuple[int, str]:
     return result.returncode, output.strip()
 
 
-def run_once(config_path: str | None, builder_id: str) -> int:
+def run_once(builder_id: str) -> int:
     logger = _setup_logging()
     try:
-        config = load_config(config_path)
+        conn = init_db(get_state_db_path())
+        config = load_runtime_config(conn)
     except ConfigError as exc:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
 
     set_umask_from_env()
     ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir))
-    conn = init_db(config.paths.state_db)
     job = claim_next_job(
         conn,
         builder_id,
@@ -68,15 +68,14 @@ def run_once(config_path: str | None, builder_id: str) -> int:
     return 0
 
 
-def run_loop(config_path: str | None, builder_id: str, sleep_seconds: int) -> int:
+def run_loop(builder_id: str, sleep_seconds: int) -> int:
     while True:
-        run_once(config_path, builder_id)
+        run_once(builder_id)
         time.sleep(sleep_seconds)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sempervigil-builder")
-    parser.add_argument("--config", dest="config", default=None)
     parser.add_argument("--once", action="store_true", help="Run a single job and exit")
     parser.add_argument("--sleep", type=int, default=10, help="Sleep seconds between polls")
     parser.add_argument("--builder-id", default=os.environ.get("HOSTNAME", "builder"))
@@ -87,8 +86,8 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     if args.once:
-        return run_once(args.config, args.builder_id)
-    return run_loop(args.config, args.builder_id, args.sleep)
+        return run_once(args.builder_id)
+    return run_loop(args.builder_id, args.sleep)
 
 
 if __name__ == "__main__":

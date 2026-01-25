@@ -1,4 +1,6 @@
 {% extends "admin/base.html" %}
+{% set nav_active = "sources" %}
+{% set nav_subactive = "sources" %}
 {% block content %}
   <section class="panel">
     <h2>Add / Edit Source</h2>
@@ -25,6 +27,7 @@
   </section>
 
   <section class="panel">
+    <a id="test-sources"></a>
     <h2>Sources</h2>
     <table id="sources-table">
       <thead>

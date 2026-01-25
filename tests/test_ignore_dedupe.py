@@ -1,6 +1,6 @@
-import yaml
+import copy
 
-from sempervigil.config import load_config
+from sempervigil.config import DEFAULT_CONFIG, load_runtime_config, set_runtime_config
 from sempervigil.ingest import evaluate_entry
 from sempervigil.models import Article, Source
 from sempervigil.storage import init_db, insert_articles
@@ -8,9 +8,10 @@ from sempervigil.utils import stable_id_from_url
 
 
 def _make_config(tmp_path):
-    config_path = tmp_path / "config.yml"
-    config_path.write_text(yaml.safe_dump({}))
-    return load_config(str(config_path))
+    db_path = tmp_path / "state.sqlite3"
+    conn = init_db(str(db_path))
+    set_runtime_config(conn, copy.deepcopy(DEFAULT_CONFIG))
+    return load_runtime_config(conn)
 
 
 def test_ignore_dedupe_accepts_duplicate(tmp_path):

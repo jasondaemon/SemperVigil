@@ -1,18 +1,19 @@
-import yaml
+import copy
 
-from sempervigil.config import load_config
+from sempervigil.config import DEFAULT_CONFIG, load_runtime_config, set_runtime_config
 from sempervigil.ingest import evaluate_entry
 from sempervigil.models import Source
 from sempervigil.storage import init_db
 
 
 def _make_config(tmp_path, deny_keywords=None):
-    config_path = tmp_path / "config.yml"
-    payload = {}
+    payload = copy.deepcopy(DEFAULT_CONFIG)
     if deny_keywords is not None:
-        payload["ingest"] = {"filters": {"deny_keywords": deny_keywords}}
-    config_path.write_text(yaml.safe_dump(payload))
-    return load_config(str(config_path))
+        payload["ingest"]["filters"]["deny_keywords"] = deny_keywords
+    db_path = tmp_path / "state.sqlite3"
+    conn = init_db(str(db_path))
+    set_runtime_config(conn, payload)
+    return load_runtime_config(conn)
 
 
 def test_decision_missing_url(tmp_path):

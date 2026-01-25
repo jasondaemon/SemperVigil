@@ -10,7 +10,6 @@ services:
     environment:
       SV_ENV: ${SV_ENV:-dev}
       SV_DATA_DIR: /data
-      SV_CONFIG_PATH: /config/config.yml
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
       SV_UMASK: ${SV_UMASK:-002}
       SV_ADMIN_TOKEN: ${SV_ADMIN_TOKEN:-}
@@ -27,7 +26,6 @@ services:
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - sv_data:/data
-      - ./config:/config:ro
       - ./tools:/tools:ro
     networks:
       - svnet
@@ -44,7 +42,6 @@ services:
     environment:
       SV_ENV: ${SV_ENV:-dev}
       SV_DATA_DIR: /data
-      SV_CONFIG_PATH: /config/config.yml
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
       SV_UMASK: ${SV_UMASK:-002}
     command:
@@ -59,7 +56,6 @@ services:
     volumes:
       - sv_data:/data
       - sv_site:/site
-      - ./config:/config:ro
       - ./tools:/tools:ro
     networks:
       - svnet

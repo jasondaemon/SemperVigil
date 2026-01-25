@@ -99,16 +99,16 @@ These documents are the **source of truth** for implementation decisions.
 
 > This gets you from zero to a working local pipeline.
 
-### 1) Copy example config
+### 1) Copy environment file
 
 ```bash
 cp .env.example .env
-cp config.example.yml config/config.yml
 ```
 
 Adjust as needed for your environment.
 
-Note: `config/sources.example.yml` is documentation only. Sources live in the DB.
+Runtime configuration is stored in the SQLite DB (see System → Runtime Config in the Admin UI).
+`config/sources.example.yml` is documentation only. Sources live in the DB.
 
 ---
 
@@ -283,7 +283,7 @@ curl -i http://127.0.0.1:8080/ | head
 
 ### NFS Notes
 
-If `./config`, `./data`, or `./site` are NFS mounts with root-squash, ensure they are owned by `SV_UID:SV_GID`. SemperVigil will create needed directories without attempting `chown`.
+If `./data` or `./site` are NFS mounts with root-squash, ensure they are owned by `SV_UID:SV_GID`. SemperVigil will create needed directories without attempting `chown`.
 
 ---
 

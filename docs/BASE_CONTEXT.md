@@ -192,7 +192,6 @@ Configuration is **DB-driven**, not file-driven.
 - Secrets (OpenAI API key, SMTP credentials, etc.)
 
 ### Files provided for reference only:
-- `config.example.yml`
 - `.env.example`
 
 These exist to bootstrap deployments, not as long-term state.

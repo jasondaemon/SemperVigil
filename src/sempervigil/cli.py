@@ -7,7 +7,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from .config import ConfigError, load_config, load_sources_file
+from .config import ConfigError, get_state_db_path, load_runtime_config
 from .cve_sync import CveSyncConfig, isoformat_utc, sync_cves
 from .worker import WORKER_JOB_TYPES
 from .ingest import process_source
@@ -31,6 +31,12 @@ from .utils import configure_logging, log_event, utc_now_iso
 
 def _setup_logging() -> logging.Logger:
     return configure_logging("sempervigil.cli")
+
+
+def _get_conn_and_config() -> tuple:
+    conn = init_db(get_state_db_path())
+    config = load_runtime_config(conn)
+    return conn, config
 
 
 def _normalize_tag_list(values: list[str]) -> list[str]:
@@ -82,12 +88,10 @@ def _load_latest_report(report_dir: str) -> dict | None:
 
 def _cmd_run(args: argparse.Namespace, logger: logging.Logger) -> int:
     try:
-        config = load_config(args.config)
+        conn, config = _get_conn_and_config()
     except ConfigError as exc:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
-
-    conn = init_db(config.paths.state_db)
     run_started_at = utc_now_iso()
 
     sources_all = list_sources(conn, enabled_only=False)
@@ -97,7 +101,7 @@ def _cmd_run(args: argparse.Namespace, logger: logging.Logger) -> int:
             logger,
             logging.ERROR,
             "no_sources",
-            hint="Add sources via the Admin UI (/ui) or use `sempervigil sources import`",
+            hint="Add sources via the Admin UI (/ui)",
         )
         return 1
     if not enabled_sources:
@@ -178,12 +182,10 @@ def _cmd_run(args: argparse.Namespace, logger: logging.Logger) -> int:
 
 def _cmd_test_source(args: argparse.Namespace, logger: logging.Logger) -> int:
     try:
-        config = load_config(args.config)
+        conn, config = _get_conn_and_config()
     except ConfigError as exc:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
-
-    conn = init_db(config.paths.state_db)
     source = get_source(conn, args.source_id)
     if source is None:
         if not list_sources(conn, enabled_only=False):
@@ -191,7 +193,7 @@ def _cmd_test_source(args: argparse.Namespace, logger: logging.Logger) -> int:
                 logger,
                 logging.ERROR,
                 "no_sources",
-                hint="Add sources via the Admin UI (/ui) or use `sempervigil sources import`",
+                hint="Add sources via the Admin UI (/ui)",
             )
         else:
             log_event(logger, logging.ERROR, "source_not_found", source_id=args.source_id)
@@ -306,7 +308,7 @@ def _log_test_source_report(
 
 def _cmd_report(args: argparse.Namespace, logger: logging.Logger) -> int:
     try:
-        config = load_config(args.config)
+        _, config = _get_conn_and_config()
     except ConfigError as exc:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
@@ -319,110 +321,20 @@ def _cmd_report(args: argparse.Namespace, logger: logging.Logger) -> int:
     log_event(logger, logging.INFO, "last_run_report", **report)
     return 0
 
-
-def _cmd_sources_import(args: argparse.Namespace, logger: logging.Logger) -> int:
-    try:
-        config = load_config(args.config)
-    except ConfigError as exc:
-        log_event(logger, logging.ERROR, "config_error", error=str(exc))
-        return 1
-
-    conn = init_db(config.paths.state_db)
-    sources_path = args.path
-    if sources_path is None:
-        if os.path.exists("/config/sources.yml"):
-            sources_path = "/config/sources.yml"
-        elif os.path.exists("/config/sources.example.yml"):
-            sources_path = "/config/sources.example.yml"
-        else:
-            log_event(
-                logger,
-                logging.ERROR,
-                "sources_import_error",
-                error="no sources.yml found",
-                hint="Use the Admin UI (/ui) or provide a sources.yml path",
-            )
-            return 1
-    log_event(logger, logging.INFO, "sources_import_path", path=sources_path)
-    try:
-        sources = load_sources_file(sources_path)
-    except ConfigError as exc:
-        log_event(logger, logging.ERROR, "sources_import_error", error=str(exc))
-        return 1
-    if not sources:
-        log_event(logger, logging.ERROR, "sources_import_error", error="no sources found")
-        return 1
-
-    for source in sources:
-        try:
-            source_id = source.get("id")
-            source_dict = {
-                "id": source_id,
-                "name": source.get("name") or source_id,
-                "enabled": source.get("enabled", True),
-                "base_url": source.get("base_url") or source.get("url"),
-                "default_frequency_minutes": int(source.get("default_frequency_minutes", 60)),
-            }
-            upsert_source(conn, source_dict)
-
-            tactic_type = source.get("type")
-            feed_url = source.get("url")
-            if tactic_type and feed_url:
-                policy: dict[str, object] = {}
-                tags = source.get("tags") or []
-                overrides = source.get("overrides") or {}
-                if tags:
-                    policy.setdefault("tags", {})["tag_defaults"] = tags
-                if isinstance(overrides, dict):
-                    if overrides.get("parse", {}).get("prefer_entry_summary") is not None:
-                        policy.setdefault("parse", {})["prefer_entry_summary"] = overrides[
-                            "parse"
-                        ]["prefer_entry_summary"]
-                    if overrides.get("http_headers"):
-                        policy.setdefault("fetch", {})["headers"] = overrides["http_headers"]
-
-                config = {"feed_url": feed_url, **policy}
-                tactic = SourceTactic(
-                    id=None,
-                    source_id=source_id,
-                    tactic_type=tactic_type,
-                    enabled=bool(source.get("enabled", True)),
-                    priority=int(source.get("priority", 100)),
-                    config=config,
-                    last_success_at=None,
-                    last_error_at=None,
-                    error_streak=0,
-                )
-                upsert_tactic(conn, tactic)
-        except ValueError as exc:
-            log_event(
-                logger,
-                logging.ERROR,
-                "sources_import_error",
-                source_id=source.get("id"),
-                error=str(exc),
-            )
-            return 1
-
-    log_event(logger, logging.INFO, "sources_imported", count=len(sources))
-    return 0
-
-
 def _cmd_sources_list(args: argparse.Namespace, logger: logging.Logger) -> int:
     try:
-        config = load_config(args.config)
+        conn, _ = _get_conn_and_config()
     except ConfigError as exc:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
 
-    conn = init_db(config.paths.state_db)
     sources = list_sources(conn, enabled_only=False)
     if not sources:
         log_event(
             logger,
             logging.WARNING,
             "no_sources",
-            hint="Add sources via the Admin UI (/ui) or use `sempervigil sources import`",
+            hint="Add sources via the Admin UI (/ui)",
         )
         return 1
 
@@ -443,12 +355,11 @@ def _cmd_sources_list(args: argparse.Namespace, logger: logging.Logger) -> int:
 
 def _cmd_sources_add(args: argparse.Namespace, logger: logging.Logger) -> int:
     try:
-        config = load_config(args.config)
+        conn, _ = _get_conn_and_config()
     except ConfigError as exc:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
 
-    conn = init_db(config.paths.state_db)
     source_dict = {
         "id": args.id,
         "name": args.name,
@@ -479,12 +390,11 @@ def _cmd_sources_add(args: argparse.Namespace, logger: logging.Logger) -> int:
 
 def _cmd_sources_show(args: argparse.Namespace, logger: logging.Logger) -> int:
     try:
-        config = load_config(args.config)
+        conn, _ = _get_conn_and_config()
     except ConfigError as exc:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
 
-    conn = init_db(config.paths.state_db)
     source = get_source(conn, args.source_id)
     if source is None:
         log_event(logger, logging.ERROR, "source_not_found", source_id=args.source_id)
@@ -498,12 +408,11 @@ def _cmd_sources_show(args: argparse.Namespace, logger: logging.Logger) -> int:
 
 def _cmd_sources_export(args: argparse.Namespace, logger: logging.Logger) -> int:
     try:
-        config = load_config(args.config)
+        conn, _ = _get_conn_and_config()
     except ConfigError as exc:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
 
-    conn = init_db(config.paths.state_db)
     sources = list_sources(conn, enabled_only=False)
     payload = [source.__dict__ for source in sources]
     try:
@@ -519,19 +428,18 @@ def _cmd_sources_export(args: argparse.Namespace, logger: logging.Logger) -> int
 
 def _cmd_db_migrate(args: argparse.Namespace, logger: logging.Logger) -> int:
     try:
-        config = load_config(args.config)
+        conn, config = _get_conn_and_config()
     except ConfigError as exc:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
 
-    init_db(config.paths.state_db)
     log_event(logger, logging.INFO, "db_migrated", path=config.paths.state_db)
     return 0
 
 
 def _cmd_jobs_enqueue(args: argparse.Namespace, logger: logging.Logger) -> int:
     try:
-        config = load_config(args.config)
+        conn, _ = _get_conn_and_config()
     except ConfigError as exc:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
@@ -539,7 +447,6 @@ def _cmd_jobs_enqueue(args: argparse.Namespace, logger: logging.Logger) -> int:
     payload = {}
     if args.source_id:
         payload["source_id"] = args.source_id
-    conn = init_db(config.paths.state_db)
     job_id = enqueue_job(conn, args.job_type, payload, debounce=args.debounce)
     log_event(logger, logging.INFO, "job_enqueued", job_id=job_id, job_type=args.job_type)
     return 0
@@ -547,12 +454,10 @@ def _cmd_jobs_enqueue(args: argparse.Namespace, logger: logging.Logger) -> int:
 
 def _cmd_jobs_list(args: argparse.Namespace, logger: logging.Logger) -> int:
     try:
-        config = load_config(args.config)
+        conn, _ = _get_conn_and_config()
     except ConfigError as exc:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
-
-    conn = init_db(config.paths.state_db)
     jobs = list_jobs(conn, limit=args.limit)
     for job in jobs:
         log_event(
@@ -580,14 +485,13 @@ def _parse_iso(value: str) -> datetime:
 
 def _cmd_cve_sync(args: argparse.Namespace, logger: logging.Logger) -> int:
     try:
-        config = load_config(args.config)
+        conn, config = _get_conn_and_config()
     except ConfigError as exc:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
     if not config.cve.enabled:
         log_event(logger, logging.WARNING, "cve_sync_disabled")
         return 0
-    conn = init_db(config.paths.state_db)
     now = datetime.now(tz=timezone.utc)
     last_sync = get_setting(conn, "cve.last_successful_sync_at", None)
     start = _parse_iso(last_sync) if isinstance(last_sync, str) else None
@@ -612,13 +516,6 @@ def _cmd_cve_sync(args: argparse.Namespace, logger: logging.Logger) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sempervigil", description="SemperVigil CLI")
-    parser.add_argument(
-        "--config",
-        dest="config",
-        default=None,
-        help="Path to config.yml (defaults to SV_CONFIG_PATH or /config/config.yml)",
-    )
-
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run_parser = subparsers.add_parser("run", help="Fetch enabled sources and write outputs")
@@ -661,10 +558,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     sources_parser = subparsers.add_parser("sources", help="Manage sources")
     sources_subparsers = sources_parser.add_subparsers(dest="sources_command", required=True)
-
-    sources_import = sources_subparsers.add_parser("import", help="Import sources from YAML")
-    sources_import.add_argument("path", nargs="?", help="Path to sources YAML file")
-    sources_import.set_defaults(func=_cmd_sources_import)
 
     sources_list = sources_subparsers.add_parser("list", help="List sources")
     sources_list.set_defaults(func=_cmd_sources_list)

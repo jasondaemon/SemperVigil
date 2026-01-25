@@ -22,6 +22,47 @@ function showToast(message) {
   setTimeout(() => toast.remove(), 2500);
 }
 
+function wireNavDropdowns() {
+  const dropdowns = Array.from(document.querySelectorAll(".nav-dropdown"));
+  if (!dropdowns.length) {
+    return;
+  }
+  const closeAll = () => {
+    dropdowns.forEach((dropdown) => {
+      dropdown.classList.remove("open");
+      const toggle = dropdown.querySelector(".dropdown-toggle");
+      if (toggle) {
+        toggle.setAttribute("aria-expanded", "false");
+      }
+    });
+  };
+  dropdowns.forEach((dropdown) => {
+    const toggle = dropdown.querySelector(".dropdown-toggle");
+    if (!toggle) {
+      return;
+    }
+    toggle.addEventListener("click", (event) => {
+      event.preventDefault();
+      const isOpen = dropdown.classList.contains("open");
+      closeAll();
+      if (!isOpen) {
+        dropdown.classList.add("open");
+        toggle.setAttribute("aria-expanded", "true");
+      }
+    });
+  });
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".nav-dropdown")) {
+      closeAll();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeAll();
+    }
+  });
+}
+
 function wireEnqueueButtons() {
   document.querySelectorAll("[data-enqueue]").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -324,6 +365,37 @@ function wireLogin() {
     } catch (err) {
       error.style.display = "block";
       error.textContent = "Invalid token";
+    }
+  });
+}
+
+function wireRuntimeConfig() {
+  const form = document.getElementById("runtime-config-form");
+  if (!form) {
+    return;
+  }
+  const field = document.getElementById("runtime-config-json");
+  const error = document.getElementById("runtime-config-error");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    error.style.display = "none";
+    let payload;
+    try {
+      payload = JSON.parse(field.value);
+    } catch (err) {
+      error.textContent = "Invalid JSON";
+      error.style.display = "block";
+      return;
+    }
+    try {
+      await apiFetch("/admin/config/runtime", {
+        method: "PUT",
+        body: JSON.stringify({ config: payload }),
+      });
+      showToast("Config saved");
+    } catch (err) {
+      error.textContent = err.message || "Save failed";
+      error.style.display = "block";
     }
   });
 }
@@ -899,10 +971,12 @@ async function wireAnalytics() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  wireNavDropdowns();
   wireEnqueueButtons();
   wireSources();
   wireJobs();
   wireLogin();
+  wireRuntimeConfig();
   wireAnalytics();
   wireAiProviders();
   wireAiModels();

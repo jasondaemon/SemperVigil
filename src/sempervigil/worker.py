@@ -8,7 +8,7 @@ import time
 import uuid
 from datetime import datetime, timezone, timedelta
 
-from .config import ConfigError, load_config
+from .config import ConfigError, get_state_db_path, load_runtime_config
 from .ingest import process_source
 from .models import Article
 from .cve_sync import CveSyncConfig, isoformat_utc, sync_cves
@@ -61,17 +61,17 @@ def _setup_logging() -> logging.Logger:
     return configure_logging("sempervigil.worker")
 
 
-def run_once(config_path: str | None, worker_id: str) -> int:
+def run_once(worker_id: str) -> int:
     logger = _setup_logging()
     try:
-        config = load_config(config_path)
+        conn = init_db(get_state_db_path())
+        config = load_runtime_config(conn)
     except ConfigError as exc:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
 
     set_umask_from_env()
     ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir))
-    conn = init_db(config.paths.state_db)
     _maybe_enqueue_cve_sync(conn, config, logger)
     job = claim_next_job(
         conn,
@@ -105,9 +105,9 @@ def run_once(config_path: str | None, worker_id: str) -> int:
     return 0
 
 
-def run_loop(config_path: str | None, worker_id: str, sleep_seconds: int) -> int:
+def run_loop(worker_id: str, sleep_seconds: int) -> int:
     while True:
-        run_once(config_path, worker_id)
+        run_once(worker_id)
         time.sleep(sleep_seconds)
 
 
@@ -636,7 +636,6 @@ def _parse_iso(value: str) -> datetime:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sempervigil-worker")
-    parser.add_argument("--config", dest="config", default=None)
     parser.add_argument("--once", action="store_true", help="Run a single job and exit")
     parser.add_argument("--sleep", type=int, default=10, help="Sleep seconds between polls")
     parser.add_argument("--worker-id", default=os.environ.get("HOSTNAME", "worker"))
@@ -647,8 +646,8 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     if args.once:
-        return run_once(args.config, args.worker_id)
-    return run_loop(args.config, args.worker_id, args.sleep)
+        return run_once(args.worker_id)
+    return run_loop(args.worker_id, args.sleep)
 
 
 def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, object]:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -7,7 +8,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from .config import ConfigError, load_config
+from .config import bootstrap_runtime_config, get_runtime_config, get_state_db_path
 from .services.sources_service import list_sources
 from .services.ai_service import (
     list_models,
@@ -33,13 +34,18 @@ TEMPLATES = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 ADMIN_COOKIE_NAME = "sv_admin_token"
 
 
+def _get_conn():
+    conn = init_db(get_state_db_path())
+    bootstrap_runtime_config(conn)
+    return conn
+
+
 def ui_router(token_guard) -> APIRouter:
     router = APIRouter(dependencies=[Depends(token_guard)])
 
     @router.get("/", response_class=HTMLResponse)
     def dashboard(request: Request):
-        config = load_config(None)
-        conn = init_db(config.paths.state_db)
+        conn = _get_conn()
         sources = list_sources(conn)
         jobs = list_jobs(conn, limit=10)
         enabled_count = sum(1 for item in sources if item.get("enabled"))
@@ -57,8 +63,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/sources", response_class=HTMLResponse)
     def sources(request: Request):
-        config = load_config(None)
-        conn = init_db(config.paths.state_db)
+        conn = _get_conn()
         items = list_sources(conn)
         since = utc_now_iso_offset(seconds=-24 * 3600)
         for item in items:
@@ -77,8 +82,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/jobs", response_class=HTMLResponse)
     def jobs(request: Request):
-        config = load_config(None)
-        conn = init_db(config.paths.state_db)
+        conn = _get_conn()
         items = list_jobs(conn, limit=50)
         return TEMPLATES.TemplateResponse(
             "admin/jobs.html",
@@ -92,8 +96,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/health", response_class=HTMLResponse)
     def health(request: Request):
-        config = load_config(None)
-        conn = init_db(config.paths.state_db)
+        conn = _get_conn()
         cursor = conn.execute(
             """
             SELECT s.id, s.name, s.enabled, s.pause_until, s.paused_reason,
@@ -149,8 +152,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/ai", response_class=HTMLResponse)
     def ai_config(request: Request):
-        config = load_config(None)
-        conn = init_db(config.paths.state_db)
+        conn = _get_conn()
         return TEMPLATES.TemplateResponse(
             "admin/ai.html",
             {
@@ -175,6 +177,20 @@ def ui_router(token_guard) -> APIRouter:
                 "request": request,
                 "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
                 "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
+            },
+        )
+
+    @router.get("/config", response_class=HTMLResponse)
+    def runtime_config(request: Request):
+        conn = _get_conn()
+        cfg = get_runtime_config(conn)
+        return TEMPLATES.TemplateResponse(
+            "admin/config.html",
+            {
+                "request": request,
+                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
+                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
+                "config_json": json.dumps(cfg, indent=2, sort_keys=True),
             },
         )
 

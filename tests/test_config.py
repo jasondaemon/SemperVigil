@@ -1,27 +1,30 @@
-import yaml
+import copy
 
-from sempervigil.config import load_config
-
-
-def test_load_config_allows_missing_sources(tmp_path):
-    config_path = tmp_path / "config.yml"
-    config_path.write_text(yaml.safe_dump({"app": {"name": "Test"}}))
-
-    config = load_config(str(config_path))
-    assert config.sources == []
+from sempervigil.config import DEFAULT_CONFIG, bootstrap_runtime_config, get_runtime_config, set_runtime_config
+from sempervigil.storage import init_db
 
 
-def test_load_config_accepts_sources_if_present(tmp_path):
-    config_path = tmp_path / "config.yml"
-    config_path.write_text(
-        yaml.safe_dump(
-            {
-                "sources": [
-                    {"id": "s1", "type": "rss", "url": "https://example.com/feed"}
-                ]
-            }
-        )
-    )
+def test_bootstrap_creates_runtime_config(tmp_path):
+    conn = init_db(str(tmp_path / "state.sqlite3"))
+    cfg = bootstrap_runtime_config(conn)
+    assert cfg == DEFAULT_CONFIG
 
-    config = load_config(str(config_path))
-    assert config.sources[0].id == "s1"
+
+def test_get_runtime_config_after_set(tmp_path):
+    conn = init_db(str(tmp_path / "state.sqlite3"))
+    custom = copy.deepcopy(DEFAULT_CONFIG)
+    custom["app"]["name"] = "Test"
+    set_runtime_config(conn, custom)
+    cfg = get_runtime_config(conn)
+    assert cfg["app"]["name"] == "Test"
+
+
+def test_set_runtime_config_rejects_invalid(tmp_path):
+    conn = init_db(str(tmp_path / "state.sqlite3"))
+    invalid = {"app": {"name": "Bad"}}
+    try:
+        set_runtime_config(conn, invalid)
+    except Exception as exc:  # noqa: BLE001
+        assert "Invalid config.runtime" in str(exc)
+    else:
+        raise AssertionError("Expected validation error")
