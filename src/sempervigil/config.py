@@ -175,6 +175,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 CONFIG_KEY = "config.runtime"
 CVE_SETTINGS_KEY = "cve.settings"
+EVENTS_SETTINGS_KEY = "events.settings"
 
 DEFAULT_CVE_SETTINGS: dict[str, Any] = {
     "enabled": True,
@@ -191,6 +192,14 @@ DEFAULT_CVE_SETTINGS: dict[str, Any] = {
         "vendor_keywords": [],
     },
     "retention_days": 365,
+}
+
+DEFAULT_EVENTS_SETTINGS: dict[str, Any] = {
+    "enabled": True,
+    "merge_window_days": 14,
+    "min_shared_products_to_merge": 1,
+    "product_burst_window_hours": 24,
+    "product_burst_min_high_critical": 3,
 }
 
 
@@ -252,6 +261,16 @@ def bootstrap_cve_settings(conn) -> dict[str, Any]:
     return cfg
 
 
+def bootstrap_events_settings(conn) -> dict[str, Any]:
+    cfg = get_setting(conn, EVENTS_SETTINGS_KEY, None)
+    if cfg is None:
+        set_setting(conn, EVENTS_SETTINGS_KEY, _deep_copy(DEFAULT_EVENTS_SETTINGS))
+        cfg = get_setting(conn, EVENTS_SETTINGS_KEY, None)
+    if not isinstance(cfg, dict):
+        raise ConfigError("events.settings must be a JSON object")
+    return cfg
+
+
 def get_cve_settings(conn) -> dict[str, Any]:
     cfg = bootstrap_cve_settings(conn)
     errors = validate_cve_settings(cfg)
@@ -260,11 +279,26 @@ def get_cve_settings(conn) -> dict[str, Any]:
     return cfg
 
 
+def get_events_settings(conn) -> dict[str, Any]:
+    cfg = bootstrap_events_settings(conn)
+    errors = validate_events_settings(cfg)
+    if errors:
+        raise ConfigError("Invalid events.settings: " + "; ".join(errors))
+    return cfg
+
+
 def set_cve_settings(conn, cfg: dict[str, Any]) -> None:
     errors = validate_cve_settings(cfg)
     if errors:
         raise ConfigError("Invalid cve.settings: " + "; ".join(errors))
     set_setting(conn, CVE_SETTINGS_KEY, _deep_copy(cfg))
+
+
+def set_events_settings(conn, cfg: dict[str, Any]) -> None:
+    errors = validate_events_settings(cfg)
+    if errors:
+        raise ConfigError("Invalid events.settings: " + "; ".join(errors))
+    set_setting(conn, EVENTS_SETTINGS_KEY, _deep_copy(cfg))
 
 
 def validate_cve_settings(cfg: dict[str, Any]) -> list[str]:
@@ -307,6 +341,31 @@ def validate_cve_settings(cfg: dict[str, Any]) -> list[str]:
             value = filters.get(key)
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
                 errors.append(f"cve.settings.filters.{key} must be a list of strings")
+    return errors
+
+
+def validate_events_settings(cfg: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    required = [
+        "enabled",
+        "merge_window_days",
+        "min_shared_products_to_merge",
+        "product_burst_window_hours",
+        "product_burst_min_high_critical",
+    ]
+    for key in required:
+        if key not in cfg:
+            errors.append(f"missing events.settings.{key}")
+    if "enabled" in cfg and not isinstance(cfg["enabled"], bool):
+        errors.append("events.settings.enabled must be a boolean")
+    for key in (
+        "merge_window_days",
+        "min_shared_products_to_merge",
+        "product_burst_window_hours",
+        "product_burst_min_high_critical",
+    ):
+        if key in cfg and not isinstance(cfg[key], int):
+            errors.append(f"events.settings.{key} must be an integer")
     return errors
 
 def load_runtime_config(conn) -> Config:

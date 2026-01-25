@@ -10,7 +10,9 @@
           Content <span class="caret">v</span>
         </button>
         <div class="dropdown-menu">
+          <a class="dropdown-item {% if subactive == 'events' %}active{% endif %}" href="/ui/events">Events</a>
           <a class="dropdown-item {% if subactive == 'content' %}active{% endif %}" href="/ui/content">Content Browser</a>
+          <a class="dropdown-item {% if subactive == 'products' %}active{% endif %}" href="/ui/products">Products</a>
           <a class="dropdown-item {% if subactive == 'cves' %}active{% endif %}" href="/ui/cves">CVEs</a>
         </div>
       </div>

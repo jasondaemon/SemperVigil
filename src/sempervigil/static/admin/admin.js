@@ -22,6 +22,64 @@ function showToast(message) {
   setTimeout(() => toast.remove(), 2500);
 }
 
+function buildPageList(current, total) {
+  const pages = new Set([1, total, current - 2, current - 1, current, current + 1, current + 2]);
+  return Array.from(pages)
+    .filter((p) => p >= 1 && p <= total)
+    .sort((a, b) => a - b);
+}
+
+function renderPager(container, total, page, size, onPage) {
+  if (!container) {
+    return;
+  }
+  container.innerHTML = "";
+  const totalPages = Math.max(1, Math.ceil(total / size));
+  const controls = document.createElement("div");
+  controls.className = "pager-controls";
+
+  const prev = document.createElement("button");
+  prev.type = "button";
+  prev.className = "btn secondary";
+  prev.textContent = "Prev";
+  prev.disabled = page <= 1;
+  prev.addEventListener("click", () => onPage(page - 1));
+  controls.appendChild(prev);
+
+  const pages = buildPageList(page, totalPages);
+  let last = 0;
+  pages.forEach((p) => {
+    if (p - last > 1) {
+      const ellipsis = document.createElement("span");
+      ellipsis.className = "pager-ellipsis";
+      ellipsis.textContent = "…";
+      controls.appendChild(ellipsis);
+    }
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "pager-page" + (p === page ? " active" : "");
+    btn.textContent = String(p);
+    btn.addEventListener("click", () => onPage(p));
+    controls.appendChild(btn);
+    last = p;
+  });
+
+  const next = document.createElement("button");
+  next.type = "button";
+  next.className = "btn secondary";
+  next.textContent = "Next";
+  next.disabled = page >= totalPages;
+  next.addEventListener("click", () => onPage(page + 1));
+  controls.appendChild(next);
+
+  const info = document.createElement("div");
+  info.className = "pager-info";
+  info.textContent = `Page ${page} of ${totalPages}`;
+
+  container.appendChild(controls);
+  container.appendChild(info);
+}
+
 function wireNavDropdowns() {
   const dropdowns = Array.from(document.querySelectorAll(".nav-dropdown"));
   if (!dropdowns.length) {
@@ -1543,6 +1601,373 @@ function wireContentArticle() {
     })
     .catch((err) => {
       container.textContent = err.message || String(err);
+  });
+}
+
+function wireEvents() {
+  const table = document.getElementById("events-table");
+  if (!table) {
+    return;
+  }
+  const tbody = table.querySelector("tbody");
+  const pager = document.getElementById("events-pager");
+  const error = document.getElementById("events-error");
+  const form = document.getElementById("events-filters");
+  const rebuildBtn = document.getElementById("events-rebuild");
+  let pageSize = 50;
+
+  function setError(message) {
+    if (!error) {
+      return;
+    }
+    if (message) {
+      error.textContent = message;
+      error.style.display = "block";
+    } else {
+      error.textContent = "";
+      error.style.display = "none";
+    }
+  }
+
+  async function load(page) {
+    setError("");
+    const params = new URLSearchParams();
+    const query = document.getElementById("events-query").value.trim();
+    const kind = document.getElementById("events-kind").value;
+    const severity = document.getElementById("events-severity").value;
+    const status = document.getElementById("events-status").value;
+    const after = document.getElementById("events-after").value;
+    const before = document.getElementById("events-before").value;
+    if (query) params.set("query", query);
+    if (kind) params.set("kind", kind);
+    if (severity) params.set("severity", severity);
+    if (status) params.set("status", status);
+    if (after) params.set("after", after);
+    if (before) params.set("before", before);
+    params.set("page", String(page));
+    params.set("page_size", String(pageSize));
+    const data = await apiFetch(`/admin/api/events?${params.toString()}`);
+    tbody.innerHTML = "";
+    data.items.forEach((event) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td><a href="/ui/events/${event.id}">${event.id}</a></td>
+        <td class="truncate" title="${event.title || ""}">${event.title || ""}</td>
+        <td>${event.kind || ""}</td>
+        <td>${event.severity || ""}</td>
+        <td>${event.status || ""}</td>
+        <td>${event.last_seen_at || ""}</td>
+      `;
+      tbody.appendChild(row);
+    });
+    renderPager(pager, data.total, data.page, data.page_size, load);
+  }
+
+  if (form) {
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      load(1).catch((err) => setError(err.message || String(err)));
+    });
+  }
+
+  if (rebuildBtn) {
+    rebuildBtn.addEventListener("click", async () => {
+      if (!confirm("Rebuild events from CVEs?")) {
+        return;
+      }
+      try {
+        const payload = await apiFetch("/admin/api/events/rebuild", {
+          method: "POST",
+          body: JSON.stringify({}),
+        });
+        if (payload && payload.job_id) {
+          showToast(`Events rebuild queued (${payload.job_id})`);
+        } else {
+          showToast("Events rebuild queued");
+        }
+        load(1).catch((err) => setError(err.message || String(err)));
+      } catch (err) {
+        setError(err.message || String(err));
+      }
+    });
+  }
+
+  load(1).catch((err) => setError(err.message || String(err)));
+}
+
+function wireEventDetail() {
+  const container = document.getElementById("event-detail");
+  if (!container) {
+    return;
+  }
+  const eventId = container.dataset.eventId;
+  const cveTable = document.getElementById("event-cves-table");
+  const productsList = document.getElementById("event-products-list");
+  const articlesTable = document.getElementById("event-articles-table");
+
+  apiFetch(`/admin/api/events/${eventId}`)
+    .then((event) => {
+      const meta = `
+        <div class="meta-grid">
+          <div><strong>ID:</strong> ${event.id}</div>
+          <div><strong>Kind:</strong> ${event.kind}</div>
+          <div><strong>Status:</strong> ${event.status}</div>
+          <div><strong>Severity:</strong> ${event.severity || "UNKNOWN"}</div>
+          <div><strong>First seen:</strong> ${event.first_seen_at || ""}</div>
+          <div><strong>Last seen:</strong> ${event.last_seen_at || ""}</div>
+        </div>
+        ${event.summary ? `<p class="summary">${event.summary}</p>` : ""}
+      `;
+      container.innerHTML = meta;
+      const cves = (event.items && event.items.cves) || [];
+      if (cveTable) {
+        const body = cveTable.querySelector("tbody");
+        body.innerHTML = "";
+        cves.forEach((cve) => {
+          const row = document.createElement("tr");
+          row.innerHTML = `
+            <td><a href="/ui/cves/${cve.cve_id}">${cve.cve_id}</a></td>
+            <td>${cve.preferred_base_severity || ""}</td>
+            <td>${cve.preferred_base_score ?? ""}</td>
+            <td>${cve.published_at || ""}</td>
+            <td class="truncate" title="${cve.summary || ""}">${cve.summary || ""}</td>
+          `;
+          body.appendChild(row);
+        });
+      }
+      const products = (event.items && event.items.products) || [];
+      if (productsList) {
+        productsList.innerHTML = "";
+        if (!products.length) {
+          productsList.innerHTML = "<li>None found</li>";
+        } else {
+          products.forEach((product) => {
+            const li = document.createElement("li");
+            const label = `${product.vendor_name || ""} ${product.product_name || ""}`.trim();
+            li.innerHTML = `<a href="/ui/products/${product.product_key}">${label}</a>`;
+            productsList.appendChild(li);
+          });
+        }
+      }
+      const articles = (event.items && event.items.articles) || [];
+      if (articlesTable) {
+        const body = articlesTable.querySelector("tbody");
+        body.innerHTML = "";
+        articles.forEach((article) => {
+          const row = document.createElement("tr");
+          const link = article.article_id
+            ? `/ui/content/articles/${article.article_id}`
+            : "";
+          row.innerHTML = `
+            <td>${link ? `<a href="${link}">${article.title || ""}</a>` : (article.title || "")}</td>
+            <td>${article.published_at || ""}</td>
+            <td>${article.url ? `<a href="${article.url}" target="_blank" rel="noopener">Source</a>` : ""}</td>
+          `;
+          body.appendChild(row);
+        });
+      }
+    })
+    .catch((err) => {
+      container.innerHTML = `<div class="error-banner">${err.message || String(err)}</div>`;
+    });
+}
+
+function wireProducts() {
+  const table = document.getElementById("products-table");
+  if (!table) {
+    return;
+  }
+  const tbody = table.querySelector("tbody");
+  const pager = document.getElementById("products-pager");
+  const error = document.getElementById("products-error");
+  const form = document.getElementById("products-filters");
+  const backfillBtn = document.getElementById("products-backfill");
+  let pageSize = 50;
+
+  function setError(message) {
+    if (!error) {
+      return;
+    }
+    if (message) {
+      error.textContent = message;
+      error.style.display = "block";
+    } else {
+      error.textContent = "";
+      error.style.display = "none";
+    }
+  }
+
+  async function load(page) {
+    setError("");
+    const params = new URLSearchParams();
+    const query = document.getElementById("products-query").value.trim();
+    const vendor = document.getElementById("products-vendor").value.trim();
+    if (query) params.set("query", query);
+    if (vendor) params.set("vendor", vendor);
+    params.set("page", String(page));
+    params.set("page_size", String(pageSize));
+    const data = await apiFetch(`/admin/api/products?${params.toString()}`);
+    tbody.innerHTML = "";
+    data.items.forEach((item) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${item.vendor_name || ""}</td>
+        <td><a href="/ui/products/${item.product_key}">${item.product_name || ""}</a></td>
+        <td class="mono">${item.product_key || ""}</td>
+      `;
+      tbody.appendChild(row);
+    });
+    renderPager(pager, data.total, data.page, data.page_size, load);
+  }
+
+  if (form) {
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      load(1).catch((err) => setError(err.message || String(err)));
+    });
+  }
+
+  if (backfillBtn) {
+    backfillBtn.addEventListener("click", async () => {
+      if (!confirm("Backfill products from existing CVEs?")) {
+        return;
+      }
+      try {
+        await apiFetch("/admin/api/products/backfill", {
+          method: "POST",
+          body: JSON.stringify({}),
+        });
+        showToast("Backfill complete");
+        load(1).catch((err) => setError(err.message || String(err)));
+      } catch (err) {
+        setError(err.message || String(err));
+      }
+    });
+  }
+
+  load(1).catch((err) => setError(err.message || String(err)));
+}
+
+function wireProductDetail() {
+  const container = document.getElementById("product-detail");
+  if (!container) {
+    return;
+  }
+  const productKey = container.dataset.productKey;
+  const facetsEl = document.createElement("div");
+  facetsEl.className = "facet-list";
+  container.appendChild(facetsEl);
+  const cveTable = document.getElementById("product-cves-table");
+  const cvePager = document.getElementById("product-cves-pager");
+  const eventsTable = document.getElementById("product-events-table");
+  const eventsPager = document.getElementById("product-events-pager");
+  const cveFilters = document.getElementById("product-cve-filters");
+  let cvePageSize = 50;
+  let eventsPageSize = 25;
+
+  function renderFacets(facets) {
+    facetsEl.innerHTML = "";
+    const entries = Object.entries(facets || {});
+    if (!entries.length) {
+      facetsEl.textContent = "No CVE facets.";
+      return;
+    }
+    entries.forEach(([severity, count]) => {
+      const chip = document.createElement("span");
+      chip.className = "facet-chip";
+      chip.textContent = `${severity}: ${count}`;
+      facetsEl.appendChild(chip);
+    });
+  }
+
+  async function loadProduct() {
+    const data = await apiFetch(`/admin/api/products/${productKey}`);
+    container.innerHTML = `
+      <h2>${data.product.vendor_name} ${data.product.product_name}</h2>
+      <div class="mono">${data.product.product_key}</div>
+    `;
+    container.appendChild(facetsEl);
+    renderFacets(data.facets);
+  }
+
+  function selectedSeverities() {
+    if (!cveFilters) {
+      return "";
+    }
+    const values = [];
+    cveFilters.querySelectorAll("input[type='checkbox']").forEach((box) => {
+      if (box.checked) {
+        values.push(box.value);
+      }
+    });
+    return values.join(",");
+  }
+
+  async function loadCves(page) {
+    const params = new URLSearchParams();
+    const severity = selectedSeverities();
+    if (severity) {
+      params.set("severity", severity);
+    }
+    params.set("page", String(page));
+    params.set("page_size", String(cvePageSize));
+    const data = await apiFetch(
+      `/admin/api/products/${productKey}/cves?${params.toString()}`
+    );
+    if (cveTable) {
+      const body = cveTable.querySelector("tbody");
+      body.innerHTML = "";
+      data.items.forEach((cve) => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td><a href="/ui/cves/${cve.cve_id}">${cve.cve_id}</a></td>
+          <td>${cve.preferred_base_severity || ""}</td>
+          <td>${cve.preferred_base_score ?? ""}</td>
+          <td>${cve.published_at || ""}</td>
+          <td class="truncate" title="${cve.summary || ""}">${cve.summary || ""}</td>
+        `;
+        body.appendChild(row);
+      });
+      renderPager(cvePager, data.total, data.page, data.page_size, loadCves);
+    }
+  }
+
+  async function loadEvents(page) {
+    const params = new URLSearchParams();
+    params.set("page", String(page));
+    params.set("page_size", String(eventsPageSize));
+    const data = await apiFetch(
+      `/admin/api/products/${productKey}/events?${params.toString()}`
+    );
+    if (eventsTable) {
+      const body = eventsTable.querySelector("tbody");
+      body.innerHTML = "";
+      data.items.forEach((event) => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td><a href="/ui/events/${event.id}">${event.title}</a></td>
+          <td>${event.kind || ""}</td>
+          <td>${event.severity || ""}</td>
+          <td>${event.status || ""}</td>
+          <td>${event.last_seen_at || ""}</td>
+        `;
+        body.appendChild(row);
+      });
+      renderPager(eventsPager, data.total, data.page, data.page_size, loadEvents);
+    }
+  }
+
+  if (cveFilters) {
+    cveFilters.addEventListener("change", () => {
+      loadCves(1).catch((err) => showToast(err.message || String(err)));
+    });
+  }
+
+  loadProduct()
+    .then(() => loadCves(1))
+    .then(() => loadEvents(1))
+    .catch((err) => {
+      container.innerHTML = `<div class="error-banner">${err.message || String(err)}</div>`;
     });
 }
 
@@ -1700,5 +2125,9 @@ document.addEventListener("DOMContentLoaded", () => {
   wireCveSettings();
   wireContentSearch();
   wireContentArticle();
+  wireEvents();
+  wireEventDetail();
+  wireProducts();
+  wireProductDetail();
   wireDangerZone();
 });

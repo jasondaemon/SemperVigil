@@ -1,0 +1,29 @@
+{% set nav_active = "content" %}
+{% set nav_subactive = "products" %}
+{% extends "admin/base.html" %}
+
+{% block content %}
+<section class="page">
+  <div class="page-header">
+    <h1>Products</h1>
+    <button class="btn secondary" id="products-backfill">Backfill from CVEs</button>
+  </div>
+  <form class="filters" id="products-filters">
+    <input type="text" id="products-query" placeholder="Search product">
+    <input type="text" id="products-vendor" placeholder="Vendor">
+    <button class="btn" type="submit">Search</button>
+  </form>
+  <div id="products-error" class="error-banner" style="display:none;"></div>
+  <table class="table" id="products-table">
+    <thead>
+      <tr>
+        <th>Vendor</th>
+        <th>Product</th>
+        <th>Product Key</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <div id="products-pager" class="pager"></div>
+</section>
+{% endblock %}

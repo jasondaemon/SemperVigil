@@ -9,6 +9,7 @@ from typing import Iterable
 
 from .migrations import apply_migrations
 from .models import Article, Job, Source, SourceTactic
+from .normalize import cpe_to_vendor_product, normalize_name
 from .utils import json_dumps, utc_now_iso, utc_now_iso_offset
 
 
@@ -470,6 +471,38 @@ def upsert_cve(
         ),
     )
     conn.commit()
+
+
+def link_cve_products_from_signals(
+    conn: sqlite3.Connection,
+    *,
+    cve_id: str,
+    products: list[str],
+    cpes: list[str],
+    source: str = "nvd",
+) -> dict[str, int]:
+    pairs: list[tuple[str, str]] = []
+    for cpe in cpes:
+        vendor, product = cpe_to_vendor_product(cpe)
+        if vendor and product:
+            pairs.append((vendor, product))
+    if not pairs:
+        for product in products:
+            if product:
+                pairs.append(("unknown", product))
+    created = 0
+    for vendor_display, product_display in pairs:
+        vendor_id = upsert_vendor(conn, vendor_display)
+        product_id, _ = upsert_product(conn, vendor_id, product_display)
+        link_cve_product(
+            conn,
+            cve_id,
+            product_id,
+            source=source,
+            evidence={"cpes": cpes[:25]},
+        )
+        created += 1
+    return {"links": created}
 
 
 def insert_cve_snapshot(
@@ -1370,6 +1403,834 @@ def list_article_tags(conn: sqlite3.Connection) -> list[dict[str, object]]:
         """
     )
     return [{"tag": row[0], "count": row[1]} for row in cursor.fetchall()]
+
+
+def upsert_vendor(conn: sqlite3.Connection, vendor_display: str) -> int:
+    vendor_norm = normalize_name(vendor_display)
+    if not vendor_norm:
+        vendor_norm = "unknown"
+    display = vendor_display.strip() or vendor_norm.replace("_", " ").title()
+    now = utc_now_iso()
+    conn.execute(
+        """
+        INSERT INTO vendors (name_norm, display_name, created_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(name_norm) DO UPDATE SET display_name = excluded.display_name
+        """,
+        (vendor_norm, display, now),
+    )
+    row = conn.execute(
+        "SELECT id FROM vendors WHERE name_norm = ?",
+        (vendor_norm,),
+    ).fetchone()
+    conn.commit()
+    return int(row[0])
+
+
+def upsert_product(
+    conn: sqlite3.Connection, vendor_id: int, product_display: str
+) -> tuple[int, str]:
+    product_norm = normalize_name(product_display)
+    if not product_norm:
+        product_norm = "unknown"
+    vendor_row = conn.execute(
+        "SELECT name_norm FROM vendors WHERE id = ?",
+        (vendor_id,),
+    ).fetchone()
+    vendor_norm = vendor_row[0] if vendor_row else "unknown"
+    product_key = f"{vendor_norm}:{product_norm}"
+    display = product_display.strip() or product_norm.replace("_", " ").title()
+    now = utc_now_iso()
+    conn.execute(
+        """
+        INSERT INTO products (vendor_id, name_norm, display_name, product_key, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(vendor_id, name_norm) DO UPDATE SET display_name = excluded.display_name
+        """,
+        (vendor_id, product_norm, display, product_key, now),
+    )
+    row = conn.execute(
+        "SELECT id, product_key FROM products WHERE vendor_id = ? AND name_norm = ?",
+        (vendor_id, product_norm),
+    ).fetchone()
+    conn.commit()
+    return int(row[0]), str(row[1])
+
+
+def link_cve_product(
+    conn: sqlite3.Connection,
+    cve_id: str,
+    product_id: int,
+    source: str = "nvd",
+    evidence: dict[str, object] | None = None,
+) -> None:
+    now = utc_now_iso()
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO cve_products (cve_id, product_id, source, evidence_json, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (cve_id, product_id, source, json_dumps(evidence) if evidence else None, now),
+    )
+    conn.commit()
+
+
+def backfill_products_from_cves(
+    conn: sqlite3.Connection, limit: int | None = None
+) -> dict[str, object]:
+    stats = {
+        "cves_processed": 0,
+        "vendors_created": 0,
+        "products_created": 0,
+        "links_created": 0,
+    }
+    if not _table_exists(conn, "cves"):
+        return stats
+    cursor = conn.execute(
+        "SELECT cve_id, affected_products_json, affected_cpes_json FROM cves"
+        + (" LIMIT ?" if limit else ""),
+        (limit,) if limit else (),
+    )
+    for cve_id, products_json, cpes_json in cursor.fetchall():
+        stats["cves_processed"] += 1
+        cpes = json.loads(cpes_json) if cpes_json else []
+        products = json.loads(products_json) if products_json else []
+        pairs: list[tuple[str, str]] = []
+        for cpe in cpes:
+            vendor, product = cpe_to_vendor_product(cpe)
+            if vendor and product:
+                pairs.append((vendor, product))
+        if not pairs:
+            for product in products:
+                if product:
+                    pairs.append(("unknown", product))
+        for vendor_display, product_display in pairs:
+            vendor_id = upsert_vendor(conn, vendor_display)
+            product_id, _ = upsert_product(conn, vendor_id, product_display)
+            link_cve_product(
+                conn,
+                cve_id,
+                product_id,
+                evidence={"cpes": cpes[:25]},
+            )
+            stats["links_created"] += 1
+    return stats
+
+
+def query_products(
+    conn: sqlite3.Connection,
+    query: str | None,
+    vendor: str | None,
+    page: int,
+    page_size: int,
+) -> tuple[list[dict[str, object]], int]:
+    if not _table_exists(conn, "products"):
+        return [], 0
+    where: list[str] = []
+    params: list[object] = []
+    if query:
+        like = f"%{query.lower()}%"
+        where.append("(LOWER(p.display_name) LIKE ? OR LOWER(p.name_norm) LIKE ?)")
+        params.extend([like, like])
+    if vendor:
+        like = f"%{vendor.lower()}%"
+        where.append("(LOWER(v.display_name) LIKE ? OR LOWER(v.name_norm) LIKE ?)")
+        params.extend([like, like])
+    where_sql = " AND ".join(where)
+    if where_sql:
+        where_sql = "WHERE " + where_sql
+
+    count_cursor = conn.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM products p
+        JOIN vendors v ON v.id = p.vendor_id
+        {where_sql}
+        """,
+        params,
+    )
+    total = count_cursor.fetchone()[0]
+
+    offset = max(page - 1, 0) * page_size
+    cursor = conn.execute(
+        f"""
+        SELECT p.id, p.product_key, p.display_name, v.display_name
+        FROM products p
+        JOIN vendors v ON v.id = p.vendor_id
+        {where_sql}
+        ORDER BY v.display_name, p.display_name
+        LIMIT ? OFFSET ?
+        """,
+        [*params, page_size, offset],
+    )
+    items = [
+        {
+            "product_id": row[0],
+            "product_key": row[1],
+            "product_name": row[2],
+            "vendor_name": row[3],
+        }
+        for row in cursor.fetchall()
+    ]
+    return items, total
+
+
+def get_product(conn: sqlite3.Connection, product_key: str) -> dict[str, object] | None:
+    if not _table_exists(conn, "products"):
+        return None
+    row = conn.execute(
+        """
+        SELECT p.id, p.product_key, p.display_name, v.display_name, v.name_norm
+        FROM products p
+        JOIN vendors v ON v.id = p.vendor_id
+        WHERE p.product_key = ?
+        """,
+        (product_key,),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "product_id": row[0],
+        "product_key": row[1],
+        "product_name": row[2],
+        "vendor_name": row[3],
+        "vendor_norm": row[4],
+    }
+
+
+def get_product_cves(
+    conn: sqlite3.Connection,
+    product_id: int,
+    severity_min: float | None,
+    severities: list[str] | None,
+    page: int,
+    page_size: int,
+) -> tuple[list[dict[str, object]], int]:
+    if not _table_exists(conn, "cve_products") or not _table_exists(conn, "cves"):
+        return [], 0
+    where: list[str] = ["cp.product_id = ?"]
+    params: list[object] = [product_id]
+    if severity_min is not None:
+        where.append("c.preferred_base_score >= ?")
+        params.append(severity_min)
+    if severities:
+        normalized = [value.upper() for value in severities]
+        placeholders = ",".join("?" for _ in normalized)
+        where.append(f"c.preferred_base_severity IN ({placeholders})")
+        params.extend(normalized)
+    where_sql = " AND ".join(where)
+    count_cursor = conn.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM cve_products cp
+        JOIN cves c ON c.cve_id = cp.cve_id
+        WHERE {where_sql}
+        """,
+        params,
+    )
+    total = count_cursor.fetchone()[0]
+    offset = max(page - 1, 0) * page_size
+    cursor = conn.execute(
+        f"""
+        SELECT c.cve_id, c.published_at, c.last_modified_at, c.preferred_base_score,
+               c.preferred_base_severity, c.description_text
+        FROM cve_products cp
+        JOIN cves c ON c.cve_id = cp.cve_id
+        WHERE {where_sql}
+        ORDER BY c.last_modified_at DESC
+        LIMIT ? OFFSET ?
+        """,
+        [*params, page_size, offset],
+    )
+    items = [
+        {
+            "cve_id": row[0],
+            "published_at": row[1],
+            "last_modified_at": row[2],
+            "preferred_base_score": row[3],
+            "preferred_base_severity": row[4],
+            "summary": (row[5] or "")[:240],
+        }
+        for row in cursor.fetchall()
+    ]
+    return items, total
+
+
+def get_product_facets(conn: sqlite3.Connection, product_id: int) -> dict[str, int]:
+    if not _table_exists(conn, "cve_products") or not _table_exists(conn, "cves"):
+        return {}
+    cursor = conn.execute(
+        """
+        SELECT COALESCE(c.preferred_base_severity, 'UNKNOWN') as severity, COUNT(*)
+        FROM cve_products cp
+        JOIN cves c ON c.cve_id = cp.cve_id
+        WHERE cp.product_id = ?
+        GROUP BY severity
+        """,
+        (product_id,),
+    )
+    return {row[0]: int(row[1]) for row in cursor.fetchall()}
+
+
+def list_product_keys_for_cve(conn: sqlite3.Connection, cve_id: str) -> list[str]:
+    if not _table_exists(conn, "cve_products") or not _table_exists(conn, "products"):
+        return []
+    cursor = conn.execute(
+        """
+        SELECT p.product_key
+        FROM cve_products cp
+        JOIN products p ON p.id = cp.product_id
+        WHERE cp.cve_id = ?
+        ORDER BY p.product_key
+        """,
+        (cve_id,),
+    )
+    return [row[0] for row in cursor.fetchall()]
+
+
+def get_product_display_by_key(conn: sqlite3.Connection, product_key: str) -> dict[str, str] | None:
+    if not _table_exists(conn, "products") or not _table_exists(conn, "vendors"):
+        return None
+    row = conn.execute(
+        """
+        SELECT p.display_name, v.display_name
+        FROM products p
+        JOIN vendors v ON v.id = p.vendor_id
+        WHERE p.product_key = ?
+        """,
+        (product_key,),
+    ).fetchone()
+    if not row:
+        return None
+    return {"product": row[0], "vendor": row[1]}
+
+
+def create_event(
+    conn: sqlite3.Connection,
+    kind: str,
+    title: str,
+    severity: str | None,
+    first_seen_at: str,
+    last_seen_at: str,
+    summary: str | None = None,
+    meta: dict[str, object] | None = None,
+) -> str:
+    event_id = f"evt_{uuid.uuid4().hex[:12]}"
+    now = utc_now_iso()
+    conn.execute(
+        """
+        INSERT INTO events
+            (id, kind, title, summary, severity, created_at, updated_at,
+             first_seen_at, last_seen_at, status, meta_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event_id,
+            kind,
+            title,
+            summary,
+            severity,
+            now,
+            now,
+            first_seen_at,
+            last_seen_at,
+            "open",
+            json_dumps(meta) if meta else None,
+        ),
+    )
+    conn.commit()
+    return event_id
+
+
+def upsert_event_item(
+    conn: sqlite3.Connection, event_id: str, item_type: str, item_key: str
+) -> None:
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO event_items (event_id, item_type, item_key, created_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (event_id, item_type, item_key, utc_now_iso()),
+    )
+    conn.commit()
+
+
+def touch_event(conn: sqlite3.Connection, event_id: str, seen_at: str) -> None:
+    now = utc_now_iso()
+    conn.execute(
+        """
+        UPDATE events
+        SET last_seen_at = CASE WHEN last_seen_at > ? THEN last_seen_at ELSE ? END,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (seen_at, seen_at, now, event_id),
+    )
+    conn.commit()
+
+
+def _severity_rank(severity: str | None) -> int:
+    order = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1, "UNKNOWN": 0}
+    if not severity:
+        return -1
+    return order.get(severity.upper(), 0)
+
+
+def _event_title_for(conn: sqlite3.Connection, event_id: str) -> str | None:
+    cursor = conn.execute(
+        """
+        SELECT p.product_key
+        FROM event_items ei
+        JOIN products p ON p.product_key = ei.item_key
+        WHERE ei.event_id = ? AND ei.item_type = 'product'
+        ORDER BY p.product_key
+        LIMIT 1
+        """,
+        (event_id,),
+    )
+    row = cursor.fetchone()
+    if row:
+        display = get_product_display_by_key(conn, row[0])
+        if display:
+            return f"CVE activity: {display['vendor']} {display['product']}"
+    cursor = conn.execute(
+        """
+        SELECT item_key
+        FROM event_items
+        WHERE event_id = ? AND item_type = 'cve'
+        ORDER BY item_key
+        LIMIT 1
+        """,
+        (event_id,),
+    )
+    row = cursor.fetchone()
+    if row:
+        return f"CVE activity: {row[0]}"
+    return None
+
+
+def update_event_rollups(conn: sqlite3.Connection, event_id: str) -> None:
+    if not _table_exists(conn, "events"):
+        return
+    cursor = conn.execute(
+        """
+        SELECT c.preferred_base_severity
+        FROM event_items ei
+        JOIN cves c ON c.cve_id = ei.item_key
+        WHERE ei.event_id = ? AND ei.item_type = 'cve'
+        """,
+        (event_id,),
+    )
+    severities = [row[0] for row in cursor.fetchall()]
+    best = None
+    best_rank = -1
+    for severity in severities:
+        rank = _severity_rank(severity)
+        if rank > best_rank:
+            best_rank = rank
+            best = severity
+    title_prefix = _event_title_for(conn, event_id)
+    count_cursor = conn.execute(
+        "SELECT COUNT(*) FROM event_items WHERE event_id = ? AND item_type = 'cve'",
+        (event_id,),
+    )
+    cve_count = int(count_cursor.fetchone()[0])
+    if title_prefix:
+        title = f"{title_prefix} ({cve_count} CVEs)"
+    else:
+        title = f"CVE activity ({cve_count} CVEs)"
+    now = utc_now_iso()
+    conn.execute(
+        """
+        UPDATE events
+        SET severity = ?, title = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (best or "UNKNOWN", title, now, event_id),
+    )
+    conn.commit()
+
+
+def _find_event_for_cve(conn: sqlite3.Connection, cve_id: str) -> str | None:
+    if not _table_exists(conn, "event_items"):
+        return None
+    row = conn.execute(
+        """
+        SELECT event_id
+        FROM event_items
+        WHERE item_type = 'cve' AND item_key = ?
+        LIMIT 1
+        """,
+        (cve_id,),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def find_merge_candidate_event(
+    conn: sqlite3.Connection,
+    product_keys: list[str],
+    window_days: int,
+    min_shared_products: int,
+) -> str | None:
+    if not product_keys or not _table_exists(conn, "event_items"):
+        return None
+    placeholders = ",".join("?" for _ in product_keys)
+    cutoff = utc_now_iso_offset(seconds=-(window_days * 86400))
+    cursor = conn.execute(
+        f"""
+        SELECT e.id, COUNT(*) as matches, e.last_seen_at
+        FROM events e
+        JOIN event_items ei ON ei.event_id = e.id
+        WHERE e.status = 'open'
+          AND e.kind = 'cve_cluster'
+          AND e.last_seen_at >= ?
+          AND ei.item_type = 'product'
+          AND ei.item_key IN ({placeholders})
+        GROUP BY e.id
+        HAVING COUNT(*) >= ?
+        ORDER BY matches DESC, e.last_seen_at DESC
+        LIMIT 1
+        """,
+        [cutoff, *product_keys, min_shared_products],
+    )
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+
+def upsert_event_for_cve(
+    conn: sqlite3.Connection,
+    cve_id: str,
+    published_at: str | None,
+    window_days: int,
+    min_shared_products: int,
+) -> tuple[str, str]:
+    if not _table_exists(conn, "events") or not _table_exists(conn, "event_items"):
+        raise ValueError("events tables not initialized")
+    event_id = _find_event_for_cve(conn, cve_id)
+    product_keys = list_product_keys_for_cve(conn, cve_id)
+    now = utc_now_iso()
+    if event_id:
+        upsert_event_item(conn, event_id, "cve", cve_id)
+        for product_key in product_keys:
+            upsert_event_item(conn, event_id, "product", product_key)
+        touch_event(conn, event_id, published_at or now)
+        update_event_rollups(conn, event_id)
+        return event_id, "existing"
+    candidate = find_merge_candidate_event(conn, product_keys, window_days, min_shared_products)
+    if candidate:
+        event_id = candidate
+        upsert_event_item(conn, event_id, "cve", cve_id)
+        for product_key in product_keys:
+            upsert_event_item(conn, event_id, "product", product_key)
+        touch_event(conn, event_id, published_at or now)
+        update_event_rollups(conn, event_id)
+        return event_id, "merged"
+    first_seen = published_at or now
+    title = f"CVE activity ({1} CVEs)"
+    event_id = create_event(
+        conn,
+        kind="cve_cluster",
+        title=title,
+        severity="UNKNOWN",
+        first_seen_at=first_seen,
+        last_seen_at=now,
+        meta={"seed_cve": cve_id},
+    )
+    upsert_event_item(conn, event_id, "cve", cve_id)
+    for product_key in product_keys:
+        upsert_event_item(conn, event_id, "product", product_key)
+    update_event_rollups(conn, event_id)
+    return event_id, "created"
+
+
+def link_article_to_events(
+    conn: sqlite3.Connection,
+    article_id: int,
+    cve_ids: list[str],
+    published_at: str | None,
+) -> int:
+    if not cve_ids:
+        return 0
+    attached = 0
+    now = utc_now_iso()
+    for cve_id in cve_ids:
+        event_id = _find_event_for_cve(conn, cve_id)
+        if not event_id:
+            continue
+        upsert_event_item(conn, event_id, "article", str(article_id))
+        touch_event(conn, event_id, published_at or now)
+        attached += 1
+    return attached
+
+
+def list_events(
+    conn: sqlite3.Connection,
+    status: str | None,
+    kind: str | None,
+    severity: str | None,
+    query: str | None,
+    after: str | None,
+    before: str | None,
+    page: int,
+    page_size: int,
+) -> tuple[list[dict[str, object]], int]:
+    if not _table_exists(conn, "events"):
+        return [], 0
+    where: list[str] = []
+    params: list[object] = []
+    if status:
+        where.append("status = ?")
+        params.append(status)
+    if kind:
+        where.append("kind = ?")
+        params.append(kind)
+    if severity:
+        where.append("severity = ?")
+        params.append(severity)
+    if query:
+        like = f"%{query.lower()}%"
+        where.append("(LOWER(title) LIKE ? OR LOWER(summary) LIKE ?)")
+        params.extend([like, like])
+    if after:
+        where.append("last_seen_at >= ?")
+        params.append(after)
+    if before:
+        where.append("last_seen_at <= ?")
+        params.append(before)
+    where_sql = " AND ".join(where)
+    if where_sql:
+        where_sql = "WHERE " + where_sql
+    count_cursor = conn.execute(
+        f"SELECT COUNT(*) FROM events {where_sql}",
+        params,
+    )
+    total = count_cursor.fetchone()[0]
+    offset = max(page - 1, 0) * page_size
+    cursor = conn.execute(
+        f"""
+        SELECT id, kind, title, summary, severity, created_at, updated_at,
+               first_seen_at, last_seen_at, status
+        FROM events
+        {where_sql}
+        ORDER BY last_seen_at DESC
+        LIMIT ? OFFSET ?
+        """,
+        [*params, page_size, offset],
+    )
+    items = [
+        {
+            "id": row[0],
+            "kind": row[1],
+            "title": row[2],
+            "summary": row[3],
+            "severity": row[4],
+            "created_at": row[5],
+            "updated_at": row[6],
+            "first_seen_at": row[7],
+            "last_seen_at": row[8],
+            "status": row[9],
+        }
+        for row in cursor.fetchall()
+    ]
+    return items, total
+
+
+def get_event(conn: sqlite3.Connection, event_id: str) -> dict[str, object] | None:
+    if not _table_exists(conn, "events"):
+        return None
+    row = conn.execute(
+        """
+        SELECT id, kind, title, summary, severity, created_at, updated_at,
+               first_seen_at, last_seen_at, status, meta_json
+        FROM events
+        WHERE id = ?
+        """,
+        (event_id,),
+    ).fetchone()
+    if not row:
+        return None
+    meta = json.loads(row[10]) if row[10] else {}
+    event = {
+        "id": row[0],
+        "kind": row[1],
+        "title": row[2],
+        "summary": row[3],
+        "severity": row[4],
+        "created_at": row[5],
+        "updated_at": row[6],
+        "first_seen_at": row[7],
+        "last_seen_at": row[8],
+        "status": row[9],
+        "meta": meta,
+    }
+    cves_cursor = conn.execute(
+        """
+        SELECT c.cve_id, c.published_at, c.preferred_base_score,
+               c.preferred_base_severity, c.description_text
+        FROM event_items ei
+        JOIN cves c ON c.cve_id = ei.item_key
+        WHERE ei.event_id = ? AND ei.item_type = 'cve'
+        ORDER BY c.last_modified_at DESC
+        """,
+        (event_id,),
+    )
+    cves = [
+        {
+            "cve_id": row[0],
+            "published_at": row[1],
+            "preferred_base_score": row[2],
+            "preferred_base_severity": row[3],
+            "summary": (row[4] or "")[:240],
+        }
+        for row in cves_cursor.fetchall()
+    ]
+    products_cursor = conn.execute(
+        """
+        SELECT p.product_key, p.display_name, v.display_name
+        FROM event_items ei
+        JOIN products p ON p.product_key = ei.item_key
+        JOIN vendors v ON v.id = p.vendor_id
+        WHERE ei.event_id = ? AND ei.item_type = 'product'
+        ORDER BY v.display_name, p.display_name
+        """,
+        (event_id,),
+    )
+    products = [
+        {
+            "product_key": row[0],
+            "product_name": row[1],
+            "vendor_name": row[2],
+        }
+        for row in products_cursor.fetchall()
+    ]
+    articles = []
+    if _table_exists(conn, "articles"):
+        article_cursor = conn.execute(
+            """
+            SELECT a.id, a.title, a.published_at, a.original_url
+            FROM event_items ei
+            JOIN articles a ON a.id = CAST(ei.item_key AS INTEGER)
+            WHERE ei.event_id = ? AND ei.item_type = 'article'
+            ORDER BY a.published_at DESC
+            """,
+            (event_id,),
+        )
+        articles = [
+            {
+                "article_id": row[0],
+                "title": row[1],
+                "published_at": row[2],
+                "url": row[3],
+            }
+            for row in article_cursor.fetchall()
+        ]
+    event["items"] = {"cves": cves, "products": products, "articles": articles}
+    return event
+
+
+def list_events_for_product(
+    conn: sqlite3.Connection,
+    product_key: str,
+    page: int,
+    page_size: int,
+) -> tuple[list[dict[str, object]], int]:
+    if not _table_exists(conn, "event_items"):
+        return [], 0
+    count_cursor = conn.execute(
+        """
+        SELECT COUNT(DISTINCT e.id)
+        FROM event_items ei
+        JOIN events e ON e.id = ei.event_id
+        WHERE ei.item_type = 'product' AND ei.item_key = ?
+        """,
+        (product_key,),
+    )
+    total = count_cursor.fetchone()[0]
+    offset = max(page - 1, 0) * page_size
+    cursor = conn.execute(
+        """
+        SELECT e.id, e.kind, e.title, e.severity, e.last_seen_at, e.status
+        FROM event_items ei
+        JOIN events e ON e.id = ei.event_id
+        WHERE ei.item_type = 'product' AND ei.item_key = ?
+        ORDER BY e.last_seen_at DESC
+        LIMIT ? OFFSET ?
+        """,
+        (product_key, page_size, offset),
+    )
+    items = [
+        {
+            "id": row[0],
+            "kind": row[1],
+            "title": row[2],
+            "severity": row[3],
+            "last_seen_at": row[4],
+            "status": row[5],
+        }
+        for row in cursor.fetchall()
+    ]
+    return items, total
+
+
+def rebuild_events_from_cves(
+    conn: sqlite3.Connection,
+    window_days: int,
+    min_shared_products: int,
+    limit: int | None = None,
+) -> dict[str, object]:
+    stats = {
+        "events_created": 0,
+        "events_merged": 0,
+        "events_existing": 0,
+        "cves_processed": 0,
+        "articles_linked": 0,
+    }
+    if _table_exists(conn, "event_items"):
+        conn.execute("DELETE FROM event_items")
+    if _table_exists(conn, "event_signals"):
+        conn.execute("DELETE FROM event_signals")
+    if _table_exists(conn, "events"):
+        conn.execute("DELETE FROM events")
+    conn.commit()
+    if not _table_exists(conn, "cves"):
+        return stats
+    cursor = conn.execute(
+        "SELECT cve_id, published_at FROM cves ORDER BY published_at"
+        + (" LIMIT ?" if limit else ""),
+        (limit,) if limit else (),
+    )
+    for cve_id, published_at in cursor.fetchall():
+        stats["cves_processed"] += 1
+        event_id, action = upsert_event_for_cve(
+            conn,
+            cve_id,
+            published_at,
+            window_days,
+            min_shared_products,
+        )
+        if action == "created":
+            stats["events_created"] += 1
+        elif action == "merged":
+            stats["events_merged"] += 1
+        else:
+            stats["events_existing"] += 1
+    if _table_exists(conn, "article_cves") and _table_exists(conn, "articles"):
+        article_cursor = conn.execute(
+            """
+            SELECT ac.article_id, ac.cve_id, a.published_at, a.ingested_at
+            FROM article_cves ac
+            JOIN articles a ON a.id = ac.article_id
+            """
+        )
+        for article_id, cve_id, published_at, ingested_at in article_cursor.fetchall():
+            linked = link_article_to_events(
+                conn,
+                int(article_id),
+                [str(cve_id)],
+                published_at or ingested_at,
+            )
+            stats["articles_linked"] += linked
+    return stats
 
 
 def delete_all_articles(conn: sqlite3.Connection, *, delete_files: bool = False) -> dict[str, object]:

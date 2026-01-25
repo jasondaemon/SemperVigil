@@ -292,6 +292,9 @@ def _get_migrations() -> list[tuple[str, Migration]]:
         ("006_sources_admin_fields", _migration_sources_admin_fields),
         ("007_llm_config", _migration_llm_config),
         ("008_article_content_and_health", _migration_article_content_and_health),
+        ("009_products_catalog", _migration_products_catalog),
+        ("010_events", _migration_events),
+        ("011_product_key_normalize", _migration_product_key_normalize),
     ]
 
 
@@ -463,6 +466,116 @@ def _migration_article_content_and_health(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_source_health_source_ts ON source_health_history(source_id, ts DESC)"
     )
+
+
+def _migration_products_catalog(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS vendors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name_norm TEXT NOT NULL UNIQUE,
+            display_name TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vendor_id INTEGER NOT NULL REFERENCES vendors(id),
+            name_norm TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            product_key TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            UNIQUE(vendor_id, name_norm)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cve_products (
+            cve_id TEXT NOT NULL REFERENCES cves(cve_id),
+            product_id INTEGER NOT NULL REFERENCES products(id),
+            source TEXT NOT NULL DEFAULT 'nvd',
+            evidence_json TEXT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(cve_id, product_id)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_vendors_name ON vendors(name_norm)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_products_key ON products(product_key)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name_norm)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_products_vendor ON products(vendor_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cve_products_product ON cve_products(product_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cve_products_cve ON cve_products(cve_id)")
+
+
+def _migration_events(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS events (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            title TEXT NOT NULL,
+            summary TEXT NULL,
+            severity TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open',
+            meta_json TEXT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_last_seen ON events(last_seen_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_severity ON events(severity)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS event_items (
+            event_id TEXT NOT NULL REFERENCES events(id),
+            item_type TEXT NOT NULL,
+            item_key TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (event_id, item_type, item_key)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_event_items_type_key ON event_items(item_type, item_key)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_event_items_event ON event_items(event_id)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS event_signals (
+            event_id TEXT NOT NULL REFERENCES events(id),
+            signal_type TEXT NOT NULL,
+            signal_value TEXT NOT NULL,
+            weight REAL NOT NULL DEFAULT 1.0,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (event_id, signal_type, signal_value)
+        )
+        """
+    )
+
+
+def _migration_product_key_normalize(conn: sqlite3.Connection) -> None:
+    if not _table_exists(conn, "products") or not _table_exists(conn, "vendors"):
+        return
+    cursor = conn.execute(
+        """
+        SELECT p.id, p.name_norm, v.name_norm
+        FROM products p
+        JOIN vendors v ON v.id = p.vendor_id
+        """
+    )
+    for product_id, product_norm, vendor_norm in cursor.fetchall():
+        product_key = f"{vendor_norm}:{product_norm}"
+        conn.execute(
+            "UPDATE products SET product_key = ? WHERE id = ?",
+            (product_key, product_id),
+        )
 
 
 def _migrate_legacy_sources(conn: sqlite3.Connection) -> None:

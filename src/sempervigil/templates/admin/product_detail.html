@@ -1,0 +1,57 @@
+{% set nav_active = "content" %}
+{% set nav_subactive = "products" %}
+{% extends "admin/base.html" %}
+
+{% block content %}
+<section class="page">
+  <div class="page-header">
+    <h1>Product Detail</h1>
+  </div>
+  <div id="product-detail" data-product-key="{{ product_key }}">
+    <div class="loading">Loading product...</div>
+  </div>
+  <div id="product-cves" class="panel">
+    <div class="panel-header">
+      <h2>CVEs</h2>
+      <div class="filters inline" id="product-cve-filters">
+        <label><input type="checkbox" value="CRITICAL" checked> Critical</label>
+        <label><input type="checkbox" value="HIGH" checked> High</label>
+        <label><input type="checkbox" value="MEDIUM"> Medium</label>
+        <label><input type="checkbox" value="LOW"> Low</label>
+        <label><input type="checkbox" value="UNKNOWN"> Unknown</label>
+      </div>
+    </div>
+    <table class="table" id="product-cves-table">
+      <thead>
+        <tr>
+          <th>CVE</th>
+          <th>Severity</th>
+          <th>Score</th>
+          <th>Published</th>
+          <th>Summary</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div id="product-cves-pager" class="pager"></div>
+  </div>
+  <div id="product-events" class="panel">
+    <div class="panel-header">
+      <h2>Events</h2>
+    </div>
+    <table class="table" id="product-events-table">
+      <thead>
+        <tr>
+          <th>Event</th>
+          <th>Kind</th>
+          <th>Severity</th>
+          <th>Status</th>
+          <th>Last Seen</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div id="product-events-pager" class="pager"></div>
+  </div>
+</section>
+{% endblock %}

@@ -8,7 +8,12 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from .config import bootstrap_runtime_config, get_runtime_config, get_state_db_path
+from .config import (
+    bootstrap_events_settings,
+    bootstrap_runtime_config,
+    get_runtime_config,
+    get_state_db_path,
+)
 from .services.sources_service import list_sources
 from .services.ai_service import (
     list_models,
@@ -37,6 +42,7 @@ ADMIN_COOKIE_NAME = "sv_admin_token"
 def _get_conn():
     conn = init_db(get_state_db_path())
     bootstrap_runtime_config(conn)
+    bootstrap_events_settings(conn)
     return conn
 
 
@@ -206,6 +212,44 @@ def ui_router(token_guard) -> APIRouter:
             {
                 **_base_context(request),
                 "cve_id": cve_id,
+            },
+        )
+
+    @router.get("/events", response_class=HTMLResponse)
+    def events(request: Request):
+        return TEMPLATES.TemplateResponse(
+            "admin/events.html",
+            {
+                **_base_context(request),
+            },
+        )
+
+    @router.get("/events/{event_id}", response_class=HTMLResponse)
+    def event_detail(request: Request, event_id: str):
+        return TEMPLATES.TemplateResponse(
+            "admin/event_detail.html",
+            {
+                **_base_context(request),
+                "event_id": event_id,
+            },
+        )
+
+    @router.get("/products", response_class=HTMLResponse)
+    def products(request: Request):
+        return TEMPLATES.TemplateResponse(
+            "admin/products.html",
+            {
+                **_base_context(request),
+            },
+        )
+
+    @router.get("/products/{product_key}", response_class=HTMLResponse)
+    def product_detail(request: Request, product_key: str):
+        return TEMPLATES.TemplateResponse(
+            "admin/product_detail.html",
+            {
+                **_base_context(request),
+                "product_key": product_key,
             },
         )
 

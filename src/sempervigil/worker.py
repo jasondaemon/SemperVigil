@@ -11,7 +11,9 @@ from datetime import datetime, timezone, timedelta
 from .config import (
     ConfigError,
     bootstrap_cve_settings,
+    bootstrap_events_settings,
     get_cve_settings,
+    get_events_settings,
     get_state_db_path,
     load_runtime_config,
 )
@@ -19,7 +21,7 @@ from .ingest import process_source
 from .models import Article
 from .cve_sync import CveSyncConfig, isoformat_utc, sync_cves
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
-from .publish import write_article_markdown, write_json_index
+from .publish import write_article_markdown, write_events_index, write_events_markdown, write_json_index
 from .signals import build_cve_evidence, extract_cve_ids
 from .pipelines.content_fetch import fetch_article_content
 from .pipelines.daily_brief import write_daily_brief
@@ -33,16 +35,21 @@ from .storage import (
     get_setting,
     get_article_id,
     get_article_by_id,
+    get_event,
     get_batch_job_counts,
     init_db,
     insert_articles,
+    link_article_to_events,
     list_due_sources,
+    list_events,
     list_summaries_for_day,
     has_pending_job,
     pause_source,
     record_health_alert,
     record_source_run,
+    rebuild_events_from_cves,
     upsert_cve_links,
+    upsert_event_for_cve,
     get_source_run_streaks,
     get_source_name,
     insert_source_health_event,
@@ -56,6 +63,7 @@ WORKER_JOB_TYPES = [
     "ingest_due_sources",
     "test_source",
     "cve_sync",
+    "events_rebuild",
     "fetch_article_content",
     "summarize_article_llm",
     "build_daily_brief",
@@ -73,6 +81,7 @@ def run_once(worker_id: str) -> int:
         conn = init_db(get_state_db_path())
         config = load_runtime_config(conn)
         bootstrap_cve_settings(conn)
+        bootstrap_events_settings(conn)
     except ConfigError as exc:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
@@ -248,6 +257,24 @@ def _handle_ingest_source(
             article_id = get_article_id(conn, article.source_id, article.stable_id)
         if article_id is not None:
             _maybe_enqueue_fetch(conn, article_id, article.source_id)
+        events_settings = get_events_settings(conn)
+        if events_settings.get("enabled", True) and cve_ids and article_id is not None:
+            window_days = int(events_settings.get("merge_window_days", 14))
+            min_shared = int(events_settings.get("min_shared_products_to_merge", 1))
+            for cve_id in cve_ids:
+                upsert_event_for_cve(
+                    conn,
+                    cve_id=cve_id,
+                    published_at=article.published_at or article.ingested_at,
+                    window_days=window_days,
+                    min_shared_products=min_shared,
+                )
+            link_article_to_events(
+                conn,
+                article_id=article_id,
+                cve_ids=cve_ids,
+                published_at=article.published_at or article.ingested_at,
+            )
         enqueue_job(
             conn,
             "write_article_markdown",
@@ -268,7 +295,6 @@ def _handle_ingest_source(
                 "batch_index": index,
             },
         )
-    # TODO: attach event correlation hooks (events/event_mentions) once implemented.
     if config.publishing.write_json_index:
         write_json_index(result.articles, config.publishing.json_index_path)
     _maybe_pause_source(conn, source.id, logger)
@@ -556,7 +582,7 @@ def _handle_ingest_due_sources(conn, logger: logging.Logger) -> dict[str, object
     return {"enqueued_count": len(enqueued), "source_ids": enqueued}
 
 
-def _handle_cve_sync(conn, logger: logging.Logger) -> dict[str, object]:
+def _handle_cve_sync(conn, config, logger: logging.Logger) -> dict[str, object]:
     settings = get_cve_settings(conn)
     if not settings.get("enabled", True):
         return {"status": "disabled"}
@@ -586,7 +612,66 @@ def _handle_cve_sync(conn, logger: logging.Logger) -> dict[str, object]:
     )
     result["start"] = start_iso
     result["end"] = end_iso
+    events_settings = get_events_settings(conn)
+    if events_settings.get("enabled", True):
+        _publish_events(conn, config, logger)
     return result
+
+
+def _handle_events_rebuild(conn, config, payload: dict[str, object], logger: logging.Logger) -> dict[str, object]:
+    settings = get_events_settings(conn)
+    limit = None
+    if payload and isinstance(payload.get("limit"), int):
+        limit = int(payload["limit"])
+    stats = rebuild_events_from_cves(
+        conn,
+        window_days=int(settings.get("merge_window_days", 14)),
+        min_shared_products=int(settings.get("min_shared_products_to_merge", 1)),
+        limit=limit,
+    )
+    _publish_events(conn, config, logger)
+    return stats
+
+
+def _publish_events(conn, config, logger: logging.Logger) -> None:
+    events: list[dict[str, object]] = []
+    page = 1
+    page_size = 200
+    total = 0
+    while True:
+        items, total = list_events(
+            conn,
+            status=None,
+            kind=None,
+            severity=None,
+            query=None,
+            after=None,
+            before=None,
+            page=page,
+            page_size=page_size,
+        )
+        if not items:
+            break
+        for item in items:
+            detail = get_event(conn, item["id"])
+            if detail:
+                events.append(detail)
+        if len(items) < page_size:
+            break
+        page += 1
+    base_content_dir = os.path.dirname(config.paths.output_dir)
+    base_static_dir = os.path.dirname(config.publishing.json_index_path)
+    written_pages = write_events_markdown(events, base_content_dir)
+    index_path = write_events_index(events, base_static_dir)
+    log_event(
+        logger,
+        logging.INFO,
+        "events_published",
+        count=len(events),
+        total=total,
+        index_path=index_path,
+        pages=len(written_pages),
+    )
 
 
 def _maybe_enqueue_cve_sync(conn, logger: logging.Logger) -> None:
@@ -671,7 +756,9 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
     if job.job_type == "test_source":
         return _handle_test_source(conn, config, job.payload, logger)
     if job.job_type == "cve_sync":
-        return _handle_cve_sync(conn, logger)
+        return _handle_cve_sync(conn, config, logger)
+    if job.job_type == "events_rebuild":
+        return _handle_events_rebuild(conn, config, job.payload or {}, logger)
     if job.job_type == "fetch_article_content":
         return _handle_fetch_article_content(conn, config, job.payload, logger)
     if job.job_type == "summarize_article_llm":

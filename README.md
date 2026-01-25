@@ -233,6 +233,15 @@ docker compose run --rm test
 
 ---
 
+### Run Tests (Local)
+
+```bash
+pip install -e ".[test]"
+pytest -q
+```
+
+---
+
 ### Test a Single Source
 
 To diagnose parsing, filtering, or health issues:

@@ -1,0 +1,52 @@
+{% set nav_active = "content" %}
+{% set nav_subactive = "events" %}
+{% extends "admin/base.html" %}
+
+{% block content %}
+<section class="page">
+  <div class="page-header">
+    <h1>Events</h1>
+    <button class="btn secondary" id="events-rebuild">Rebuild Events</button>
+  </div>
+  <form class="filters" id="events-filters">
+    <input type="text" id="events-query" placeholder="Search title/summary">
+    <select id="events-kind">
+      <option value="">All kinds</option>
+      <option value="cve_cluster">CVE cluster</option>
+      <option value="product_cluster">Product cluster</option>
+      <option value="manual">Manual</option>
+    </select>
+    <select id="events-severity">
+      <option value="">All severities</option>
+      <option value="CRITICAL">Critical</option>
+      <option value="HIGH">High</option>
+      <option value="MEDIUM">Medium</option>
+      <option value="LOW">Low</option>
+      <option value="UNKNOWN">Unknown</option>
+    </select>
+    <select id="events-status">
+      <option value="">All status</option>
+      <option value="open">Open</option>
+      <option value="closed">Closed</option>
+    </select>
+    <input type="date" id="events-after">
+    <input type="date" id="events-before">
+    <button class="btn" type="submit">Apply</button>
+  </form>
+  <div id="events-error" class="error-banner" style="display:none;"></div>
+  <table class="table" id="events-table">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Title</th>
+        <th>Kind</th>
+        <th>Severity</th>
+        <th>Status</th>
+        <th>Last Seen</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <div id="events-pager" class="pager"></div>
+</section>
+{% endblock %}

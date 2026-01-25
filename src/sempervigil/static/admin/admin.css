@@ -227,6 +227,48 @@ th, td {
   color: #991b1b;
 }
 
+.panel {
+  margin-top: 20px;
+  padding: 16px;
+  border: 1px solid #e6e6e6;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.facet-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.facet-chip {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #f2f4f7;
+  font-size: 12px;
+}
+
+.list {
+  margin: 0;
+  padding-left: 18px;
+}
+
 .actions {
   margin-top: 12px;
   display: flex;

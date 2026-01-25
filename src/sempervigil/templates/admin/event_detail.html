@@ -1,0 +1,46 @@
+{% set nav_active = "content" %}
+{% set nav_subactive = "events" %}
+{% extends "admin/base.html" %}
+
+{% block content %}
+<section class="page">
+  <div class="page-header">
+    <h1>Event Detail</h1>
+  </div>
+  <div id="event-detail" data-event-id="{{ event_id }}">
+    <div class="loading">Loading event...</div>
+  </div>
+  <div class="panel">
+    <div class="panel-header"><h2>CVEs</h2></div>
+    <table class="table" id="event-cves-table">
+      <thead>
+        <tr>
+          <th>CVE</th>
+          <th>Severity</th>
+          <th>Score</th>
+          <th>Published</th>
+          <th>Summary</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="panel">
+    <div class="panel-header"><h2>Products</h2></div>
+    <ul id="event-products-list" class="list"></ul>
+  </div>
+  <div class="panel">
+    <div class="panel-header"><h2>Articles</h2></div>
+    <table class="table" id="event-articles-table">
+      <thead>
+        <tr>
+          <th>Article</th>
+          <th>Published</th>
+          <th>Source</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

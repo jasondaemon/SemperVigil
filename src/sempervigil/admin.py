@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from .config import (
     ConfigError,
     bootstrap_cve_settings,
+    bootstrap_events_settings,
     bootstrap_runtime_config,
     get_cve_settings,
     get_runtime_config,
@@ -34,15 +35,23 @@ from .storage import (
     delete_all_articles,
     delete_all_content,
     delete_all_cves,
+    get_event,
     get_article_by_id,
     get_cve,
     get_cve_last_seen,
     get_last_source_run,
+    get_product,
+    get_product_cves,
+    get_product_facets,
     get_setting,
     get_source_stats,
     list_article_tags,
     list_articles_per_day,
+    list_events,
+    list_events_for_product,
     list_source_health_events,
+    query_products,
+    backfill_products_from_cves,
     search_articles,
     search_cves,
 )
@@ -275,6 +284,7 @@ def _startup() -> None:
         conn = init_db(get_state_db_path())
         config = load_runtime_config(conn)
         bootstrap_cve_settings(conn)
+        bootstrap_events_settings(conn)
     except ConfigError:
         return
     set_umask_from_env()
@@ -621,6 +631,125 @@ def api_cve_detail(cve_id: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="cve_not_found")
     cve["last_seen_at"] = get_cve_last_seen(conn, cve_id)
     return cve
+
+
+@app.get("/admin/api/events", dependencies=[Depends(_require_admin_token)])
+def api_events(
+    query: str | None = None,
+    severity: str | None = None,
+    kind: str | None = None,
+    status: str | None = None,
+    after: str | None = None,
+    before: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict[str, object]:
+    conn = _get_conn()
+    items, total = list_events(
+        conn,
+        status=status,
+        kind=kind,
+        severity=severity,
+        query=query,
+        after=after,
+        before=before,
+        page=page,
+        page_size=page_size,
+    )
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@app.get("/admin/api/events/{event_id}", dependencies=[Depends(_require_admin_token)])
+def api_event_detail(event_id: str) -> dict[str, object]:
+    conn = _get_conn()
+    event = get_event(conn, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="event_not_found")
+    return event
+
+
+class EventsRebuildRequest(BaseModel):
+    limit: int | None = None
+
+
+@app.post("/admin/api/events/rebuild", dependencies=[Depends(_require_admin_token)])
+def api_events_rebuild(payload: EventsRebuildRequest | None = None) -> dict[str, object]:
+    conn = _get_conn()
+    limit = payload.limit if payload else None
+    job_id = enqueue_job(
+        conn,
+        "events_rebuild",
+        {"limit": limit} if limit is not None else None,
+        debounce=True,
+    )
+    return {"status": "queued", "job_id": job_id}
+
+
+@app.get("/admin/api/products", dependencies=[Depends(_require_admin_token)])
+def api_products(
+    query: str | None = None,
+    vendor: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict[str, object]:
+    conn = _get_conn()
+    items, total = query_products(conn, query=query, vendor=vendor, page=page, page_size=page_size)
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@app.get("/admin/api/products/{product_key}", dependencies=[Depends(_require_admin_token)])
+def api_product_detail(product_key: str) -> dict[str, object]:
+    conn = _get_conn()
+    product = get_product(conn, product_key)
+    if not product:
+        raise HTTPException(status_code=404, detail="product_not_found")
+    facets = get_product_facets(conn, product["product_id"])
+    return {"product": product, "facets": facets}
+
+
+@app.get("/admin/api/products/{product_key}/cves", dependencies=[Depends(_require_admin_token)])
+def api_product_cves(
+    product_key: str,
+    severity: str | None = None,
+    min_cvss: float | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict[str, object]:
+    conn = _get_conn()
+    product = get_product(conn, product_key)
+    if not product:
+        raise HTTPException(status_code=404, detail="product_not_found")
+    severities = [item.strip().upper() for item in severity.split(",")] if severity else None
+    items, total = get_product_cves(
+        conn,
+        product["product_id"],
+        severity_min=min_cvss,
+        severities=severities,
+        page=page,
+        page_size=page_size,
+    )
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@app.get("/admin/api/products/{product_key}/events", dependencies=[Depends(_require_admin_token)])
+def api_product_events(
+    product_key: str,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict[str, object]:
+    conn = _get_conn()
+    items, total = list_events_for_product(conn, product_key, page, page_size)
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@app.post("/admin/api/products/backfill", dependencies=[Depends(_require_admin_token)])
+def api_products_backfill(payload: dict[str, object] | None = None) -> dict[str, object]:
+    conn = _get_conn()
+    limit = None
+    if payload and isinstance(payload.get("limit"), int):
+        limit = int(payload["limit"])
+    stats = backfill_products_from_cves(conn, limit=limit)
+    return {"status": "ok", "stats": stats}
 
 
 @app.get("/admin/api/content/search", dependencies=[Depends(_require_admin_token)])
