@@ -1,0 +1,9 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "system" %}
+{% set nav_subactive = "cves" %}
+{% block content %}
+  <section class="panel">
+    <h2>CVE Detail</h2>
+    <div id="cve-detail" data-cve-id="{{ cve_id }}"></div>
+  </section>
+{% endblock %}

@@ -16,21 +16,31 @@ from pydantic import BaseModel
 
 from .config import (
     ConfigError,
+    bootstrap_cve_settings,
     bootstrap_runtime_config,
+    get_cve_settings,
     get_runtime_config,
     get_state_db_path,
     load_runtime_config,
+    set_cve_settings,
     set_runtime_config,
 )
 from .admin_ui import TEMPLATES, ui_router
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .storage import enqueue_job, get_source_run_streaks, init_db, list_jobs
+from .cve_filters import CveSignals, matches_filters
 from .storage import (
     count_articles_since,
+    get_article_by_id,
+    get_cve,
+    get_cve_last_seen,
     get_last_source_run,
+    get_setting,
+    get_source_stats,
     list_articles_per_day,
     list_source_health_events,
-    get_source_stats,
+    search_articles,
+    search_cves,
 )
 from .ingest import process_source
 from .services.sources_service import (
@@ -140,6 +150,10 @@ class RuntimeConfigRequest(BaseModel):
     config: dict
 
 
+class CveSettingsRequest(BaseModel):
+    settings: dict
+
+
 @app.get("/")
 def root() -> dict[str, str]:
     return {"service": "SemperVigil Admin API"}
@@ -172,6 +186,36 @@ def runtime_config_set(payload: RuntimeConfigRequest) -> dict[str, object]:
     except ConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "ok"}
+
+
+@app.get("/admin/api/cves/settings", dependencies=[Depends(_require_admin_token)])
+def cve_settings_get() -> dict[str, object]:
+    conn = _get_conn()
+    try:
+        settings = get_cve_settings(conn)
+    except ConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    last_sync = get_setting(conn, "cve.last_successful_sync_at", None)
+    settings = dict(settings)
+    settings["last_run_at"] = last_sync
+    return {"settings": settings}
+
+
+@app.put("/admin/api/cves/settings", dependencies=[Depends(_require_admin_token)])
+def cve_settings_set(payload: CveSettingsRequest) -> dict[str, object]:
+    conn = _get_conn()
+    try:
+        set_cve_settings(conn, payload.settings)
+    except ConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "ok"}
+
+
+@app.post("/admin/api/cves/run", dependencies=[Depends(_require_admin_token)])
+def cve_settings_run() -> dict[str, object]:
+    conn = _get_conn()
+    job_id = enqueue_job(conn, "cve_sync", None, debounce=True)
+    return {"job_id": job_id}
 
 
 @app.get("/ui/login")
@@ -221,6 +265,7 @@ def _startup() -> None:
     try:
         conn = init_db(get_state_db_path())
         config = load_runtime_config(conn)
+        bootstrap_cve_settings(conn)
     except ConfigError:
         return
     set_umask_from_env()
@@ -504,6 +549,133 @@ def analytics_source_stats(days: int = 7, runs: int = 20) -> dict[str, object]:
     conn = _get_conn()
     return {"days": days, "runs": runs, "data": get_source_stats(conn, days, runs)}
 
+
+@app.get("/admin/api/cves", dependencies=[Depends(_require_admin_token)])
+def api_cves(
+    query: str | None = None,
+    severity: str | None = None,
+    min_cvss: float | None = None,
+    after: str | None = None,
+    before: str | None = None,
+    in_scope: bool | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict[str, object]:
+    conn = _get_conn()
+    settings = get_cve_settings(conn)
+    severities = [item.strip().upper() for item in severity.split(",")] if severity else None
+    items, total = search_cves(
+        conn,
+        query=query,
+        severities=severities,
+        min_cvss=min_cvss,
+        after=after,
+        before=before,
+        in_scope=in_scope,
+        settings=settings,
+        page=page,
+        page_size=page_size,
+    )
+    for item in items:
+        signals = CveSignals(
+            vendors=[],
+            products=item.get("affected_products") or [],
+            cpes=item.get("affected_cpes") or [],
+            reference_domains=item.get("reference_domains") or [],
+        )
+        item["in_scope"] = matches_filters(
+            preferred_score=item.get("preferred_base_score"),
+            preferred_severity=item.get("preferred_base_severity"),
+            description=item.get("summary"),
+            signals=signals,
+            filters=(settings.get("filters") or {}),
+        )
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@app.get("/admin/api/cves/{cve_id}", dependencies=[Depends(_require_admin_token)])
+def api_cve_detail(cve_id: str) -> dict[str, object]:
+    conn = _get_conn()
+    cve = get_cve(conn, cve_id)
+    if not cve:
+        raise HTTPException(status_code=404, detail="cve_not_found")
+    cve["last_seen_at"] = get_cve_last_seen(conn, cve_id)
+    return cve
+
+
+@app.get("/admin/api/content/search", dependencies=[Depends(_require_admin_token)])
+def api_content_search(
+    query: str | None = None,
+    type: str | None = None,
+    source_id: str | None = None,
+    has_summary: bool | None = None,
+    severity: str | None = None,
+    min_cvss: float | None = None,
+    after: str | None = None,
+    before: str | None = None,
+    tags: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict[str, object]:
+    conn = _get_conn()
+    items: list[dict[str, object]] = []
+    total = 0
+    if type in (None, "all", "articles"):
+        tag_list = [item.strip() for item in tags.split(",")] if tags else None
+        article_items, article_total = search_articles(
+            conn,
+            query=query,
+            source_id=source_id,
+            has_summary=has_summary,
+            after=after,
+            before=before,
+            tags=tag_list,
+            page=page,
+            page_size=page_size,
+        )
+        for item in article_items:
+            items.append(
+                {
+                    "type": "article",
+                    **item,
+                }
+            )
+        total += article_total
+    if type in ("cves", "cve") or (type in (None, "all")):
+        settings = get_cve_settings(conn)
+        severities = (
+            [item.strip().upper() for item in severity.split(",")] if severity else None
+        )
+        cve_items, cve_total = search_cves(
+            conn,
+            query=query,
+            severities=severities,
+            min_cvss=min_cvss,
+            after=after,
+            before=before,
+            in_scope=None,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+        )
+        for item in cve_items:
+            items.append({"type": "cve", **item})
+        total += cve_total
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@app.get("/admin/api/content/articles/{article_id}", dependencies=[Depends(_require_admin_token)])
+def api_article_detail(article_id: int) -> dict[str, object]:
+    conn = _get_conn()
+    article = get_article_by_id(conn, article_id)
+    if not article:
+        raise HTTPException(status_code=404, detail="article_not_found")
+    return article
 
 
 

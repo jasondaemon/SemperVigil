@@ -47,7 +47,7 @@ def list_providers(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                 "last_test_status": last_test_status,
                 "last_test_at": last_test_at,
                 "last_test_error": last_test_error,
-                "api_key_last4": api_key_last4 or "",
+                "key_last4": api_key_last4 or "",
             }
         )
     return rows

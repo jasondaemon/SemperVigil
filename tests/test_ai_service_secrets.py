@@ -37,7 +37,7 @@ def test_provider_secret_is_encrypted(tmp_path, monkeypatch):
     assert api_key_last4 == "cret"
 
     providers = list_providers(conn)
-    assert providers[0]["api_key_last4"] == "cret"
+    assert providers[0]["key_last4"] == "cret"
 
     decrypted = load_provider_secret(conn, provider["id"])
     assert decrypted == "supersecret"

@@ -10,6 +10,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from .cve_filters import extract_signals, matches_filters, normalize_severity
 from .storage import (
     get_latest_cve_snapshot,
     insert_cve_change,
@@ -19,17 +20,16 @@ from .storage import (
 )
 from .utils import json_dumps, utc_now_iso
 
-NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
-
-
 @dataclass(frozen=True)
 class CveSyncConfig:
+    api_base: str
     results_per_page: int
     rate_limit_seconds: float
     backoff_seconds: float
     max_retries: int
     prefer_v4: bool
     api_key: str | None = None
+    filters: dict[str, Any] | None = None
 
 
 def sync_cves(
@@ -43,6 +43,7 @@ def sync_cves(
     total_new = 0
     total_changes = 0
     errors = 0
+    filtered = 0
 
     while True:
         payload = _fetch_page(
@@ -59,7 +60,10 @@ def sync_cves(
             break
         for item in vulnerabilities:
             cve_item = item.get("cve") or {}
-            processed = process_cve_item(conn, cve_item, config.prefer_v4)
+            processed = process_cve_item(conn, cve_item, config.prefer_v4, config.filters or {})
+            if processed is None:
+                filtered += 1
+                continue
             total_processed += 1
             total_new += 1 if processed.new_snapshot else 0
             total_changes += processed.change_count
@@ -77,6 +81,7 @@ def sync_cves(
         "new_snapshots": total_new,
         "changes": total_changes,
         "errors": errors,
+        "filtered": filtered,
     }
 
 
@@ -86,7 +91,9 @@ class ProcessResult:
     change_count: int
 
 
-def process_cve_item(conn, cve_item: dict[str, Any], prefer_v4: bool) -> ProcessResult:
+def process_cve_item(
+    conn, cve_item: dict[str, Any], prefer_v4: bool, filters: dict[str, Any]
+) -> ProcessResult | None:
     cve_id = cve_item.get("id")
     if not cve_id:
         return ProcessResult(new_snapshot=False, change_count=0)
@@ -99,6 +106,15 @@ def process_cve_item(conn, cve_item: dict[str, Any], prefer_v4: bool) -> Process
     v40 = _extract_cvss(metrics.get("cvssMetricV40"))
 
     preferred = _select_preferred_metrics(v31, v40, prefer_v4)
+    signals = extract_signals(cve_item)
+    if filters and not matches_filters(
+        preferred_score=preferred.base_score,
+        preferred_severity=preferred.base_severity,
+        description=description,
+        signals=signals,
+        filters=filters,
+    ):
+        return None
     preferred_dict = asdict(preferred)
     snapshot_hash = _snapshot_hash(
         {
@@ -123,6 +139,9 @@ def process_cve_item(conn, cve_item: dict[str, Any], prefer_v4: bool) -> Process
         cvss_v40_json=v40,
         cvss_v31_json=v31,
         description_text=description,
+        affected_products=signals.products,
+        affected_cpes=signals.cpes,
+        reference_domains=signals.reference_domains,
     )
 
     observed_at = utc_now_iso()
@@ -173,21 +192,21 @@ def _select_preferred_metrics(
         return PreferredMetrics(
             version="4.0",
             base_score=v40.get("baseScore"),
-            base_severity=_normalize_severity(v40.get("baseSeverity")),
+            base_severity=normalize_severity(v40.get("baseSeverity")),
             vector=v40.get("vectorString"),
         )
     if v31:
         return PreferredMetrics(
             version="3.1",
             base_score=v31.get("baseScore"),
-            base_severity=_normalize_severity(v31.get("baseSeverity")),
+            base_severity=normalize_severity(v31.get("baseSeverity")),
             vector=v31.get("vectorString"),
         )
     if v40:
         return PreferredMetrics(
             version="4.0",
             base_score=v40.get("baseScore"),
-            base_severity=_normalize_severity(v40.get("baseSeverity")),
+            base_severity=normalize_severity(v40.get("baseSeverity")),
             vector=v40.get("vectorString"),
         )
     return PreferredMetrics(version=None, base_score=None, base_severity=None, vector=None)
@@ -259,10 +278,10 @@ def _diff_snapshots(
     prev_v40 = prev_snapshot.get("cvss_v40_json")
     new_v40 = new_snapshot.get("v40")
     if not prev_v40 and new_v40:
-        v31_band = _normalize_severity(
+        v31_band = normalize_severity(
             (prev_snapshot.get("cvss_v31_json") or {}).get("baseSeverity")
         )
-        v40_band = _normalize_severity(new_v40.get("baseSeverity"))
+        v40_band = normalize_severity(new_v40.get("baseSeverity"))
         insert_cve_change(
             conn,
             cve_id=cve_id,
@@ -331,15 +350,6 @@ def _extract_cvss(entries: list[dict[str, Any]] | None) -> dict[str, Any] | None
     }
 
 
-def _normalize_severity(value: str | None) -> str | None:
-    if not value:
-        return None
-    upper = str(value).upper()
-    if upper in {"NONE", "LOW", "MEDIUM", "HIGH", "CRITICAL"}:
-        return upper
-    return None
-
-
 def _severity_rank(value: str | None) -> int:
     mapping = {"NONE": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
     return mapping.get(value or "", 0)
@@ -362,7 +372,7 @@ def _fetch_page(
         "startIndex": start_index,
         "resultsPerPage": config.results_per_page,
     }
-    url = f"{NVD_API_URL}?{urlencode(params)}"
+    url = f"{config.api_base}?{urlencode(params)}"
     headers = {"User-Agent": "SemperVigil/0.1"}
     if config.api_key:
         headers["apiKey"] = config.api_key

@@ -1,0 +1,35 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "system" %}
+{% set nav_subactive = "cve_settings" %}
+{% block content %}
+  <section class="panel">
+    <h2>CVE Settings</h2>
+    <form id="cve-settings-form">
+      <div class="grid">
+        <label class="checkbox"><input type="checkbox" id="cve-enabled"> Enabled</label>
+        <label>Schedule (minutes)<input type="number" id="cve-schedule" value="60"></label>
+        <label>NVD API Base<input type="text" id="cve-api-base"></label>
+        <label>NVD Results Per Page<input type="number" id="cve-results" value="2000"></label>
+        <label>Min CVSS<input type="number" step="0.1" id="cve-min"></label>
+        <label class="checkbox"><input type="checkbox" id="cve-known-score"> Require known score</label>
+        <label>Severities
+          <select id="cve-severities" multiple>
+            <option value="CRITICAL">CRITICAL</option>
+            <option value="HIGH">HIGH</option>
+            <option value="MEDIUM">MEDIUM</option>
+            <option value="LOW">LOW</option>
+          </select>
+        </label>
+        <label>Vendor keywords (comma)<input type="text" id="cve-vendors"></label>
+        <label>Product keywords (comma)<input type="text" id="cve-products"></label>
+        <label>Retention (days)<input type="number" id="cve-retention" value="365"></label>
+      </div>
+      <div class="actions">
+        <button class="btn" type="submit">Save Settings</button>
+        <button class="btn secondary" type="button" id="cve-run-now">Run Sync Now</button>
+      </div>
+      <p class="error" id="cve-settings-error" style="display:none;"></p>
+    </form>
+    <div class="panel-note" id="cve-settings-note"></div>
+  </section>
+{% endblock %}

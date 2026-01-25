@@ -180,6 +180,66 @@ def ui_router(token_guard) -> APIRouter:
             },
         )
 
+    @router.get("/cves", response_class=HTMLResponse)
+    def cves(request: Request):
+        return TEMPLATES.TemplateResponse(
+            "admin/cves.html",
+            {
+                "request": request,
+                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
+                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
+            },
+        )
+
+    @router.get("/cves/settings", response_class=HTMLResponse)
+    def cve_settings(request: Request):
+        return TEMPLATES.TemplateResponse(
+            "admin/cve_settings.html",
+            {
+                "request": request,
+                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
+                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
+            },
+        )
+
+    @router.get("/cves/{cve_id}", response_class=HTMLResponse)
+    def cve_detail(request: Request, cve_id: str):
+        return TEMPLATES.TemplateResponse(
+            "admin/cve_detail.html",
+            {
+                "request": request,
+                "cve_id": cve_id,
+                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
+                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
+            },
+        )
+
+    @router.get("/content", response_class=HTMLResponse)
+    def content(request: Request):
+        conn = _get_conn()
+        sources = list_sources(conn)
+        return TEMPLATES.TemplateResponse(
+            "admin/content.html",
+            {
+                "request": request,
+                "sources": sources,
+                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
+                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
+            },
+        )
+
+    @router.get("/content/articles/{article_id}", response_class=HTMLResponse)
+    def content_article(request: Request, article_id: int):
+        return TEMPLATES.TemplateResponse(
+            "admin/content_article.html",
+            {
+                "request": request,
+                "article_id": article_id,
+                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
+                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
+            },
+        )
+
     @router.get("/config", response_class=HTMLResponse)
     def runtime_config(request: Request):
         conn = _get_conn()

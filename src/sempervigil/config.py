@@ -172,6 +172,24 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 CONFIG_KEY = "config.runtime"
+CVE_SETTINGS_KEY = "cve.settings"
+
+DEFAULT_CVE_SETTINGS: dict[str, Any] = {
+    "enabled": True,
+    "schedule_minutes": 60,
+    "nvd": {
+        "api_base": "https://services.nvd.nist.gov/rest/json/cves/2.0",
+        "results_per_page": 2000,
+    },
+    "filters": {
+        "min_cvss": None,
+        "severities": ["CRITICAL", "HIGH", "MEDIUM", "LOW"],
+        "require_known_score": False,
+        "product_keywords": [],
+        "vendor_keywords": [],
+    },
+    "retention_days": 365,
+}
 
 
 def get_state_db_path() -> str:
@@ -203,6 +221,73 @@ def set_runtime_config(conn, cfg: dict[str, Any]) -> None:
         raise ConfigError("Invalid config.runtime: " + "; ".join(errors))
     set_setting(conn, CONFIG_KEY, _deep_copy(cfg))
 
+
+def bootstrap_cve_settings(conn) -> dict[str, Any]:
+    cfg = get_setting(conn, CVE_SETTINGS_KEY, None)
+    if cfg is None:
+        set_setting(conn, CVE_SETTINGS_KEY, _deep_copy(DEFAULT_CVE_SETTINGS))
+        cfg = get_setting(conn, CVE_SETTINGS_KEY, None)
+    if not isinstance(cfg, dict):
+        raise ConfigError("cve.settings must be a JSON object")
+    return cfg
+
+
+def get_cve_settings(conn) -> dict[str, Any]:
+    cfg = bootstrap_cve_settings(conn)
+    errors = validate_cve_settings(cfg)
+    if errors:
+        raise ConfigError("Invalid cve.settings: " + "; ".join(errors))
+    return cfg
+
+
+def set_cve_settings(conn, cfg: dict[str, Any]) -> None:
+    errors = validate_cve_settings(cfg)
+    if errors:
+        raise ConfigError("Invalid cve.settings: " + "; ".join(errors))
+    set_setting(conn, CVE_SETTINGS_KEY, _deep_copy(cfg))
+
+
+def validate_cve_settings(cfg: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    required = ["enabled", "schedule_minutes", "nvd", "filters", "retention_days"]
+    for key in required:
+        if key not in cfg:
+            errors.append(f"missing cve.settings.{key}")
+    if "enabled" in cfg and not isinstance(cfg["enabled"], bool):
+        errors.append("cve.settings.enabled must be a boolean")
+    if "schedule_minutes" in cfg and not isinstance(cfg["schedule_minutes"], int):
+        errors.append("cve.settings.schedule_minutes must be an integer")
+    if "retention_days" in cfg and not isinstance(cfg["retention_days"], int):
+        errors.append("cve.settings.retention_days must be an integer")
+    nvd = cfg.get("nvd")
+    if not isinstance(nvd, dict):
+        errors.append("cve.settings.nvd must be an object")
+    else:
+        if "api_base" not in nvd or not isinstance(nvd.get("api_base"), str):
+            errors.append("cve.settings.nvd.api_base must be a string")
+        if "results_per_page" not in nvd or not isinstance(nvd.get("results_per_page"), int):
+            errors.append("cve.settings.nvd.results_per_page must be an integer")
+    filters = cfg.get("filters")
+    if not isinstance(filters, dict):
+        errors.append("cve.settings.filters must be an object")
+    else:
+        min_cvss = filters.get("min_cvss")
+        if min_cvss is not None and not isinstance(min_cvss, (int, float)):
+            errors.append("cve.settings.filters.min_cvss must be a number or null")
+        severities = filters.get("severities")
+        if not isinstance(severities, list) or not all(
+            isinstance(item, str) for item in severities
+        ):
+            errors.append("cve.settings.filters.severities must be a list of strings")
+        if "require_known_score" in filters and not isinstance(
+            filters.get("require_known_score"), bool
+        ):
+            errors.append("cve.settings.filters.require_known_score must be a boolean")
+        for key in ("product_keywords", "vendor_keywords"):
+            value = filters.get(key)
+            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                errors.append(f"cve.settings.filters.{key} must be a list of strings")
+    return errors
 
 def load_runtime_config(conn) -> Config:
     cfg = get_runtime_config(conn)

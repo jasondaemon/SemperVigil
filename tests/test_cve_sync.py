@@ -65,7 +65,7 @@ def _make_cve_item(
 def test_snapshot_insert_creates_no_changes(tmp_path):
     conn = init_db(str(tmp_path / "state.sqlite3"))
     item = _make_cve_item("CVE-2025-1111", 5.0, "MEDIUM", "AV:N/AC:L")
-    result = process_cve_item(conn, item, prefer_v4=True)
+    result = process_cve_item(conn, item, prefer_v4=True, filters={})
     assert result.new_snapshot is True
     assert result.change_count == 0
     assert conn.execute("SELECT COUNT(*) FROM cves").fetchone()[0] == 1
@@ -77,8 +77,8 @@ def test_severity_upgrade_detection(tmp_path):
     conn = init_db(str(tmp_path / "state.sqlite3"))
     first = _make_cve_item("CVE-2025-2222", 5.0, "MEDIUM", "AV:N/AC:L")
     second = _make_cve_item("CVE-2025-2222", 7.5, "HIGH", "AV:N/AC:L")
-    process_cve_item(conn, first, prefer_v4=True)
-    result = process_cve_item(conn, second, prefer_v4=True)
+    process_cve_item(conn, first, prefer_v4=True, filters={})
+    result = process_cve_item(conn, second, prefer_v4=True, filters={})
     assert result.change_count >= 1
     change = conn.execute(
         "SELECT change_type, from_severity, to_severity FROM cve_changes"
@@ -92,8 +92,8 @@ def test_vector_change_detection(tmp_path):
     conn = init_db(str(tmp_path / "state.sqlite3"))
     first = _make_cve_item("CVE-2025-3333", 5.0, "MEDIUM", "AV:N/AC:L")
     second = _make_cve_item("CVE-2025-3333", 5.0, "MEDIUM", "AV:L/AC:L")
-    process_cve_item(conn, first, prefer_v4=True)
-    process_cve_item(conn, second, prefer_v4=True)
+    process_cve_item(conn, first, prefer_v4=True, filters={})
+    process_cve_item(conn, second, prefer_v4=True, filters={})
     change = conn.execute(
         "SELECT change_type, vector_from, vector_to FROM cve_changes WHERE change_type = 'vector_change'"
     ).fetchone()
@@ -114,8 +114,8 @@ def test_preferred_severity_diff_on_v4_added(tmp_path):
         v40_severity="CRITICAL",
         v40_vector="AV:N/AC:L/AT:N",
     )
-    process_cve_item(conn, first, prefer_v4=True)
-    process_cve_item(conn, second, prefer_v4=True)
+    process_cve_item(conn, first, prefer_v4=True, filters={})
+    process_cve_item(conn, second, prefer_v4=True, filters={})
     change_types = {
         row[0]
         for row in conn.execute("SELECT change_type FROM cve_changes").fetchall()
@@ -127,8 +127,8 @@ def test_preferred_severity_diff_on_v4_added(tmp_path):
 def test_idempotent_rerun(tmp_path):
     conn = init_db(str(tmp_path / "state.sqlite3"))
     item = _make_cve_item("CVE-2025-5555", 4.0, "LOW", "AV:N/AC:L")
-    process_cve_item(conn, item, prefer_v4=True)
-    process_cve_item(conn, item, prefer_v4=True)
+    process_cve_item(conn, item, prefer_v4=True, filters={})
+    process_cve_item(conn, item, prefer_v4=True, filters={})
     assert conn.execute("SELECT COUNT(*) FROM cve_snapshots").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM cve_changes").fetchone()[0] == 0
 
@@ -146,12 +146,14 @@ def test_cve_sync_result_is_json_serializable(tmp_path, monkeypatch):
     result = sync_cves(
         conn,
         CveSyncConfig(
+            api_base="https://services.nvd.nist.gov/rest/json/cves/2.0",
             results_per_page=1,
             rate_limit_seconds=0.0,
             backoff_seconds=0.0,
             max_retries=0,
             prefer_v4=True,
             api_key=None,
+            filters={},
         ),
         last_modified_start="2025-01-01T00:00:00Z",
         last_modified_end="2025-01-02T00:00:00Z",

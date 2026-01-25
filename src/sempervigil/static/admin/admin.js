@@ -896,6 +896,293 @@ function wireAiRouting() {
   });
 }
 
+function wireCveSearch() {
+  const form = document.getElementById("cve-search-form");
+  const table = document.getElementById("cve-table");
+  if (!form || !table) {
+    return;
+  }
+  const tbody = table.querySelector("tbody");
+  const pager = document.getElementById("cve-pager");
+  const pageSize = 50;
+  let currentPage = 1;
+
+  async function load(page) {
+    currentPage = page;
+    const query = document.getElementById("cve-query").value.trim();
+    const severitySelect = document.getElementById("cve-severity");
+    const severities = Array.from(severitySelect.selectedOptions).map((opt) => opt.value);
+    const minCvss = document.getElementById("cve-min-cvss").value;
+    const after = document.getElementById("cve-after").value;
+    const before = document.getElementById("cve-before").value;
+    const inScope = document.getElementById("cve-in-scope").checked;
+
+    const params = new URLSearchParams();
+    if (query) params.set("query", query);
+    if (severities.length) params.set("severity", severities.join(","));
+    if (minCvss) params.set("min_cvss", minCvss);
+    if (after) params.set("after", after);
+    if (before) params.set("before", before);
+    if (inScope) params.set("in_scope", "true");
+    params.set("page", String(page));
+    params.set("page_size", String(pageSize));
+
+    const data = await apiFetch(`/admin/api/cves?${params.toString()}`);
+    tbody.innerHTML = "";
+    data.items.forEach((item) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td><a href="/ui/cves/${item.cve_id}">${item.cve_id}</a></td>
+        <td>${item.published_at || ""}</td>
+        <td>${item.last_modified_at || ""}</td>
+        <td>${item.preferred_base_severity || ""}</td>
+        <td>${item.preferred_base_score || ""}</td>
+        <td class="truncate" title="${item.summary || ""}">${item.summary || ""}</td>
+        <td>${item.in_scope ? "yes" : "no"}</td>
+      `;
+      tbody.appendChild(row);
+    });
+    pager.textContent = `Page ${data.page} of ${Math.max(
+      1,
+      Math.ceil(data.total / data.page_size)
+    )}`;
+  }
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    load(1).catch((err) => alert(err));
+  });
+
+  load(currentPage).catch((err) => alert(err));
+}
+
+function wireCveDetail() {
+  const container = document.getElementById("cve-detail");
+  if (!container) {
+    return;
+  }
+  const cveId = container.dataset.cveId;
+  apiFetch(`/admin/api/cves/${cveId}`)
+    .then((item) => {
+      container.innerHTML = `
+        <div class="kv">
+          <div><strong>${item.cve_id}</strong></div>
+          <div>Published: ${item.published_at || ""}</div>
+          <div>Modified: ${item.last_modified_at || ""}</div>
+          <div>Last seen: ${item.last_seen_at || ""}</div>
+          <div>Severity: ${item.preferred_base_severity || ""}</div>
+          <div>CVSS: ${item.preferred_base_score || ""}</div>
+          <div>Vector: ${item.preferred_vector || ""}</div>
+        </div>
+        <h3>Description</h3>
+        <p>${item.description_text || ""}</p>
+        <h3>Affected Products</h3>
+        <pre class="mono">${(item.affected_products || []).join("\\n")}</pre>
+        <h3>Affected CPEs</h3>
+        <pre class="mono">${(item.affected_cpes || []).join("\\n")}</pre>
+        <h3>Reference Domains</h3>
+        <pre class="mono">${(item.reference_domains || []).join("\\n")}</pre>
+      `;
+    })
+    .catch((err) => {
+      container.textContent = err.message || String(err);
+    });
+}
+
+function wireCveSettings() {
+  const form = document.getElementById("cve-settings-form");
+  if (!form) {
+    return;
+  }
+  const error = document.getElementById("cve-settings-error");
+  const note = document.getElementById("cve-settings-note");
+
+  function setSeverities(values) {
+    const select = document.getElementById("cve-severities");
+    Array.from(select.options).forEach((opt) => {
+      opt.selected = values.includes(opt.value);
+    });
+  }
+
+  async function load() {
+    const data = await apiFetch("/admin/api/cves/settings");
+    const settings = data.settings || {};
+    document.getElementById("cve-enabled").checked = settings.enabled ?? true;
+    document.getElementById("cve-schedule").value = settings.schedule_minutes ?? 60;
+    document.getElementById("cve-api-base").value =
+      settings.nvd?.api_base ?? "https://services.nvd.nist.gov/rest/json/cves/2.0";
+    document.getElementById("cve-results").value = settings.nvd?.results_per_page ?? 2000;
+    document.getElementById("cve-min").value = settings.filters?.min_cvss ?? "";
+    document.getElementById("cve-known-score").checked =
+      settings.filters?.require_known_score ?? false;
+    setSeverities(settings.filters?.severities || []);
+    document.getElementById("cve-vendors").value = (settings.filters?.vendor_keywords || []).join(
+      ", "
+    );
+    document.getElementById("cve-products").value = (
+      settings.filters?.product_keywords || []
+    ).join(", ");
+    document.getElementById("cve-retention").value = settings.retention_days ?? 365;
+    if (note) {
+      note.textContent = `Last run: ${settings.last_run_at || "unknown"}`;
+    }
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    error.style.display = "none";
+    const settings = {
+      enabled: document.getElementById("cve-enabled").checked,
+      schedule_minutes: parseInt(document.getElementById("cve-schedule").value, 10),
+      nvd: {
+        api_base: document.getElementById("cve-api-base").value.trim(),
+        results_per_page: parseInt(document.getElementById("cve-results").value, 10),
+      },
+      filters: {
+        min_cvss: document.getElementById("cve-min").value
+          ? parseFloat(document.getElementById("cve-min").value)
+          : null,
+        severities: Array.from(document.getElementById("cve-severities").selectedOptions).map(
+          (opt) => opt.value
+        ),
+        require_known_score: document.getElementById("cve-known-score").checked,
+        vendor_keywords: document
+          .getElementById("cve-vendors")
+          .value.split(",")
+          .map((item) => item.trim())
+          .filter(Boolean),
+        product_keywords: document
+          .getElementById("cve-products")
+          .value.split(",")
+          .map((item) => item.trim())
+          .filter(Boolean),
+      },
+      retention_days: parseInt(document.getElementById("cve-retention").value, 10),
+    };
+    try {
+      await apiFetch("/admin/api/cves/settings", {
+        method: "PUT",
+        body: JSON.stringify({ settings }),
+      });
+      showToast("Settings saved");
+    } catch (err) {
+      error.textContent = err.message || "Save failed";
+      error.style.display = "block";
+    }
+  });
+
+  const runNow = document.getElementById("cve-run-now");
+  if (runNow) {
+    runNow.addEventListener("click", async () => {
+      try {
+        await apiFetch("/admin/api/cves/run", { method: "POST", body: JSON.stringify({}) });
+        showToast("CVE sync enqueued");
+      } catch (err) {
+        alert(err);
+      }
+    });
+  }
+
+  load().catch((err) => alert(err));
+}
+
+function wireContentSearch() {
+  const form = document.getElementById("content-search-form");
+  const table = document.getElementById("content-table");
+  if (!form || !table) {
+    return;
+  }
+  const tbody = table.querySelector("tbody");
+  const pager = document.getElementById("content-pager");
+  const pageSize = 50;
+  let currentPage = 1;
+
+  async function load(page) {
+    currentPage = page;
+    const params = new URLSearchParams();
+    const query = document.getElementById("content-query").value.trim();
+    const type = document.getElementById("content-type").value;
+    const source = document.getElementById("content-source").value;
+    const hasSummary = document.getElementById("content-has-summary").value;
+    const tags = document.getElementById("content-tags").value.trim();
+    const severity = document.getElementById("content-severity").value;
+    const minCvss = document.getElementById("content-min-cvss").value;
+    const after = document.getElementById("content-after").value;
+    const before = document.getElementById("content-before").value;
+
+    if (query) params.set("query", query);
+    if (type) params.set("type", type);
+    if (source) params.set("source_id", source);
+    if (hasSummary) params.set("has_summary", hasSummary);
+    if (tags) params.set("tags", tags);
+    if (severity) params.set("severity", severity);
+    if (minCvss) params.set("min_cvss", minCvss);
+    if (after) params.set("after", after);
+    if (before) params.set("before", before);
+    params.set("page", String(page));
+    params.set("page_size", String(pageSize));
+
+    const data = await apiFetch(`/admin/api/content/search?${params.toString()}`);
+    tbody.innerHTML = "";
+    data.items.forEach((item) => {
+      const row = document.createElement("tr");
+      const date = item.published_at || item.last_modified_at || item.ingested_at || "";
+      const title = item.title || item.summary || "";
+      let link = "";
+      if (item.type === "article") {
+        link = `/ui/content/articles/${item.id}`;
+      } else if (item.type === "cve") {
+        link = `/ui/cves/${item.cve_id}`;
+      }
+      row.innerHTML = `
+        <td>${item.type}</td>
+        <td>${link ? `<a href="${link}">${item.type === "cve" ? item.cve_id : item.id}</a>` : ""}</td>
+        <td>${date}</td>
+        <td class="truncate" title="${title}">${title}</td>
+        <td>${item.source_name || ""}</td>
+      `;
+      tbody.appendChild(row);
+    });
+    pager.textContent = `Page ${data.page} of ${Math.max(
+      1,
+      Math.ceil(data.total / data.page_size)
+    )}`;
+  }
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    load(1).catch((err) => alert(err));
+  });
+
+  load(currentPage).catch((err) => alert(err));
+}
+
+function wireContentArticle() {
+  const container = document.getElementById("article-detail");
+  if (!container) {
+    return;
+  }
+  const articleId = container.dataset.articleId;
+  apiFetch(`/admin/api/content/articles/${articleId}`)
+    .then((item) => {
+      container.innerHTML = `
+        <div class="kv">
+          <div><strong>${item.title || ""}</strong></div>
+          <div>Source: ${item.source_id || ""}</div>
+          <div>Published: ${item.published_at || ""}</div>
+          <div>Ingested: ${item.ingested_at || ""}</div>
+          <div><a href="${item.original_url}" target="_blank" rel="noopener">Open URL</a></div>
+        </div>
+        <h3>Summary</h3>
+        <pre class="mono">${item.summary_llm || ""}</pre>
+        <h3>Content</h3>
+        <pre class="mono">${item.content_text || ""}</pre>
+      `;
+    })
+    .catch((err) => {
+      container.textContent = err.message || String(err);
+    });
+}
 async function wireAnalytics() {
   const chartEl = document.getElementById("articles-chart");
   if (!chartEl || !window.Chart) {
@@ -984,4 +1271,9 @@ document.addEventListener("DOMContentLoaded", () => {
   wireAiSchemas();
   wireAiProfiles();
   wireAiRouting();
+  wireCveSearch();
+  wireCveDetail();
+  wireCveSettings();
+  wireContentSearch();
+  wireContentArticle();
 });

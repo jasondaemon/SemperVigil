@@ -293,6 +293,36 @@ th, td {
   gap: 12px;
 }
 
+.filters {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.filters input,
+.filters select {
+  padding: 6px 8px;
+}
+
+.pager {
+  margin-top: 10px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.kv {
+  display: grid;
+  gap: 4px;
+  font-size: 14px;
+}
+
+.panel-note {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
 .grid label {
   display: flex;
   flex-direction: column;

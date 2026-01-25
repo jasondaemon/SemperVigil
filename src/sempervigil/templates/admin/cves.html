@@ -1,0 +1,41 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "system" %}
+{% set nav_subactive = "cves" %}
+{% block content %}
+  <section class="panel">
+    <h2>CVE Browser</h2>
+    <form id="cve-search-form" class="filters">
+      <input type="text" id="cve-query" placeholder="Search CVE or summary">
+      <select id="cve-severity" multiple>
+        <option value="CRITICAL">CRITICAL</option>
+        <option value="HIGH">HIGH</option>
+        <option value="MEDIUM">MEDIUM</option>
+        <option value="LOW">LOW</option>
+        <option value="UNKNOWN">UNKNOWN</option>
+      </select>
+      <input type="number" step="0.1" id="cve-min-cvss" placeholder="Min CVSS">
+      <input type="date" id="cve-after">
+      <input type="date" id="cve-before">
+      <label class="checkbox"><input type="checkbox" id="cve-in-scope"> In scope only</label>
+      <button class="btn" type="submit">Search</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <table id="cve-table">
+      <thead>
+        <tr>
+          <th>CVE ID</th>
+          <th>Published</th>
+          <th>Modified</th>
+          <th>Severity</th>
+          <th>CVSS</th>
+          <th>Summary</th>
+          <th>In Scope</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div class="pager" id="cve-pager"></div>
+  </section>
+{% endblock %}

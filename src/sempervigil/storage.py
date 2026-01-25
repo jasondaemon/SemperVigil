@@ -425,14 +425,18 @@ def upsert_cve(
     cvss_v40_json: dict[str, object] | None,
     cvss_v31_json: dict[str, object] | None,
     description_text: str | None,
+    affected_products: list[str] | None = None,
+    affected_cpes: list[str] | None = None,
+    reference_domains: list[str] | None = None,
 ) -> None:
     conn.execute(
         """
         INSERT INTO cves
             (cve_id, published_at, last_modified_at, preferred_cvss_version,
              preferred_base_score, preferred_base_severity, preferred_vector,
-             cvss_v40_json, cvss_v31_json, description_text, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             cvss_v40_json, cvss_v31_json, description_text, affected_products_json,
+             affected_cpes_json, reference_domains_json, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(cve_id) DO UPDATE SET
             published_at=excluded.published_at,
             last_modified_at=excluded.last_modified_at,
@@ -443,6 +447,9 @@ def upsert_cve(
             cvss_v40_json=excluded.cvss_v40_json,
             cvss_v31_json=excluded.cvss_v31_json,
             description_text=excluded.description_text,
+            affected_products_json=excluded.affected_products_json,
+            affected_cpes_json=excluded.affected_cpes_json,
+            reference_domains_json=excluded.reference_domains_json,
             updated_at=excluded.updated_at
         """,
         (
@@ -456,6 +463,9 @@ def upsert_cve(
             json_dumps(cvss_v40_json) if cvss_v40_json else None,
             json_dumps(cvss_v31_json) if cvss_v31_json else None,
             description_text,
+            json_dumps(affected_products) if affected_products else None,
+            json_dumps(affected_cpes) if affected_cpes else None,
+            json_dumps(reference_domains) if reference_domains else None,
             utc_now_iso(),
         ),
     )
@@ -1278,6 +1288,272 @@ def get_article_by_id(conn: sqlite3.Connection, article_id: int) -> dict[str, ob
         "brief_day": brief_day,
         "has_full_content": bool(has_full_content),
     }
+
+
+def search_articles(
+    conn: sqlite3.Connection,
+    query: str | None,
+    source_id: str | None,
+    has_summary: bool | None,
+    after: str | None,
+    before: str | None,
+    tags: list[str] | None,
+    page: int,
+    page_size: int,
+) -> tuple[list[dict[str, object]], int]:
+    where: list[str] = []
+    params: list[object] = []
+    if query:
+        like = f"%{query}%"
+        where.append("(a.title LIKE ? OR a.content_text LIKE ? OR a.summary_llm LIKE ?)")
+        params.extend([like, like, like])
+    if source_id:
+        where.append("a.source_id = ?")
+        params.append(source_id)
+    if has_summary is True:
+        where.append("a.summary_llm IS NOT NULL")
+    if has_summary is False:
+        where.append("a.summary_llm IS NULL")
+    if after:
+        where.append("a.published_at >= ?")
+        params.append(after)
+    if before:
+        where.append("a.published_at <= ?")
+        params.append(before)
+    if tags:
+        where.append(
+            "EXISTS (SELECT 1 FROM article_tags t WHERE t.article_id = a.id AND t.tag IN ({}))".format(
+                ",".join("?" for _ in tags)
+            )
+        )
+        params.extend(tags)
+
+    where_sql = " AND ".join(where)
+    if where_sql:
+        where_sql = "WHERE " + where_sql
+
+    count_cursor = conn.execute(
+        f"SELECT COUNT(1) FROM articles a {where_sql}",
+        params,
+    )
+    total = count_cursor.fetchone()[0]
+
+    offset = max(page - 1, 0) * page_size
+    cursor = conn.execute(
+        f"""
+        SELECT a.id, a.title, a.original_url, a.published_at, a.ingested_at,
+               a.summary_llm, a.source_id, s.name,
+               GROUP_CONCAT(t.tag) as tags
+        FROM articles a
+        LEFT JOIN sources s ON s.id = a.source_id
+        LEFT JOIN article_tags t ON t.article_id = a.id
+        {where_sql}
+        GROUP BY a.id
+        ORDER BY a.published_at DESC
+        LIMIT ? OFFSET ?
+        """,
+        [*params, page_size, offset],
+    )
+    items: list[dict[str, object]] = []
+    for (
+        article_id,
+        title,
+        original_url,
+        published_at,
+        ingested_at,
+        summary_llm,
+        source_id,
+        source_name,
+        tags_csv,
+    ) in cursor.fetchall():
+        items.append(
+            {
+                "id": article_id,
+                "title": title,
+                "url": original_url,
+                "published_at": published_at,
+                "ingested_at": ingested_at,
+                "has_summary": summary_llm is not None,
+                "source_id": source_id,
+                "source_name": source_name,
+                "tags": tags_csv.split(",") if tags_csv else [],
+            }
+        )
+    return items, total
+
+
+def get_cve(conn: sqlite3.Connection, cve_id: str) -> dict[str, object] | None:
+    cursor = conn.execute(
+        """
+        SELECT cve_id, published_at, last_modified_at, preferred_base_score,
+               preferred_base_severity, preferred_vector, description_text,
+               affected_products_json, affected_cpes_json, reference_domains_json,
+               updated_at
+        FROM cves
+        WHERE cve_id = ?
+        """,
+        (cve_id,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        return None
+    (
+        cve_id,
+        published_at,
+        last_modified_at,
+        preferred_base_score,
+        preferred_base_severity,
+        preferred_vector,
+        description_text,
+        affected_products_json,
+        affected_cpes_json,
+        reference_domains_json,
+        updated_at,
+    ) = row
+    return {
+        "cve_id": cve_id,
+        "published_at": published_at,
+        "last_modified_at": last_modified_at,
+        "preferred_base_score": preferred_base_score,
+        "preferred_base_severity": preferred_base_severity,
+        "preferred_vector": preferred_vector,
+        "description_text": description_text,
+        "affected_products": json.loads(affected_products_json) if affected_products_json else [],
+        "affected_cpes": json.loads(affected_cpes_json) if affected_cpes_json else [],
+        "reference_domains": json.loads(reference_domains_json) if reference_domains_json else [],
+        "updated_at": updated_at,
+    }
+
+
+def get_cve_last_seen(conn: sqlite3.Connection, cve_id: str) -> str | None:
+    cursor = conn.execute(
+        "SELECT MAX(observed_at) FROM cve_snapshots WHERE cve_id = ?",
+        (cve_id,),
+    )
+    row = cursor.fetchone()
+    return row[0] if row and row[0] else None
+
+
+def search_cves(
+    conn: sqlite3.Connection,
+    query: str | None,
+    severities: list[str] | None,
+    min_cvss: float | None,
+    after: str | None,
+    before: str | None,
+    in_scope: bool | None,
+    settings: dict[str, object] | None,
+    page: int,
+    page_size: int,
+) -> tuple[list[dict[str, object]], int]:
+    where: list[str] = []
+    params: list[object] = []
+    if query:
+        like = f"%{query}%"
+        where.append("(cve_id LIKE ? OR description_text LIKE ?)")
+        params.extend([like, like])
+    if severities:
+        normalized = [severity.upper() for severity in severities]
+        include_unknown = "UNKNOWN" in normalized
+        normalized = [value for value in normalized if value != "UNKNOWN"]
+        condition_parts = []
+        if normalized:
+            condition_parts.append(
+                "preferred_base_severity IN ({})".format(",".join("?" for _ in normalized))
+            )
+            params.extend(normalized)
+        if include_unknown:
+            condition_parts.append("preferred_base_severity IS NULL")
+        if condition_parts:
+            where.append("(" + " OR ".join(condition_parts) + ")")
+    if min_cvss is not None:
+        where.append("preferred_base_score >= ?")
+        params.append(min_cvss)
+    if after:
+        where.append("published_at >= ?")
+        params.append(after)
+    if before:
+        where.append("published_at <= ?")
+        params.append(before)
+    if in_scope and settings:
+        filters = settings.get("filters") or {}
+        scope_sevs = filters.get("severities") or []
+        if scope_sevs:
+            where.append(
+                "preferred_base_severity IN ({})".format(",".join("?" for _ in scope_sevs))
+            )
+            params.extend([severity.upper() for severity in scope_sevs])
+        min_score = filters.get("min_cvss")
+        if min_score is not None:
+            where.append("preferred_base_score >= ?")
+            params.append(min_score)
+        if filters.get("require_known_score"):
+            where.append("preferred_base_score IS NOT NULL")
+        keyword_filters = (filters.get("vendor_keywords") or []) + (
+            filters.get("product_keywords") or []
+        )
+        if keyword_filters:
+            keyword_where = []
+            for keyword in keyword_filters:
+                like = f"%{keyword.lower()}%"
+                keyword_where.append("LOWER(description_text) LIKE ?")
+                params.append(like)
+                keyword_where.append("LOWER(affected_products_json) LIKE ?")
+                params.append(like)
+                keyword_where.append("LOWER(affected_cpes_json) LIKE ?")
+                params.append(like)
+                keyword_where.append("LOWER(reference_domains_json) LIKE ?")
+                params.append(like)
+            where.append("(" + " OR ".join(keyword_where) + ")")
+
+    where_sql = " AND ".join(where)
+    if where_sql:
+        where_sql = "WHERE " + where_sql
+
+    count_cursor = conn.execute(f"SELECT COUNT(1) FROM cves {where_sql}", params)
+    total = count_cursor.fetchone()[0]
+
+    offset = max(page - 1, 0) * page_size
+    cursor = conn.execute(
+        f"""
+        SELECT cve_id, published_at, last_modified_at, preferred_base_score,
+               preferred_base_severity, description_text, updated_at,
+               affected_products_json, affected_cpes_json, reference_domains_json
+        FROM cves
+        {where_sql}
+        ORDER BY last_modified_at DESC
+        LIMIT ? OFFSET ?
+        """,
+        [*params, page_size, offset],
+    )
+    items = []
+    for (
+        cve_id,
+        published_at,
+        last_modified_at,
+        preferred_base_score,
+        preferred_base_severity,
+        description_text,
+        updated_at,
+        affected_products_json,
+        affected_cpes_json,
+        reference_domains_json,
+    ) in cursor.fetchall():
+        items.append(
+            {
+                "cve_id": cve_id,
+                "published_at": published_at,
+                "last_modified_at": last_modified_at,
+                "preferred_base_score": preferred_base_score,
+                "preferred_base_severity": preferred_base_severity,
+                "summary": description_text,
+                "updated_at": updated_at,
+                "affected_products": json.loads(affected_products_json) if affected_products_json else [],
+                "affected_cpes": json.loads(affected_cpes_json) if affected_cpes_json else [],
+                "reference_domains": json.loads(reference_domains_json) if reference_domains_json else [],
+            }
+        )
+    return items, total
 
 
 def update_article_content(

@@ -48,9 +48,9 @@ def test_admin_ai_provider_secret_flow(tmp_path, monkeypatch):
     )
     assert secret_response.status_code == 200
     assert '"api_key"' not in secret_response.text
-    assert "api_key_last4" in secret_response.text
+    assert "key_last4" in secret_response.text
 
     list_response = client.get("/admin/ai/providers")
     assert list_response.status_code == 200
     providers = list_response.json()
-    assert providers[0]["api_key_last4"] == "cret"
+    assert providers[0]["key_last4"] == "cret"

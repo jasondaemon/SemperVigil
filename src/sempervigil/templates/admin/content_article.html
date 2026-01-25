@@ -1,0 +1,8 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "content" %}
+{% block content %}
+  <section class="panel">
+    <h2>Article Detail</h2>
+    <div id="article-detail" data-article-id="{{ article_id }}"></div>
+  </section>
+{% endblock %}

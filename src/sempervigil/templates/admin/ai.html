@@ -59,7 +59,7 @@ SEMPERIVGIL_KEY_ID=v1</pre>
           <td class="provider-base-url">{{ provider.base_url or "" }}</td>
           <td><input type="checkbox" class="toggle-provider" {% if provider.is_enabled %}checked{% endif %}></td>
           <td class="mono">
-            {% if provider.api_key_last4 %}****{{ provider.api_key_last4 }}{% else %}not set{% endif %}
+            {% if provider.key_last4 %}****{{ provider.key_last4 }}{% else %}not set{% endif %}
           </td>
           <td class="mono">{{ provider.last_test_status or "" }}</td>
           <td class="actions">

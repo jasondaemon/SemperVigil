@@ -8,7 +8,13 @@ import time
 import uuid
 from datetime import datetime, timezone, timedelta
 
-from .config import ConfigError, get_state_db_path, load_runtime_config
+from .config import (
+    ConfigError,
+    bootstrap_cve_settings,
+    get_cve_settings,
+    get_state_db_path,
+    load_runtime_config,
+)
 from .ingest import process_source
 from .models import Article
 from .cve_sync import CveSyncConfig, isoformat_utc, sync_cves
@@ -66,13 +72,14 @@ def run_once(worker_id: str) -> int:
     try:
         conn = init_db(get_state_db_path())
         config = load_runtime_config(conn)
+        bootstrap_cve_settings(conn)
     except ConfigError as exc:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
 
     set_umask_from_env()
     ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir))
-    _maybe_enqueue_cve_sync(conn, config, logger)
+    _maybe_enqueue_cve_sync(conn, logger)
     job = claim_next_job(
         conn,
         worker_id,
@@ -549,26 +556,30 @@ def _handle_ingest_due_sources(conn, logger: logging.Logger) -> dict[str, object
     return {"enqueued_count": len(enqueued), "source_ids": enqueued}
 
 
-def _handle_cve_sync(conn, config, logger: logging.Logger) -> dict[str, object]:
-    if not config.cve.enabled:
+def _handle_cve_sync(conn, logger: logging.Logger) -> dict[str, object]:
+    settings = get_cve_settings(conn)
+    if not settings.get("enabled", True):
         return {"status": "disabled"}
     now = datetime.now(tz=timezone.utc)
     last_sync = get_setting(conn, "cve.last_successful_sync_at", None)
     start = _parse_iso(last_sync) if isinstance(last_sync, str) else None
     if not start:
-        start = now - timedelta(minutes=config.cve.sync_interval_minutes)
+        start = now - timedelta(minutes=int(settings.get("schedule_minutes", 60)))
     start_iso = isoformat_utc(start)
     end_iso = isoformat_utc(now)
     api_key = os.environ.get("NVD_API_KEY")
+    nvd = settings.get("nvd") or {}
     result = sync_cves(
         conn,
         CveSyncConfig(
-            results_per_page=config.cve.results_per_page,
-            rate_limit_seconds=config.cve.rate_limit_seconds,
-            backoff_seconds=config.cve.backoff_seconds,
-            max_retries=config.cve.max_retries,
-            prefer_v4=config.cve.prefer_v4,
+            api_base=str(nvd.get("api_base") or "https://services.nvd.nist.gov/rest/json/cves/2.0"),
+            results_per_page=int(nvd.get("results_per_page") or 2000),
+            rate_limit_seconds=float(settings.get("rate_limit_seconds", 1.0)),
+            backoff_seconds=float(settings.get("backoff_seconds", 2.0)),
+            max_retries=int(settings.get("max_retries", 3)),
+            prefer_v4=bool(settings.get("prefer_v4", True)),
             api_key=api_key,
+            filters=settings.get("filters") or {},
         ),
         last_modified_start=start_iso,
         last_modified_end=end_iso,
@@ -578,16 +589,17 @@ def _handle_cve_sync(conn, config, logger: logging.Logger) -> dict[str, object]:
     return result
 
 
-def _maybe_enqueue_cve_sync(conn, config, logger: logging.Logger) -> None:
-    if not config.cve.enabled:
+def _maybe_enqueue_cve_sync(conn, logger: logging.Logger) -> None:
+    settings = get_cve_settings(conn)
+    if not settings.get("enabled", True):
         return
     last_sync = get_setting(conn, "cve.last_successful_sync_at", None)
     now = datetime.now(tz=timezone.utc)
     if isinstance(last_sync, str):
         last_dt = _parse_iso(last_sync)
     else:
-        last_dt = now - timedelta(minutes=config.cve.sync_interval_minutes + 1)
-    due = last_dt + timedelta(minutes=config.cve.sync_interval_minutes) <= now
+        last_dt = now - timedelta(minutes=int(settings.get("schedule_minutes", 60)) + 1)
+    due = last_dt + timedelta(minutes=int(settings.get("schedule_minutes", 60))) <= now
     if due:
         enqueue_job(conn, "cve_sync", None, debounce=True)
 
@@ -659,7 +671,7 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
     if job.job_type == "test_source":
         return _handle_test_source(conn, config, job.payload, logger)
     if job.job_type == "cve_sync":
-        return _handle_cve_sync(conn, config, logger)
+        return _handle_cve_sync(conn, logger)
     if job.job_type == "fetch_article_content":
         return _handle_fetch_article_content(conn, config, job.payload, logger)
     if job.job_type == "summarize_article_llm":

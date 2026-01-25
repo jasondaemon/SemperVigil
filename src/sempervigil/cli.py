@@ -7,7 +7,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from .config import ConfigError, get_state_db_path, load_runtime_config
+from .config import ConfigError, get_cve_settings, get_state_db_path, load_runtime_config
 from .cve_sync import CveSyncConfig, isoformat_utc, sync_cves
 from .worker import WORKER_JOB_TYPES
 from .ingest import process_source
@@ -489,23 +489,26 @@ def _cmd_cve_sync(args: argparse.Namespace, logger: logging.Logger) -> int:
     except ConfigError as exc:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
-    if not config.cve.enabled:
+    settings = get_cve_settings(conn)
+    if not settings.get("enabled", True):
         log_event(logger, logging.WARNING, "cve_sync_disabled")
         return 0
     now = datetime.now(tz=timezone.utc)
     last_sync = get_setting(conn, "cve.last_successful_sync_at", None)
     start = _parse_iso(last_sync) if isinstance(last_sync, str) else None
     if not start:
-        start = now - timedelta(minutes=config.cve.sync_interval_minutes)
+        start = now - timedelta(minutes=int(settings.get("schedule_minutes", 60)))
     result = sync_cves(
         conn,
         CveSyncConfig(
-            results_per_page=config.cve.results_per_page,
-            rate_limit_seconds=config.cve.rate_limit_seconds,
-            backoff_seconds=config.cve.backoff_seconds,
-            max_retries=config.cve.max_retries,
-            prefer_v4=config.cve.prefer_v4,
+            api_base=str((settings.get("nvd") or {}).get("api_base") or "https://services.nvd.nist.gov/rest/json/cves/2.0"),
+            results_per_page=int((settings.get("nvd") or {}).get("results_per_page") or 2000),
+            rate_limit_seconds=float(settings.get("rate_limit_seconds", 1.0)),
+            backoff_seconds=float(settings.get("backoff_seconds", 2.0)),
+            max_retries=int(settings.get("max_retries", 3)),
+            prefer_v4=bool(settings.get("prefer_v4", True)),
             api_key=os.environ.get("NVD_API_KEY"),
+            filters=settings.get("filters") or {},
         ),
         last_modified_start=isoformat_utc(start),
         last_modified_end=isoformat_utc(now),
