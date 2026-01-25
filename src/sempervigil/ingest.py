@@ -354,7 +354,8 @@ def _run_tactic(
     raw_entry = dict(entries[0]) if test_mode and entries else None
 
     fetched_at = utc_now_iso()
-    for entry in entries:
+    total_entries = len(entries)
+    for index, entry in enumerate(entries, start=1):
         decision, article = evaluate_entry(
             entry,
             source,
@@ -365,6 +366,16 @@ def _run_tactic(
             fetched_at,
             ignore_dedupe=ignore_dedupe,
         )
+        if logger.isEnabledFor(logging.DEBUG) and total_entries:
+            log_event(
+                logger,
+                logging.DEBUG,
+                "ingest_progress",
+                source_id=source.id,
+                source_name=source.name,
+                i=index,
+                total=total_entries,
+            )
         decisions.append(decision)
         if "already_seen" in decision.reasons:
             already_seen_count += 1

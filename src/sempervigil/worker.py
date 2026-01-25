@@ -33,6 +33,7 @@ from .storage import (
     upsert_cve_links,
     get_source_run_streaks,
     get_source_name,
+    insert_source_health_event,
 )
 from .utils import configure_logging, log_event, utc_now_iso
 
@@ -137,6 +138,10 @@ def _handle_ingest_source(
 
     result = process_source(source, config, logger, conn)
     finished_at = utc_now_iso()
+    duration_ms = int(
+        (datetime.fromisoformat(finished_at) - datetime.fromisoformat(started_at)).total_seconds()
+        * 1000
+    )
     seen_count = result.skipped_duplicates
     filtered_count = result.skipped_filters
     error_count = result.skipped_missing_url
@@ -168,6 +173,19 @@ def _handle_ingest_source(
         skipped_missing_url=result.skipped_missing_url,
         error=result.error,
         notes={"tactics": result.notes} if result.notes else None,
+    )
+    insert_source_health_event(
+        conn,
+        source_id=source.id,
+        ts=finished_at,
+        ok=result.status == "ok",
+        found_count=result.found_count,
+        accepted_count=result.accepted_count,
+        seen_count=result.skipped_duplicates,
+        filtered_count=result.skipped_filters,
+        error_count=result.skipped_missing_url,
+        last_error=result.error,
+        duration_ms=duration_ms,
     )
 
     if result.status != "ok":
@@ -518,17 +536,25 @@ def _log_job_claimed(conn, job, logger: logging.Logger) -> None:
 
 
 def _job_context_fields(conn, job) -> dict[str, object]:
-    if job.job_type != "write_article_markdown":
-        return {}
+    if job.job_type == "write_article_markdown":
+        payload = job.payload or {}
+        source_id = str(payload.get("source_id") or "")
+        source_name = get_source_name(conn, source_id) or ""
+        return {
+            "source_id": source_id,
+            "source_name": source_name,
+            "article_id": payload.get("article_id"),
+            "article_url": payload.get("original_url"),
+        }
+    if job.job_type in {"ingest_source", "test_source"}:
+        payload = job.payload or {}
+        source_id = str(payload.get("source_id") or "")
+        source_name = get_source_name(conn, source_id) or ""
+        return {"source_id": source_id, "source_name": source_name}
     payload = job.payload or {}
     source_id = str(payload.get("source_id") or "")
     source_name = get_source_name(conn, source_id) or ""
-    return {
-        "source_id": source_id,
-        "source_name": source_name,
-        "article_id": payload.get("article_id"),
-        "article_url": payload.get("original_url"),
-    }
+    return {"source_id": source_id, "source_name": source_name}
 
 
 if __name__ == "__main__":
