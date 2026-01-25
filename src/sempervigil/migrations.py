@@ -291,6 +291,7 @@ def _get_migrations() -> list[tuple[str, Migration]]:
         ("005_cve_tables", _migration_cve_tables),
         ("006_sources_admin_fields", _migration_sources_admin_fields),
         ("007_llm_config", _migration_llm_config),
+        ("008_article_content_and_health", _migration_article_content_and_health),
     ]
 
 
@@ -414,6 +415,53 @@ def _migration_llm_config(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_llm_profiles_provider ON llm_profiles(primary_provider_id)"
+    )
+
+
+def _migration_article_content_and_health(conn: sqlite3.Connection) -> None:
+    if _table_exists(conn, "articles"):
+        columns = _table_columns(conn, "articles")
+        to_add = {
+            "content_text": "TEXT NULL",
+            "content_html": "TEXT NULL",
+            "content_fetched_at": "TEXT NULL",
+            "content_error": "TEXT NULL",
+            "summary_llm": "TEXT NULL",
+            "summary_model": "TEXT NULL",
+            "summary_generated_at": "TEXT NULL",
+            "summary_error": "TEXT NULL",
+            "brief_day": "TEXT NULL",
+            "has_full_content": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for column, definition in to_add.items():
+            if column in columns:
+                continue
+            conn.execute(f"ALTER TABLE articles ADD COLUMN {column} {definition}")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_articles_source_published ON articles(source_id, published_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_articles_brief_day ON articles(brief_day)"
+        )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS source_health_history (
+            id TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL REFERENCES sources(id),
+            ts TEXT NOT NULL,
+            ok INTEGER NOT NULL,
+            found_count INTEGER NOT NULL DEFAULT 0,
+            accepted_count INTEGER NOT NULL DEFAULT 0,
+            seen_count INTEGER NOT NULL DEFAULT 0,
+            filtered_count INTEGER NOT NULL DEFAULT 0,
+            error_count INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT NULL,
+            duration_ms INTEGER NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_source_health_source_ts ON source_health_history(source_id, ts DESC)"
     )
 
 

@@ -723,6 +723,90 @@ def get_batch_job_counts(conn: sqlite3.Connection, batch_id: str) -> dict[str, i
     return counts
 
 
+def insert_source_health_event(
+    conn: sqlite3.Connection,
+    source_id: str,
+    ts: str,
+    ok: bool,
+    found_count: int,
+    accepted_count: int,
+    seen_count: int,
+    filtered_count: int,
+    error_count: int,
+    last_error: str | None,
+    duration_ms: int | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO source_health_history
+            (id, source_id, ts, ok, found_count, accepted_count, seen_count,
+             filtered_count, error_count, last_error, duration_ms)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            str(uuid.uuid4()),
+            source_id,
+            ts,
+            1 if ok else 0,
+            int(found_count),
+            int(accepted_count),
+            int(seen_count),
+            int(filtered_count),
+            int(error_count),
+            last_error,
+            duration_ms,
+        ),
+    )
+    conn.commit()
+
+
+def list_source_health_events(
+    conn: sqlite3.Connection, source_id: str, limit: int = 50
+) -> list[dict[str, object]]:
+    cursor = conn.execute(
+        """
+        SELECT id, source_id, ts, ok, found_count, accepted_count, seen_count,
+               filtered_count, error_count, last_error, duration_ms
+        FROM source_health_history
+        WHERE source_id = ?
+        ORDER BY ts DESC
+        LIMIT ?
+        """,
+        (source_id, limit),
+    )
+    rows = []
+    for row in cursor.fetchall():
+        (
+            event_id,
+            source_id,
+            ts,
+            ok,
+            found_count,
+            accepted_count,
+            seen_count,
+            filtered_count,
+            error_count,
+            last_error,
+            duration_ms,
+        ) = row
+        rows.append(
+            {
+                "id": event_id,
+                "source_id": source_id,
+                "ts": ts,
+                "ok": bool(ok),
+                "found_count": found_count,
+                "accepted_count": accepted_count,
+                "seen_count": seen_count,
+                "filtered_count": filtered_count,
+                "error_count": error_count,
+                "last_error": last_error,
+                "duration_ms": duration_ms,
+            }
+        )
+    return rows
+
+
 def claim_next_job(
     conn: sqlite3.Connection,
     worker_id: str,
