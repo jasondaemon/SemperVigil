@@ -1,0 +1,51 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "system" %}
+{% set nav_subactive = "danger" %}
+{% block content %}
+  <section class="panel danger-zone">
+    <h2>Danger Zone</h2>
+    <p class="danger-banner">Destructive actions. For testing only.</p>
+
+    <div class="danger-section" id="danger-articles">
+      <h3>Clear Articles</h3>
+      <p>Deletes all article rows and related tag/link tables.</p>
+      <label class="checkbox">
+        <input type="checkbox" class="danger-ack"> I understand this deletes data
+      </label>
+      <label>Type confirmation</label>
+      <input type="text" class="danger-confirm" placeholder="DELETE_ALL_ARTICLES">
+      <label class="checkbox">
+        <input type="checkbox" class="danger-delete-files"> Also delete stored content files
+      </label>
+      <button class="btn danger-btn" data-action="articles" disabled>Delete Articles</button>
+      <pre class="mono danger-result"></pre>
+    </div>
+
+    <div class="danger-section" id="danger-cves">
+      <h3>Clear CVEs</h3>
+      <p>Deletes all CVEs, snapshots, and change history.</p>
+      <label class="checkbox">
+        <input type="checkbox" class="danger-ack"> I understand this deletes data
+      </label>
+      <label>Type confirmation</label>
+      <input type="text" class="danger-confirm" placeholder="DELETE_ALL_CVES">
+      <button class="btn danger-btn" data-action="cves" disabled>Delete CVEs</button>
+      <pre class="mono danger-result"></pre>
+    </div>
+
+    <div class="danger-section" id="danger-all">
+      <h3>Clear ALL Content</h3>
+      <p>Deletes all Articles and CVEs.</p>
+      <label class="checkbox">
+        <input type="checkbox" class="danger-ack"> I understand this deletes data
+      </label>
+      <label>Type confirmation</label>
+      <input type="text" class="danger-confirm" placeholder="DELETE_ALL_CONTENT">
+      <label class="checkbox">
+        <input type="checkbox" class="danger-delete-files"> Also delete stored content files
+      </label>
+      <button class="btn danger-btn" data-action="all" disabled>Delete All Content</button>
+      <pre class="mono danger-result"></pre>
+    </div>
+  </section>
+{% endblock %}

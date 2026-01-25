@@ -32,6 +32,7 @@ class PublishingConfig:
     hugo_section: str
     write_json_index: bool
     json_index_path: str
+    public_base_url: str
 
 
 @dataclass(frozen=True)
@@ -122,6 +123,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "hugo_section": "posts",
         "write_json_index": True,
         "json_index_path": "/site/static/sempervigil/index.json",
+        "public_base_url": "",
     },
     "ingest": {
         "http": {
@@ -383,6 +385,7 @@ def _build_config(cfg: dict[str, Any]) -> Config:
         hugo_section=str(publishing_cfg.get("hugo_section")),
         write_json_index=bool(publishing_cfg.get("write_json_index")),
         json_index_path=str(publishing_cfg.get("json_index_path")),
+        public_base_url=str(publishing_cfg.get("public_base_url") or ""),
     )
 
     http_cfg = ingest_cfg.get("http") or {}

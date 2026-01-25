@@ -311,6 +311,142 @@ th, td {
   font-size: 12px;
 }
 
+.pager-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.pager-page {
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.pager-page.active {
+  background: #2563eb;
+  color: #fff;
+  border-color: #2563eb;
+}
+
+.pager-ellipsis {
+  padding: 0 4px;
+  color: #6b7280;
+}
+
+.pager-info {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.tag-panel {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.tag-panel-header {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-item {
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tag-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tag-chip {
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.form-section h3 {
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
+.form-section label {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.form-section input[type="text"],
+.form-section input[type="number"],
+.form-section textarea {
+  width: 100%;
+}
+
+.advanced {
+  margin-top: 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fafafa;
+}
+
+.danger-zone {
+  border: 1px solid #fee2e2;
+  background: #fff5f5;
+}
+
+.danger-banner {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.danger-section {
+  border-top: 1px solid #fecaca;
+  padding-top: 12px;
+  margin-top: 12px;
+}
+
+.danger-btn {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #fff;
+}
+
+.danger-btn[disabled] {
+  background: #fca5a5;
+  border-color: #fca5a5;
+  cursor: not-allowed;
+}
+
 .kv {
   display: grid;
   gap: 4px;

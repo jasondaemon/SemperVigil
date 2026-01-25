@@ -6,12 +6,106 @@
     <h2>Runtime Config</h2>
     <p>Edit the runtime configuration stored in the database.</p>
     <form id="runtime-config-form">
-      <label>Config JSON</label>
-      <textarea id="runtime-config-json" class="mono" rows="18">{{ config_json }}</textarea>
+      <div class="form-grid">
+        <div class="form-section">
+          <h3>App</h3>
+          <label>Name</label>
+          <input type="text" id="app-name">
+          <label>Timezone</label>
+          <input type="text" id="app-timezone">
+        </div>
+
+        <div class="form-section">
+          <h3>Paths</h3>
+          <label>Data dir</label>
+          <input type="text" id="paths-data-dir">
+          <label>Output dir</label>
+          <input type="text" id="paths-output-dir">
+          <label>State DB</label>
+          <input type="text" id="paths-state-db">
+          <label>Run reports dir</label>
+          <input type="text" id="paths-run-reports-dir">
+        </div>
+
+        <div class="form-section">
+          <h3>Publishing</h3>
+          <label>Format</label>
+          <input type="text" id="publishing-format">
+          <label>Hugo section</label>
+          <input type="text" id="publishing-hugo-section">
+          <label>Write JSON index</label>
+          <input type="checkbox" id="publishing-write-json-index">
+          <label>JSON index path</label>
+          <input type="text" id="publishing-json-index-path">
+          <label>Public base URL</label>
+          <input type="text" id="publishing-public-base-url" placeholder="https://news.example.com">
+        </div>
+
+        <div class="form-section">
+          <h3>Ingest HTTP</h3>
+          <label>Timeout seconds</label>
+          <input type="number" id="ingest-timeout">
+          <label>User agent</label>
+          <input type="text" id="ingest-user-agent">
+          <label>Max retries</label>
+          <input type="number" id="ingest-max-retries">
+          <label>Backoff seconds</label>
+          <input type="number" step="0.1" id="ingest-backoff">
+        </div>
+
+        <div class="form-section">
+          <h3>Dedupe</h3>
+          <label>Enabled</label>
+          <input type="checkbox" id="dedupe-enabled">
+          <label>Strategy</label>
+          <input type="text" id="dedupe-strategy">
+        </div>
+
+        <div class="form-section">
+          <h3>Filters</h3>
+          <label>Allow keywords (one per line)</label>
+          <textarea id="filters-allow" rows="4"></textarea>
+          <label>Deny keywords (one per line)</label>
+          <textarea id="filters-deny" rows="4"></textarea>
+        </div>
+
+        <div class="form-section">
+          <h3>Jobs</h3>
+          <label>Lock timeout seconds</label>
+          <input type="number" id="jobs-lock-timeout">
+        </div>
+
+        <div class="form-section">
+          <h3>CVE</h3>
+          <label>Enabled</label>
+          <input type="checkbox" id="cve-enabled">
+          <label>Sync interval minutes</label>
+          <input type="number" id="cve-sync-interval">
+          <label>Results per page</label>
+          <input type="number" id="cve-results-per-page">
+          <label>Rate limit seconds</label>
+          <input type="number" step="0.1" id="cve-rate-limit">
+          <label>Backoff seconds</label>
+          <input type="number" step="0.1" id="cve-backoff">
+          <label>Max retries</label>
+          <input type="number" id="cve-max-retries">
+          <label>Prefer CVSS v4</label>
+          <input type="checkbox" id="cve-prefer-v4">
+        </div>
+      </div>
+
+      <details class="advanced">
+        <summary>Advanced JSON</summary>
+        <label>LLM config (JSON)</label>
+        <textarea id="runtime-llm-json" class="mono" rows="6"></textarea>
+        <label>Per-source tweaks (JSON)</label>
+        <textarea id="runtime-per-source-json" class="mono" rows="6"></textarea>
+      </details>
       <div class="actions">
         <button class="btn" type="submit">Save Config</button>
       </div>
       <p class="error" id="runtime-config-error" style="display:none;"></p>
     </form>
   </section>
+  <script id="runtime-config-data" type="application/json">{{ config_json | safe }}</script>
 {% endblock %}

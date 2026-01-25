@@ -25,10 +25,18 @@ def extract_signals(cve_item: dict[str, Any]) -> CveSignals:
     cpes: set[str] = set()
     reference_domains: set[str] = set()
 
-    configurations = cve_item.get("configurations") or {}
-    nodes = configurations.get("nodes") or []
-    for node in nodes:
-        _collect_cpes(node, cpes, vendors, products)
+    configurations = cve_item.get("configurations")
+    if isinstance(configurations, dict):
+        nodes = configurations.get("nodes") or []
+        for node in nodes:
+            _collect_cpes(node, cpes, vendors, products)
+    elif isinstance(configurations, list):
+        for entry in configurations:
+            if not isinstance(entry, dict):
+                continue
+            nodes = entry.get("nodes") or []
+            for node in nodes:
+                _collect_cpes(node, cpes, vendors, products)
 
     references = cve_item.get("references") or []
     for ref in references:

@@ -374,23 +374,194 @@ function wireRuntimeConfig() {
   if (!form) {
     return;
   }
-  const field = document.getElementById("runtime-config-json");
   const error = document.getElementById("runtime-config-error");
+  const dataEl = document.getElementById("runtime-config-data");
+  let baseConfig = {};
+  if (dataEl && dataEl.textContent) {
+    try {
+      baseConfig = JSON.parse(dataEl.textContent);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function parseList(value) {
+    return value
+      .split(/\n|,/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function intOr(value, fallback) {
+    const parsed = parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  function floatOr(value, fallback) {
+    const parsed = parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  function setValue(id, value) {
+    const el = document.getElementById(id);
+    if (!el) {
+      return;
+    }
+    if (el.type === "checkbox") {
+      el.checked = Boolean(value);
+      return;
+    }
+    el.value = value ?? "";
+  }
+
+  function loadConfig() {
+    const cfg = baseConfig || {};
+    setValue("app-name", cfg.app?.name);
+    setValue("app-timezone", cfg.app?.timezone);
+
+    setValue("paths-data-dir", cfg.paths?.data_dir);
+    setValue("paths-output-dir", cfg.paths?.output_dir);
+    setValue("paths-state-db", cfg.paths?.state_db);
+    setValue("paths-run-reports-dir", cfg.paths?.run_reports_dir);
+
+    setValue("publishing-format", cfg.publishing?.format);
+    setValue("publishing-hugo-section", cfg.publishing?.hugo_section);
+    setValue("publishing-write-json-index", cfg.publishing?.write_json_index);
+    setValue("publishing-json-index-path", cfg.publishing?.json_index_path);
+    setValue("publishing-public-base-url", cfg.publishing?.public_base_url);
+
+    setValue("ingest-timeout", cfg.ingest?.http?.timeout_seconds);
+    setValue("ingest-user-agent", cfg.ingest?.http?.user_agent);
+    setValue("ingest-max-retries", cfg.ingest?.http?.max_retries);
+    setValue("ingest-backoff", cfg.ingest?.http?.backoff_seconds);
+
+    setValue("dedupe-enabled", cfg.ingest?.dedupe?.enabled);
+    setValue("dedupe-strategy", cfg.ingest?.dedupe?.strategy);
+
+    setValue("filters-allow", (cfg.ingest?.filters?.allow_keywords || []).join("\n"));
+    setValue("filters-deny", (cfg.ingest?.filters?.deny_keywords || []).join("\n"));
+
+    setValue("jobs-lock-timeout", cfg.jobs?.lock_timeout_seconds);
+
+    setValue("cve-enabled", cfg.cve?.enabled);
+    setValue("cve-sync-interval", cfg.cve?.sync_interval_minutes);
+    setValue("cve-results-per-page", cfg.cve?.results_per_page);
+    setValue("cve-rate-limit", cfg.cve?.rate_limit_seconds);
+    setValue("cve-backoff", cfg.cve?.backoff_seconds);
+    setValue("cve-max-retries", cfg.cve?.max_retries);
+    setValue("cve-prefer-v4", cfg.cve?.prefer_v4);
+
+    setValue("runtime-llm-json", JSON.stringify(cfg.llm || {}, null, 2));
+    setValue("runtime-per-source-json", JSON.stringify(cfg.per_source_tweaks || {}, null, 2));
+  }
+
+  loadConfig();
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     error.style.display = "none";
-    let payload;
+    const nextConfig = JSON.parse(JSON.stringify(baseConfig || {}));
+    nextConfig.app = nextConfig.app || {};
+    nextConfig.paths = nextConfig.paths || {};
+    nextConfig.publishing = nextConfig.publishing || {};
+    nextConfig.ingest = nextConfig.ingest || {};
+    nextConfig.ingest.http = nextConfig.ingest.http || {};
+    nextConfig.ingest.dedupe = nextConfig.ingest.dedupe || {};
+    nextConfig.ingest.filters = nextConfig.ingest.filters || {};
+    nextConfig.jobs = nextConfig.jobs || {};
+    nextConfig.cve = nextConfig.cve || {};
+
+    nextConfig.app.name = document.getElementById("app-name").value.trim();
+    nextConfig.app.timezone = document.getElementById("app-timezone").value.trim();
+
+    nextConfig.paths.data_dir = document.getElementById("paths-data-dir").value.trim();
+    nextConfig.paths.output_dir = document.getElementById("paths-output-dir").value.trim();
+    nextConfig.paths.state_db = document.getElementById("paths-state-db").value.trim();
+    nextConfig.paths.run_reports_dir = document.getElementById("paths-run-reports-dir").value.trim();
+
+    nextConfig.publishing.format = document.getElementById("publishing-format").value.trim();
+    nextConfig.publishing.hugo_section = document
+      .getElementById("publishing-hugo-section")
+      .value.trim();
+    nextConfig.publishing.write_json_index = document.getElementById(
+      "publishing-write-json-index"
+    ).checked;
+    nextConfig.publishing.json_index_path = document
+      .getElementById("publishing-json-index-path")
+      .value.trim();
+    nextConfig.publishing.public_base_url = document
+      .getElementById("publishing-public-base-url")
+      .value.trim();
+
+    nextConfig.ingest.http.timeout_seconds = intOr(
+      document.getElementById("ingest-timeout").value,
+      nextConfig.ingest.http.timeout_seconds
+    );
+    nextConfig.ingest.http.user_agent = document.getElementById("ingest-user-agent").value.trim();
+    nextConfig.ingest.http.max_retries = intOr(
+      document.getElementById("ingest-max-retries").value,
+      nextConfig.ingest.http.max_retries
+    );
+    nextConfig.ingest.http.backoff_seconds = floatOr(
+      document.getElementById("ingest-backoff").value,
+      nextConfig.ingest.http.backoff_seconds
+    );
+
+    nextConfig.ingest.dedupe.enabled = document.getElementById("dedupe-enabled").checked;
+    nextConfig.ingest.dedupe.strategy = document.getElementById("dedupe-strategy").value.trim();
+
+    nextConfig.ingest.filters.allow_keywords = parseList(
+      document.getElementById("filters-allow").value
+    );
+    nextConfig.ingest.filters.deny_keywords = parseList(
+      document.getElementById("filters-deny").value
+    );
+
+    nextConfig.jobs.lock_timeout_seconds = intOr(
+      document.getElementById("jobs-lock-timeout").value,
+      nextConfig.jobs.lock_timeout_seconds
+    );
+
+    nextConfig.cve.enabled = document.getElementById("cve-enabled").checked;
+    nextConfig.cve.sync_interval_minutes = intOr(
+      document.getElementById("cve-sync-interval").value,
+      nextConfig.cve.sync_interval_minutes
+    );
+    nextConfig.cve.results_per_page = intOr(
+      document.getElementById("cve-results-per-page").value,
+      nextConfig.cve.results_per_page
+    );
+    nextConfig.cve.rate_limit_seconds = floatOr(
+      document.getElementById("cve-rate-limit").value,
+      nextConfig.cve.rate_limit_seconds
+    );
+    nextConfig.cve.backoff_seconds = floatOr(
+      document.getElementById("cve-backoff").value,
+      nextConfig.cve.backoff_seconds
+    );
+    nextConfig.cve.max_retries = intOr(
+      document.getElementById("cve-max-retries").value,
+      nextConfig.cve.max_retries
+    );
+    nextConfig.cve.prefer_v4 = document.getElementById("cve-prefer-v4").checked;
+
     try {
-      payload = JSON.parse(field.value);
+      nextConfig.llm = parseJsonField(
+        document.getElementById("runtime-llm-json").value,
+        {}
+      );
+      nextConfig.per_source_tweaks = parseJsonField(
+        document.getElementById("runtime-per-source-json").value,
+        {}
+      );
     } catch (err) {
-      error.textContent = "Invalid JSON";
+      error.textContent = "Invalid JSON in advanced fields";
       error.style.display = "block";
       return;
     }
     try {
       await apiFetch("/admin/config/runtime", {
         method: "PUT",
-        body: JSON.stringify({ config: payload }),
+        body: JSON.stringify({ config: nextConfig }),
       });
       showToast("Config saved");
     } catch (err) {
@@ -904,11 +1075,16 @@ function wireCveSearch() {
   }
   const tbody = table.querySelector("tbody");
   const pager = document.getElementById("cve-pager");
+  const error = document.getElementById("cve-error");
   const pageSize = 50;
   let currentPage = 1;
 
   async function load(page) {
     currentPage = page;
+    if (error) {
+      error.style.display = "none";
+      error.textContent = "";
+    }
     const query = document.getElementById("cve-query").value.trim();
     const severitySelect = document.getElementById("cve-severity");
     const severities = Array.from(severitySelect.selectedOptions).map((opt) => opt.value);
@@ -950,10 +1126,20 @@ function wireCveSearch() {
 
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    load(1).catch((err) => alert(err));
+    load(1).catch((err) => {
+      if (error) {
+        error.textContent = err.message || String(err);
+        error.style.display = "block";
+      }
+    });
   });
 
-  load(currentPage).catch((err) => alert(err));
+  load(currentPage).catch((err) => {
+    if (error) {
+      error.textContent = err.message || String(err);
+      error.style.display = "block";
+    }
+  });
 }
 
 function wireCveDetail() {
@@ -964,24 +1150,40 @@ function wireCveDetail() {
   const cveId = container.dataset.cveId;
   apiFetch(`/admin/api/cves/${cveId}`)
     .then((item) => {
+      const preferredVersion = item.preferred_cvss_version || "unknown";
+      const v31 = item.cvss_v31 || null;
+      const v40 = item.cvss_v40 || null;
+      const products = item.affected_products || [];
+      const cpes = item.affected_cpes || [];
+      const domains = item.reference_domains || [];
       container.innerHTML = `
         <div class="kv">
           <div><strong>${item.cve_id}</strong></div>
           <div>Published: ${item.published_at || ""}</div>
           <div>Modified: ${item.last_modified_at || ""}</div>
           <div>Last seen: ${item.last_seen_at || ""}</div>
-          <div>Severity: ${item.preferred_base_severity || ""}</div>
-          <div>CVSS: ${item.preferred_base_score || ""}</div>
-          <div>Vector: ${item.preferred_vector || ""}</div>
+          <div>Preferred CVSS (${preferredVersion}): ${item.preferred_base_score || ""} ${
+        item.preferred_base_severity ? `(${item.preferred_base_severity})` : ""
+      }</div>
+          <div>Preferred Vector: ${item.preferred_vector || ""}</div>
+        </div>
+        <h3>CVSS Versions</h3>
+        <div class="kv">
+          <div>CVSS v3.1: ${
+            v31 ? `${v31.baseScore || ""} ${v31.baseSeverity || ""} ${v31.vectorString || ""}` : "None"
+          }</div>
+          <div>CVSS v4.0: ${
+            v40 ? `${v40.baseScore || ""} ${v40.baseSeverity || ""} ${v40.vectorString || ""}` : "None"
+          }</div>
         </div>
         <h3>Description</h3>
         <p>${item.description_text || ""}</p>
         <h3>Affected Products</h3>
-        <pre class="mono">${(item.affected_products || []).join("\\n")}</pre>
+        <pre class="mono">${products.length ? products.join("\\n") : "None found"}</pre>
         <h3>Affected CPEs</h3>
-        <pre class="mono">${(item.affected_cpes || []).join("\\n")}</pre>
+        <pre class="mono">${cpes.length ? cpes.join("\\n") : "None found"}</pre>
         <h3>Reference Domains</h3>
-        <pre class="mono">${(item.reference_domains || []).join("\\n")}</pre>
+        <pre class="mono">${domains.length ? domains.join("\\n") : "None found"}</pre>
       `;
     })
     .catch((err) => {
@@ -1078,12 +1280,16 @@ function wireCveSettings() {
         await apiFetch("/admin/api/cves/run", { method: "POST", body: JSON.stringify({}) });
         showToast("CVE sync enqueued");
       } catch (err) {
-        alert(err);
+        error.textContent = err.message || String(err);
+        error.style.display = "block";
       }
     });
   }
 
-  load().catch((err) => alert(err));
+  load().catch((err) => {
+    error.textContent = err.message || String(err);
+    error.style.display = "block";
+  });
 }
 
 function wireContentSearch() {
@@ -1094,11 +1300,143 @@ function wireContentSearch() {
   }
   const tbody = table.querySelector("tbody");
   const pager = document.getElementById("content-pager");
-  const pageSize = 50;
+  const error = document.getElementById("content-error");
+  const tagList = document.getElementById("content-tag-list");
+  const selectedTagsEl = document.getElementById("content-selected-tags");
+  const tagsField = document.getElementById("content-tags");
+  let pageSize = parseInt(document.getElementById("content-page-size").value, 10);
   let currentPage = 1;
+  let selectedTags = new Set();
+
+  function setError(message) {
+    if (!error) {
+      return;
+    }
+    if (message) {
+      error.textContent = message;
+      error.style.display = "block";
+    } else {
+      error.textContent = "";
+      error.style.display = "none";
+    }
+  }
+
+  function syncTagField() {
+    tagsField.value = Array.from(selectedTags).join(", ");
+  }
+
+  function renderSelectedTags() {
+    if (!selectedTagsEl) {
+      return;
+    }
+    selectedTagsEl.innerHTML = "";
+    Array.from(selectedTags).forEach((tag) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "tag-chip";
+      chip.textContent = tag;
+      chip.addEventListener("click", () => {
+        selectedTags.delete(tag);
+        syncTagField();
+        renderSelectedTags();
+        load(1).catch((err) => setError(err.message || String(err)));
+      });
+      selectedTagsEl.appendChild(chip);
+    });
+  }
+
+  function renderTagList(tags) {
+    if (!tagList) {
+      return;
+    }
+    tagList.innerHTML = "";
+    tags.forEach((item) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "tag-item";
+      btn.textContent = `${item.tag} (${item.count})`;
+      btn.addEventListener("click", () => {
+        if (selectedTags.has(item.tag)) {
+          selectedTags.delete(item.tag);
+        } else {
+          selectedTags.add(item.tag);
+        }
+        syncTagField();
+        renderSelectedTags();
+        load(1).catch((err) => setError(err.message || String(err)));
+      });
+      tagList.appendChild(btn);
+    });
+  }
+
+  function parseTagsInput(value) {
+    return value
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+  }
+
+  function buildPageList(current, total) {
+    const pages = new Set([1, total, current - 2, current - 1, current, current + 1, current + 2]);
+    return Array.from(pages)
+      .filter((p) => p >= 1 && p <= total)
+      .sort((a, b) => a - b);
+  }
+
+  function renderPager(total, page, size) {
+    if (!pager) {
+      return;
+    }
+    pager.innerHTML = "";
+    const totalPages = Math.max(1, Math.ceil(total / size));
+    const controls = document.createElement("div");
+    controls.className = "pager-controls";
+
+    const prev = document.createElement("button");
+    prev.type = "button";
+    prev.className = "btn secondary";
+    prev.textContent = "Prev";
+    prev.disabled = page <= 1;
+    prev.addEventListener("click", () => load(page - 1));
+    controls.appendChild(prev);
+
+    const pages = buildPageList(page, totalPages);
+    let last = 0;
+    pages.forEach((p) => {
+      if (p - last > 1) {
+        const ellipsis = document.createElement("span");
+        ellipsis.className = "pager-ellipsis";
+        ellipsis.textContent = "…";
+        controls.appendChild(ellipsis);
+      }
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "pager-page" + (p === page ? " active" : "");
+      btn.textContent = String(p);
+      btn.addEventListener("click", () => load(p));
+      controls.appendChild(btn);
+      last = p;
+    });
+
+    const next = document.createElement("button");
+    next.type = "button";
+    next.className = "btn secondary";
+    next.textContent = "Next";
+    next.disabled = page >= totalPages;
+    next.addEventListener("click", () => load(page + 1));
+    controls.appendChild(next);
+
+    const info = document.createElement("div");
+    info.className = "pager-info";
+    info.textContent = `Page ${page} of ${totalPages}`;
+
+    pager.appendChild(controls);
+    pager.appendChild(info);
+  }
 
   async function load(page) {
     currentPage = page;
+    setError("");
     const params = new URLSearchParams();
     const query = document.getElementById("content-query").value.trim();
     const type = document.getElementById("content-type").value;
@@ -1143,18 +1481,36 @@ function wireContentSearch() {
       `;
       tbody.appendChild(row);
     });
-    pager.textContent = `Page ${data.page} of ${Math.max(
-      1,
-      Math.ceil(data.total / data.page_size)
-    )}`;
+    renderPager(data.total, data.page, data.page_size);
   }
+
+  document.getElementById("content-page-size").addEventListener("change", () => {
+    pageSize = parseInt(document.getElementById("content-page-size").value, 10);
+    load(1).catch((err) => setError(err.message || String(err)));
+  });
 
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    load(1).catch((err) => alert(err));
+    load(1).catch((err) => setError(err.message || String(err)));
   });
 
-  load(currentPage).catch((err) => alert(err));
+  if (tagList) {
+    apiFetch("/admin/api/content/tags")
+      .then((data) => renderTagList(data.tags || []))
+      .catch((err) => setError(err.message || String(err)));
+  }
+  if (tagsField.value.trim()) {
+    selectedTags = new Set(parseTagsInput(tagsField.value));
+    renderSelectedTags();
+  }
+
+  tagsField.addEventListener("change", () => {
+    selectedTags = new Set(parseTagsInput(tagsField.value));
+    renderSelectedTags();
+    load(1).catch((err) => setError(err.message || String(err)));
+  });
+
+  load(currentPage).catch((err) => setError(err.message || String(err)));
 }
 
 function wireContentArticle() {
@@ -1165,6 +1521,10 @@ function wireContentArticle() {
   const articleId = container.dataset.articleId;
   apiFetch(`/admin/api/content/articles/${articleId}`)
     .then((item) => {
+      const summary = item.summary_llm || item.summary || "";
+      const content = item.content_text || "";
+      const htmlExcerpt = item.content_html_excerpt || "";
+      const error = item.content_error || "";
       container.innerHTML = `
         <div class="kv">
           <div><strong>${item.title || ""}</strong></div>
@@ -1174,17 +1534,71 @@ function wireContentArticle() {
           <div><a href="${item.original_url}" target="_blank" rel="noopener">Open URL</a></div>
         </div>
         <h3>Summary</h3>
-        <pre class="mono">${item.summary_llm || ""}</pre>
+        <pre class="mono">${summary || "No summary available."}</pre>
         <h3>Content</h3>
-        <pre class="mono">${item.content_text || ""}</pre>
+        <pre class="mono">${content || "No extracted content available."}</pre>
+        ${htmlExcerpt ? `<h3>HTML Excerpt</h3><pre class="mono">${htmlExcerpt}</pre>` : ""}
+        ${error ? `<p class="error">Content error: ${error}</p>` : ""}
       `;
     })
     .catch((err) => {
       container.textContent = err.message || String(err);
     });
 }
+
+function wireDangerZone() {
+  const section = document.querySelector(".danger-zone");
+  if (!section) {
+    return;
+  }
+
+  function setup(panelId, confirmToken, endpoint, allowFiles) {
+    const panel = document.getElementById(panelId);
+    if (!panel) {
+      return;
+    }
+    const ack = panel.querySelector(".danger-ack");
+    const confirmInput = panel.querySelector(".danger-confirm");
+    const btn = panel.querySelector(".danger-btn");
+    const result = panel.querySelector(".danger-result");
+    const deleteFiles = panel.querySelector(".danger-delete-files");
+
+    function updateState() {
+      const ok = ack.checked && confirmInput.value.trim() === confirmToken;
+      btn.disabled = !ok;
+    }
+
+    ack.addEventListener("change", updateState);
+    confirmInput.addEventListener("input", updateState);
+
+    btn.addEventListener("click", async () => {
+      result.textContent = "";
+      try {
+        const payload = { confirm: confirmToken };
+        if (allowFiles && deleteFiles) {
+          payload.delete_files = deleteFiles.checked;
+        }
+        const data = await apiFetch(endpoint, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        result.textContent = JSON.stringify(data.stats, null, 2);
+        showToast("Deletion complete");
+      } catch (err) {
+        result.textContent = err.message || String(err);
+      }
+    });
+
+    updateState();
+  }
+
+  setup("danger-articles", "DELETE_ALL_ARTICLES", "/admin/api/admin/clear/articles", true);
+  setup("danger-cves", "DELETE_ALL_CVES", "/admin/api/admin/clear/cves", false);
+  setup("danger-all", "DELETE_ALL_CONTENT", "/admin/api/admin/clear/all", true);
+}
 async function wireAnalytics() {
   const chartEl = document.getElementById("articles-chart");
+  const error = document.getElementById("analytics-error");
   if (!chartEl || !window.Chart) {
     return;
   }
@@ -1248,12 +1662,22 @@ async function wireAnalytics() {
           });
           showToast("Brief job enqueued");
         } catch (err) {
-          alert(err);
+          if (error) {
+            error.textContent = err.message || String(err);
+            error.style.display = "block";
+          }
         }
       });
     }
+    if (error) {
+      error.style.display = "none";
+      error.textContent = "";
+    }
   } catch (err) {
-    alert(err);
+    if (error) {
+      error.textContent = err.message || String(err);
+      error.style.display = "block";
+    }
   }
 }
 
@@ -1276,4 +1700,5 @@ document.addEventListener("DOMContentLoaded", () => {
   wireCveSettings();
   wireContentSearch();
   wireContentArticle();
+  wireDangerZone();
 });

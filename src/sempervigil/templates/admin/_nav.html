@@ -5,14 +5,13 @@
     <div class="brand"><a href="/ui/">SemperVigil Admin</a></div>
     <nav class="nav">
       <a class="nav-link {% if active == 'dashboard' %}active{% endif %}" href="/ui/">Dashboard</a>
-      <div class="nav-item nav-dropdown {% if active == 'sources' %}active{% endif %}">
+      <div class="nav-item nav-dropdown {% if active == 'content' %}active{% endif %}">
         <button class="nav-link dropdown-toggle" type="button" aria-haspopup="true" aria-expanded="false">
-          Sources <span class="caret">v</span>
+          Content <span class="caret">v</span>
         </button>
         <div class="dropdown-menu">
-          <a class="dropdown-item {% if subactive == 'sources' %}active{% endif %}" href="/ui/sources">Sources</a>
-          <a class="dropdown-item {% if subactive == 'test' %}active{% endif %}" href="/ui/sources#test-sources">Test Sources</a>
-          <a class="dropdown-item {% if subactive == 'health' %}active{% endif %}" href="/ui/health">Source Health/History</a>
+          <a class="dropdown-item {% if subactive == 'content' %}active{% endif %}" href="/ui/content">Content Browser</a>
+          <a class="dropdown-item {% if subactive == 'cves' %}active{% endif %}" href="/ui/cves">CVEs</a>
         </div>
       </div>
       <div class="nav-item nav-dropdown {% if active == 'system' %}active{% endif %}">
@@ -20,17 +19,21 @@
           System <span class="caret">v</span>
         </button>
         <div class="dropdown-menu">
+          <a class="dropdown-item {% if subactive == 'sources' %}active{% endif %}" href="/ui/sources">Sources</a>
+          <a class="dropdown-item {% if subactive == 'test' %}active{% endif %}" href="/ui/sources#test-sources">Test Sources</a>
+          <a class="dropdown-item {% if subactive == 'health' %}active{% endif %}" href="/ui/health">Source Health/History</a>
+          <a class="dropdown-item {% if subactive == 'jobs' %}active{% endif %}" href="/ui/jobs">Jobs</a>
           <a class="dropdown-item {% if subactive == 'runtime_config' %}active{% endif %}" href="/ui/config">Runtime Config</a>
-          <a class="dropdown-item {% if subactive == 'ai_config' %}active{% endif %}" href="/ui/ai">AI Config (Providers/Profiles)</a>
-          <a class="dropdown-item {% if subactive == 'cves' %}active{% endif %}" href="/ui/cves">CVEs</a>
+          <a class="dropdown-item {% if subactive == 'ai_config' %}active{% endif %}" href="/ui/ai">AI Config</a>
           <a class="dropdown-item {% if subactive == 'cve_settings' %}active{% endif %}" href="/ui/cves/settings">CVE Settings</a>
+          <a class="dropdown-item {% if subactive == 'danger' %}active{% endif %}" href="/ui/system/danger">Danger Zone</a>
           <span class="dropdown-item disabled {% if subactive == 'diagnostics' %}active{% endif %}">Diagnostics</span>
         </div>
       </div>
-      <a class="nav-link {% if active == 'content' %}active{% endif %}" href="/ui/content">Content</a>
       <a class="nav-link {% if active == 'insights' %}active{% endif %}" href="/ui/analytics">Insights</a>
-      <a class="nav-link {% if active == 'jobs' %}active{% endif %}" href="/ui/jobs">Jobs</a>
-      <a class="nav-link {% if active == 'site' %}active{% endif %}" href="/" target="_blank" rel="noopener">Site</a>
+      {% if site_url %}
+      <a class="nav-link {% if active == 'site' %}active{% endif %}" href="{{ site_url }}" target="_blank" rel="noopener">Site</a>
+      {% endif %}
     </nav>
   </div>
   <div class="topbar-right">

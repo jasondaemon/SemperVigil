@@ -40,6 +40,19 @@ def _get_conn():
     return conn
 
 
+def _base_context(request: Request) -> dict[str, object]:
+    conn = _get_conn()
+    cfg = get_runtime_config(conn)
+    publishing = cfg.get("publishing") or {}
+    site_url = str(publishing.get("public_base_url") or "").strip()
+    return {
+        "request": request,
+        "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
+        "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
+        "site_url": site_url or None,
+    }
+
+
 def ui_router(token_guard) -> APIRouter:
     router = APIRouter(dependencies=[Depends(token_guard)])
 
@@ -52,12 +65,10 @@ def ui_router(token_guard) -> APIRouter:
         return TEMPLATES.TemplateResponse(
             "admin/dashboard.html",
             {
-                "request": request,
+                **_base_context(request),
                 "sources_count": len(sources),
                 "enabled_count": enabled_count,
                 "jobs": jobs,
-                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
-                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
             },
         )
 
@@ -73,10 +84,8 @@ def ui_router(token_guard) -> APIRouter:
         return TEMPLATES.TemplateResponse(
             "admin/sources.html",
             {
-                "request": request,
+                **_base_context(request),
                 "sources": items,
-                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
-                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
             },
         )
 
@@ -87,10 +96,8 @@ def ui_router(token_guard) -> APIRouter:
         return TEMPLATES.TemplateResponse(
             "admin/jobs.html",
             {
-                "request": request,
+                **_base_context(request),
                 "jobs": items,
-                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
-                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
             },
         )
 
@@ -143,10 +150,8 @@ def ui_router(token_guard) -> APIRouter:
         return TEMPLATES.TemplateResponse(
             "admin/health.html",
             {
-                "request": request,
+                **_base_context(request),
                 "health": rows,
-                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
-                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
             },
         )
 
@@ -156,9 +161,7 @@ def ui_router(token_guard) -> APIRouter:
         return TEMPLATES.TemplateResponse(
             "admin/ai.html",
             {
-                "request": request,
-                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
-                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
+                **_base_context(request),
                 "providers": list_providers(conn),
                 "models": list_models(conn),
                 "prompts": list_prompts(conn),
@@ -174,9 +177,7 @@ def ui_router(token_guard) -> APIRouter:
         return TEMPLATES.TemplateResponse(
             "admin/analytics.html",
             {
-                "request": request,
-                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
-                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
+                **_base_context(request),
             },
         )
 
@@ -185,9 +186,7 @@ def ui_router(token_guard) -> APIRouter:
         return TEMPLATES.TemplateResponse(
             "admin/cves.html",
             {
-                "request": request,
-                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
-                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
+                **_base_context(request),
             },
         )
 
@@ -196,9 +195,7 @@ def ui_router(token_guard) -> APIRouter:
         return TEMPLATES.TemplateResponse(
             "admin/cve_settings.html",
             {
-                "request": request,
-                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
-                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
+                **_base_context(request),
             },
         )
 
@@ -207,10 +204,8 @@ def ui_router(token_guard) -> APIRouter:
         return TEMPLATES.TemplateResponse(
             "admin/cve_detail.html",
             {
-                "request": request,
+                **_base_context(request),
                 "cve_id": cve_id,
-                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
-                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
             },
         )
 
@@ -221,10 +216,8 @@ def ui_router(token_guard) -> APIRouter:
         return TEMPLATES.TemplateResponse(
             "admin/content.html",
             {
-                "request": request,
+                **_base_context(request),
                 "sources": sources,
-                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
-                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
             },
         )
 
@@ -233,10 +226,8 @@ def ui_router(token_guard) -> APIRouter:
         return TEMPLATES.TemplateResponse(
             "admin/content_article.html",
             {
-                "request": request,
+                **_base_context(request),
                 "article_id": article_id,
-                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
-                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
             },
         )
 
@@ -247,10 +238,17 @@ def ui_router(token_guard) -> APIRouter:
         return TEMPLATES.TemplateResponse(
             "admin/config.html",
             {
-                "request": request,
-                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
-                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
+                **_base_context(request),
                 "config_json": json.dumps(cfg, indent=2, sort_keys=True),
+            },
+        )
+
+    @router.get("/system/danger", response_class=HTMLResponse)
+    def danger_zone(request: Request):
+        return TEMPLATES.TemplateResponse(
+            "admin/danger.html",
+            {
+                **_base_context(request),
             },
         )
 

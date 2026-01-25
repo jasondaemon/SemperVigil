@@ -1,5 +1,5 @@
 {% extends "admin/base.html" %}
-{% set nav_active = "system" %}
+{% set nav_active = "content" %}
 {% set nav_subactive = "cves" %}
 {% block content %}
   <section class="panel">
@@ -19,6 +19,7 @@
       <label class="checkbox"><input type="checkbox" id="cve-in-scope"> In scope only</label>
       <button class="btn" type="submit">Search</button>
     </form>
+    <p class="error" id="cve-error" style="display:none;"></p>
   </section>
 
   <section class="panel">

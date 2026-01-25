@@ -31,12 +31,16 @@ from .storage import enqueue_job, get_source_run_streaks, init_db, list_jobs
 from .cve_filters import CveSignals, matches_filters
 from .storage import (
     count_articles_since,
+    delete_all_articles,
+    delete_all_content,
+    delete_all_cves,
     get_article_by_id,
     get_cve,
     get_cve_last_seen,
     get_last_source_run,
     get_setting,
     get_source_stats,
+    list_article_tags,
     list_articles_per_day,
     list_source_health_events,
     search_articles,
@@ -152,6 +156,11 @@ class RuntimeConfigRequest(BaseModel):
 
 class CveSettingsRequest(BaseModel):
     settings: dict
+
+
+class ClearRequest(BaseModel):
+    confirm: str
+    delete_files: bool = False
 
 
 @app.get("/")
@@ -537,14 +546,14 @@ def sources_health_history(source_id: str, limit: int = 50) -> list[dict[str, ob
     return list_source_health_events(conn, source_id, limit=limit)
 
 
-@app.get("/admin/analytics/articles_per_day")
+@app.get("/admin/analytics/articles_per_day", dependencies=[Depends(_require_admin_token)])
 def analytics_articles_per_day(days: int = 30) -> dict[str, object]:
     conn = _get_conn()
     since_day = (datetime.now(tz=timezone.utc) - timedelta(days=days)).date().isoformat()
     return {"days": days, "data": list_articles_per_day(conn, since_day)}
 
 
-@app.get("/admin/analytics/source_stats")
+@app.get("/admin/analytics/source_stats", dependencies=[Depends(_require_admin_token)])
 def analytics_source_stats(days: int = 7, runs: int = 20) -> dict[str, object]:
     conn = _get_conn()
     return {"days": days, "runs": runs, "data": get_source_stats(conn, days, runs)}
@@ -557,6 +566,8 @@ def api_cves(
     min_cvss: float | None = None,
     after: str | None = None,
     before: str | None = None,
+    vendor: str | None = None,
+    product: str | None = None,
     in_scope: bool | None = None,
     page: int = 1,
     page_size: int = 50,
@@ -564,6 +575,8 @@ def api_cves(
     conn = _get_conn()
     settings = get_cve_settings(conn)
     severities = [item.strip().upper() for item in severity.split(",")] if severity else None
+    vendor_keywords = [item.strip() for item in vendor.split(",")] if vendor else None
+    product_keywords = [item.strip() for item in product.split(",")] if product else None
     items, total = search_cves(
         conn,
         query=query,
@@ -571,6 +584,8 @@ def api_cves(
         min_cvss=min_cvss,
         after=after,
         before=before,
+        vendor_keywords=vendor_keywords,
+        product_keywords=product_keywords,
         in_scope=in_scope,
         settings=settings,
         page=page,
@@ -619,6 +634,8 @@ def api_content_search(
     after: str | None = None,
     before: str | None = None,
     tags: str | None = None,
+    vendor: str | None = None,
+    product: str | None = None,
     page: int = 1,
     page_size: int = 50,
 ) -> dict[str, object]:
@@ -651,6 +668,8 @@ def api_content_search(
         severities = (
             [item.strip().upper() for item in severity.split(",")] if severity else None
         )
+        vendor_keywords = [item.strip() for item in vendor.split(",")] if vendor else None
+        product_keywords = [item.strip() for item in product.split(",")] if product else None
         cve_items, cve_total = search_cves(
             conn,
             query=query,
@@ -658,6 +677,8 @@ def api_content_search(
             min_cvss=min_cvss,
             after=after,
             before=before,
+            vendor_keywords=vendor_keywords,
+            product_keywords=product_keywords,
             in_scope=None,
             settings=settings,
             page=page,
@@ -676,6 +697,62 @@ def api_article_detail(article_id: int) -> dict[str, object]:
     if not article:
         raise HTTPException(status_code=404, detail="article_not_found")
     return article
+
+
+@app.get("/admin/api/content/tags", dependencies=[Depends(_require_admin_token)])
+def api_content_tags() -> dict[str, object]:
+    conn = _get_conn()
+    return {"tags": list_article_tags(conn)}
+
+
+@app.post("/admin/api/admin/clear/articles", dependencies=[Depends(_require_admin_token)])
+def api_clear_articles(payload: ClearRequest, request: Request) -> dict[str, object]:
+    if payload.confirm != "DELETE_ALL_ARTICLES":
+        raise HTTPException(status_code=400, detail="confirm_required")
+    conn = _get_conn()
+    stats = delete_all_articles(conn, delete_files=payload.delete_files)
+    logger = logging.getLogger("sempervigil.admin")
+    log_event(
+        logger,
+        logging.WARNING,
+        "admin_clear_articles",
+        client=request.client.host if request.client else "unknown",
+        delete_files=payload.delete_files,
+    )
+    return {"status": "ok", "stats": stats}
+
+
+@app.post("/admin/api/admin/clear/cves", dependencies=[Depends(_require_admin_token)])
+def api_clear_cves(payload: ClearRequest, request: Request) -> dict[str, object]:
+    if payload.confirm != "DELETE_ALL_CVES":
+        raise HTTPException(status_code=400, detail="confirm_required")
+    conn = _get_conn()
+    stats = delete_all_cves(conn)
+    logger = logging.getLogger("sempervigil.admin")
+    log_event(
+        logger,
+        logging.WARNING,
+        "admin_clear_cves",
+        client=request.client.host if request.client else "unknown",
+    )
+    return {"status": "ok", "stats": stats}
+
+
+@app.post("/admin/api/admin/clear/all", dependencies=[Depends(_require_admin_token)])
+def api_clear_all(payload: ClearRequest, request: Request) -> dict[str, object]:
+    if payload.confirm != "DELETE_ALL_CONTENT":
+        raise HTTPException(status_code=400, detail="confirm_required")
+    conn = _get_conn()
+    stats = delete_all_content(conn, delete_files=payload.delete_files)
+    logger = logging.getLogger("sempervigil.admin")
+    log_event(
+        logger,
+        logging.WARNING,
+        "admin_clear_all",
+        client=request.client.host if request.client else "unknown",
+        delete_files=payload.delete_files,
+    )
+    return {"status": "ok", "stats": stats}
 
 
 

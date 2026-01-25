@@ -911,23 +911,38 @@ def get_last_source_run(conn: sqlite3.Connection, source_id: str) -> dict[str, o
 
 
 def list_articles_per_day(conn: sqlite3.Connection, since_day: str) -> list[dict[str, object]]:
+    if not _table_exists(conn, "articles"):
+        return []
+    columns = _table_columns(conn, "articles")
+    if "brief_day" in columns:
+        date_expr = "brief_day"
+    else:
+        published_expr = "substr(published_at, 1, 10)" if "published_at" in columns else "NULL"
+        ingested_expr = "substr(ingested_at, 1, 10)" if "ingested_at" in columns else "NULL"
+        created_expr = "substr(created_at, 1, 10)" if "created_at" in columns else "NULL"
+        date_expr = f"COALESCE({published_expr}, {ingested_expr}, {created_expr})"
     cursor = conn.execute(
-        """
-        SELECT brief_day, COUNT(*)
+        f"""
+        SELECT {date_expr} as day, COUNT(*)
         FROM articles
-        WHERE brief_day >= ?
-        GROUP BY brief_day
-        ORDER BY brief_day
+        WHERE {date_expr} >= ?
+        GROUP BY day
+        ORDER BY day
         """,
         (since_day,),
     )
-    return [{"day": row[0], "count": row[1]} for row in cursor.fetchall()]
+    return [{"day": row[0], "count": row[1]} for row in cursor.fetchall() if row[0]]
 
 
 def get_source_stats(
     conn: sqlite3.Connection, days: int, runs: int
 ) -> list[dict[str, object]]:
     since_day = (datetime.now(tz=timezone.utc) - timedelta(days=days)).date().isoformat()
+    article_columns = _table_columns(conn, "articles") if _table_exists(conn, "articles") else set()
+    has_full_content_col = "has_full_content" in article_columns
+    has_summary_col = "summary_llm" in article_columns
+    brief_day_col = "brief_day" in article_columns
+    extracted_text_col = "extracted_text_path" in article_columns
     rows = []
     sources = conn.execute(
         "SELECT id, name, last_ok_at, last_error FROM sources ORDER BY name"
@@ -937,33 +952,59 @@ def get_source_stats(
             "SELECT COUNT(*) FROM articles WHERE source_id = ?",
             (source_id,),
         ).fetchone()[0]
-        full_content = conn.execute(
-            "SELECT COUNT(*) FROM articles WHERE source_id = ? AND has_full_content = 1",
-            (source_id,),
-        ).fetchone()[0]
-        summaries = conn.execute(
-            "SELECT COUNT(*) FROM articles WHERE source_id = ? AND summary_llm IS NOT NULL",
-            (source_id,),
-        ).fetchone()[0]
-        recent_articles = conn.execute(
-            "SELECT COUNT(*) FROM articles WHERE source_id = ? AND brief_day >= ?",
-            (source_id, since_day),
-        ).fetchone()[0]
-        health = conn.execute(
-            """
-            SELECT COUNT(*), SUM(ok)
-            FROM (
-                SELECT ok
-                FROM source_health_history
-                WHERE source_id = ?
-                ORDER BY ts DESC
-                LIMIT ?
-            )
-            """,
-            (source_id, runs),
-        ).fetchone()
-        run_count = health[0] or 0
-        ok_count = health[1] or 0
+        if has_full_content_col:
+            full_content = conn.execute(
+                "SELECT COUNT(*) FROM articles WHERE source_id = ? AND has_full_content = 1",
+                (source_id,),
+            ).fetchone()[0]
+        elif extracted_text_col:
+            full_content = conn.execute(
+                "SELECT COUNT(*) FROM articles WHERE source_id = ? AND extracted_text_path IS NOT NULL",
+                (source_id,),
+            ).fetchone()[0]
+        else:
+            full_content = 0
+        summaries = (
+            conn.execute(
+                "SELECT COUNT(*) FROM articles WHERE source_id = ? AND summary_llm IS NOT NULL",
+                (source_id,),
+            ).fetchone()[0]
+            if has_summary_col
+            else 0
+        )
+        if brief_day_col:
+            recent_articles = conn.execute(
+                "SELECT COUNT(*) FROM articles WHERE source_id = ? AND brief_day >= ?",
+                (source_id, since_day),
+            ).fetchone()[0]
+        else:
+            recent_articles = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM articles
+                WHERE source_id = ? AND COALESCE(substr(published_at, 1, 10), substr(ingested_at, 1, 10)) >= ?
+                """,
+                (source_id, since_day),
+            ).fetchone()[0]
+        if _table_exists(conn, "source_health_history"):
+            health = conn.execute(
+                """
+                SELECT COUNT(*), SUM(ok)
+                FROM (
+                    SELECT ok
+                    FROM source_health_history
+                    WHERE source_id = ?
+                    ORDER BY ts DESC
+                    LIMIT ?
+                )
+                """,
+                (source_id, runs),
+            ).fetchone()
+            run_count = health[0] or 0
+            ok_count = health[1] or 0
+        else:
+            run_count = 0
+            ok_count = 0
         rows.append(
             {
                 "source_id": source_id,
@@ -1234,60 +1275,184 @@ def _brief_day_from(value: str) -> str:
 
 
 def get_article_by_id(conn: sqlite3.Connection, article_id: int) -> dict[str, object] | None:
+    if not _table_exists(conn, "articles"):
+        return None
+    columns = _table_columns(conn, "articles")
+    wanted = [
+        "id",
+        "source_id",
+        "original_url",
+        "normalized_url",
+        "title",
+        "published_at",
+        "ingested_at",
+        "summary",
+        "content_text",
+        "content_html",
+        "content_fetched_at",
+        "content_error",
+        "summary_llm",
+        "summary_model",
+        "summary_generated_at",
+        "summary_error",
+        "brief_day",
+        "has_full_content",
+        "extracted_text_path",
+        "raw_html_path",
+        "meta_json",
+        "created_at",
+        "updated_at",
+    ]
+    selected = [name for name in wanted if name in columns]
+    if "id" not in selected:
+        return None
     cursor = conn.execute(
-        """
-        SELECT id, source_id, original_url, normalized_url, title, published_at,
-               ingested_at, summary, content_text, content_html, content_fetched_at,
-               content_error, summary_llm, summary_model, summary_generated_at,
-               summary_error, brief_day, has_full_content
-        FROM articles
-        WHERE id = ?
-        """,
+        f"SELECT {', '.join(selected)} FROM articles WHERE id = ?",
         (article_id,),
     )
     row = cursor.fetchone()
     if not row:
         return None
-    (
-        article_id,
-        source_id,
-        original_url,
-        normalized_url,
-        title,
-        published_at,
-        ingested_at,
-        summary,
-        content_text,
-        content_html,
-        content_fetched_at,
-        content_error,
-        summary_llm,
-        summary_model,
-        summary_generated_at,
-        summary_error,
-        brief_day,
-        has_full_content,
-    ) = row
+    article = dict(zip(selected, row))
+    content_text = article.get("content_text")
+    extracted_path = article.get("extracted_text_path")
+    if not content_text and extracted_path:
+        content_text = _load_text_file(extracted_path)
+    content_html = article.get("content_html")
+    html_excerpt = None
+    if content_html:
+        html_excerpt = content_html[:2000]
+    has_full_content = bool(content_text) or bool(extracted_path)
     return {
-        "id": article_id,
-        "source_id": source_id,
-        "original_url": original_url,
-        "normalized_url": normalized_url,
-        "title": title,
-        "published_at": published_at,
-        "ingested_at": ingested_at,
-        "summary": summary,
+        "id": article.get("id"),
+        "source_id": article.get("source_id"),
+        "original_url": article.get("original_url"),
+        "normalized_url": article.get("normalized_url"),
+        "title": article.get("title"),
+        "published_at": article.get("published_at"),
+        "ingested_at": article.get("ingested_at"),
+        "summary": article.get("summary"),
         "content_text": content_text,
-        "content_html": content_html,
-        "content_fetched_at": content_fetched_at,
-        "content_error": content_error,
-        "summary_llm": summary_llm,
-        "summary_model": summary_model,
-        "summary_generated_at": summary_generated_at,
-        "summary_error": summary_error,
-        "brief_day": brief_day,
-        "has_full_content": bool(has_full_content),
+        "content_html_excerpt": html_excerpt,
+        "content_fetched_at": article.get("content_fetched_at"),
+        "content_error": article.get("content_error"),
+        "summary_llm": article.get("summary_llm"),
+        "summary_model": article.get("summary_model"),
+        "summary_generated_at": article.get("summary_generated_at"),
+        "summary_error": article.get("summary_error"),
+        "brief_day": article.get("brief_day"),
+        "has_full_content": has_full_content,
+        "meta_json": article.get("meta_json"),
+        "created_at": article.get("created_at"),
+        "updated_at": article.get("updated_at"),
     }
+
+
+def _load_text_file(path: str, limit: int = 250_000) -> str | None:
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = handle.read(limit + 1)
+            return data[:limit]
+    except OSError:
+        return None
+
+
+def list_article_tags(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    if not _table_exists(conn, "article_tags") or not _table_exists(conn, "articles"):
+        return []
+    cursor = conn.execute(
+        """
+        SELECT t.tag, COUNT(*)
+        FROM article_tags t
+        JOIN articles a ON a.id = t.article_id
+        GROUP BY t.tag
+        ORDER BY COUNT(*) DESC, t.tag ASC
+        """
+    )
+    return [{"tag": row[0], "count": row[1]} for row in cursor.fetchall()]
+
+
+def delete_all_articles(conn: sqlite3.Connection, *, delete_files: bool = False) -> dict[str, object]:
+    stats: dict[str, object] = {"tables": {}, "files_deleted": 0, "file_errors": []}
+    file_paths: list[str] = []
+    if delete_files and _table_exists(conn, "articles"):
+        columns = _table_columns(conn, "articles")
+        path_cols = [col for col in ("extracted_text_path", "raw_html_path") if col in columns]
+        if path_cols:
+            cursor = conn.execute(
+                f"SELECT {', '.join(path_cols)} FROM articles WHERE " +
+                " OR ".join(f"{col} IS NOT NULL" for col in path_cols)
+            )
+            for row in cursor.fetchall():
+                for value in row:
+                    if isinstance(value, str) and value:
+                        file_paths.append(value)
+
+    conn.execute("BEGIN IMMEDIATE")
+    if _table_exists(conn, "article_tags"):
+        cursor = conn.execute("DELETE FROM article_tags")
+        stats["tables"]["article_tags"] = cursor.rowcount
+    if _table_exists(conn, "article_cves"):
+        cursor = conn.execute("DELETE FROM article_cves")
+        stats["tables"]["article_cves"] = cursor.rowcount
+    if _table_exists(conn, "articles"):
+        cursor = conn.execute("DELETE FROM articles")
+        stats["tables"]["articles"] = cursor.rowcount
+    conn.execute("COMMIT")
+
+    if delete_files:
+        _delete_content_files(conn, file_paths, stats)
+    return stats
+
+
+def delete_all_cves(conn: sqlite3.Connection) -> dict[str, object]:
+    stats: dict[str, object] = {"tables": {}}
+    conn.execute("BEGIN IMMEDIATE")
+    if _table_exists(conn, "article_cves"):
+        cursor = conn.execute("DELETE FROM article_cves")
+        stats["tables"]["article_cves"] = cursor.rowcount
+    if _table_exists(conn, "cve_changes"):
+        cursor = conn.execute("DELETE FROM cve_changes")
+        stats["tables"]["cve_changes"] = cursor.rowcount
+    if _table_exists(conn, "cve_snapshots"):
+        cursor = conn.execute("DELETE FROM cve_snapshots")
+        stats["tables"]["cve_snapshots"] = cursor.rowcount
+    if _table_exists(conn, "cves"):
+        cursor = conn.execute("DELETE FROM cves")
+        stats["tables"]["cves"] = cursor.rowcount
+    conn.execute("COMMIT")
+    return stats
+
+
+def delete_all_content(conn: sqlite3.Connection, *, delete_files: bool = False) -> dict[str, object]:
+    articles = delete_all_articles(conn, delete_files=delete_files)
+    cves = delete_all_cves(conn)
+    return {"articles": articles, "cves": cves}
+
+
+def _delete_content_files(
+    conn: sqlite3.Connection, file_paths: list[str], stats: dict[str, object]
+) -> None:
+    config = get_setting(conn, "config.runtime", {}) or {}
+    data_dir = ((config.get("paths") or {}).get("data_dir") or "").strip()
+    if not data_dir:
+        stats["file_errors"].append("missing data_dir in config.runtime")
+        return
+    allowed_root = os.path.realpath(data_dir)
+    deleted = 0
+    for path in file_paths:
+        try:
+            real_path = os.path.realpath(path)
+            if not real_path.startswith(allowed_root + os.sep):
+                stats["file_errors"].append(f"skip_outside_root:{path}")
+                continue
+            os.remove(real_path)
+            deleted += 1
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            stats["file_errors"].append(f"{path}:{exc}")
+    stats["files_deleted"] = deleted
 
 
 def search_articles(
@@ -1301,26 +1466,44 @@ def search_articles(
     page: int,
     page_size: int,
 ) -> tuple[list[dict[str, object]], int]:
+    if not _table_exists(conn, "articles"):
+        return [], 0
+    columns = _table_columns(conn, "articles")
     where: list[str] = []
     params: list[object] = []
     if query:
         like = f"%{query}%"
-        where.append("(a.title LIKE ? OR a.content_text LIKE ? OR a.summary_llm LIKE ?)")
-        params.extend([like, like, like])
+        parts = ["a.title LIKE ?"]
+        params.append(like)
+        if "content_text" in columns:
+            parts.append("a.content_text LIKE ?")
+            params.append(like)
+        if "summary_llm" in columns:
+            parts.append("a.summary_llm LIKE ?")
+            params.append(like)
+        where.append("(" + " OR ".join(parts) + ")")
     if source_id:
         where.append("a.source_id = ?")
         params.append(source_id)
     if has_summary is True:
-        where.append("a.summary_llm IS NOT NULL")
+        if "summary_llm" in columns:
+            where.append("a.summary_llm IS NOT NULL")
+        else:
+            return [], 0
     if has_summary is False:
-        where.append("a.summary_llm IS NULL")
+        if "summary_llm" in columns:
+            where.append("a.summary_llm IS NULL")
     if after:
-        where.append("a.published_at >= ?")
-        params.append(after)
+        if "published_at" in columns:
+            where.append("a.published_at >= ?")
+            params.append(after)
     if before:
-        where.append("a.published_at <= ?")
-        params.append(before)
+        if "published_at" in columns:
+            where.append("a.published_at <= ?")
+            params.append(before)
     if tags:
+        if not _table_exists(conn, "article_tags"):
+            return [], 0
         where.append(
             "EXISTS (SELECT 1 FROM article_tags t WHERE t.article_id = a.id AND t.tag IN ({}))".format(
                 ",".join("?" for _ in tags)
@@ -1339,17 +1522,19 @@ def search_articles(
     total = count_cursor.fetchone()[0]
 
     offset = max(page - 1, 0) * page_size
+    order_col = "a.published_at" if "published_at" in columns else "a.ingested_at"
     cursor = conn.execute(
         f"""
         SELECT a.id, a.title, a.original_url, a.published_at, a.ingested_at,
-               a.summary_llm, a.source_id, s.name,
+               { 'a.summary_llm' if 'summary_llm' in columns else 'NULL' } as summary_llm,
+               a.source_id, s.name,
                GROUP_CONCAT(t.tag) as tags
         FROM articles a
         LEFT JOIN sources s ON s.id = a.source_id
         LEFT JOIN article_tags t ON t.article_id = a.id
         {where_sql}
         GROUP BY a.id
-        ORDER BY a.published_at DESC
+        ORDER BY {order_col} DESC
         LIMIT ? OFFSET ?
         """,
         [*params, page_size, offset],
@@ -1385,8 +1570,9 @@ def search_articles(
 def get_cve(conn: sqlite3.Connection, cve_id: str) -> dict[str, object] | None:
     cursor = conn.execute(
         """
-        SELECT cve_id, published_at, last_modified_at, preferred_base_score,
-               preferred_base_severity, preferred_vector, description_text,
+        SELECT cve_id, published_at, last_modified_at, preferred_cvss_version,
+               preferred_base_score, preferred_base_severity, preferred_vector,
+               cvss_v31_json, cvss_v40_json, description_text,
                affected_products_json, affected_cpes_json, reference_domains_json,
                updated_at
         FROM cves
@@ -1401,22 +1587,30 @@ def get_cve(conn: sqlite3.Connection, cve_id: str) -> dict[str, object] | None:
         cve_id,
         published_at,
         last_modified_at,
+        preferred_cvss_version,
         preferred_base_score,
         preferred_base_severity,
         preferred_vector,
+        cvss_v31_json,
+        cvss_v40_json,
         description_text,
         affected_products_json,
         affected_cpes_json,
         reference_domains_json,
         updated_at,
     ) = row
+    cvss_v31 = json.loads(cvss_v31_json) if cvss_v31_json else None
+    cvss_v40 = json.loads(cvss_v40_json) if cvss_v40_json else None
     return {
         "cve_id": cve_id,
         "published_at": published_at,
         "last_modified_at": last_modified_at,
+        "preferred_cvss_version": preferred_cvss_version,
         "preferred_base_score": preferred_base_score,
         "preferred_base_severity": preferred_base_severity,
         "preferred_vector": preferred_vector,
+        "cvss_v31": cvss_v31,
+        "cvss_v40": cvss_v40,
         "description_text": description_text,
         "affected_products": json.loads(affected_products_json) if affected_products_json else [],
         "affected_cpes": json.loads(affected_cpes_json) if affected_cpes_json else [],
@@ -1441,6 +1635,8 @@ def search_cves(
     min_cvss: float | None,
     after: str | None,
     before: str | None,
+    vendor_keywords: list[str] | None,
+    product_keywords: list[str] | None,
     in_scope: bool | None,
     settings: dict[str, object] | None,
     page: int,
@@ -1450,8 +1646,10 @@ def search_cves(
     params: list[object] = []
     if query:
         like = f"%{query}%"
-        where.append("(cve_id LIKE ? OR description_text LIKE ?)")
-        params.extend([like, like])
+        where.append(
+            "(cve_id LIKE ? OR description_text LIKE ? OR LOWER(affected_products_json) LIKE ? OR LOWER(affected_cpes_json) LIKE ?)"
+        )
+        params.extend([like, like, like.lower(), like.lower()])
     if severities:
         normalized = [severity.upper() for severity in severities]
         include_unknown = "UNKNOWN" in normalized
@@ -1475,6 +1673,20 @@ def search_cves(
     if before:
         where.append("published_at <= ?")
         params.append(before)
+    if vendor_keywords:
+        for keyword in vendor_keywords:
+            like = f"%{keyword.lower()}%"
+            where.append(
+                "(LOWER(description_text) LIKE ? OR LOWER(affected_products_json) LIKE ? OR LOWER(affected_cpes_json) LIKE ? OR LOWER(reference_domains_json) LIKE ?)"
+            )
+            params.extend([like, like, like, like])
+    if product_keywords:
+        for keyword in product_keywords:
+            like = f"%{keyword.lower()}%"
+            where.append(
+                "(LOWER(description_text) LIKE ? OR LOWER(affected_products_json) LIKE ? OR LOWER(affected_cpes_json) LIKE ? OR LOWER(reference_domains_json) LIKE ?)"
+            )
+            params.extend([like, like, like, like])
     if in_scope and settings:
         filters = settings.get("filters") or {}
         scope_sevs = filters.get("severities") or []
