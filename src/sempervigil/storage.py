@@ -1047,6 +1047,119 @@ def _get_article_id(conn: sqlite3.Connection, source_id: str, stable_id: str) ->
     return row[0] if row else None
 
 
+def get_article_by_id(conn: sqlite3.Connection, article_id: int) -> dict[str, object] | None:
+    cursor = conn.execute(
+        """
+        SELECT id, source_id, original_url, normalized_url, title, published_at,
+               ingested_at, summary, content_text, content_html, content_fetched_at,
+               content_error, summary_llm, summary_model, summary_generated_at,
+               summary_error, brief_day, has_full_content
+        FROM articles
+        WHERE id = ?
+        """,
+        (article_id,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        return None
+    (
+        article_id,
+        source_id,
+        original_url,
+        normalized_url,
+        title,
+        published_at,
+        ingested_at,
+        summary,
+        content_text,
+        content_html,
+        content_fetched_at,
+        content_error,
+        summary_llm,
+        summary_model,
+        summary_generated_at,
+        summary_error,
+        brief_day,
+        has_full_content,
+    ) = row
+    return {
+        "id": article_id,
+        "source_id": source_id,
+        "original_url": original_url,
+        "normalized_url": normalized_url,
+        "title": title,
+        "published_at": published_at,
+        "ingested_at": ingested_at,
+        "summary": summary,
+        "content_text": content_text,
+        "content_html": content_html,
+        "content_fetched_at": content_fetched_at,
+        "content_error": content_error,
+        "summary_llm": summary_llm,
+        "summary_model": summary_model,
+        "summary_generated_at": summary_generated_at,
+        "summary_error": summary_error,
+        "brief_day": brief_day,
+        "has_full_content": bool(has_full_content),
+    }
+
+
+def update_article_content(
+    conn: sqlite3.Connection,
+    article_id: int,
+    *,
+    content_text: str | None,
+    content_html: str | None,
+    content_fetched_at: str,
+    content_error: str | None,
+    has_full_content: bool,
+) -> None:
+    conn.execute(
+        """
+        UPDATE articles
+        SET content_text = ?, content_html = ?, content_fetched_at = ?,
+            content_error = ?, has_full_content = ?
+        WHERE id = ?
+        """,
+        (
+            content_text,
+            content_html,
+            content_fetched_at,
+            content_error,
+            1 if has_full_content else 0,
+            article_id,
+        ),
+    )
+    conn.commit()
+
+
+def update_article_summary(
+    conn: sqlite3.Connection,
+    article_id: int,
+    *,
+    summary_llm: str | None,
+    summary_model: str | None,
+    summary_generated_at: str | None,
+    summary_error: str | None,
+) -> None:
+    conn.execute(
+        """
+        UPDATE articles
+        SET summary_llm = ?, summary_model = ?, summary_generated_at = ?,
+            summary_error = ?
+        WHERE id = ?
+        """,
+        (
+            summary_llm,
+            summary_model,
+            summary_generated_at,
+            summary_error,
+            article_id,
+        ),
+    )
+    conn.commit()
+
+
 def _insert_article_tags(conn: sqlite3.Connection, article_id: int, tags: list[str]) -> None:
     if not tags:
         return

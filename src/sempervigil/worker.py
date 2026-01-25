@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import time
@@ -14,6 +15,8 @@ from .cve_sync import CveSyncConfig, isoformat_utc, sync_cves
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .publish import write_article_markdown, write_json_index
 from .signals import build_cve_evidence, extract_cve_ids
+from .pipelines.content_fetch import fetch_article_content
+from .pipelines.summarize_llm import summarize_with_llm
 from .storage import (
     claim_next_job,
     complete_job,
@@ -22,6 +25,7 @@ from .storage import (
     get_source,
     get_setting,
     get_article_id,
+    get_article_by_id,
     get_batch_job_counts,
     init_db,
     insert_articles,
@@ -34,6 +38,8 @@ from .storage import (
     get_source_run_streaks,
     get_source_name,
     insert_source_health_event,
+    update_article_content,
+    update_article_summary,
 )
 from .utils import configure_logging, log_event, utc_now_iso
 
@@ -42,6 +48,8 @@ WORKER_JOB_TYPES = [
     "ingest_due_sources",
     "test_source",
     "cve_sync",
+    "fetch_article_content",
+    "summarize_article_llm",
     "write_article_markdown",
 ]
 
@@ -228,6 +236,8 @@ def _handle_ingest_source(
                 upsert_cve_links(conn, article_id, cve_ids, evidence)
         if article_id is None:
             article_id = get_article_id(conn, article.source_id, article.stable_id)
+        if article_id is not None:
+            _maybe_enqueue_fetch(conn, article_id, article.source_id)
         enqueue_job(
             conn,
             "write_article_markdown",
@@ -393,6 +403,92 @@ def _handle_write_article_markdown(
     return {"path": path}
 
 
+def _handle_fetch_article_content(
+    conn, config, payload: dict[str, object], logger: logging.Logger
+) -> dict[str, object]:
+    article_id = payload.get("article_id") if payload else None
+    if not article_id:
+        raise ValueError("fetch_article_content requires article_id")
+    article = get_article_by_id(conn, int(article_id))
+    if not article:
+        raise ValueError("article_not_found")
+    url = article["original_url"]
+    try:
+        result = fetch_article_content(
+            url,
+            timeout_seconds=config.ingest.http.timeout_seconds,
+            user_agent=config.ingest.http.user_agent,
+            logger=logger,
+        )
+        content_text = result["content_text"]
+        store_html = os.environ.get("SV_STORE_ARTICLE_HTML", "0") == "1"
+        content_html = result["content_html"] if store_html else None
+        has_full_content = len(content_text or "") >= 500
+        update_article_content(
+            conn,
+            int(article_id),
+            content_text=content_text,
+            content_html=content_html,
+            content_fetched_at=utc_now_iso(),
+            content_error=None,
+            has_full_content=has_full_content,
+        )
+    except Exception as exc:  # noqa: BLE001
+        update_article_content(
+            conn,
+            int(article_id),
+            content_text=None,
+            content_html=None,
+            content_fetched_at=utc_now_iso(),
+            content_error=str(exc),
+            has_full_content=False,
+        )
+        raise
+    _maybe_enqueue_summarize(conn, int(article_id), article["source_id"])
+    return {"article_id": article_id, "has_full_content": has_full_content}
+
+
+def _handle_summarize_article_llm(
+    conn, config, payload: dict[str, object], logger: logging.Logger
+) -> dict[str, object]:
+    article_id = payload.get("article_id") if payload else None
+    if not article_id:
+        raise ValueError("summarize_article_llm requires article_id")
+    article = get_article_by_id(conn, int(article_id))
+    if not article:
+        raise ValueError("article_not_found")
+    source_name = get_source_name(conn, article["source_id"]) or ""
+    content = article["content_text"] or article["summary"] or article["title"]
+    try:
+        result = summarize_with_llm(
+            title=article["title"],
+            source=source_name,
+            published_at=article["published_at"],
+            url=article["original_url"],
+            content=content,
+            logger=logger,
+        )
+        update_article_summary(
+            conn,
+            int(article_id),
+            summary_llm=json.dumps(result),
+            summary_model=result.get("model"),
+            summary_generated_at=utc_now_iso(),
+            summary_error=None,
+        )
+        return result
+    except Exception as exc:  # noqa: BLE001
+        update_article_summary(
+            conn,
+            int(article_id),
+            summary_llm=None,
+            summary_model=None,
+            summary_generated_at=utc_now_iso(),
+            summary_error=str(exc),
+        )
+        raise
+
+
 def _handle_ingest_due_sources(conn, logger: logging.Logger) -> dict[str, object]:
     now = utc_now_iso()
     sources = list_due_sources(conn, now)
@@ -521,6 +617,10 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         return _handle_test_source(conn, config, job.payload, logger)
     if job.job_type == "cve_sync":
         return _handle_cve_sync(conn, config, logger)
+    if job.job_type == "fetch_article_content":
+        return _handle_fetch_article_content(conn, config, job.payload, logger)
+    if job.job_type == "summarize_article_llm":
+        return _handle_summarize_article_llm(conn, config, job.payload, logger)
     if job.job_type == "write_article_markdown":
         result = _handle_write_article_markdown(conn, config, job.payload, logger)
         if not has_pending_job(conn, "write_article_markdown", exclude_job_id=job.id):
@@ -536,7 +636,7 @@ def _log_job_claimed(conn, job, logger: logging.Logger) -> None:
 
 
 def _job_context_fields(conn, job) -> dict[str, object]:
-    if job.job_type == "write_article_markdown":
+    if job.job_type in {"write_article_markdown", "fetch_article_content", "summarize_article_llm"}:
         payload = job.payload or {}
         source_id = str(payload.get("source_id") or "")
         source_name = get_source_name(conn, source_id) or ""
@@ -555,6 +655,38 @@ def _job_context_fields(conn, job) -> dict[str, object]:
     source_id = str(payload.get("source_id") or "")
     source_name = get_source_name(conn, source_id) or ""
     return {"source_id": source_id, "source_name": source_name}
+
+
+def _maybe_enqueue_fetch(conn, article_id: int, source_id: str) -> None:
+    if os.environ.get("SV_FETCH_FULL_CONTENT", "1") != "1":
+        _maybe_enqueue_summarize(conn, article_id, source_id)
+        return
+    article = get_article_by_id(conn, article_id)
+    if not article:
+        return
+    if article["has_full_content"]:
+        _maybe_enqueue_summarize(conn, article_id, source_id)
+        return
+    if article["content_fetched_at"]:
+        return
+    enqueue_job(
+        conn,
+        "fetch_article_content",
+        {"article_id": article_id, "source_id": source_id},
+    )
+
+
+def _maybe_enqueue_summarize(conn, article_id: int, source_id: str) -> None:
+    article = get_article_by_id(conn, article_id)
+    if not article:
+        return
+    if article.get("summary_llm"):
+        return
+    enqueue_job(
+        conn,
+        "summarize_article_llm",
+        {"article_id": article_id, "source_id": source_id},
+    )
 
 
 if __name__ == "__main__":
