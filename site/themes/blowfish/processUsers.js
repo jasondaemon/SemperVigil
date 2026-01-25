@@ -1,7 +1,7 @@
 const fs = require("fs/promises");
 const crypto = require("crypto");
 const puppeteer = require("puppeteer");
-const translate = require("@iamtraction/google-translate");
+const translate = require("@vitalets/google-translate-api");
 
 const configDir = "./exampleSite/config/_default";
 const defaultLang = "en";
@@ -139,4 +139,3 @@ async function translateFrontMatterTags(block, targetLang, tags) {
 
   await browser.close();
 })();
-

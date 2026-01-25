@@ -1,5 +1,5 @@
 const fs = require("fs/promises");
-const translate = require("@iamtraction/google-translate");
+const translate = require("@vitalets/google-translate-api");
 
 const defaultLang = "en";
 const targetLang = process.argv[2] || "en";
@@ -58,4 +58,3 @@ async function main() {
 }
 
 main();
-

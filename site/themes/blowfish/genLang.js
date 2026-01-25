@@ -1,5 +1,5 @@
 const fs = require("fs/promises");
-const translate = require("@iamtraction/google-translate");
+const translate = require("@vitalets/google-translate-api");
 
 const configDir = "./exampleSite/config/_default";
 const contentDir = "./exampleSite/content";
@@ -107,4 +107,3 @@ async function createContent() {
   await createConfigs();
   await createContent();
 })();
-

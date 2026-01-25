@@ -123,8 +123,12 @@
   "dependencies": {
     "@headlessui/react": "^2.2.9",
     "@heroicons/react": "^2.2.0",
-    "@iamtraction/google-translate": "^2.0.1",
+    "@vitalets/google-translate-api": "^9.2.1",
     "@tailwindcss/forms": "^0.5.10",
     "commander": "^14.0.2"
+  },
+  "overrides": {
+    "glob": "^11.1.0",
+    "lodash-es": "4.17.23"
   }
 }
