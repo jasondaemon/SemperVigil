@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.4"]
+test = ["pytest>=7.4", "httpx>=0.25"]
 
 [project.scripts]
 sempervigil = "sempervigil.cli:main"

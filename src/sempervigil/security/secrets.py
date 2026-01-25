@@ -11,9 +11,11 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 # Prefer correctly spelled env vars, but support legacy misspelling for backward compatibility.
 MASTER_KEY_ENV_PRIMARY = "SEMPERVIGIL_MASTER_KEY"
 MASTER_KEY_ENV_LEGACY = "SEMPERIVGIL_MASTER_KEY"
+MASTER_KEY_ENV = MASTER_KEY_ENV_PRIMARY
 
 KEY_ID_ENV_PRIMARY = "SEMPERVIGIL_KEY_ID"
 KEY_ID_ENV_LEGACY = "SEMPERIVGIL_KEY_ID"
+KEY_ID_ENV = KEY_ID_ENV_PRIMARY
 
 DEFAULT_KEY_ID = "v1"
 HKDF_INFO = b"sempervigil:secrets:v1"
