@@ -700,6 +700,29 @@ def has_pending_job(
     return cursor.fetchone() is not None
 
 
+def get_source_name(conn: sqlite3.Connection, source_id: str) -> str | None:
+    row = conn.execute("SELECT name FROM sources WHERE id = ?", (source_id,)).fetchone()
+    return row[0] if row else None
+
+
+def get_batch_job_counts(conn: sqlite3.Connection, batch_id: str) -> dict[str, int]:
+    pattern = f'%\"batch_id\":\"{batch_id}\"%'
+    cursor = conn.execute(
+        """
+        SELECT status, COUNT(*)
+        FROM jobs
+        WHERE job_type = 'write_article_markdown' AND payload_json LIKE ?
+        GROUP BY status
+        """,
+        (pattern,),
+    )
+    counts = {"total": 0, "queued": 0, "running": 0, "succeeded": 0, "failed": 0}
+    for status, count in cursor.fetchall():
+        counts["total"] += count
+        counts[status] = count
+    return counts
+
+
 def claim_next_job(
     conn: sqlite3.Connection,
     worker_id: str,

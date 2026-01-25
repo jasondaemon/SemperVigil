@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 import time
+import uuid
 from datetime import datetime, timezone, timedelta
 
 from .config import ConfigError, load_config
@@ -21,6 +22,7 @@ from .storage import (
     get_source,
     get_setting,
     get_article_id,
+    get_batch_job_counts,
     init_db,
     insert_articles,
     list_due_sources,
@@ -30,6 +32,7 @@ from .storage import (
     record_source_run,
     upsert_cve_links,
     get_source_run_streaks,
+    get_source_name,
 )
 from .utils import log_event, utc_now_iso
 
@@ -76,11 +79,20 @@ def run_once(config_path: str | None, worker_id: str) -> int:
         result = run_claimed_job(conn, config, job, logger)
     except Exception as exc:  # noqa: BLE001
         fail_job(conn, job.id, str(exc))
-        log_event(logger, logging.ERROR, "job_failed", job_id=job.id, error=str(exc))
+        fields = _job_context_fields(conn, job)
+        log_event(
+            logger,
+            logging.ERROR,
+            "job_failed",
+            job_id=job.id,
+            error=str(exc),
+            **fields,
+        )
         return 1
 
     if complete_job(conn, job.id, result=result):
-        log_event(logger, logging.INFO, "job_succeeded", job_id=job.id)
+        fields = _job_context_fields(conn, job)
+        log_event(logger, logging.INFO, "job_succeeded", job_id=job.id, **fields)
     else:
         log_event(logger, logging.ERROR, "job_complete_failed", job_id=job.id)
     return 0
@@ -177,7 +189,20 @@ def _handle_ingest_source(
         }
 
     insert_articles(conn, result.articles)
-    for article in result.articles:
+    batch_id = str(uuid.uuid4())
+    batch_total = len(result.articles)
+    if batch_total:
+        log_event(
+            logger,
+            logging.INFO,
+            "batch_start",
+            job_type="write_article_markdown",
+            batch_id=batch_id,
+            total=batch_total,
+            source_id=source.id,
+            source_name=source.name,
+        )
+    for index, article in enumerate(result.articles, start=1):
         cve_ids = extract_cve_ids(
             [article.title, article.summary or "", article.original_url]
         )
@@ -188,10 +213,13 @@ def _handle_ingest_source(
             if article_id is not None:
                 evidence = build_cve_evidence(article, cve_ids)
                 upsert_cve_links(conn, article_id, cve_ids, evidence)
+        if article_id is None:
+            article_id = get_article_id(conn, article.source_id, article.stable_id)
         enqueue_job(
             conn,
             "write_article_markdown",
             {
+                "article_id": article_id,
                 "stable_id": article.stable_id,
                 "title": article.title,
                 "source_id": article.source_id,
@@ -202,6 +230,9 @@ def _handle_ingest_source(
                 "tags": article.tags,
                 "original_url": article.original_url,
                 "normalized_url": article.normalized_url,
+                "batch_id": batch_id,
+                "batch_total": batch_total,
+                "batch_index": index,
             },
         )
     # TODO: attach event correlation hooks (events/event_mentions) once implemented.
@@ -298,13 +329,18 @@ def _handle_write_article_markdown(
 ) -> dict[str, object]:
     if not payload:
         raise ValueError("write_article_markdown requires payload")
+    source_id = str(payload.get("source_id"))
+    source_name = get_source_name(conn, source_id) or ""
+    batch_id = str(payload.get("batch_id") or "")
+    batch_total = int(payload.get("batch_total") or 0)
+    batch_index = int(payload.get("batch_index") or 0)
     article = Article(
         id=None,
         stable_id=str(payload.get("stable_id")),
         original_url=str(payload.get("original_url")),
         normalized_url=str(payload.get("normalized_url")),
         title=str(payload.get("title")),
-        source_id=str(payload.get("source_id")),
+        source_id=source_id,
         published_at=payload.get("published_at") or None,
         published_at_source=payload.get("published_at_source") or None,
         ingested_at=str(payload.get("ingested_at")),
@@ -312,7 +348,35 @@ def _handle_write_article_markdown(
         tags=list(payload.get("tags") or []),
     )
     path = write_article_markdown(article, config.paths.output_dir)
-    log_event(logger, logging.INFO, "article_markdown_written", path=path)
+    progress = ""
+    if batch_total and batch_index:
+        progress = f"{batch_index}/{batch_total}"
+    log_event(
+        logger,
+        logging.INFO,
+        "article_markdown_written",
+        path=path,
+        source_id=source_id,
+        source_name=source_name,
+        article_id=payload.get("article_id"),
+        article_url=article.original_url,
+        progress=progress,
+    )
+    if batch_id and batch_total:
+        counts = get_batch_job_counts(conn, batch_id)
+        remaining = counts["queued"] + counts["running"] - 1
+        if remaining == 0:
+            log_event(
+                logger,
+                logging.INFO,
+                "batch_complete",
+                batch_id=batch_id,
+                total=counts["total"],
+                succeeded=counts.get("succeeded", 0) + 1,
+                failed=counts.get("failed", 0),
+                source_id=source_id,
+                source_name=source_name,
+            )
     return {"path": path}
 
 
@@ -435,13 +499,7 @@ def main() -> int:
 
 
 def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, object]:
-    log_event(
-        logger,
-        logging.INFO,
-        "job_claimed",
-        job_id=job.id,
-        job_type=job.job_type,
-    )
+    _log_job_claimed(conn, job, logger)
     if job.job_type == "ingest_source":
         return _handle_ingest_source(conn, config, job.payload, logger)
     if job.job_type == "ingest_due_sources":
@@ -456,6 +514,26 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
             enqueue_job(conn, "build_site", None, debounce=True)
         return result
     raise ValueError(f"unsupported job type {job.job_type}")
+
+
+def _log_job_claimed(conn, job, logger: logging.Logger) -> None:
+    fields = {"job_id": job.id, "job_type": job.job_type}
+    fields.update(_job_context_fields(conn, job))
+    log_event(logger, logging.INFO, "job_claimed", **fields)
+
+
+def _job_context_fields(conn, job) -> dict[str, object]:
+    if job.job_type != "write_article_markdown":
+        return {}
+    payload = job.payload or {}
+    source_id = str(payload.get("source_id") or "")
+    source_name = get_source_name(conn, source_id) or ""
+    return {
+        "source_id": source_id,
+        "source_name": source_name,
+        "article_id": payload.get("article_id"),
+        "article_url": payload.get("original_url"),
+    }
 
 
 if __name__ == "__main__":
