@@ -54,16 +54,21 @@ def get_source(conn: sqlite3.Connection, source_id: str) -> dict[str, Any] | Non
 
 
 def create_source(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str, Any]:
+    # Allow UI to omit id when creating a new source
     source_id = str(payload.get("id") or "").strip()
-    if not source_id:
-        raise ValueError("id is required")
+
     name = str(payload.get("name") or "").strip()
     if not name:
         raise ValueError("name is required")
+
+    if not source_id:
+        source_id = _generate_source_id(conn, name)
+
     kind = str(payload.get("kind") or "rss").strip()
     url = str(payload.get("url") or "").strip()
     if not url:
         raise ValueError("url is required")
+
     enabled = bool(payload.get("enabled", True))
     interval = int(payload.get("interval_minutes", 60))
     tags = _parse_tags(payload.get("tags"))
@@ -93,6 +98,33 @@ def create_source(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str
     conn.commit()
     _ensure_tactic(conn, source_id, kind, url, enabled)
     return get_source(conn, source_id) or {}
+
+
+def _slugify(value: str) -> str:
+    # Simple, dependency-free slugify
+    value = value.strip().lower()
+    out = []
+    dash = False
+    for ch in value:
+        if ch.isalnum():
+            out.append(ch)
+            dash = False
+        else:
+            if not dash:
+                out.append("-")
+                dash = True
+    slug = "".join(out).strip("-")
+    return slug or "source"
+
+
+def _generate_source_id(conn: sqlite3.Connection, name: str) -> str:
+    base = _slugify(name)
+    candidate = base
+    i = 2
+    while get_source(conn, candidate) is not None:
+        candidate = f"{base}-{i}"
+        i += 1
+    return candidate
 
 
 def update_source(conn: sqlite3.Connection, source_id: str, payload: dict[str, Any]) -> dict[str, Any]:
