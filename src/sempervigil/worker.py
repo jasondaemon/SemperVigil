@@ -377,6 +377,15 @@ def _handle_write_article_markdown(
     progress = ""
     if batch_total and batch_index:
         progress = f"{batch_index}/{batch_total}"
+        log_event(
+            logger,
+            logging.INFO,
+            "batch_progress",
+            source_id=source_id,
+            source_name=source_name,
+            i=batch_index,
+            total=batch_total,
+        )
     log_event(
         logger,
         logging.INFO,
@@ -403,7 +412,12 @@ def _handle_write_article_markdown(
                 source_id=source_id,
                 source_name=source_name,
             )
-    return {"path": path}
+    return {
+        "path": path,
+        "batch_id": batch_id,
+        "batch_total": batch_total,
+        "batch_index": batch_index,
+    }
 
 
 def _handle_fetch_article_content(

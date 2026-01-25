@@ -26,7 +26,7 @@
 
   <section class="panel">
     <h2>Sources</h2>
-    <table>
+    <table id="sources-table">
       <thead>
         <tr>
           <th>Enabled</th>
@@ -34,6 +34,10 @@
           <th>Kind</th>
           <th>URL</th>
           <th>Interval</th>
+          <th>Status</th>
+          <th>Articles 24h</th>
+          <th>Accepted Last Run</th>
+          <th>Tags</th>
           <th>Last OK</th>
           <th>Last Error</th>
           <th>Actions</th>
@@ -47,18 +51,42 @@
           </td>
           <td class="source-name">{{ source.name }}</td>
           <td class="source-kind">{{ source.kind or "" }}</td>
-          <td class="source-url mono">{{ source.url }}</td>
+          <td class="source-url mono wrap">{{ source.url }}</td>
           <td class="source-interval">{{ source.interval_minutes }}</td>
+          <td>
+            {% if source.last_error %}
+              <span class="status-pill status-error">Error</span>
+            {% elif source.last_ok_at %}
+              <span class="status-pill status-ok">OK</span>
+            {% else %}
+              <span class="status-pill">Unknown</span>
+            {% endif %}
+          </td>
+          <td>{{ source.articles_24h }}</td>
+          <td>{{ source.accepted_last_run }}</td>
+          <td class="source-tags">{{ source.tags | join(", ") }}</td>
           <td>{{ source.last_ok_at or "" }}</td>
           <td class="truncate">{{ source.last_error or "" }}</td>
-          <td>
+          <td class="table-actions">
             <button class="btn small test-source" type="button">Test</button>
+            <button class="btn small secondary history-source" type="button">History</button>
             <button class="btn small secondary edit-source" type="button">Edit</button>
             <button class="btn small danger delete-source" type="button">Delete</button>
           </td>
         </tr>
         <tr class="test-result" data-source-id="{{ source.id }}" style="display:none;">
-          <td colspan="8" class="mono"></td>
+          <td colspan="12">
+            <div class="test-summary"></div>
+            <details class="test-details">
+              <summary>Details</summary>
+              <pre class="mono test-raw"></pre>
+            </details>
+          </td>
+        </tr>
+        <tr class="history-result" data-source-id="{{ source.id }}" style="display:none;">
+          <td colspan="12">
+            <div class="history-table"></div>
+          </td>
         </tr>
         {% endfor %}
       </tbody>

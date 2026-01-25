@@ -93,6 +93,12 @@ th, td {
   border-bottom: 1px solid #e5e7eb;
 }
 
+.table-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .mono {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 12px;
@@ -103,6 +109,29 @@ th, td {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.wrap {
+  word-break: break-word;
+}
+
+.status-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: #e5e7eb;
+  color: #111827;
+}
+
+.status-ok {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.status-error {
+  background: #fee2e2;
+  color: #991b1b;
 }
 
 .actions {
@@ -132,6 +161,32 @@ th, td {
 .btn.small {
   padding: 6px 8px;
   font-size: 12px;
+}
+
+.test-summary {
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.test-details {
+  margin-top: 6px;
+}
+
+.toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  background: #111827;
+  color: #f9fafb;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  z-index: 999;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+}
+
+.chart-panel {
+  padding: 12px;
 }
 
 .error {

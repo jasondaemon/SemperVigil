@@ -18,6 +18,13 @@ from .config import ConfigError, load_config
 from .admin_ui import TEMPLATES, ui_router
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .storage import enqueue_job, get_source_run_streaks, init_db, list_jobs
+from .storage import (
+    count_articles_since,
+    get_last_source_run,
+    list_articles_per_day,
+    list_source_health_events,
+    get_source_stats,
+)
 from .ingest import process_source
 from .services.sources_service import (
     create_source,
@@ -60,7 +67,7 @@ from .services.ai_service import (
     update_schema,
 )
 from .llm import STAGE_NAMES, test_profile, test_provider
-from .utils import configure_logging, log_event
+from .utils import configure_logging, log_event, utc_now_iso_offset
 
 app = FastAPI(title="SemperVigil Admin API")
 
@@ -309,14 +316,20 @@ class DailyBriefRequest(BaseModel):
     date: str | None = None
 
 
+class AnalyticsRequest(BaseModel):
+    days: int = 30
+
+
 @app.get("/sources")
 def sources_list() -> list[dict[str, object]]:
-    try:
-        config = load_config(None)
-    except ConfigError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    conn = init_db(config.paths.state_db)
-    return list_sources(conn)
+    conn = _get_conn()
+    sources = list_sources(conn)
+    since = utc_now_iso_offset(seconds=-24 * 3600)
+    for item in sources:
+        item["articles_24h"] = count_articles_since(conn, item["id"], since)
+        last_run = get_last_source_run(conn, item["id"])
+        item["accepted_last_run"] = last_run["items_accepted"] if last_run else 0
+    return sources
 
 
 @app.get("/sources/health")
@@ -470,6 +483,25 @@ def sources_test(
         "accepted_count": result.accepted_count,
         "items": preview,
     }
+
+
+@app.get("/sources/{source_id}/health")
+def sources_health_history(source_id: str, limit: int = 50) -> list[dict[str, object]]:
+    conn = _get_conn()
+    return list_source_health_events(conn, source_id, limit=limit)
+
+
+@app.get("/admin/analytics/articles_per_day")
+def analytics_articles_per_day(days: int = 30) -> dict[str, object]:
+    conn = _get_conn()
+    since_day = (datetime.now(tz=timezone.utc) - timedelta(days=days)).date().isoformat()
+    return {"days": days, "data": list_articles_per_day(conn, since_day)}
+
+
+@app.get("/admin/analytics/source_stats")
+def analytics_source_stats(days: int = 7, runs: int = 20) -> dict[str, object]:
+    conn = _get_conn()
+    return {"days": days, "runs": runs, "data": get_source_stats(conn, days, runs)}
 
 
 

@@ -8,7 +8,9 @@ mkdir -p /data \
   /site/content/posts \
   /site/content/events \
   /site/content/cves \
+  /site/content/briefs \
   /site/public \
-  /site/static/sempervigil
+  /site/static/sempervigil \
+  /site/static/sempervigil/briefs
 
 chmod -R u+rwX,g+rwX /data /site/content /site/public /site/static/sempervigil || true

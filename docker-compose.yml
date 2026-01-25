@@ -20,7 +20,7 @@ services:
       - |
         set -e
         umask ${SV_UMASK:-002}
-        mkdir -p /data /site /config
+        sh /tools/ensure-dirs.sh
         uvicorn sempervigil.admin:app --host 0.0.0.0 --port 8000
     ports:
       - "0.0.0.0:${SV_ADMIN_PORT:-8001}:8000"
@@ -28,6 +28,7 @@ services:
     volumes:
       - sv_data:/data
       - ./config:/config:ro
+      - ./tools:/tools:ro
     networks:
       - svnet
     restart: unless-stopped
@@ -52,13 +53,14 @@ services:
       - |
         set -e
         umask ${SV_UMASK:-002}
-        mkdir -p /data /site /config
+        sh /tools/ensure-dirs.sh
         sempervigil-worker
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - sv_data:/data
       - sv_site:/site
       - ./config:/config:ro
+      - ./tools:/tools:ro
     networks:
       - svnet
     restart: unless-stopped
@@ -76,6 +78,7 @@ services:
       SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-http://localhost:${SV_WEB_PORT:-8080}/}
       HUGO_CACHEDIR: /tmp/hugo_cache
     working_dir: /repo
+    user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - .:/repo:ro
       - sv_site:/site

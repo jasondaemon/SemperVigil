@@ -141,6 +141,7 @@ open http://<host>:8001/ui
 ```
 
 Add your first source in the Sources tab (DB-backed).
+Analytics and daily brief tools are available at `/ui/analytics`.
 
 Optional token gate:
 - Set `SV_ADMIN_TOKEN` in `.env`
@@ -165,6 +166,17 @@ AI Configuration:
   - `SEMPERIVGIL_MASTER_KEY=<generated>`
   - `SEMPERIVGIL_KEY_ID=v1` (optional)
 - If the master key is lost, saved provider keys cannot be decrypted and must be re-entered
+
+LLM summarization (LiteLLM OpenAI-compatible):
+- Set `SV_LLM_BASE_URL`, `SV_LLM_API_KEY`, `SV_LLM_MODEL`
+- Summaries are generated via the `summarize_article_llm` job
+- Full content fetching is controlled by:
+  - `SV_FETCH_FULL_CONTENT=1`
+  - `SV_STORE_ARTICLE_HTML=0` (default off)
+
+Permissions / first-boot:
+- If `/site/static/sempervigil/index.json` is not writable, run:
+  - `docker compose run --rm worker sh /tools/ensure-dirs.sh`
 
 Smoke tests:
 ```bash

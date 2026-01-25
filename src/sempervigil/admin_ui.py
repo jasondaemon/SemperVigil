@@ -17,7 +17,14 @@ from .services.ai_service import (
     list_providers,
     list_schemas,
 )
-from .storage import get_source_run_streaks, init_db, list_jobs
+from .storage import (
+    count_articles_since,
+    get_last_source_run,
+    get_source_run_streaks,
+    init_db,
+    list_jobs,
+)
+from .utils import utc_now_iso_offset
 from .llm import STAGE_NAMES
 
 
@@ -53,6 +60,11 @@ def ui_router(token_guard) -> APIRouter:
         config = load_config(None)
         conn = init_db(config.paths.state_db)
         items = list_sources(conn)
+        since = utc_now_iso_offset(seconds=-24 * 3600)
+        for item in items:
+            item["articles_24h"] = count_articles_since(conn, item["id"], since)
+            last_run = get_last_source_run(conn, item["id"])
+            item["accepted_last_run"] = last_run["items_accepted"] if last_run else 0
         return TEMPLATES.TemplateResponse(
             "admin/sources.html",
             {
@@ -152,6 +164,17 @@ def ui_router(token_guard) -> APIRouter:
                 "profiles": list_profiles(conn),
                 "routing": list_pipeline_routing(conn),
                 "stages": STAGE_NAMES,
+            },
+        )
+
+    @router.get("/analytics", response_class=HTMLResponse)
+    def analytics(request: Request):
+        return TEMPLATES.TemplateResponse(
+            "admin/analytics.html",
+            {
+                "request": request,
+                "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
+                "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
             },
         )
 

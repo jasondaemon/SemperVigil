@@ -17,7 +17,13 @@ def ensure_runtime_dirs(paths: Iterable[str]) -> None:
 
 
 def build_default_paths(data_dir: str, output_dir: str) -> list[str]:
-    paths = [data_dir, "/site", "/site/public", "/site/static/sempervigil"]
+    paths = [
+        data_dir,
+        "/site",
+        "/site/public",
+        "/site/static/sempervigil",
+        "/site/static/sempervigil/briefs",
+    ]
     output_path = Path(output_dir)
     content_root = output_path.parent if output_path.name == "posts" else output_path
     paths.extend(
@@ -26,6 +32,7 @@ def build_default_paths(data_dir: str, output_dir: str) -> list[str]:
             str(content_root / "posts"),
             str(content_root / "events"),
             str(content_root / "cves"),
+            str(content_root / "briefs"),
         ]
     )
     return paths

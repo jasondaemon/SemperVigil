@@ -866,6 +866,114 @@ def list_source_health_events(
     return rows
 
 
+def count_articles_since(conn: sqlite3.Connection, source_id: str, since_iso: str) -> int:
+    cursor = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM articles
+        WHERE source_id = ? AND published_at >= ?
+        """,
+        (source_id, since_iso),
+    )
+    return int(cursor.fetchone()[0])
+
+
+def get_last_source_run(conn: sqlite3.Connection, source_id: str) -> dict[str, object] | None:
+    cursor = conn.execute(
+        """
+        SELECT started_at, items_accepted, status, error
+        FROM source_runs
+        WHERE source_id = ?
+        ORDER BY started_at DESC
+        LIMIT 1
+        """,
+        (source_id,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        return None
+    return {
+        "started_at": row[0],
+        "items_accepted": row[1],
+        "status": row[2],
+        "error": row[3],
+    }
+
+
+def list_articles_per_day(conn: sqlite3.Connection, since_day: str) -> list[dict[str, object]]:
+    cursor = conn.execute(
+        """
+        SELECT brief_day, COUNT(*)
+        FROM articles
+        WHERE brief_day >= ?
+        GROUP BY brief_day
+        ORDER BY brief_day
+        """,
+        (since_day,),
+    )
+    return [{"day": row[0], "count": row[1]} for row in cursor.fetchall()]
+
+
+def get_source_stats(
+    conn: sqlite3.Connection, days: int, runs: int
+) -> list[dict[str, object]]:
+    since_day = (datetime.now(tz=timezone.utc) - timedelta(days=days)).date().isoformat()
+    rows = []
+    sources = conn.execute(
+        "SELECT id, name, last_ok_at, last_error FROM sources ORDER BY name"
+    ).fetchall()
+    for source_id, name, last_ok_at, last_error in sources:
+        total_articles = conn.execute(
+            "SELECT COUNT(*) FROM articles WHERE source_id = ?",
+            (source_id,),
+        ).fetchone()[0]
+        full_content = conn.execute(
+            "SELECT COUNT(*) FROM articles WHERE source_id = ? AND has_full_content = 1",
+            (source_id,),
+        ).fetchone()[0]
+        summaries = conn.execute(
+            "SELECT COUNT(*) FROM articles WHERE source_id = ? AND summary_llm IS NOT NULL",
+            (source_id,),
+        ).fetchone()[0]
+        recent_articles = conn.execute(
+            "SELECT COUNT(*) FROM articles WHERE source_id = ? AND brief_day >= ?",
+            (source_id, since_day),
+        ).fetchone()[0]
+        health = conn.execute(
+            """
+            SELECT COUNT(*), SUM(ok)
+            FROM (
+                SELECT ok
+                FROM source_health_history
+                WHERE source_id = ?
+                ORDER BY ts DESC
+                LIMIT ?
+            )
+            """,
+            (source_id, runs),
+        ).fetchone()
+        run_count = health[0] or 0
+        ok_count = health[1] or 0
+        rows.append(
+            {
+                "source_id": source_id,
+                "source_name": name,
+                "articles_per_day_avg": round(recent_articles / max(days, 1), 2),
+                "last_ok_at": last_ok_at,
+                "last_error": last_error,
+                "ok_rate": round((ok_count / run_count) * 100, 1) if run_count else 0.0,
+                "total_articles": total_articles,
+                "pct_full_content": round((full_content / total_articles) * 100, 1)
+                if total_articles
+                else 0.0,
+                "pct_summaries": round((summaries / total_articles) * 100, 1)
+                if total_articles
+                else 0.0,
+            }
+        )
+    return rows
+
+
 def claim_next_job(
     conn: sqlite3.Connection,
     worker_id: str,
