@@ -211,6 +211,7 @@ def bootstrap_runtime_config(conn) -> dict[str, Any]:
 
 def get_runtime_config(conn) -> dict[str, Any]:
     cfg = bootstrap_runtime_config(conn)
+    cfg = _upgrade_runtime_config(cfg)
     errors = validate_runtime_config(cfg)
     if errors:
         raise ConfigError("Invalid config.runtime: " + "; ".join(errors))
@@ -218,10 +219,27 @@ def get_runtime_config(conn) -> dict[str, Any]:
 
 
 def set_runtime_config(conn, cfg: dict[str, Any]) -> None:
+    cfg = _upgrade_runtime_config(cfg)
     errors = validate_runtime_config(cfg)
     if errors:
         raise ConfigError("Invalid config.runtime: " + "; ".join(errors))
     set_setting(conn, CONFIG_KEY, _deep_copy(cfg))
+
+
+def _upgrade_runtime_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    merged = _deep_copy(DEFAULT_CONFIG)
+    _merge_missing(merged, cfg)
+    return merged
+
+
+def _merge_missing(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for key, value in source.items():
+        if key not in target:
+            continue
+        if isinstance(target[key], dict) and isinstance(value, dict):
+            _merge_missing(target[key], value)
+        else:
+            target[key] = value
 
 
 def bootstrap_cve_settings(conn) -> dict[str, Any]:
