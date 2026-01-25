@@ -9,16 +9,11 @@ import time
 from .config import ConfigError, load_config
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .storage import claim_next_job, complete_job, fail_job, init_db
-from .utils import log_event
+from .utils import configure_logging, log_event
 
 
 def _setup_logging() -> logging.Logger:
-    level_name = os.environ.get("SV_LOG_LEVEL", "INFO").upper()
-    logging.basicConfig(
-        level=getattr(logging, level_name, logging.INFO),
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
-    return logging.getLogger("sempervigil")
+    return configure_logging("sempervigil.hugo")
 
 
 def _run_hugo() -> tuple[int, str]:

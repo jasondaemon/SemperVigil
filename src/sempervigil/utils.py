@@ -5,6 +5,7 @@ import dataclasses
 import hashlib
 import json
 import logging
+import os
 import re
 import unicodedata
 from datetime import date, datetime, timezone, timedelta
@@ -21,6 +22,29 @@ def log_event(logger: logging.Logger, level: int, event: str, **fields: Any) -> 
     for key, value in fields.items():
         parts.append(f"{key}={value}")
     logger.log(level, " ".join(parts))
+
+
+def configure_logging(logger_name: str, default_level: str = "INFO") -> logging.Logger:
+    level_name = os.environ.get("SV_LOG_LEVEL", default_level).upper()
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=getattr(logging, level_name, logging.INFO),
+            format="%(asctime)s %(levelname)s %(message)s",
+        )
+    _apply_log_overrides()
+    return logging.getLogger(logger_name)
+
+
+def _apply_log_overrides() -> None:
+    overrides = os.environ.get("SV_LOG_LEVELS", "")
+    if not overrides:
+        return
+    for item in overrides.split(","):
+        if not item.strip() or "=" not in item:
+            continue
+        name, level = item.split("=", 1)
+        logger = logging.getLogger(name.strip())
+        logger.setLevel(getattr(logging, level.strip().upper(), logging.INFO))
 
 
 def json_dumps(value: Any) -> str:

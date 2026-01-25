@@ -28,7 +28,7 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
     try:
         for version, migration in _get_migrations():
             if version in applied:
-                logger.info("migration_skipped version=%s", version)
+                logger.debug("migration_skipped version=%s", version)
                 continue
             migration(conn)
             conn.execute(

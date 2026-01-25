@@ -26,16 +26,11 @@ from .storage import (
     list_jobs,
 )
 from .tagger import normalize_tag
-from .utils import log_event, utc_now_iso
+from .utils import configure_logging, log_event, utc_now_iso
 
 
 def _setup_logging() -> logging.Logger:
-    level_name = os.environ.get("SV_LOG_LEVEL", "INFO").upper()
-    logging.basicConfig(
-        level=getattr(logging, level_name, logging.INFO),
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
-    return logging.getLogger("sempervigil")
+    return configure_logging("sempervigil.cli")
 
 
 def _normalize_tag_list(values: list[str]) -> list[str]:

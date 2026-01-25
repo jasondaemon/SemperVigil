@@ -34,7 +34,7 @@ from .storage import (
     get_source_run_streaks,
     get_source_name,
 )
-from .utils import log_event, utc_now_iso
+from .utils import configure_logging, log_event, utc_now_iso
 
 WORKER_JOB_TYPES = [
     "ingest_source",
@@ -46,12 +46,7 @@ WORKER_JOB_TYPES = [
 
 
 def _setup_logging() -> logging.Logger:
-    level_name = os.environ.get("SV_LOG_LEVEL", "INFO").upper()
-    logging.basicConfig(
-        level=getattr(logging, level_name, logging.INFO),
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
-    return logging.getLogger("sempervigil")
+    return configure_logging("sempervigil.worker")
 
 
 def run_once(config_path: str | None, worker_id: str) -> int:

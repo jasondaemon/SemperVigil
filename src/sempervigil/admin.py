@@ -60,7 +60,7 @@ from .services.ai_service import (
     update_schema,
 )
 from .llm import STAGE_NAMES, test_profile, test_provider
-from .utils import log_event
+from .utils import configure_logging, log_event
 
 app = FastAPI(title="SemperVigil Admin API")
 
@@ -471,11 +471,7 @@ def sources_test(
 
 
 def _setup_logging() -> None:
-    level_name = os.environ.get("SV_LOG_LEVEL", "INFO").upper()
-    logging.basicConfig(
-        level=getattr(logging, level_name, logging.INFO),
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
+    configure_logging("sempervigil.admin")
 
 
 _setup_logging()
