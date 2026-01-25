@@ -47,7 +47,8 @@ def test_admin_ai_provider_secret_flow(tmp_path, monkeypatch):
         f"/admin/ai/providers/{provider_id}/secret", json={"api_key": "supersecret"}
     )
     assert secret_response.status_code == 200
-    assert "api_key" not in secret_response.text
+    assert '"api_key"' not in secret_response.text
+    assert "api_key_last4" in secret_response.text
 
     list_response = client.get("/admin/ai/providers")
     assert list_response.status_code == 200

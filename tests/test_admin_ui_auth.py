@@ -27,7 +27,7 @@ def test_ui_login_cookie_flow(tmp_path, monkeypatch):
     monkeypatch.setenv("SV_ADMIN_TOKEN", "secret")
 
     client = TestClient(app)
-    response = client.get("/ui", allow_redirects=False)
+    response = client.get("/ui", follow_redirects=False)
     assert response.status_code == 303
     assert response.headers["location"] == "/ui/login"
 
@@ -47,7 +47,7 @@ def test_ui_redirects_to_trailing_slash_without_token(tmp_path, monkeypatch):
     monkeypatch.delenv("SV_ADMIN_TOKEN", raising=False)
 
     client = TestClient(app)
-    response = client.get("/ui", allow_redirects=False)
+    response = client.get("/ui", follow_redirects=False)
     assert response.status_code == 307
     assert response.headers["location"] == "/ui/"
 
