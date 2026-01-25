@@ -196,6 +196,7 @@ def insert_articles(conn: sqlite3.Connection, articles: Iterable[Article]) -> in
             article.published_at,
             article.published_at_source,
             article.ingested_at,
+            _brief_day_from(article.published_at or article.ingested_at),
             0,
             None,
             None,
@@ -214,10 +215,10 @@ def insert_articles(conn: sqlite3.Connection, articles: Iterable[Article]) -> in
         """
         INSERT OR IGNORE INTO articles
             (source_id, stable_id, original_url, normalized_url, title, published_at,
-             published_at_source, ingested_at, is_commercial, content_fingerprint,
+             published_at_source, ingested_at, brief_day, is_commercial, content_fingerprint,
              extracted_text_path, extracted_text_hash, raw_html_path, raw_html_hash,
              meta_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         rows,
     )
@@ -230,6 +231,64 @@ def insert_articles(conn: sqlite3.Connection, articles: Iterable[Article]) -> in
         _insert_article_tags(conn, article_id, article.tags)
 
     return len(rows)
+
+
+def list_articles_for_day(conn: sqlite3.Connection, day: str) -> list[dict[str, object]]:
+    cursor = conn.execute(
+        """
+        SELECT id, source_id, title, original_url, published_at, ingested_at, summary, brief_day,
+               summary_llm, summary_model, summary_generated_at
+        FROM articles
+        WHERE brief_day = ?
+        ORDER BY published_at DESC
+        """,
+        (day,),
+    )
+    rows = []
+    for row in cursor.fetchall():
+        (
+            article_id,
+            source_id,
+            title,
+            original_url,
+            published_at,
+            ingested_at,
+            summary,
+            brief_day,
+            summary_llm,
+            summary_model,
+            summary_generated_at,
+        ) = row
+        rows.append(
+            {
+                "id": article_id,
+                "source_id": source_id,
+                "title": title,
+                "original_url": original_url,
+                "published_at": published_at,
+                "ingested_at": ingested_at,
+                "summary": summary,
+                "brief_day": brief_day,
+                "summary_llm": summary_llm,
+                "summary_model": summary_model,
+                "summary_generated_at": summary_generated_at,
+            }
+        )
+    return rows
+
+
+def list_summaries_for_day(conn: sqlite3.Connection, day: str) -> list[dict[str, object]]:
+    articles = list_articles_for_day(conn, day)
+    rows: list[dict[str, object]] = []
+    for article in articles:
+        if not article.get("summary_llm"):
+            continue
+        try:
+            summary_data = json.loads(article["summary_llm"])
+        except json.JSONDecodeError:
+            summary_data = {"summary": article["summary_llm"], "bullets": [], "why": "", "cves": []}
+        rows.append({**article, "summary_data": summary_data})
+    return rows
 
 
 def upsert_cve_links(
@@ -1045,6 +1104,15 @@ def _get_article_id(conn: sqlite3.Connection, source_id: str, stable_id: str) ->
     )
     row = cursor.fetchone()
     return row[0] if row else None
+
+
+def _brief_day_from(value: str) -> str:
+    if value.endswith("Z"):
+        value = value.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(value).date().isoformat()
+    except ValueError:
+        return utc_now_iso().split("T")[0]
 
 
 def get_article_by_id(conn: sqlite3.Connection, article_id: int) -> dict[str, object] | None:

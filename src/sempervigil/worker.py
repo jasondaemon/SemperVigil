@@ -16,6 +16,7 @@ from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .publish import write_article_markdown, write_json_index
 from .signals import build_cve_evidence, extract_cve_ids
 from .pipelines.content_fetch import fetch_article_content
+from .pipelines.daily_brief import write_daily_brief
 from .pipelines.summarize_llm import summarize_with_llm
 from .storage import (
     claim_next_job,
@@ -30,6 +31,7 @@ from .storage import (
     init_db,
     insert_articles,
     list_due_sources,
+    list_summaries_for_day,
     has_pending_job,
     pause_source,
     record_health_alert,
@@ -50,6 +52,7 @@ WORKER_JOB_TYPES = [
     "cve_sync",
     "fetch_article_content",
     "summarize_article_llm",
+    "build_daily_brief",
     "write_article_markdown",
 ]
 
@@ -489,6 +492,33 @@ def _handle_summarize_article_llm(
         raise
 
 
+def _handle_build_daily_brief(
+    conn, config, payload: dict[str, object], logger: logging.Logger
+) -> dict[str, object]:
+    day = str(payload.get("date") or utc_now_iso().split("T")[0])
+    items = list_summaries_for_day(conn, day)
+    for item in items:
+        item["source_name"] = get_source_name(conn, item["source_id"]) or ""
+    base_content_dir = os.path.dirname(config.paths.output_dir)
+    base_static_dir = os.path.dirname(config.publishing.json_index_path)
+    result = write_daily_brief(
+        base_content_dir=base_content_dir,
+        base_static_dir=base_static_dir,
+        day=day,
+        items=items,
+    )
+    log_event(
+        logger,
+        logging.INFO,
+        "daily_brief_written",
+        day=day,
+        count=len(items),
+        markdown_path=result["markdown_path"],
+        json_path=result["json_path"],
+    )
+    return {"day": day, "count": len(items), **result}
+
+
 def _handle_ingest_due_sources(conn, logger: logging.Logger) -> dict[str, object]:
     now = utc_now_iso()
     sources = list_due_sources(conn, now)
@@ -621,6 +651,8 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         return _handle_fetch_article_content(conn, config, job.payload, logger)
     if job.job_type == "summarize_article_llm":
         return _handle_summarize_article_llm(conn, config, job.payload, logger)
+    if job.job_type == "build_daily_brief":
+        return _handle_build_daily_brief(conn, config, job.payload, logger)
     if job.job_type == "write_article_markdown":
         result = _handle_write_article_markdown(conn, config, job.payload, logger)
         if not has_pending_job(conn, "write_article_markdown", exclude_job_id=job.id):

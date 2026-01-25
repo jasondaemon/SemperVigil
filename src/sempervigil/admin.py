@@ -305,6 +305,10 @@ class ProfileTestRequest(BaseModel):
     text: str
 
 
+class DailyBriefRequest(BaseModel):
+    date: str | None = None
+
+
 @app.get("/sources")
 def sources_list() -> list[dict[str, object]]:
     try:
@@ -783,3 +787,14 @@ def _normalize_model_payload(payload: ModelRequest) -> dict[str, object]:
 
 app.include_router(ui_router(_require_admin_token), prefix="/ui")
 app.include_router(ai_router)
+
+
+@app.post("/admin/briefs/build")
+def build_brief(payload: DailyBriefRequest, _: None = Depends(_require_admin_token)) -> dict[str, str]:
+    conn = _get_conn()
+    job_id = enqueue_job(
+        conn,
+        "build_daily_brief",
+        {"date": payload.date} if payload.date else {},
+    )
+    return {"job_id": job_id}
