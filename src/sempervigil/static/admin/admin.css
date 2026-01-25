@@ -208,6 +208,12 @@ th, td {
   word-break: break-word;
 }
 
+.wrap-pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .status-pill {
   display: inline-block;
   padding: 2px 8px;

@@ -1592,10 +1592,10 @@ function wireContentArticle() {
           <div><a href="${item.original_url}" target="_blank" rel="noopener">Open URL</a></div>
         </div>
         <h3>Summary</h3>
-        <pre class="mono">${summary || "No summary available."}</pre>
+        <pre class="mono wrap-pre">${summary || "No summary available."}</pre>
         <h3>Content</h3>
-        <pre class="mono">${content || "No extracted content available."}</pre>
-        ${htmlExcerpt ? `<h3>HTML Excerpt</h3><pre class="mono">${htmlExcerpt}</pre>` : ""}
+        <pre class="mono wrap-pre">${content || "No extracted content available."}</pre>
+        ${htmlExcerpt ? `<h3>HTML Excerpt</h3><pre class="mono wrap-pre">${htmlExcerpt}</pre>` : ""}
         ${error ? `<p class="error">Content error: ${error}</p>` : ""}
       `;
     })
