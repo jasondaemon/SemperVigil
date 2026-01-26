@@ -1,4 +1,18 @@
 services:
+  # 0) PostgreSQL (internal)
+  db:
+    image: postgres:16
+    container_name: sempervigil-db
+    environment:
+      POSTGRES_DB: ${SV_DB_NAME:-sempervigil}
+      POSTGRES_USER: ${SV_DB_USER:-sempervigil}
+      POSTGRES_PASSWORD: ${SV_DB_PASSWORD:-sempervigil}
+    volumes:
+      - sempervigil_pgdata:/var/lib/postgresql/data
+    networks:
+      - svnet
+    restart: unless-stopped
+
   # 1) Admin API (internal)
   admin:
     build:
@@ -14,6 +28,7 @@ services:
       SV_LOG_FILE: /data/logs/admin.log
       SV_UMASK: ${SV_UMASK:-002}
       SV_ADMIN_TOKEN: ${SV_ADMIN_TOKEN:-}
+      SV_DB_URL: ${SV_DB_URL:-}
     command:
       - sh
       - -lc
@@ -33,11 +48,12 @@ services:
     restart: unless-stopped
 
   # 2) Worker (internal)
-  worker:
+  # Recommended scaling: worker_fetch=2, worker_llm=1
+  worker_fetch:
     build:
       context: .
       dockerfile: docker/ingest/Dockerfile
-    container_name: sempervigil-worker
+    container_name: sempervigil-worker-fetch
     env_file:
       - .env
     environment:
@@ -46,6 +62,42 @@ services:
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
       SV_LOG_FILE: /data/logs/worker.log
       SV_UMASK: ${SV_UMASK:-002}
+      SV_DB_URL: ${SV_DB_URL:-}
+      SV_WORKER_ONLY_TYPES: "ingest_source,html_index,rss_index,fetch_article_content,write_article_markdown,cve_sync"
+    command:
+      - sh
+      - -lc
+      - |
+        set -e
+        umask ${SV_UMASK:-002}
+        sh /tools/ensure-dirs.sh
+        sempervigil-worker
+    user: "${SV_UID:-1000}:${SV_GID:-1000}"
+    volumes:
+      - sv_data:/data
+      - sv_site:/site
+      - ./tools:/tools:ro
+    networks:
+      - svnet
+    restart: unless-stopped
+
+  worker_llm:
+    build:
+      context: .
+      dockerfile: docker/ingest/Dockerfile
+    container_name: sempervigil-worker-llm
+    env_file:
+      - .env
+    environment:
+      SV_ENV: ${SV_ENV:-dev}
+      SV_DATA_DIR: /data
+      SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
+      SV_LOG_FILE: /data/logs/worker.log
+      SV_UMASK: ${SV_UMASK:-002}
+      SV_DB_URL: ${SV_DB_URL:-}
+      SV_WORKER_ONLY_TYPES: "summarize_article_llm"
+      SV_LLM_MAX_INFLIGHT: "1"
+      SV_WORKER_CONCURRENCY: "1"
     command:
       - sh
       - -lc
@@ -76,6 +128,7 @@ services:
       SV_LOG_FILE: /data/logs/builder.log
       SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-http://localhost:${SV_WEB_PORT:-8080}/}
       HUGO_CACHEDIR: /tmp/hugo_cache
+      SV_DB_URL: ${SV_DB_URL:-}
     working_dir: /repo
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
@@ -119,6 +172,8 @@ services:
       - sv_site:/site
     working_dir: /app
     command: ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+    environment:
+      SV_DB_URL: ${SV_DB_URL:-}
 
 volumes:
   sv_data:
@@ -126,6 +181,7 @@ volumes:
   sv_hugo_cache:
   sv_hugo_resources:
   sv_hugo_modules:
+  sempervigil_pgdata:
 
 networks:
   svnet:

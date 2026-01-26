@@ -299,6 +299,7 @@ def _get_migrations() -> list[tuple[str, Migration]]:
         ("013_cvss_lists", _migration_cvss_lists),
         ("014_cve_product_versions", _migration_cve_product_versions),
         ("015_watchlist", _migration_watchlist),
+        ("016_llm_leases", _migration_llm_leases),
     ]
 
 
@@ -678,6 +679,19 @@ def _migration_watchlist(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_cve_scope_cve ON cve_scope(cve_id)"
+    )
+
+
+def _migration_llm_leases(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS llm_leases (
+            lease_name TEXT PRIMARY KEY,
+            acquired_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            holder TEXT NOT NULL
+        )
+        """
     )
 
 

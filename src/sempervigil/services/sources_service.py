@@ -231,10 +231,26 @@ def _parse_tags(tags: Any) -> list[str]:
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    backend = getattr(conn, "backend", "sqlite")
+    if backend == "postgres":
+        cursor = conn.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = %s
+            """,
+            (table,),
+        )
+        return {row[0] for row in cursor.fetchall()}
     return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    backend = getattr(conn, "backend", "sqlite")
+    if backend == "postgres":
+        cursor = conn.execute("SELECT to_regclass(%s)", (f"public.{table}",))
+        row = cursor.fetchone()
+        return bool(row and row[0])
     cursor = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name = ?", (table,)
     )

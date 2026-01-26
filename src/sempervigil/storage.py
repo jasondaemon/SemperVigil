@@ -4,22 +4,20 @@ import json
 import logging
 import os
 import sqlite3
+import hashlib
+import struct
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Iterable
 
-from .migrations import apply_migrations
+from .db import connect_db
 from .models import Article, Job, Source, SourceTactic
 from .normalize import cpe_to_vendor_product, normalize_name
 from .utils import json_dumps, log_event, utc_now_iso, utc_now_iso_offset
 
 
-def init_db(path: str) -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    conn = sqlite3.connect(path)
-    conn.execute("PRAGMA journal_mode=WAL")
-    apply_migrations(conn)
-    return conn
+def init_db(path: str):
+    return connect_db(path)
 
 
 def upsert_source(conn: sqlite3.Connection, source_dict: dict[str, object]) -> None:
@@ -659,6 +657,11 @@ def insert_cve_change(
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    backend = getattr(conn, "backend", "sqlite")
+    if backend == "postgres":
+        cursor = conn.execute("SELECT to_regclass(%s)", (f"public.{table}",))
+        row = cursor.fetchone()
+        return bool(row and row[0])
     cursor = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name = ?", (table,)
     )
@@ -666,6 +669,17 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    backend = getattr(conn, "backend", "sqlite")
+    if backend == "postgres":
+        cursor = conn.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = %s
+            """,
+            (table,),
+        )
+        return {row[0] for row in cursor.fetchall()}
     return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
@@ -1536,6 +1550,9 @@ def claim_next_job(
     allowed_types: list[str] | None = None,
     lock_timeout_seconds: int | None = None,
 ) -> Job | None:
+    backend = getattr(conn, "backend", "sqlite")
+    if backend == "postgres":
+        return _claim_next_job_postgres(conn, worker_id, allowed_types, lock_timeout_seconds)
     conn.execute("BEGIN IMMEDIATE")
     if lock_timeout_seconds is not None:
         cutoff = utc_now_iso_offset(seconds=-lock_timeout_seconds)
@@ -1625,6 +1642,152 @@ def claim_next_job(
         locked_at=now,
         error=job.error,
     )
+
+
+def _claim_next_job_postgres(
+    conn: sqlite3.Connection,
+    worker_id: str,
+    allowed_types: list[str] | None,
+    lock_timeout_seconds: int | None,
+) -> Job | None:
+    conn.execute("BEGIN")
+    if lock_timeout_seconds is not None:
+        cutoff = utc_now_iso_offset(seconds=-lock_timeout_seconds)
+        conn.execute(
+            """
+            UPDATE jobs
+            SET status = 'queued',
+                locked_by = NULL,
+                locked_at = NULL,
+                started_at = NULL,
+                error = 'stale_lock_requeued'
+            WHERE status = 'running' AND locked_at IS NOT NULL AND locked_at < %s
+            """,
+            (cutoff,),
+        )
+    for _ in range(20):
+        params: list[object] = []
+        type_clause = ""
+        if allowed_types:
+            placeholders = ",".join(["%s"] * len(allowed_types))
+            type_clause = f" AND job_type IN ({placeholders})"
+            params.extend(allowed_types)
+        cursor = conn.execute(
+            f"""
+            SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
+                   finished_at, locked_by, locked_at, error
+            FROM jobs
+            WHERE status = 'queued' AND locked_by IS NULL {type_clause}
+            ORDER BY requested_at ASC
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+            """,
+            tuple(params),
+        )
+        row = cursor.fetchone()
+        if not row:
+            conn.execute("COMMIT")
+            return None
+        payload_json = row[3]
+        try:
+            payload = json.loads(payload_json) if payload_json else {}
+        except json.JSONDecodeError:
+            payload = {}
+        not_before = payload.get("not_before")
+        if not_before and isinstance(not_before, str) and not_before > utc_now_iso():
+            conn.execute(
+                """
+                UPDATE jobs
+                SET requested_at = %s
+                WHERE id = %s
+                """,
+                (not_before, row[0]),
+            )
+            conn.execute("COMMIT")
+            conn.execute("BEGIN")
+            continue
+        job_id = row[0]
+        now = utc_now_iso()
+        cursor = conn.execute(
+            """
+            UPDATE jobs
+            SET status = 'running', started_at = %s, locked_by = %s, locked_at = %s
+            WHERE id = %s AND status = 'queued' AND locked_by IS NULL
+            RETURNING id, job_type, status, payload_json, result_json, requested_at, started_at,
+                      finished_at, locked_by, locked_at, error
+            """,
+            (now, worker_id, now, job_id),
+        )
+        updated = cursor.fetchone()
+        conn.execute("COMMIT")
+        if not updated:
+            return None
+        job = _row_to_job(updated)
+        return Job(
+            id=job.id,
+            job_type=job.job_type,
+            status="running",
+            payload=job.payload,
+            result=job.result,
+            requested_at=job.requested_at,
+            started_at=now,
+            finished_at=job.finished_at,
+            locked_by=worker_id,
+            locked_at=now,
+            error=job.error,
+        )
+    conn.execute("COMMIT")
+    return None
+
+
+def try_acquire_lease(
+    conn: sqlite3.Connection,
+    lease_name: str,
+    holder: str,
+    ttl_seconds: int,
+) -> bool:
+    backend = getattr(conn, "backend", "sqlite")
+    if backend == "postgres":
+        key = _lease_key(lease_name)
+        cursor = conn.execute("SELECT pg_try_advisory_lock(%s)", (key,))
+        row = cursor.fetchone()
+        return bool(row and row[0])
+    now = utc_now_iso()
+    expires_at = utc_now_iso_offset(seconds=ttl_seconds)
+    cursor = conn.execute(
+        """
+        INSERT INTO llm_leases (lease_name, acquired_at, expires_at, holder)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(lease_name) DO UPDATE SET
+            acquired_at = excluded.acquired_at,
+            expires_at = excluded.expires_at,
+            holder = excluded.holder
+        WHERE llm_leases.expires_at < ?
+        """,
+        (lease_name, now, expires_at, holder, now),
+    )
+    conn.commit()
+    return cursor.rowcount == 1
+
+
+def release_lease(conn: sqlite3.Connection, lease_name: str, holder: str) -> bool:
+    backend = getattr(conn, "backend", "sqlite")
+    if backend == "postgres":
+        key = _lease_key(lease_name)
+        cursor = conn.execute("SELECT pg_advisory_unlock(%s)", (key,))
+        row = cursor.fetchone()
+        return bool(row and row[0])
+    cursor = conn.execute(
+        "DELETE FROM llm_leases WHERE lease_name = ? AND holder = ?",
+        (lease_name, holder),
+    )
+    conn.commit()
+    return cursor.rowcount == 1
+
+
+def _lease_key(lease_name: str) -> int:
+    digest = hashlib.sha256(lease_name.encode("utf-8")).digest()
+    return struct.unpack(">q", digest[:8])[0]
 
 
 

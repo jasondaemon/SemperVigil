@@ -8,6 +8,7 @@ import time
 import uuid
 from dataclasses import replace
 from datetime import datetime, timezone, timedelta
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
 from .config import (
     ConfigError,
@@ -71,8 +72,10 @@ from .storage import (
     list_article_ids_missing_summary,
     list_article_ids_for_source_since,
     compute_watchlist_hits,
+    try_acquire_lease,
+    release_lease,
 )
-from .utils import configure_logging, log_event, utc_now_iso
+from .utils import configure_logging, log_event, utc_now_iso, utc_now_iso_offset
 
 WORKER_JOB_TYPES = [
     "ingest_source",
@@ -93,7 +96,7 @@ def _setup_logging() -> logging.Logger:
     return configure_logging("sempervigil.worker")
 
 
-def run_once(worker_id: str) -> int:
+def run_once(worker_id: str, allowed_types: list[str] | None = None) -> int:
     logger = _setup_logging()
     try:
         conn = init_db(get_state_db_path())
@@ -110,11 +113,15 @@ def run_once(worker_id: str) -> int:
     job = claim_next_job(
         conn,
         worker_id,
-        allowed_types=WORKER_JOB_TYPES,
+        allowed_types=allowed_types or WORKER_JOB_TYPES,
         lock_timeout_seconds=config.jobs.lock_timeout_seconds,
     )
     if not job:
         return 0
+    return _process_claimed_job(conn, config, job, logger)
+
+
+def _process_claimed_job(conn, config, job, logger: logging.Logger) -> int:
     if is_job_canceled(conn, job.id):
         log_event(logger, logging.INFO, "job_canceled", job_id=job.id)
         return 0
@@ -162,10 +169,69 @@ def run_once(worker_id: str) -> int:
     return 0
 
 
-def run_loop(worker_id: str, sleep_seconds: int) -> int:
-    while True:
-        run_once(worker_id)
-        time.sleep(sleep_seconds)
+def _process_claimed_job_thread(worker_id: str, job: Job) -> int:
+    logger = _setup_logging()
+    try:
+        conn = init_db(get_state_db_path())
+        config = load_runtime_config(conn)
+        bootstrap_cve_settings(conn)
+        bootstrap_events_settings(conn)
+    except ConfigError as exc:
+        log_event(logger, logging.ERROR, "config_error", error=str(exc))
+        return 1
+    set_umask_from_env()
+    ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir))
+    return _process_claimed_job(conn, config, job, logger)
+
+
+def run_loop(
+    worker_id: str,
+    sleep_seconds: int,
+    allowed_types: list[str] | None = None,
+    concurrency: int = 1,
+) -> int:
+    if concurrency <= 1:
+        while True:
+            run_once(worker_id, allowed_types)
+            time.sleep(sleep_seconds)
+        return 0
+
+    logger = _setup_logging()
+    max_workers = max(1, concurrency)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = set()
+        while True:
+            while len(futures) < max_workers:
+                try:
+                    conn = init_db(get_state_db_path())
+                    config = load_runtime_config(conn)
+                    bootstrap_cve_settings(conn)
+                    bootstrap_events_settings(conn)
+                except ConfigError as exc:
+                    log_event(logger, logging.ERROR, "config_error", error=str(exc))
+                    break
+                set_umask_from_env()
+                ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir))
+                _maybe_enqueue_cve_sync(conn, logger)
+                job = claim_next_job(
+                    conn,
+                    worker_id,
+                    allowed_types=allowed_types or WORKER_JOB_TYPES,
+                    lock_timeout_seconds=config.jobs.lock_timeout_seconds,
+                )
+                conn.close()
+                if not job:
+                    break
+                futures.add(executor.submit(_process_claimed_job_thread, worker_id, job))
+            if futures:
+                done, futures = wait(futures, timeout=sleep_seconds, return_when=FIRST_COMPLETED)
+                for future in done:
+                    try:
+                        future.result()
+                    except Exception as exc:  # noqa: BLE001
+                        log_event(logger, logging.ERROR, "job_thread_error", error=str(exc))
+            else:
+                time.sleep(sleep_seconds)
 
 
 def _handle_ingest_source(
@@ -582,9 +648,10 @@ def _handle_fetch_article_content(
 
 
 def _handle_summarize_article_llm(
-    conn, config, payload: dict[str, object], logger: logging.Logger
+    conn, config, job: Job, logger: logging.Logger
 ) -> dict[str, object]:
-    article_id = payload.get("article_id") if payload else None
+    payload = job.payload or {}
+    article_id = payload.get("article_id")
     if not article_id:
         raise ValueError("summarize_article_llm requires article_id")
     article = get_article_by_id(conn, int(article_id))
@@ -625,6 +692,28 @@ def _handle_summarize_article_llm(
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         raise ValueError("missing_content")
     input_chars = len(content or "")
+    lease_holder = f"{job.id}:{article_id}"
+    max_inflight = int(os.environ.get("SV_LLM_MAX_INFLIGHT", "1") or "1")
+    max_inflight = max(1, max_inflight)
+    lease_names = (
+        ["summarize_article_llm"]
+        if max_inflight == 1
+        else [f"summarize_article_llm:{idx}" for idx in range(max_inflight)]
+    )
+    lease_name = None
+    for attempt, delay in enumerate([2, 3, 5], start=1):
+        for candidate in lease_names:
+            if try_acquire_lease(conn, candidate, lease_holder, ttl_seconds=600):
+                lease_name = candidate
+                break
+        if lease_name:
+            break
+        time.sleep(delay)
+    if not lease_name:
+        next_payload = dict(payload)
+        next_payload["not_before"] = utc_now_iso_offset(seconds=30)
+        requeue_job(conn, job.id, next_payload, next_payload["not_before"])
+        return {"requeued": True, "reason": "llm_lease_unavailable"}
     start = time.time()
     try:
         input_text = (
@@ -691,6 +780,9 @@ def _handle_summarize_article_llm(
         )
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         raise
+    finally:
+        if lease_name:
+            release_lease(conn, lease_name, lease_holder)
 
 
 def _handle_build_daily_brief(
@@ -1193,20 +1285,34 @@ def _parse_iso(value: str) -> datetime:
     return datetime.fromisoformat(value).astimezone(timezone.utc)
 
 
+def _parse_only_types(value: str | None) -> list[str] | None:
+    if not value:
+        return None
+    items = [item.strip() for item in value.split(",") if item.strip()]
+    return items or None
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sempervigil-worker")
     parser.add_argument("--once", action="store_true", help="Run a single job and exit")
     parser.add_argument("--sleep", type=int, default=10, help="Sleep seconds between polls")
     parser.add_argument("--worker-id", default=os.environ.get("HOSTNAME", "worker"))
+    parser.add_argument("--only-job-types", default=os.environ.get("SV_WORKER_ONLY_TYPES", ""))
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=int(os.environ.get("SV_WORKER_CONCURRENCY", "1")),
+    )
     return parser
 
 
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    allowed_types = _parse_only_types(args.only_job_types)
     if args.once:
-        return run_once(args.worker_id)
-    return run_loop(args.worker_id, args.sleep)
+        return run_once(args.worker_id, allowed_types)
+    return run_loop(args.worker_id, args.sleep, allowed_types, args.concurrency)
 
 
 def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, object]:
@@ -1228,7 +1334,7 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
     if job.job_type == "fetch_article_content":
         return _handle_fetch_article_content(conn, config, job, job.payload, logger)
     if job.job_type == "summarize_article_llm":
-        return _handle_summarize_article_llm(conn, config, job.payload, logger)
+        return _handle_summarize_article_llm(conn, config, job, logger)
     if job.job_type == "build_daily_brief":
         return _handle_build_daily_brief(conn, config, job.payload, logger)
     if job.job_type == "write_article_markdown":

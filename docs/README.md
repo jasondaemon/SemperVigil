@@ -110,12 +110,21 @@ Adjust as needed for your environment.
 Runtime configuration is stored in the SQLite DB (see System → Runtime Config in the Admin UI).
 `config/sources.example.yml` is documentation only. Sources live in the DB.
 
+Optional: use PostgreSQL by setting `SV_DB_URL` in `.env` and starting the `db` service.
+If `SV_DB_URL` is unset, SQLite is used.
+
 ---
 
 ### 2) Initialize the state DB
 
 ```bash
 docker compose run --rm worker sempervigil db migrate
+```
+
+If using Postgres:
+
+```bash
+docker compose up -d db
 ```
 
 Sources are stored in the database, not in static config files.
@@ -222,6 +231,18 @@ If no build job is queued, you can enqueue one manually:
 docker compose run --rm worker \
   sempervigil jobs enqueue build_site
 ```
+
+---
+
+## PostgreSQL migration (optional)
+
+If you want to migrate existing SQLite data into Postgres:
+
+```bash
+python scripts/migrate_sqlite_to_postgres.py --sqlite /data/state.sqlite3 --pg-url "$SV_DB_URL"
+```
+
+Rollback is just unsetting `SV_DB_URL` to return to SQLite.
 
 ---
 
