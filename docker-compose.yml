@@ -83,17 +83,11 @@ services:
       - sv_hugo_resources:/repo/site/resources
       # If your theme uses Hugo Modules, this prevents module cache pain too
       - sv_hugo_modules:/tmp/hugo_modules
-    command:
-      - sh
-      - -lc
-      - |
-        set -e
-        umask ${SV_UMASK:-002}
-        mkdir -p /site /tmp/hugo_cache /tmp/hugo_modules
-        echo "Building Hugo: source=/repo/site -> dest=/site (baseURL=${SV_HUGO_BASEURL})"
-        hugo --source /repo/site --destination /site --baseURL "${SV_HUGO_BASEURL}" --noBuildLock
+      - ./tools:/tools:ro
+    command: ["sempervigil-builder"]
     networks:
       - svnet
+    restart: unless-stopped
 
   # 4) Static site server (public)
   web:
