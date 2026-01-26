@@ -6,11 +6,14 @@ from sempervigil.admin import app
 from sempervigil.config import DEFAULT_CONFIG, set_runtime_config
 from sempervigil.models import Article
 from sempervigil.storage import (
+    create_event,
     delete_all_articles,
     delete_all_cves,
+    delete_all_events,
     init_db,
     insert_articles,
     insert_cve_snapshot,
+    upsert_event_item,
     upsert_cve,
     upsert_source,
 )
@@ -82,6 +85,19 @@ def _insert_cve(conn):
     )
 
 
+def _insert_event(conn):
+    event_id = create_event(
+        conn,
+        kind="cve_cluster",
+        title="Test event",
+        severity="HIGH",
+        first_seen_at="2025-01-01T00:00:00Z",
+        last_seen_at="2025-01-02T00:00:00Z",
+    )
+    upsert_event_item(conn, event_id, "cve", "CVE-2025-0001")
+    return event_id
+
+
 def test_delete_all_articles(tmp_path, monkeypatch):
     conn = _seed_runtime_config(tmp_path, monkeypatch)
     _insert_article(conn)
@@ -96,6 +112,15 @@ def test_delete_all_cves(tmp_path, monkeypatch):
     stats = delete_all_cves(conn)
     assert stats["tables"]["cves"] == 1
     assert stats["tables"]["cve_snapshots"] >= 1
+
+
+def test_delete_all_events(tmp_path, monkeypatch):
+    conn = _seed_runtime_config(tmp_path, monkeypatch)
+    _insert_cve(conn)
+    _insert_event(conn)
+    stats = delete_all_events(conn)
+    assert stats["tables"]["events"] == 1
+    assert stats["tables"]["event_items"] >= 1
 
 
 def test_admin_clear_requires_confirm(tmp_path, monkeypatch):
@@ -124,3 +149,21 @@ def test_admin_clear_articles(tmp_path, monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert payload["stats"]["tables"]["articles"] == 1
+
+
+def test_admin_clear_events(tmp_path, monkeypatch):
+    conn = _seed_runtime_config(tmp_path, monkeypatch)
+    _insert_cve(conn)
+    _insert_event(conn)
+    monkeypatch.setenv("SV_ADMIN_TOKEN", "secret")
+    client = TestClient(app)
+    login = client.post("/ui/login", json={"token": "secret"})
+    assert login.status_code == 200
+
+    response = client.post(
+        "/admin/api/admin/clear/events",
+        json={"confirm": "DELETE_ALL_EVENTS"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["stats"]["tables"]["events"] == 1

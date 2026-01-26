@@ -35,6 +35,7 @@ from .storage import (
     delete_all_articles,
     delete_all_content,
     delete_all_cves,
+    delete_all_events,
     get_event,
     get_article_by_id,
     get_cve,
@@ -886,6 +887,22 @@ def api_clear_all(payload: ClearRequest, request: Request) -> dict[str, object]:
         "admin_clear_all",
         client=request.client.host if request.client else "unknown",
         delete_files=payload.delete_files,
+    )
+    return {"status": "ok", "stats": stats}
+
+
+@app.post("/admin/api/admin/clear/events", dependencies=[Depends(_require_admin_token)])
+def api_clear_events(payload: ClearRequest, request: Request) -> dict[str, object]:
+    if payload.confirm != "DELETE_ALL_EVENTS":
+        raise HTTPException(status_code=400, detail="confirm_required")
+    conn = _get_conn()
+    stats = delete_all_events(conn)
+    logger = logging.getLogger("sempervigil.admin")
+    log_event(
+        logger,
+        logging.WARNING,
+        "admin_clear_events",
+        client=request.client.host if request.client else "unknown",
     )
     return {"status": "ok", "stats": stats}
 

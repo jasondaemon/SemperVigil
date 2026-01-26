@@ -2083,6 +2083,7 @@ function wireDangerZone() {
 
   setup("danger-articles", "DELETE_ALL_ARTICLES", "/admin/api/admin/clear/articles", true);
   setup("danger-cves", "DELETE_ALL_CVES", "/admin/api/admin/clear/cves", false);
+  setup("danger-events", "DELETE_ALL_EVENTS", "/admin/api/admin/clear/events", false);
   setup("danger-all", "DELETE_ALL_CONTENT", "/admin/api/admin/clear/all", true);
 }
 async function wireAnalytics() {

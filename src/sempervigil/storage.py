@@ -2353,6 +2353,9 @@ def delete_all_cves(conn: sqlite3.Connection) -> dict[str, object]:
     if _table_exists(conn, "article_cves"):
         cursor = conn.execute("DELETE FROM article_cves")
         stats["tables"]["article_cves"] = cursor.rowcount
+    if _table_exists(conn, "cve_products"):
+        cursor = conn.execute("DELETE FROM cve_products")
+        stats["tables"]["cve_products"] = cursor.rowcount
     if _table_exists(conn, "cve_changes"):
         cursor = conn.execute("DELETE FROM cve_changes")
         stats["tables"]["cve_changes"] = cursor.rowcount
@@ -2366,10 +2369,27 @@ def delete_all_cves(conn: sqlite3.Connection) -> dict[str, object]:
     return stats
 
 
+def delete_all_events(conn: sqlite3.Connection) -> dict[str, object]:
+    stats: dict[str, object] = {"tables": {}}
+    conn.execute("BEGIN IMMEDIATE")
+    if _table_exists(conn, "event_signals"):
+        cursor = conn.execute("DELETE FROM event_signals")
+        stats["tables"]["event_signals"] = cursor.rowcount
+    if _table_exists(conn, "event_items"):
+        cursor = conn.execute("DELETE FROM event_items")
+        stats["tables"]["event_items"] = cursor.rowcount
+    if _table_exists(conn, "events"):
+        cursor = conn.execute("DELETE FROM events")
+        stats["tables"]["events"] = cursor.rowcount
+    conn.execute("COMMIT")
+    return stats
+
+
 def delete_all_content(conn: sqlite3.Connection, *, delete_files: bool = False) -> dict[str, object]:
     articles = delete_all_articles(conn, delete_files=delete_files)
     cves = delete_all_cves(conn)
-    return {"articles": articles, "cves": cves}
+    events = delete_all_events(conn)
+    return {"articles": articles, "cves": cves, "events": events}
 
 
 def _delete_content_files(
