@@ -21,6 +21,7 @@
           <th>Started</th>
           <th>Finished</th>
           <th>Result</th>
+          <th>Actions</th>
         </tr>
       </thead>
       <tbody id="jobs-table-body">
@@ -33,6 +34,13 @@
           <td>{{ job.started_at or "" }}</td>
           <td>{{ job.finished_at or "" }}</td>
           <td class="truncate">{{ job.error or job.result or "" }}</td>
+          <td>
+            {% if job.status in ["queued", "running"] %}
+              <button class="btn small danger job-cancel" type="button" data-job-id="{{ job.id }}">Cancel</button>
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>

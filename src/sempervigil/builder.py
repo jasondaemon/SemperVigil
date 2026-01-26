@@ -8,7 +8,7 @@ import time
 
 from .config import ConfigError, get_state_db_path, load_runtime_config
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
-from .storage import claim_next_job, complete_job, fail_job, init_db
+from .storage import claim_next_job, complete_job, fail_job, init_db, is_job_canceled
 from .utils import configure_logging, log_event
 
 
@@ -21,17 +21,31 @@ def _tail(text: str, max_lines: int = 120) -> str:
     return "\n".join(lines[-max_lines:])
 
 
-def _run_hugo() -> tuple[int, str, str]:
+def _run_hugo_until_done(conn, job_id: str) -> tuple[int, str, str, bool]:
     cmd = ["/bin/sh", "/tools/hugo-build.sh"]
-    result = subprocess.run(
+    proc = subprocess.Popen(
         cmd,
-        check=False,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
     )
-    stdout = (result.stdout or "").strip()
-    stderr = (result.stderr or "").strip()
-    return result.returncode, stdout, stderr
+    canceled = False
+    while True:
+        if is_job_canceled(conn, job_id):
+            canceled = True
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            break
+        if proc.poll() is not None:
+            break
+        time.sleep(0.5)
+    stdout, stderr = proc.communicate()
+    stdout = (stdout or "").strip()
+    stderr = (stderr or "").strip()
+    return proc.returncode or 0, stdout, stderr, canceled
 
 
 def run_once(builder_id: str) -> int:
@@ -54,14 +68,22 @@ def run_once(builder_id: str) -> int:
     if not job:
         return 0
 
+    if is_job_canceled(conn, job.id):
+        log_event(logger, logging.INFO, "build_canceled", job_id=job.id)
+        return 0
+
     log_event(logger, logging.INFO, "build_claimed", job_id=job.id)
     start = time.time()
     try:
-        returncode, stdout, stderr = _run_hugo()
+        returncode, stdout, stderr, canceled = _run_hugo_until_done(conn, job.id)
     except Exception as exc:  # noqa: BLE001
         fail_job(conn, job.id, str(exc))
         log_event(logger, logging.ERROR, "build_failed", job_id=job.id, error=str(exc))
         return 1
+
+    if canceled or is_job_canceled(conn, job.id):
+        log_event(logger, logging.INFO, "build_canceled", job_id=job.id)
+        return 0
 
     if returncode != 0:
         tail = _tail(stderr or stdout)

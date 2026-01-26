@@ -778,6 +778,47 @@ def list_jobs(conn: sqlite3.Connection, limit: int = 50) -> list[Job]:
     return [_row_to_job(row) for row in cursor.fetchall()]
 
 
+def cancel_job(conn: sqlite3.Connection, job_id: str, reason: str = "canceled_by_admin") -> bool:
+    now = utc_now_iso()
+    cursor = conn.execute(
+        """
+        UPDATE jobs
+        SET status = 'canceled',
+            finished_at = ?,
+            error = ?,
+            locked_by = NULL,
+            locked_at = NULL
+        WHERE id = ? AND status IN ('queued', 'running')
+        """,
+        (now, reason, job_id),
+    )
+    conn.commit()
+    return cursor.rowcount == 1
+
+
+def cancel_all_jobs(conn: sqlite3.Connection, reason: str = "canceled_by_admin") -> int:
+    now = utc_now_iso()
+    cursor = conn.execute(
+        """
+        UPDATE jobs
+        SET status = 'canceled',
+            finished_at = ?,
+            error = ?,
+            locked_by = NULL,
+            locked_at = NULL
+        WHERE status IN ('queued', 'running')
+        """,
+        (now, reason),
+    )
+    conn.commit()
+    return int(cursor.rowcount or 0)
+
+
+def is_job_canceled(conn: sqlite3.Connection, job_id: str) -> bool:
+    row = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    return bool(row and row[0] == "canceled")
+
+
 def has_pending_job(
     conn: sqlite3.Connection, job_type: str, exclude_job_id: str | None = None
 ) -> bool:
@@ -823,6 +864,13 @@ def get_batch_job_counts(conn: sqlite3.Connection, batch_id: str) -> dict[str, i
         counts["total"] += count
         counts[status] = count
     return counts
+
+
+def count_articles_total(conn: sqlite3.Connection, source_id: str) -> int:
+    if not _table_exists(conn, "articles"):
+        return 0
+    cursor = conn.execute("SELECT COUNT(*) FROM articles WHERE source_id = ?", (source_id,))
+    return int(cursor.fetchone()[0] or 0)
 
 
 def insert_source_health_event(

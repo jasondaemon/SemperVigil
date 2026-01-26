@@ -28,7 +28,7 @@ from .config import (
 )
 from .admin_ui import TEMPLATES, ui_router
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
-from .storage import enqueue_job, get_source_run_streaks, init_db, list_jobs
+from .storage import enqueue_job, get_source_run_streaks, init_db, list_jobs, cancel_job, cancel_all_jobs, count_articles_total
 from .cve_filters import CveSignals, matches_filters
 from .storage import (
     count_articles_since,
@@ -40,7 +40,6 @@ from .storage import (
     get_article_by_id,
     get_cve,
     get_cve_last_seen,
-    get_last_source_run,
     get_product,
     get_product_cves,
     get_product_facets,
@@ -308,6 +307,23 @@ def enqueue(job: JobRequest, _: None = Depends(_require_admin_token)) -> dict[st
     return {"job_id": job_id}
 
 
+@app.post("/jobs/{job_id}/cancel", dependencies=[Depends(_require_admin_token)])
+def cancel_job_api(job_id: str, request: Request) -> dict[str, object]:
+    conn = _get_conn()
+    canceled = cancel_job(conn, job_id)
+    logger = logging.getLogger("sempervigil.admin")
+    log_event(
+        logger,
+        logging.WARNING,
+        "job_canceled",
+        job_id=job_id,
+        client=request.client.host if request.client else "unknown",
+    )
+    if not canceled:
+        raise HTTPException(status_code=404, detail="job_not_cancelable")
+    return {"status": "ok", "job_id": job_id}
+
+
 @app.get("/jobs")
 def jobs(limit: int = 20) -> list[dict[str, str]]:
     conn = _get_conn()
@@ -420,8 +436,7 @@ def sources_list() -> list[dict[str, object]]:
     since = utc_now_iso_offset(seconds=-24 * 3600)
     for item in sources:
         item["articles_24h"] = count_articles_since(conn, item["id"], since)
-        last_run = get_last_source_run(conn, item["id"])
-        item["accepted_last_run"] = last_run["items_accepted"] if last_run else 0
+        item["total_articles"] = count_articles_total(conn, item["id"])
     return sources
 
 
@@ -879,6 +894,7 @@ def api_clear_all(payload: ClearRequest, request: Request) -> dict[str, object]:
     if payload.confirm != "DELETE_ALL_CONTENT":
         raise HTTPException(status_code=400, detail="confirm_required")
     conn = _get_conn()
+    cancel_all_jobs(conn, reason="canceled_by_admin:clear_all")
     stats = delete_all_content(conn, delete_files=payload.delete_files)
     logger = logging.getLogger("sempervigil.admin")
     log_event(

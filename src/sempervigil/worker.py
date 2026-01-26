@@ -37,6 +37,7 @@ from .storage import (
     get_article_by_id,
     get_event,
     get_batch_job_counts,
+    is_job_canceled,
     init_db,
     insert_articles,
     link_article_to_events,
@@ -97,10 +98,16 @@ def run_once(worker_id: str) -> int:
     )
     if not job:
         return 0
+    if is_job_canceled(conn, job.id):
+        log_event(logger, logging.INFO, "job_canceled", job_id=job.id)
+        return 0
 
     try:
         result = run_claimed_job(conn, config, job, logger)
     except Exception as exc:  # noqa: BLE001
+        if is_job_canceled(conn, job.id):
+            log_event(logger, logging.INFO, "job_canceled", job_id=job.id)
+            return 0
         fail_job(conn, job.id, str(exc))
         fields = _job_context_fields(conn, job)
         log_event(
@@ -126,6 +133,10 @@ def run_once(worker_id: str) -> int:
         )
         return 0
 
+    if is_job_canceled(conn, job.id):
+        log_event(logger, logging.INFO, "job_canceled", job_id=job.id)
+        return 0
+
     if complete_job(conn, job.id, result=result):
         fields = _job_context_fields(conn, job)
         log_event(logger, logging.INFO, "job_succeeded", job_id=job.id, **fields)
@@ -141,7 +152,11 @@ def run_loop(worker_id: str, sleep_seconds: int) -> int:
 
 
 def _handle_ingest_source(
-    conn, config, payload: dict[str, object], logger: logging.Logger
+    conn,
+    config,
+    payload: dict[str, object],
+    logger: logging.Logger,
+    job_id: str | None = None,
 ) -> dict[str, object]:
     source_id = payload.get("source_id") if payload else None
     if not source_id:
@@ -241,6 +256,9 @@ def _handle_ingest_source(
             "error_count": error_count,
         }
 
+    if job_id and is_job_canceled(conn, job_id):
+        return {"canceled": True}
+
     insert_articles(conn, result.articles)
     batch_id = str(uuid.uuid4())
     batch_total = len(result.articles)
@@ -256,6 +274,8 @@ def _handle_ingest_source(
             source_name=source.name,
         )
     for index, article in enumerate(result.articles, start=1):
+        if job_id and is_job_canceled(conn, job_id):
+            return {"canceled": True}
         cve_ids = extract_cve_ids(
             [article.title, article.summary or "", article.original_url]
         )
@@ -764,8 +784,10 @@ def main() -> int:
 
 def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, object]:
     _log_job_claimed(conn, job, logger)
+    if is_job_canceled(conn, job.id):
+        return {"canceled": True}
     if job.job_type == "ingest_source":
-        return _handle_ingest_source(conn, config, job.payload, logger)
+        return _handle_ingest_source(conn, config, job.payload, logger, job.id)
     if job.job_type == "ingest_due_sources":
         return _handle_ingest_due_sources(conn, logger)
     if job.job_type == "test_source":

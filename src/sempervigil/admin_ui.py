@@ -25,7 +25,7 @@ from .services.ai_service import (
 )
 from .storage import (
     count_articles_since,
-    get_last_source_run,
+    count_articles_total,
     get_source_run_streaks,
     init_db,
     list_jobs,
@@ -85,8 +85,7 @@ def ui_router(token_guard) -> APIRouter:
         since = utc_now_iso_offset(seconds=-24 * 3600)
         for item in items:
             item["articles_24h"] = count_articles_since(conn, item["id"], since)
-            last_run = get_last_source_run(conn, item["id"])
-            item["accepted_last_run"] = last_run["items_accepted"] if last_run else 0
+            item["total_articles"] = count_articles_total(conn, item["id"])
         return TEMPLATES.TemplateResponse(
             "admin/sources.html",
             {

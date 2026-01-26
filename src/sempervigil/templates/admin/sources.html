@@ -40,7 +40,7 @@
           <th>Interval</th>
           <th>Status</th>
           <th>Articles 24h</th>
-          <th>Accepted Last Run</th>
+          <th>Total Articles</th>
           <th>Tags</th>
           <th>Last OK</th>
           <th>Last Error</th>
@@ -67,7 +67,7 @@
             {% endif %}
           </td>
           <td>{{ source.articles_24h }}</td>
-          <td>{{ source.accepted_last_run }}</td>
+          <td>{{ source.total_articles }}</td>
           <td class="source-tags">{{ source.tags | join(", ") }}</td>
           <td>{{ source.last_ok_at or "" }}</td>
           <td class="truncate">{{ source.last_error or "" }}</td>

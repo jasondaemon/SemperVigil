@@ -197,7 +197,7 @@ function wireSources() {
           ${source.last_error ? '<span class="status-pill status-error">Error</span>' : source.last_ok_at ? '<span class="status-pill status-ok">OK</span>' : '<span class="status-pill">Unknown</span>'}
         </td>
         <td>${source.articles_24h || 0}</td>
-        <td>${source.accepted_last_run || 0}</td>
+        <td>${source.total_articles || 0}</td>
         <td class="source-tags">${(source.tags || []).join(", ")}</td>
         <td>${source.last_ok_at || ""}</td>
         <td class="truncate" title="${source.last_error || ""}">${source.last_error || ""}</td>
@@ -417,6 +417,7 @@ function wireJobs() {
   function renderRows(jobs) {
     tbody.innerHTML = "";
     jobs.forEach((job) => {
+      const canCancel = job.status === "queued" || job.status === "running";
       const row = document.createElement("tr");
       row.innerHTML = `
         <td class="mono">${job.id}</td>
@@ -426,6 +427,13 @@ function wireJobs() {
         <td>${job.started_at || ""}</td>
         <td>${job.finished_at || ""}</td>
         <td class="truncate" title="${formatResult(job)}">${formatResult(job)}</td>
+        <td>
+          ${
+            canCancel
+              ? `<button class="btn small danger job-cancel" type="button" data-job-id="${job.id}">Cancel</button>`
+              : `<span class="muted">—</span>`
+          }
+        </td>
       `;
       tbody.appendChild(row);
     });
@@ -439,6 +447,30 @@ function wireJobs() {
 
   refresh.addEventListener("click", () => {
     refreshJobs().catch((err) => alert(err));
+  });
+
+  tbody.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    if (!target.classList.contains("job-cancel")) {
+      return;
+    }
+    const jobId = target.dataset.jobId;
+    if (!jobId) {
+      return;
+    }
+    if (!confirm("Cancel this job?")) {
+      return;
+    }
+    try {
+      await apiFetch(`/jobs/${jobId}/cancel`, { method: "POST" });
+      showToast("Job canceled");
+      refreshJobs().catch((err) => alert(err));
+    } catch (err) {
+      alert(err.message || String(err));
+    }
   });
 
   let polling = false;
