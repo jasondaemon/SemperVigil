@@ -160,6 +160,15 @@ def ui_router(token_guard) -> APIRouter:
             },
         )
 
+    @router.get("/debug", response_class=HTMLResponse)
+    def debug(request: Request):
+        return TEMPLATES.TemplateResponse(
+            "admin/debug.html",
+            {
+                **_base_context(request),
+            },
+        )
+
     @router.get("/ai", response_class=HTMLResponse)
     def ai_config(request: Request):
         conn = _get_conn()

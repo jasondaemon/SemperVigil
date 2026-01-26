@@ -117,10 +117,12 @@ def process_cve_item(
     description = _extract_description(cve_item.get("descriptions"))
 
     metrics = cve_item.get("metrics") or {}
-    v31 = _extract_cvss(metrics.get("cvssMetricV31"))
-    v40 = _extract_cvss(metrics.get("cvssMetricV40"))
+    v31_list = _extract_cvss(metrics.get("cvssMetricV31"), "3.1")
+    v40_list = _extract_cvss(metrics.get("cvssMetricV40"), "4.0")
+    v31 = _pick_preferred_entry(v31_list)
+    v40 = _pick_preferred_entry(v40_list)
 
-    preferred = _select_preferred_metrics(v31, v40, prefer_v4)
+    preferred = _select_preferred_metrics(v31_list, v40_list, prefer_v4)
     signals = extract_signals(cve_item)
     if logger:
         log_event(
@@ -133,6 +135,8 @@ def process_cve_item(
             products=len(signals.products),
             cpes=len(signals.cpes),
             domains=len(signals.reference_domains),
+            has_v31=bool(v31_list),
+            has_v40=bool(v40_list),
         )
     if filters and not matches_filters(
         preferred_score=preferred.base_score,
@@ -165,6 +169,8 @@ def process_cve_item(
         preferred_vector=preferred.vector,
         cvss_v40_json=v40,
         cvss_v31_json=v31,
+        cvss_v40_list_json=v40_list,
+        cvss_v31_list_json=v31_list,
         description_text=description,
         affected_products=signals.products,
         affected_cpes=signals.cpes,
@@ -175,6 +181,7 @@ def process_cve_item(
         cve_id=cve_id,
         products=signals.products,
         cpes=signals.cpes,
+        product_versions=signals.product_versions,
         source="nvd",
     )
     events_settings = get_events_settings(conn)
@@ -229,8 +236,12 @@ class PreferredMetrics:
 
 
 def _select_preferred_metrics(
-    v31: dict[str, Any] | None, v40: dict[str, Any] | None, prefer_v4: bool
+    v31_list: list[dict[str, Any]],
+    v40_list: list[dict[str, Any]],
+    prefer_v4: bool,
 ) -> PreferredMetrics:
+    v31 = _pick_preferred_entry(v31_list)
+    v40 = _pick_preferred_entry(v40_list)
     if prefer_v4 and v40:
         return PreferredMetrics(
             version="4.0",
@@ -393,18 +404,35 @@ def _extract_description(descriptions: Any) -> str | None:
     return None
 
 
-def _extract_cvss(entries: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+def _extract_cvss(entries: list[dict[str, Any]] | None, version_label: str) -> list[dict[str, Any]]:
     if not entries:
-        return None
-    entry = entries[0]
-    cvss = entry.get("cvssData") or {}
-    return {
-        "baseScore": cvss.get("baseScore"),
-        "baseSeverity": cvss.get("baseSeverity"),
-        "vectorString": cvss.get("vectorString"),
-        "exploitabilityScore": entry.get("exploitabilityScore"),
-        "impactScore": entry.get("impactScore"),
-    }
+        return []
+    normalized: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        cvss = entry.get("cvssData") or {}
+        normalized.append(
+            {
+                "version": cvss.get("version") or version_label,
+                "source": entry.get("source"),
+                "type": entry.get("type"),
+                "baseScore": cvss.get("baseScore"),
+                "baseSeverity": cvss.get("baseSeverity"),
+                "vectorString": cvss.get("vectorString"),
+                "exploitabilityScore": entry.get("exploitabilityScore"),
+                "impactScore": entry.get("impactScore"),
+                "cvssData": cvss,
+            }
+        )
+    return normalized
+
+
+def _pick_preferred_entry(entries: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for entry in entries:
+        if str(entry.get("type") or "").lower() == "primary":
+            return entry
+    return entries[0] if entries else None
 
 
 def _severity_rank(value: str | None) -> int:
@@ -485,9 +513,9 @@ def preview_cves(
         found += 1
         description = _extract_description(cve_item.get("descriptions"))
         metrics = cve_item.get("metrics") or {}
-        v31 = _extract_cvss(metrics.get("cvssMetricV31"))
-        v40 = _extract_cvss(metrics.get("cvssMetricV40"))
-        preferred = _select_preferred_metrics(v31, v40, config.prefer_v4)
+        v31_list = _extract_cvss(metrics.get("cvssMetricV31"), "3.1")
+        v40_list = _extract_cvss(metrics.get("cvssMetricV40"), "4.0")
+        preferred = _select_preferred_metrics(v31_list, v40_list, config.prefer_v4)
         signals = extract_signals(cve_item)
         is_match = True
         if config.filters:

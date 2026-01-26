@@ -495,6 +495,38 @@ th, td {
   cursor: not-allowed;
 }
 
+.stat-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.stat-value {
+  font-size: 20px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.job-logs {
+  margin-top: 6px;
+}
+
+.job-logs pre {
+  max-height: 180px;
+  overflow: auto;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  padding: 8px;
+}
+
 .kv {
   display: grid;
   gap: 4px;
@@ -505,6 +537,11 @@ th, td {
   margin-top: 10px;
   font-size: 12px;
   color: #6b7280;
+}
+
+.muted {
+  color: #6b7280;
+  font-size: 13px;
 }
 
 .grid label {

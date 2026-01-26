@@ -6,6 +6,7 @@ import logging
 import os
 import time
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone, timedelta
 
 from .config import (
@@ -18,7 +19,7 @@ from .config import (
     load_runtime_config,
 )
 from .ingest import process_source
-from .models import Article
+from .models import Article, Job
 from .cve_sync import CveSyncConfig, isoformat_utc, sync_cves
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .publish import write_article_markdown, write_events_index, write_events_markdown, write_json_index
@@ -32,11 +33,13 @@ from .storage import (
     enqueue_job,
     fail_job,
     get_source,
+    list_sources,
     get_setting,
     get_article_id,
     get_article_by_id,
     get_event,
     get_batch_job_counts,
+    get_job,
     is_job_canceled,
     init_db,
     insert_articles,
@@ -44,7 +47,10 @@ from .storage import (
     list_due_sources,
     list_events,
     list_summaries_for_day,
+    list_jobs_by_types_since,
+    requeue_job,
     has_pending_job,
+    insert_llm_run,
     pause_source,
     record_health_alert,
     record_source_run,
@@ -56,6 +62,7 @@ from .storage import (
     insert_source_health_event,
     update_article_content,
     update_article_summary,
+    update_job_result,
 )
 from .utils import configure_logging, log_event, utc_now_iso
 
@@ -69,6 +76,7 @@ WORKER_JOB_TYPES = [
     "summarize_article_llm",
     "build_daily_brief",
     "write_article_markdown",
+    "smoke_test",
 ]
 
 
@@ -192,6 +200,9 @@ def _handle_ingest_source(
         }
 
     result = process_source(source, config, logger, conn)
+    limit = payload.get("limit")
+    if isinstance(limit, int) and limit > 0 and len(result.articles) > limit:
+        result = replace(result, accepted_count=limit, articles=result.articles[:limit])
     finished_at = utc_now_iso()
     duration_ms = int(
         (datetime.fromisoformat(finished_at) - datetime.fromisoformat(started_at)).total_seconds()
@@ -494,10 +505,40 @@ def _handle_fetch_article_content(
         raise ValueError("fetch_article_content requires article_id")
     article = get_article_by_id(conn, int(article_id))
     if not article:
-        raise ValueError("article_not_found")
+        log_event(
+            logger,
+            logging.WARNING,
+            "fetch_article_missing",
+            article_id=article_id,
+        )
+        raise ValueError("article_missing")
     url = article.get("original_url") or article.get("normalized_url") or ""
     if not url:
-        raise ValueError("article_not_found")
+        attempts = int(payload.get("attempt", 0) if payload else 0)
+        backoff = [10, 30, 60, 120, 300]
+        if attempts < len(backoff):
+            delay = backoff[attempts]
+            next_payload = dict(payload or {})
+            next_payload["attempt"] = attempts + 1
+            next_payload["not_before"] = utc_now_iso_offset(seconds=delay)
+            requeue_job(conn, job.id, next_payload, next_payload["not_before"])
+            log_event(
+                logger,
+                logging.INFO,
+                "fetch_article_url_missing",
+                article_id=article_id,
+                attempt=attempts + 1,
+                next_in=delay,
+            )
+            return {"requeued": True, "reason": "article_url_missing", "attempt": attempts + 1}
+        log_event(
+            logger,
+            logging.WARNING,
+            "fetch_article_url_gave_up",
+            article_id=article_id,
+            attempts=attempts,
+        )
+        raise ValueError("article_not_ready")
     try:
         result = fetch_article_content(
             url,
@@ -525,7 +566,7 @@ def _handle_fetch_article_content(
             content_text=None,
             content_html=None,
             content_fetched_at=utc_now_iso(),
-            content_error=str(exc),
+            content_error=f"fetch_failed:{exc}",
             has_full_content=False,
         )
         raise
@@ -544,6 +585,8 @@ def _handle_summarize_article_llm(
         raise ValueError("article_not_found")
     source_name = get_source_name(conn, article["source_id"]) or ""
     content = article["content_text"] or article["summary"] or article["title"]
+    input_chars = len(content or "")
+    start = time.time()
     try:
         result = summarize_with_llm(
             title=article["title"],
@@ -553,6 +596,7 @@ def _handle_summarize_article_llm(
             content=content,
             logger=logger,
         )
+        latency_ms = int((time.time() - start) * 1000)
         update_article_summary(
             conn,
             int(article_id),
@@ -561,8 +605,32 @@ def _handle_summarize_article_llm(
             summary_generated_at=utc_now_iso(),
             summary_error=None,
         )
+        insert_llm_run(
+            conn,
+            job_id=None,
+            provider_id="env",
+            model_id=result.get("model"),
+            prompt_name="summarize_article_llm",
+            input_chars=input_chars,
+            output_chars=len(result.get("summary") or ""),
+            latency_ms=latency_ms,
+            ok=True,
+            error=None,
+        )
         return result
     except Exception as exc:  # noqa: BLE001
+        insert_llm_run(
+            conn,
+            job_id=None,
+            provider_id="env",
+            model_id=None,
+            prompt_name="summarize_article_llm",
+            input_chars=input_chars,
+            output_chars=0,
+            latency_ms=int((time.time() - start) * 1000),
+            ok=False,
+            error=str(exc),
+        )
         update_article_summary(
             conn,
             int(article_id),
@@ -599,6 +667,184 @@ def _handle_build_daily_brief(
         json_path=result["json_path"],
     )
     return {"day": day, "count": len(items), **result}
+
+
+def _handle_smoke_test(conn, config, job, logger: logging.Logger) -> dict[str, object]:
+    payload = job.payload or {}
+    sources_limit = int(payload.get("sources_limit") or 2)
+    per_source_limit = int(payload.get("per_source_limit") or 10)
+    timeout_seconds = int(payload.get("timeout_seconds") or 300)
+    skip_ingest = bool(payload.get("skip_ingest"))
+    skip_cve_sync = bool(payload.get("skip_cve_sync"))
+    skip_events = bool(payload.get("skip_events"))
+    skip_build = bool(payload.get("skip_build"))
+    result: dict[str, object] = {"steps": []}
+
+    def update_step(step: str, status: str, **extra) -> None:
+        entry = {"step": step, "status": status}
+        if extra:
+            entry.update(extra)
+        result["steps"].append(entry)
+        update_job_result(conn, job.id, result)
+
+    if is_job_canceled(conn, job.id):
+        return {"canceled": True}
+
+    start_marker = utc_now_iso()
+    ingest_job_ids: list[str] = []
+    if skip_ingest:
+        update_step("ingest_sources", "skipped", reason="skip_ingest")
+    else:
+        sources = list_sources(conn, enabled_only=True)[: max(0, sources_limit)]
+        if not sources:
+            update_step("ingest_sources", "skipped", reason="no_sources")
+        else:
+            for source in sources:
+                if is_job_canceled(conn, job.id):
+                    return {"canceled": True}
+                job_id = enqueue_job(
+                    conn,
+                    "ingest_source",
+                    {"source_id": source.id, "limit": per_source_limit},
+                )
+                ingest_job_ids.append(job_id)
+            update_step("ingest_sources", "enqueued", jobs=ingest_job_ids)
+
+            _run_jobs_inline(
+                conn,
+                config,
+                logger,
+                allowed_types=["ingest_source"],
+                timeout_seconds=timeout_seconds,
+            )
+            done = [get_job(conn, job_id) for job_id in ingest_job_ids]
+            article_count = sum(
+                int((job.result or {}).get("accepted_count") or 0) for job in done if job
+            )
+            update_step("ingest_sources", "completed", article_count_ingested=article_count)
+
+            _run_jobs_inline(
+                conn,
+                config,
+                logger,
+                allowed_types=["fetch_article_content", "summarize_article_llm", "write_article_markdown"],
+                timeout_seconds=timeout_seconds,
+            )
+            jobs = list_jobs_by_types_since(
+                conn,
+                types=["fetch_article_content", "summarize_article_llm", "write_article_markdown"],
+                since=start_marker,
+            )
+            result["article_count_ingested"] = article_count
+            result["content_fetch_ok"] = sum(1 for j in jobs if j.job_type == "fetch_article_content" and j.status == "succeeded")
+            result["content_fetch_failed"] = sum(1 for j in jobs if j.job_type == "fetch_article_content" and j.status == "failed")
+            result["summarize_ok"] = sum(1 for j in jobs if j.job_type == "summarize_article_llm" and j.status == "succeeded")
+            result["summarize_failed"] = sum(1 for j in jobs if j.job_type == "summarize_article_llm" and j.status == "failed")
+            result["markdown_ok"] = sum(1 for j in jobs if j.job_type == "write_article_markdown" and j.status == "succeeded")
+            result["markdown_failed"] = sum(1 for j in jobs if j.job_type == "write_article_markdown" and j.status == "failed")
+            update_job_result(conn, job.id, result)
+
+    if is_job_canceled(conn, job.id):
+        return {"canceled": True}
+
+    if skip_cve_sync:
+        update_step("cve_sync", "skipped", reason="skip_cve_sync")
+    else:
+        try:
+            cve_result = _handle_cve_sync(conn, config, logger)
+            update_step("cve_sync", "ok", **cve_result)
+        except Exception as exc:  # noqa: BLE001
+            update_step("cve_sync", "error", error=str(exc))
+
+    if is_job_canceled(conn, job.id):
+        return {"canceled": True}
+
+    if skip_events:
+        update_step("events_rebuild", "skipped", reason="skip_events")
+    else:
+        try:
+            events_result = _handle_events_rebuild(conn, config, {"limit": 200}, logger)
+            update_step("events_rebuild", "ok", **events_result)
+        except Exception as exc:  # noqa: BLE001
+            update_step("events_rebuild", "error", error=str(exc))
+
+    if is_job_canceled(conn, job.id):
+        return {"canceled": True}
+
+    if skip_build:
+        update_step("build_site", "skipped", reason="skip_build")
+    else:
+        build_job_id = enqueue_job(conn, "build_site", None, debounce=True)
+        update_step("build_site", "enqueued", job_id=build_job_id)
+        _wait_for_job(conn, build_job_id, timeout_seconds)
+        build_job = get_job(conn, build_job_id)
+        if build_job:
+            result["build_ok"] = build_job.status == "succeeded"
+            result["build_exit_code"] = (build_job.result or {}).get("exit_code")
+            update_job_result(conn, job.id, result)
+    return result
+
+
+def _run_jobs_inline(
+    conn,
+    config,
+    logger: logging.Logger,
+    *,
+    allowed_types: list[str],
+    timeout_seconds: int,
+) -> None:
+    start = time.monotonic()
+    worker_id = f"smoke_inline_{uuid.uuid4().hex}"
+    while time.monotonic() - start < timeout_seconds:
+        job = claim_next_job(
+            conn,
+            worker_id,
+            allowed_types=allowed_types,
+            lock_timeout_seconds=config.jobs.lock_timeout_seconds,
+        )
+        if not job:
+            return
+        if is_job_canceled(conn, job.id):
+            log_event(logger, logging.INFO, "job_canceled", job_id=job.id)
+            continue
+        try:
+            result = run_claimed_job(conn, config, job, logger)
+        except Exception as exc:  # noqa: BLE001
+            fail_job(conn, job.id, str(exc))
+            fields = _job_context_fields(conn, job)
+            log_event(
+                logger,
+                logging.ERROR,
+                "job_failed",
+                job_id=job.id,
+                error=str(exc),
+                **fields,
+            )
+            continue
+        if result.get("requeued"):
+            fields = _job_context_fields(conn, job)
+            log_event(
+                logger,
+                logging.INFO,
+                "job_requeued",
+                job_id=job.id,
+                reason=result.get("reason"),
+                attempt=result.get("attempt"),
+                **fields,
+            )
+    log_event(logger, logging.WARNING, "smoke_inline_timeout", timeout_seconds=timeout_seconds)
+
+
+def _wait_for_job(conn, job_id: str, timeout_seconds: int) -> Job | None:
+    start = time.monotonic()
+    while time.monotonic() - start < timeout_seconds:
+        job = get_job(conn, job_id)
+        if not job:
+            return None
+        if job.status in {"succeeded", "failed", "canceled"}:
+            return job
+        time.sleep(1)
+    return get_job(conn, job_id)
 
 
 def _handle_ingest_due_sources(conn, logger: logging.Logger) -> dict[str, object]:
@@ -807,6 +1053,8 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         if not has_pending_job(conn, "write_article_markdown", exclude_job_id=job.id):
             enqueue_job(conn, "build_site", None, debounce=True)
         return result
+    if job.job_type == "smoke_test":
+        return _handle_smoke_test(conn, config, job, logger)
     raise ValueError(f"unsupported job type {job.job_type}")
 
 

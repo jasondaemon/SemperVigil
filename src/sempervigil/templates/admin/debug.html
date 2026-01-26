@@ -1,0 +1,69 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "system" %}
+{% set nav_subactive = "debug" %}
+{% block content %}
+  <section class="panel">
+    <div class="actions">
+      <button class="btn" id="debug-refresh">Refresh Overview</button>
+      <button class="btn secondary" id="debug-smoke">Run Smoke Test</button>
+      <button class="btn secondary" id="debug-build">Build Site Now</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>System Overview</h2>
+    <div id="debug-error" class="error" style="display:none;"></div>
+    <div class="grid" id="debug-cards"></div>
+  </section>
+
+  <section class="panel">
+    <h3>Recent Jobs</h3>
+    <table class="table" id="debug-jobs-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Type</th>
+          <th>Status</th>
+          <th>Requested</th>
+          <th>Started</th>
+          <th>Finished</th>
+          <th>Error</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="panel">
+    <h3>Last Build</h3>
+    <pre class="mono" id="debug-build"></pre>
+  </section>
+
+  <section class="panel">
+    <h3>Last CVE Sync</h3>
+    <pre class="mono" id="debug-cve-sync"></pre>
+  </section>
+
+  <section class="panel">
+    <h3>Last Article Ingest</h3>
+    <pre class="mono" id="debug-ingest"></pre>
+  </section>
+
+  <section class="panel">
+    <h3>Last LLM Runs</h3>
+    <table class="table" id="debug-llm-table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Provider</th>
+          <th>Model</th>
+          <th>Prompt</th>
+          <th>Latency</th>
+          <th>Status</th>
+          <th>Error</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+{% endblock %}

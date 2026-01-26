@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 class CveSignals:
     vendors: list[str]
     products: list[str]
+    product_versions: list[str]
     cpes: list[str]
     reference_domains: list[str]
 
@@ -22,6 +23,7 @@ def normalize_severity(value: str | None) -> str | None:
 def extract_signals(cve_item: dict[str, Any]) -> CveSignals:
     vendors: set[str] = set()
     products: set[str] = set()
+    product_versions: set[str] = set()
     cpes: set[str] = set()
     reference_domains: set[str] = set()
 
@@ -29,14 +31,14 @@ def extract_signals(cve_item: dict[str, Any]) -> CveSignals:
     if isinstance(configurations, dict):
         nodes = configurations.get("nodes") or []
         for node in nodes:
-            _collect_cpes(node, cpes, vendors, products)
+            _collect_cpes(node, cpes, vendors, products, product_versions)
     elif isinstance(configurations, list):
         for entry in configurations:
             if not isinstance(entry, dict):
                 continue
             nodes = entry.get("nodes") or []
             for node in nodes:
-                _collect_cpes(node, cpes, vendors, products)
+                _collect_cpes(node, cpes, vendors, products, product_versions)
 
     references = cve_item.get("references") or []
     for ref in references:
@@ -50,6 +52,7 @@ def extract_signals(cve_item: dict[str, Any]) -> CveSignals:
     return CveSignals(
         vendors=sorted(vendors),
         products=sorted(products),
+        product_versions=sorted(product_versions),
         cpes=sorted(cpes),
         reference_domains=sorted(reference_domains),
     )
@@ -87,6 +90,7 @@ def matches_filters(
             [description or ""]
             + signals.vendors
             + signals.products
+            + signals.product_versions
             + signals.cpes
             + signals.reference_domains
         ).lower()
@@ -102,7 +106,13 @@ def _normalize_keywords(values: list[str]) -> list[str]:
     return [value.strip().lower() for value in values if value and value.strip()]
 
 
-def _collect_cpes(node: dict[str, Any], cpes: set[str], vendors: set[str], products: set[str]) -> None:
+def _collect_cpes(
+    node: dict[str, Any],
+    cpes: set[str],
+    vendors: set[str],
+    products: set[str],
+    product_versions: set[str],
+) -> None:
     for match in node.get("cpeMatch") or []:
         cpe = match.get("criteria") or match.get("cpe23Uri")
         if not cpe:
@@ -112,5 +122,9 @@ def _collect_cpes(node: dict[str, Any], cpes: set[str], vendors: set[str], produ
         if len(parts) >= 5:
             vendors.add(parts[3])
             products.add(parts[4])
+            if len(parts) >= 6:
+                version = parts[5]
+                if version not in ("*", "-"):
+                    product_versions.add(f"{parts[3]}:{parts[4]}:{version}")
     for child in node.get("children") or []:
-        _collect_cpes(child, cpes, vendors, products)
+        _collect_cpes(child, cpes, vendors, products, product_versions)

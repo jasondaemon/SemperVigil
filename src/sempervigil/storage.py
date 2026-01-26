@@ -429,15 +429,34 @@ def upsert_cve(
     affected_products: list[str] | None = None,
     affected_cpes: list[str] | None = None,
     reference_domains: list[str] | None = None,
+    cvss_v40_list_json: list[dict[str, object]] | None = None,
+    cvss_v31_list_json: list[dict[str, object]] | None = None,
 ) -> None:
+    columns = _table_columns(conn, "cves") if _table_exists(conn, "cves") else set()
+    has_v40_list = "cvss_v40_list_json" in columns
+    has_v31_list = "cvss_v31_list_json" in columns
+    extra_cols = []
+    extra_vals = []
+    extra_updates = []
+    if has_v40_list:
+        extra_cols.append("cvss_v40_list_json")
+        extra_vals.append(json_dumps(cvss_v40_list_json) if cvss_v40_list_json else None)
+        extra_updates.append("cvss_v40_list_json=excluded.cvss_v40_list_json")
+    if has_v31_list:
+        extra_cols.append("cvss_v31_list_json")
+        extra_vals.append(json_dumps(cvss_v31_list_json) if cvss_v31_list_json else None)
+        extra_updates.append("cvss_v31_list_json=excluded.cvss_v31_list_json")
+
     conn.execute(
-        """
+        f"""
         INSERT INTO cves
             (cve_id, published_at, last_modified_at, preferred_cvss_version,
              preferred_base_score, preferred_base_severity, preferred_vector,
              cvss_v40_json, cvss_v31_json, description_text, affected_products_json,
-             affected_cpes_json, reference_domains_json, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             affected_cpes_json, reference_domains_json, updated_at
+             {"," if extra_cols else ""} {", ".join(extra_cols)})
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             {"," if extra_cols else ""} {", ".join("?" for _ in extra_cols)})
         ON CONFLICT(cve_id) DO UPDATE SET
             published_at=excluded.published_at,
             last_modified_at=excluded.last_modified_at,
@@ -447,6 +466,7 @@ def upsert_cve(
             preferred_vector=excluded.preferred_vector,
             cvss_v40_json=excluded.cvss_v40_json,
             cvss_v31_json=excluded.cvss_v31_json,
+            {", ".join(extra_updates) + "," if extra_updates else ""}
             description_text=excluded.description_text,
             affected_products_json=excluded.affected_products_json,
             affected_cpes_json=excluded.affected_cpes_json,
@@ -468,6 +488,7 @@ def upsert_cve(
             json_dumps(affected_cpes) if affected_cpes else None,
             json_dumps(reference_domains) if reference_domains else None,
             utc_now_iso(),
+            *extra_vals,
         ),
     )
     conn.commit()
@@ -479,6 +500,7 @@ def link_cve_products_from_signals(
     cve_id: str,
     products: list[str],
     cpes: list[str],
+    product_versions: list[str] | None = None,
     source: str = "nvd",
 ) -> dict[str, int]:
     pairs: list[tuple[str, str]] = []
@@ -502,7 +524,31 @@ def link_cve_products_from_signals(
             evidence={"cpes": cpes[:25]},
         )
         created += 1
+    if product_versions:
+        for entry in product_versions:
+            parts = entry.split(":")
+            if len(parts) != 3:
+                continue
+            vendor_display, product_display, version = parts
+            vendor_id = upsert_vendor(conn, vendor_display)
+            product_id, _ = upsert_product(conn, vendor_id, product_display)
+            _link_cve_product_version(conn, cve_id, product_id, version, source)
     return {"links": created}
+
+
+def _link_cve_product_version(
+    conn: sqlite3.Connection, cve_id: str, product_id: int, version: str, source: str
+) -> None:
+    if not _table_exists(conn, "cve_product_versions"):
+        return
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO cve_product_versions
+            (cve_id, product_id, version, source, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (cve_id, product_id, version, source, utc_now_iso()),
+    )
 
 
 def insert_cve_snapshot(
@@ -776,6 +822,171 @@ def list_jobs(conn: sqlite3.Connection, limit: int = 50) -> list[Job]:
         (limit,),
     )
     return [_row_to_job(row) for row in cursor.fetchall()]
+
+
+def get_schema_version(conn: sqlite3.Connection) -> str | None:
+    if not _table_exists(conn, "schema_migrations"):
+        return None
+    row = conn.execute(
+        "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1"
+    ).fetchone()
+    return row[0] if row else None
+
+
+def count_table(conn: sqlite3.Connection, table: str) -> int:
+    if not _table_exists(conn, table):
+        return 0
+    row = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+    return int(row[0] or 0)
+
+
+def get_last_job_by_type(conn: sqlite3.Connection, job_type: str) -> Job | None:
+    if not _table_exists(conn, "jobs"):
+        return None
+    row = conn.execute(
+        """
+        SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
+               finished_at, locked_by, locked_at, error
+        FROM jobs
+        WHERE job_type = ?
+        ORDER BY requested_at DESC
+        LIMIT 1
+        """,
+        (job_type,),
+    ).fetchone()
+    return _row_to_job(row) if row else None
+
+
+def get_job(conn: sqlite3.Connection, job_id: str) -> Job | None:
+    if not _table_exists(conn, "jobs"):
+        return None
+    row = conn.execute(
+        """
+        SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
+               finished_at, locked_by, locked_at, error
+        FROM jobs
+        WHERE id = ?
+        """,
+        (job_id,),
+    ).fetchone()
+    return _row_to_job(row) if row else None
+
+
+def list_jobs_by_types_since(
+    conn: sqlite3.Connection, *, types: list[str], since: str
+) -> list[Job]:
+    if not _table_exists(conn, "jobs") or not types:
+        return []
+    placeholders = ",".join("?" for _ in types)
+    cursor = conn.execute(
+        f"""
+        SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
+               finished_at, locked_by, locked_at, error
+        FROM jobs
+        WHERE requested_at >= ? AND job_type IN ({placeholders})
+        ORDER BY requested_at ASC
+        """,
+        (since, *types),
+    )
+    return [_row_to_job(row) for row in cursor.fetchall()]
+
+
+def insert_llm_run(
+    conn: sqlite3.Connection,
+    *,
+    job_id: str | None,
+    provider_id: str | None,
+    model_id: str | None,
+    prompt_name: str | None,
+    input_chars: int | None,
+    output_chars: int | None,
+    latency_ms: int | None,
+    ok: bool,
+    error: str | None,
+) -> str:
+    run_id = f"llm_{uuid.uuid4().hex}"
+    conn.execute(
+        """
+        INSERT INTO llm_runs
+            (id, ts, job_id, provider_id, model_id, prompt_name,
+             input_chars, output_chars, latency_ms, ok, error)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            run_id,
+            utc_now_iso(),
+            job_id,
+            provider_id,
+            model_id,
+            prompt_name,
+            input_chars,
+            output_chars,
+            latency_ms,
+            1 if ok else 0,
+            error,
+        ),
+    )
+    conn.commit()
+    return run_id
+
+
+def list_llm_runs(conn: sqlite3.Connection, limit: int = 10) -> list[dict[str, object]]:
+    if not _table_exists(conn, "llm_runs"):
+        return []
+    cursor = conn.execute(
+        """
+        SELECT id, ts, job_id, provider_id, model_id, prompt_name,
+               input_chars, output_chars, latency_ms, ok, error
+        FROM llm_runs
+        ORDER BY ts DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    items = []
+    for row in cursor.fetchall():
+        (
+            run_id,
+            ts,
+            job_id,
+            provider_id,
+            model_id,
+            prompt_name,
+            input_chars,
+            output_chars,
+            latency_ms,
+            ok,
+            error,
+        ) = row
+        items.append(
+            {
+                "id": run_id,
+                "ts": ts,
+                "job_id": job_id,
+                "provider_id": provider_id,
+                "model_id": model_id,
+                "prompt_name": prompt_name,
+                "input_chars": input_chars,
+                "output_chars": output_chars,
+                "latency_ms": latency_ms,
+                "ok": bool(ok),
+                "error": error,
+            }
+        )
+    return items
+
+
+def update_job_result(conn: sqlite3.Connection, job_id: str, result: dict[str, object]) -> bool:
+    cursor = conn.execute(
+        """
+        UPDATE jobs
+        SET result_json = ?
+        WHERE id = ? AND status = 'running'
+        """,
+        (json_dumps(result), job_id),
+    )
+    conn.commit()
+    return cursor.rowcount == 1
 
 
 def cancel_job(conn: sqlite3.Connection, job_id: str, reason: str = "canceled_by_admin") -> bool:
@@ -2578,13 +2789,31 @@ def search_articles(
 
 
 def get_cve(conn: sqlite3.Connection, cve_id: str) -> dict[str, object] | None:
+    columns = _table_columns(conn, "cves") if _table_exists(conn, "cves") else set()
+    selected = [
+        "cve_id",
+        "published_at",
+        "last_modified_at",
+        "preferred_cvss_version",
+        "preferred_base_score",
+        "preferred_base_severity",
+        "preferred_vector",
+        "cvss_v31_json",
+        "cvss_v40_json",
+        "cvss_v31_list_json",
+        "cvss_v40_list_json",
+        "description_text",
+        "affected_products_json",
+        "affected_cpes_json",
+        "reference_domains_json",
+        "updated_at",
+    ]
+    selected = [col for col in selected if col in columns]
+    if not selected:
+        return None
     cursor = conn.execute(
-        """
-        SELECT cve_id, published_at, last_modified_at, preferred_cvss_version,
-               preferred_base_score, preferred_base_severity, preferred_vector,
-               cvss_v31_json, cvss_v40_json, description_text,
-               affected_products_json, affected_cpes_json, reference_domains_json,
-               updated_at
+        f"""
+        SELECT {", ".join(selected)}
         FROM cves
         WHERE cve_id = ?
         """,
@@ -2593,39 +2822,34 @@ def get_cve(conn: sqlite3.Connection, cve_id: str) -> dict[str, object] | None:
     row = cursor.fetchone()
     if not row:
         return None
-    (
-        cve_id,
-        published_at,
-        last_modified_at,
-        preferred_cvss_version,
-        preferred_base_score,
-        preferred_base_severity,
-        preferred_vector,
-        cvss_v31_json,
-        cvss_v40_json,
-        description_text,
-        affected_products_json,
-        affected_cpes_json,
-        reference_domains_json,
-        updated_at,
-    ) = row
+    data = dict(zip(selected, row))
+    cvss_v31_json = data.get("cvss_v31_json")
+    cvss_v40_json = data.get("cvss_v40_json")
+    cvss_v31_list_json = data.get("cvss_v31_list_json")
+    cvss_v40_list_json = data.get("cvss_v40_list_json")
     cvss_v31 = json.loads(cvss_v31_json) if cvss_v31_json else None
     cvss_v40 = json.loads(cvss_v40_json) if cvss_v40_json else None
+    cvss_v31_list = json.loads(cvss_v31_list_json) if cvss_v31_list_json else []
+    cvss_v40_list = json.loads(cvss_v40_list_json) if cvss_v40_list_json else []
+    product_versions = _list_cve_product_versions(conn, cve_id)
     return {
-        "cve_id": cve_id,
-        "published_at": published_at,
-        "last_modified_at": last_modified_at,
-        "preferred_cvss_version": preferred_cvss_version,
-        "preferred_base_score": preferred_base_score,
-        "preferred_base_severity": preferred_base_severity,
-        "preferred_vector": preferred_vector,
+        "cve_id": data.get("cve_id"),
+        "published_at": data.get("published_at"),
+        "last_modified_at": data.get("last_modified_at"),
+        "preferred_cvss_version": data.get("preferred_cvss_version"),
+        "preferred_base_score": data.get("preferred_base_score"),
+        "preferred_base_severity": data.get("preferred_base_severity"),
+        "preferred_vector": data.get("preferred_vector"),
         "cvss_v31": cvss_v31,
         "cvss_v40": cvss_v40,
-        "description_text": description_text,
-        "affected_products": json.loads(affected_products_json) if affected_products_json else [],
-        "affected_cpes": json.loads(affected_cpes_json) if affected_cpes_json else [],
-        "reference_domains": json.loads(reference_domains_json) if reference_domains_json else [],
-        "updated_at": updated_at,
+        "cvss_v31_list": cvss_v31_list,
+        "cvss_v40_list": cvss_v40_list,
+        "description_text": data.get("description_text"),
+        "affected_products": json.loads(data.get("affected_products_json") or "[]"),
+        "affected_cpes": json.loads(data.get("affected_cpes_json") or "[]"),
+        "reference_domains": json.loads(data.get("reference_domains_json") or "[]"),
+        "product_versions": product_versions,
+        "updated_at": data.get("updated_at"),
     }
 
 
@@ -2652,6 +2876,7 @@ def search_cves(
     page: int,
     page_size: int,
 ) -> tuple[list[dict[str, object]], int]:
+    columns = _table_columns(conn, "cves") if _table_exists(conn, "cves") else set()
     where: list[str] = []
     params: list[object] = []
     if query:
@@ -2736,11 +2961,26 @@ def search_cves(
     total = count_cursor.fetchone()[0]
 
     offset = max(page - 1, 0) * page_size
+    selected = [
+        "cve_id",
+        "published_at",
+        "last_modified_at",
+        "preferred_cvss_version",
+        "preferred_base_score",
+        "preferred_base_severity",
+        "preferred_vector",
+        "description_text",
+        "updated_at",
+        "affected_products_json",
+        "affected_cpes_json",
+        "reference_domains_json",
+        "cvss_v31_list_json",
+        "cvss_v40_list_json",
+    ]
+    selected = [col for col in selected if col in columns]
     cursor = conn.execute(
         f"""
-        SELECT cve_id, published_at, last_modified_at, preferred_base_score,
-               preferred_base_severity, description_text, updated_at,
-               affected_products_json, affected_cpes_json, reference_domains_json
+        SELECT {", ".join(selected)}
         FROM cves
         {where_sql}
         ORDER BY last_modified_at DESC
@@ -2749,33 +2989,166 @@ def search_cves(
         [*params, page_size, offset],
     )
     items = []
-    for (
-        cve_id,
-        published_at,
-        last_modified_at,
-        preferred_base_score,
-        preferred_base_severity,
-        description_text,
-        updated_at,
-        affected_products_json,
-        affected_cpes_json,
-        reference_domains_json,
-    ) in cursor.fetchall():
+    for row in cursor.fetchall():
+        data = dict(zip(selected, row))
+        cvss_v31_list_json = data.get("cvss_v31_list_json")
+        cvss_v40_list_json = data.get("cvss_v40_list_json")
         items.append(
             {
-                "cve_id": cve_id,
-                "published_at": published_at,
-                "last_modified_at": last_modified_at,
-                "preferred_base_score": preferred_base_score,
-                "preferred_base_severity": preferred_base_severity,
-                "summary": description_text,
-                "updated_at": updated_at,
-                "affected_products": json.loads(affected_products_json) if affected_products_json else [],
-                "affected_cpes": json.loads(affected_cpes_json) if affected_cpes_json else [],
-                "reference_domains": json.loads(reference_domains_json) if reference_domains_json else [],
+                "cve_id": data.get("cve_id"),
+                "published_at": data.get("published_at"),
+                "last_modified_at": data.get("last_modified_at"),
+                "preferred_cvss_version": data.get("preferred_cvss_version"),
+                "preferred_base_score": data.get("preferred_base_score"),
+                "preferred_base_severity": data.get("preferred_base_severity"),
+                "preferred_vector": data.get("preferred_vector"),
+                "summary": data.get("description_text"),
+                "updated_at": data.get("updated_at"),
+                "affected_products": json.loads(data.get("affected_products_json") or "[]"),
+                "affected_cpes": json.loads(data.get("affected_cpes_json") or "[]"),
+                "reference_domains": json.loads(data.get("reference_domains_json") or "[]"),
+                "cvss_v31_list": json.loads(cvss_v31_list_json) if cvss_v31_list_json else [],
+                "cvss_v40_list": json.loads(cvss_v40_list_json) if cvss_v40_list_json else [],
+                "product_versions": _list_cve_product_versions(conn, data.get("cve_id")),
             }
         )
     return items, total
+
+
+def _list_cve_product_versions(conn: sqlite3.Connection, cve_id: str | None) -> list[str]:
+    if not cve_id or not _table_exists(conn, "cve_product_versions"):
+        return []
+    if not _table_exists(conn, "products") or not _table_exists(conn, "vendors"):
+        return []
+    cursor = conn.execute(
+        """
+        SELECT v.display_name, p.display_name, cpv.version
+        FROM cve_product_versions cpv
+        JOIN products p ON p.id = cpv.product_id
+        JOIN vendors v ON v.id = p.vendor_id
+        WHERE cpv.cve_id = ?
+        ORDER BY v.display_name, p.display_name, cpv.version
+        """,
+        (cve_id,),
+    )
+    return [
+        f"{vendor}:{product}:{version}"
+        for vendor, product, version in cursor.fetchall()
+        if vendor and product and version
+    ]
+
+
+def cve_data_completeness(conn: sqlite3.Connection, limit: int = 20) -> dict[str, object]:
+    if not _table_exists(conn, "cves"):
+        return {"counts": {}, "missing": []}
+    columns = _table_columns(conn, "cves")
+    total = count_table(conn, "cves")
+    def _count_where(clause: str) -> int:
+        row = conn.execute(f"SELECT COUNT(*) FROM cves WHERE {clause}").fetchone()
+        return int(row[0] or 0)
+
+    counts = {"total": total}
+    if "description_text" in columns:
+        counts["with_description"] = _count_where("description_text IS NOT NULL AND description_text != ''")
+        counts["good_description"] = _count_where("length(description_text) >= 80")
+    if "reference_domains_json" in columns:
+        counts["with_domains"] = _count_where("reference_domains_json IS NOT NULL AND reference_domains_json != '[]'")
+    if "affected_products_json" in columns:
+        counts["with_products"] = _count_where("affected_products_json IS NOT NULL AND affected_products_json != '[]'")
+    cvss_any = []
+    if "cvss_v31_json" in columns:
+        cvss_any.append("cvss_v31_json IS NOT NULL")
+        counts["has_v31"] = _count_where("cvss_v31_json IS NOT NULL")
+    if "cvss_v40_json" in columns:
+        cvss_any.append("cvss_v40_json IS NOT NULL")
+        counts["has_v40"] = _count_where("cvss_v40_json IS NOT NULL")
+    if "cvss_v31_list_json" in columns:
+        cvss_any.append("cvss_v31_list_json IS NOT NULL")
+        counts["has_v31_list"] = _count_where("cvss_v31_list_json IS NOT NULL")
+    if "cvss_v40_list_json" in columns:
+        cvss_any.append("cvss_v40_list_json IS NOT NULL")
+        counts["has_v40_list"] = _count_where("cvss_v40_list_json IS NOT NULL")
+    if "preferred_base_score" in columns:
+        cvss_any.append("preferred_base_score IS NOT NULL")
+    counts["has_any_cvss"] = _count_where(" OR ".join(cvss_any)) if cvss_any else 0
+
+    where_missing = []
+    if "description_text" in columns:
+        where_missing.append("(description_text IS NULL OR description_text = '')")
+    if "reference_domains_json" in columns:
+        where_missing.append("(reference_domains_json IS NULL OR reference_domains_json = '[]')")
+    if "affected_products_json" in columns:
+        where_missing.append("(affected_products_json IS NULL OR affected_products_json = '[]')")
+    if cvss_any:
+        parts = []
+        if "cvss_v31_json" in columns:
+            parts.append("cvss_v31_json IS NULL")
+        if "cvss_v40_json" in columns:
+            parts.append("cvss_v40_json IS NULL")
+        if "cvss_v31_list_json" in columns:
+            parts.append("cvss_v31_list_json IS NULL")
+        if "cvss_v40_list_json" in columns:
+            parts.append("cvss_v40_list_json IS NULL")
+        if "preferred_base_score" in columns:
+            parts.append("preferred_base_score IS NULL")
+        where_missing.append("(" + " AND ".join(parts) + ")")
+
+    missing: list[dict[str, object]] = []
+    missing_by_category: dict[str, list[str]] = {
+        "description": [],
+        "products": [],
+        "domains": [],
+        "cvss": [],
+    }
+    if where_missing:
+        cursor = conn.execute(
+            f"""
+            SELECT cve_id, description_text, affected_products_json, reference_domains_json,
+                   cvss_v31_json, cvss_v40_json, cvss_v31_list_json, cvss_v40_list_json,
+                   preferred_base_score
+            FROM cves
+            WHERE {" OR ".join(where_missing)}
+            ORDER BY published_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        for (
+            cve_id,
+            description_text,
+            affected_products_json,
+            reference_domains_json,
+            cvss_v31_json,
+            cvss_v40_json,
+            cvss_v31_list_json,
+            cvss_v40_list_json,
+            preferred_base_score,
+        ) in cursor.fetchall():
+            missing_fields = []
+            if "description_text" in columns and not (description_text or "").strip():
+                missing_fields.append("description")
+                missing_by_category["description"].append(cve_id)
+            if "affected_products_json" in columns and (not affected_products_json or affected_products_json == "[]"):
+                missing_fields.append("products")
+                missing_by_category["products"].append(cve_id)
+            if "reference_domains_json" in columns and (not reference_domains_json or reference_domains_json == "[]"):
+                missing_fields.append("domains")
+                missing_by_category["domains"].append(cve_id)
+            has_cvss = any(
+                value is not None
+                for value in (
+                    cvss_v31_json,
+                    cvss_v40_json,
+                    cvss_v31_list_json,
+                    cvss_v40_list_json,
+                    preferred_base_score,
+                )
+            )
+            if not has_cvss:
+                missing_fields.append("cvss")
+                missing_by_category["cvss"].append(cve_id)
+            missing.append({"cve_id": cve_id, "missing": missing_fields})
+    return {"counts": counts, "missing": missing, "missing_by_category": missing_by_category}
 
 
 def update_article_content(

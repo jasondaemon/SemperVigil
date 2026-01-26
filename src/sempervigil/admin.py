@@ -19,6 +19,7 @@ from .config import (
     bootstrap_cve_settings,
     bootstrap_events_settings,
     bootstrap_runtime_config,
+    apply_runtime_config_patch,
     get_cve_settings,
     get_runtime_config,
     get_state_db_path,
@@ -28,7 +29,7 @@ from .config import (
 )
 from .admin_ui import TEMPLATES, ui_router
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
-from .storage import enqueue_job, get_source_run_streaks, init_db, list_jobs, cancel_job, cancel_all_jobs, count_articles_total
+from .storage import enqueue_job, get_source_run_streaks, init_db, list_jobs, cancel_job, cancel_all_jobs, count_articles_total, get_schema_version, count_table, get_last_job_by_type
 from .cve_filters import CveSignals, matches_filters
 from .cve_sync import CveSyncConfig, isoformat_utc, preview_cves
 from .storage import (
@@ -51,8 +52,11 @@ from .storage import (
     list_events,
     list_events_for_product,
     list_source_health_events,
+    list_llm_runs,
+    insert_llm_run,
     query_products,
     backfill_products_from_cves,
+    cve_data_completeness,
     search_articles,
     search_cves,
 )
@@ -178,6 +182,11 @@ class ClearRequest(BaseModel):
     delete_files: bool = False
 
 
+class SmokeRequest(BaseModel):
+    sources_limit: int = 2
+    per_source_limit: int = 10
+
+
 @app.get("/")
 def root() -> dict[str, str]:
     return {"service": "SemperVigil Admin API"}
@@ -210,6 +219,16 @@ def runtime_config_set(payload: RuntimeConfigRequest) -> dict[str, object]:
     except ConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "ok"}
+
+
+@app.put("/admin/api/config/patch", dependencies=[Depends(_require_admin_token)])
+def runtime_config_patch(payload: RuntimeConfigRequest) -> dict[str, object]:
+    conn = _get_conn()
+    try:
+        cfg = apply_runtime_config_patch(conn, payload.config)
+    except ConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "ok", "config": cfg}
 
 
 @app.get("/admin/api/cves/settings", dependencies=[Depends(_require_admin_token)])
@@ -270,6 +289,12 @@ def cve_settings_test(payload: CveTestRequest) -> dict[str, object]:
     result["start"] = start_iso
     result["end"] = end_iso
     return result
+
+
+@app.get("/admin/api/cves/completeness", dependencies=[Depends(_require_admin_token)])
+def cve_completeness(limit: int = 20) -> dict[str, object]:
+    conn = _get_conn()
+    return cve_data_completeness(conn, limit=limit)
 
 
 @app.get("/ui/login")
@@ -373,6 +398,89 @@ def cancel_all_jobs_api(request: Request) -> dict[str, object]:
         canceled=canceled,
     )
     return {"status": "ok", "canceled": canceled}
+
+
+@app.get("/admin/api/debug/overview", dependencies=[Depends(_require_admin_token)])
+def debug_overview() -> dict[str, object]:
+    conn = _get_conn()
+    counts = {
+        "articles": count_table(conn, "articles"),
+        "article_tags": count_table(conn, "article_tags"),
+        "cves": count_table(conn, "cves"),
+        "vendors": count_table(conn, "vendors"),
+        "products": count_table(conn, "products"),
+        "cve_products": count_table(conn, "cve_products"),
+        "cve_product_versions": count_table(conn, "cve_product_versions"),
+        "events": count_table(conn, "events"),
+        "event_items": count_table(conn, "event_items"),
+        "jobs": count_table(conn, "jobs"),
+        "source_health_history": count_table(conn, "source_health_history"),
+        "llm_runs": count_table(conn, "llm_runs"),
+    }
+    last_jobs = [
+        {
+            "id": job.id,
+            "job_type": job.job_type,
+            "status": job.status,
+            "requested_at": job.requested_at,
+            "started_at": job.started_at,
+            "finished_at": job.finished_at,
+            "error": job.error,
+        }
+        for job in list_jobs(conn, limit=10)
+    ]
+    last_build = get_last_job_by_type(conn, "build_site")
+    last_build_job = None
+    if last_build:
+        last_build_job = {
+            "id": last_build.id,
+            "status": last_build.status,
+            "requested_at": last_build.requested_at,
+            "started_at": last_build.started_at,
+            "finished_at": last_build.finished_at,
+            "error": last_build.error,
+            "result": last_build.result or {},
+        }
+    last_cve = get_last_job_by_type(conn, "cve_sync")
+    last_article_ingest = get_last_job_by_type(conn, "ingest_source")
+    return {
+        "db_schema_version": get_schema_version(conn),
+        "counts": counts,
+        "last_jobs": last_jobs,
+        "last_build_job": last_build_job,
+        "last_llm_runs": list_llm_runs(conn, limit=10),
+        "last_cve_sync": {
+            "job_id": last_cve.id,
+            "status": last_cve.status,
+            "finished_at": last_cve.finished_at,
+            "result": last_cve.result or {},
+        }
+        if last_cve
+        else None,
+        "last_article_ingest": {
+            "job_id": last_article_ingest.id,
+            "status": last_article_ingest.status,
+            "finished_at": last_article_ingest.finished_at,
+            "result": last_article_ingest.result or {},
+        }
+        if last_article_ingest
+        else None,
+    }
+
+
+@app.post("/admin/api/debug/smoke", dependencies=[Depends(_require_admin_token)])
+def debug_smoke(payload: SmokeRequest) -> dict[str, object]:
+    conn = _get_conn()
+    job_id = enqueue_job(
+        conn,
+        "smoke_test",
+        {
+            "sources_limit": int(payload.sources_limit),
+            "per_source_limit": int(payload.per_source_limit),
+        },
+        debounce=True,
+    )
+    return {"job_id": job_id}
 
 
 @app.get("/jobs")
@@ -632,14 +740,20 @@ def sources_health_history(source_id: str, limit: int = 50) -> list[dict[str, ob
 @app.get("/admin/analytics/articles_per_day", dependencies=[Depends(_require_admin_token)])
 def analytics_articles_per_day(days: int = 30) -> dict[str, object]:
     conn = _get_conn()
-    since_day = (datetime.now(tz=timezone.utc) - timedelta(days=days)).date().isoformat()
-    return {"days": days, "data": list_articles_per_day(conn, since_day)}
+    try:
+        since_day = (datetime.now(tz=timezone.utc) - timedelta(days=days)).date().isoformat()
+        return {"days": days, "data": list_articles_per_day(conn, since_day)}
+    except Exception as exc:  # noqa: BLE001
+        return {"days": days, "data": [], "error": str(exc)}
 
 
 @app.get("/admin/analytics/source_stats", dependencies=[Depends(_require_admin_token)])
 def analytics_source_stats(days: int = 7, runs: int = 20) -> dict[str, object]:
     conn = _get_conn()
-    return {"days": days, "runs": runs, "data": get_source_stats(conn, days, runs)}
+    try:
+        return {"days": days, "runs": runs, "data": get_source_stats(conn, days, runs)}
+    except Exception as exc:  # noqa: BLE001
+        return {"days": days, "runs": runs, "data": [], "error": str(exc)}
 
 
 @app.get("/admin/api/cves", dependencies=[Depends(_require_admin_token)])
@@ -680,6 +794,7 @@ def api_cves(
             products=item.get("affected_products") or [],
             cpes=item.get("affected_cpes") or [],
             reference_domains=item.get("reference_domains") or [],
+            product_versions=item.get("product_versions") or [],
         )
         item["in_scope"] = matches_filters(
             preferred_score=item.get("preferred_base_score"),
@@ -1303,7 +1418,39 @@ def build_brief(payload: DailyBriefRequest, _: None = Depends(_require_admin_tok
 def api_ai_test(payload: AiTestRequest) -> dict[str, object]:
     conn = _get_conn()
     logger = logging.getLogger("sempervigil.admin")
+    input_chars = len(payload.prompt or "")
     try:
-        return test_model(conn, payload.provider_id, payload.model_id, payload.prompt, logger)
+        result = test_model(conn, payload.provider_id, payload.model_id, payload.prompt, logger)
+        run_id = insert_llm_run(
+            conn,
+            job_id=None,
+            provider_id=payload.provider_id,
+            model_id=payload.model_id,
+            prompt_name="ai_test",
+            input_chars=input_chars,
+            output_chars=len(result.get("output") or ""),
+            latency_ms=int(result.get("latency_ms") or 0),
+            ok=True,
+            error=None,
+        )
+        return {**result, "run_id": run_id}
     except Exception as exc:  # noqa: BLE001
+        run_id = insert_llm_run(
+            conn,
+            job_id=None,
+            provider_id=payload.provider_id,
+            model_id=payload.model_id,
+            prompt_name="ai_test",
+            input_chars=input_chars,
+            output_chars=0,
+            latency_ms=None,
+            ok=False,
+            error=str(exc),
+        )
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/admin/api/ai/runs", dependencies=[Depends(_require_admin_token)])
+def api_ai_runs(limit: int = 10) -> dict[str, object]:
+    conn = _get_conn()
+    return {"items": list_llm_runs(conn, limit=limit)}

@@ -21,6 +21,7 @@ SEMPERVIGIL_KEY_ID=v1</pre>
 
   <section class="panel" id="ai-providers">
     <h3>Providers</h3>
+    <p class="muted">Configure endpoints and credentials for each LLM provider.</p>
     <form id="provider-form" class="grid">
       <label>ID (optional)<input type="text" id="provider-id"></label>
       <label>Name<input type="text" id="provider-name" required></label>
@@ -100,10 +101,26 @@ SEMPERVIGIL_KEY_ID=v1</pre>
       </div>
     </form>
     <pre class="mono" id="ai-test-output"></pre>
+    <h4>Recent LLM Runs</h4>
+    <table class="table" id="ai-runs-table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Provider</th>
+          <th>Model</th>
+          <th>Prompt</th>
+          <th>Latency</th>
+          <th>Status</th>
+          <th>Error</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
   </section>
 
   <section class="panel" id="ai-models">
     <h3>Models</h3>
+    <p class="muted">Define available models for each provider.</p>
     <form id="model-form" class="grid">
       <label>ID (optional)<input type="text" id="model-id"></label>
       <label>Provider
@@ -152,6 +169,7 @@ SEMPERVIGIL_KEY_ID=v1</pre>
 
   <section class="panel" id="ai-prompts">
     <h3>Prompts</h3>
+    <p class="muted">Reusable prompt templates for pipeline tasks.</p>
     <form id="prompt-form" class="grid">
       <label>ID (optional)<input type="text" id="prompt-id"></label>
       <label>Name<input type="text" id="prompt-name" required></label>
@@ -189,6 +207,7 @@ SEMPERVIGIL_KEY_ID=v1</pre>
 
   <section class="panel" id="ai-schemas">
     <h3>Schemas</h3>
+    <p class="muted">JSON schemas for validating structured model outputs.</p>
     <form id="schema-form" class="grid">
       <label>ID (optional)<input type="text" id="schema-id"></label>
       <label>Name<input type="text" id="schema-name" required></label>
@@ -224,6 +243,7 @@ SEMPERVIGIL_KEY_ID=v1</pre>
 
   <section class="panel" id="ai-profiles">
     <h3>Profiles</h3>
+    <p class="muted">Bundle provider, model, prompt, and schema into a single profile.</p>
     <form id="profile-form" class="grid">
       <label>ID (optional)<input type="text" id="profile-id"></label>
       <label>Name<input type="text" id="profile-name" required></label>

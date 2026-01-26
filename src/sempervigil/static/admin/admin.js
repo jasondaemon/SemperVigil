@@ -419,6 +419,23 @@ function wireJobs() {
     tbody.innerHTML = "";
     jobs.forEach((job) => {
       const canCancel = job.status === "queued" || job.status === "running";
+      let resultHtml = "";
+      if (job.job_type === "build_site" && job.result) {
+        const exitCode = job.result.exit_code ?? "";
+        const stdout = job.result.stdout_tail || "";
+        const stderr = job.result.stderr_tail || "";
+        resultHtml = `
+          <div class="mono">exit=${exitCode}</div>
+          <details class="job-logs">
+            <summary>View logs</summary>
+            ${stdout ? `<div class="mono">stdout:</div><pre class="mono">${stdout}</pre>` : ""}
+            ${stderr ? `<div class="mono">stderr:</div><pre class="mono">${stderr}</pre>` : ""}
+          </details>
+        `;
+      } else {
+        const text = formatResult(job);
+        resultHtml = `<div class="truncate" title="${text}">${text}</div>`;
+      }
       const row = document.createElement("tr");
       row.innerHTML = `
         <td class="mono">${job.id}</td>
@@ -427,7 +444,7 @@ function wireJobs() {
         <td>${job.requested_at || ""}</td>
         <td>${job.started_at || ""}</td>
         <td>${job.finished_at || ""}</td>
-        <td class="truncate" title="${formatResult(job)}">${formatResult(job)}</td>
+        <td>${resultHtml}</td>
         <td>
           ${
             canCancel
@@ -497,10 +514,7 @@ function wireJobs() {
     polling = true;
     try {
       const jobs = await refreshJobs();
-      const running = jobs.some(
-        (job) =>
-          job.job_type === "build_site" && (job.status === "queued" || job.status === "running")
-      );
+      const running = jobs.some((job) => job.status === "queued" || job.status === "running");
       if (running) {
         setTimeout(() => {
           polling = false;
@@ -1323,9 +1337,23 @@ function wireCveDetail() {
       const preferredVersion = item.preferred_cvss_version || "unknown";
       const v31 = item.cvss_v31 || null;
       const v40 = item.cvss_v40 || null;
+      const v31List = item.cvss_v31_list || [];
+      const v40List = item.cvss_v40_list || [];
       const products = item.affected_products || [];
       const cpes = item.affected_cpes || [];
       const domains = item.reference_domains || [];
+      const productVersions = item.product_versions || [];
+      const otherScores = [...v31List, ...v40List]
+        .map((entry) => {
+          const version = entry.version || "unknown";
+          const type = entry.type || "";
+          const source = entry.source || "";
+          const score = entry.baseScore ?? "";
+          const severity = entry.baseSeverity || "";
+          const vector = entry.vectorString || "";
+          return `${version} ${type} ${source} ${score} ${severity} ${vector}`.trim();
+        })
+        .filter(Boolean);
       container.innerHTML = `
         <div class="kv">
           <div><strong>${item.cve_id}</strong></div>
@@ -1346,10 +1374,14 @@ function wireCveDetail() {
             v40 ? `${v40.baseScore || ""} ${v40.baseSeverity || ""} ${v40.vectorString || ""}` : "None"
           }</div>
         </div>
+        <h3>Other Scores</h3>
+        <pre class="mono">${otherScores.length ? otherScores.join("\\n") : "None"}</pre>
         <h3>Description</h3>
         <p>${item.description_text || ""}</p>
         <h3>Affected Products</h3>
         <pre class="mono">${products.length ? products.join("\\n") : "None found"}</pre>
+        <h3>Product Versions</h3>
+        <pre class="mono">${productVersions.length ? productVersions.join("\\n") : "None found"}</pre>
         <h3>Affected CPEs</h3>
         <pre class="mono">${cpes.length ? cpes.join("\\n") : "None found"}</pre>
         <h3>Reference Domains</h3>
@@ -1446,6 +1478,8 @@ function wireCveSettings() {
   const runNow = document.getElementById("cve-run-now");
   const testNow = document.getElementById("cve-test-now");
   const testOutput = document.getElementById("cve-test-output");
+  const completenessCards = document.getElementById("cve-completeness-cards");
+  const missingTable = document.querySelector("#cve-missing-table tbody");
   if (runNow) {
     runNow.addEventListener("click", async () => {
       try {
@@ -1475,7 +1509,47 @@ function wireCveSettings() {
     });
   }
 
-  load().catch((err) => {
+  async function loadCompleteness() {
+    if (!completenessCards || !missingTable) {
+      return;
+    }
+    const data = await apiFetch("/admin/api/cves/completeness?limit=20");
+    const counts = data.counts || {};
+    completenessCards.innerHTML = "";
+    [
+      ["Total", counts.total ?? 0],
+      ["With Description", counts.with_description ?? 0],
+      ["Good Description", counts.good_description ?? 0],
+      ["With Products", counts.with_products ?? 0],
+      ["With Domains", counts.with_domains ?? 0],
+      ["Has Any CVSS", counts.has_any_cvss ?? 0],
+      ["Has v3.1", counts.has_v31 ?? 0],
+      ["Has v4.0", counts.has_v40 ?? 0],
+    ].forEach(([label, value]) => {
+      const card = document.createElement("div");
+      card.className = "stat-card";
+      card.innerHTML = `<div class="stat-label">${label}</div><div class="stat-value">${value}</div>`;
+      completenessCards.appendChild(card);
+    });
+    const byCategory = data.missing_by_category || {};
+    const rows = [];
+    ["description", "products", "domains", "cvss"].forEach((key) => {
+      (byCategory[key] || []).forEach((cveId) => {
+        rows.push({ cve_id: cveId, missing: key });
+      });
+    });
+    missingTable.innerHTML = "";
+    rows.slice(0, 20).forEach((item) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td><a href="/ui/cves/${item.cve_id}">${item.cve_id}</a></td>
+        <td>${item.missing}</td>
+      `;
+      missingTable.appendChild(row);
+    });
+  }
+
+  Promise.all([load(), loadCompleteness()]).catch((err) => {
     error.textContent = err.message || String(err);
     error.style.display = "block";
   });
@@ -2153,6 +2227,159 @@ function wireDangerZone() {
   setup("danger-events", "DELETE_ALL_EVENTS", "/admin/api/admin/clear/events", false);
   setup("danger-all", "DELETE_ALL_CONTENT", "/admin/api/admin/clear/all", true);
 }
+
+function wireDebug() {
+  const cards = document.getElementById("debug-cards");
+  if (!cards) {
+    return;
+  }
+  const error = document.getElementById("debug-error");
+  const refresh = document.getElementById("debug-refresh");
+  const smoke = document.getElementById("debug-smoke");
+  const buildNow = document.getElementById("debug-build");
+  const jobsBody = document.querySelector("#debug-jobs-table tbody");
+  const buildEl = document.getElementById("debug-build");
+  const cveEl = document.getElementById("debug-cve-sync");
+  const ingestEl = document.getElementById("debug-ingest");
+  const llmBody = document.querySelector("#debug-llm-table tbody");
+
+  function renderCards(data) {
+    cards.innerHTML = "";
+    const items = [
+      ["Schema", data.db_schema_version || "unknown"],
+      ["Articles", data.counts?.articles ?? 0],
+      ["Article Tags", data.counts?.article_tags ?? 0],
+      ["CVEs", data.counts?.cves ?? 0],
+      ["Vendors", data.counts?.vendors ?? 0],
+      ["Products", data.counts?.products ?? 0],
+      ["CVE Products", data.counts?.cve_products ?? 0],
+      ["CVE Product Versions", data.counts?.cve_product_versions ?? 0],
+      ["Events", data.counts?.events ?? 0],
+      ["Event Items", data.counts?.event_items ?? 0],
+      ["Jobs", data.counts?.jobs ?? 0],
+      ["Health Runs", data.counts?.source_health_history ?? 0],
+      ["LLM Runs", data.counts?.llm_runs ?? 0],
+    ];
+    items.forEach(([label, value]) => {
+      const card = document.createElement("div");
+      card.className = "stat-card";
+      card.innerHTML = `<div class="stat-label">${label}</div><div class="stat-value">${value}</div>`;
+      cards.appendChild(card);
+    });
+  }
+
+  function renderJobs(rows) {
+    if (!jobsBody) {
+      return;
+    }
+    jobsBody.innerHTML = "";
+    rows.forEach((job) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td class="mono">${job.id}</td>
+        <td>${job.job_type}</td>
+        <td>${job.status}</td>
+        <td>${job.requested_at || ""}</td>
+        <td>${job.started_at || ""}</td>
+        <td>${job.finished_at || ""}</td>
+        <td class="truncate" title="${job.error || ""}">${job.error || ""}</td>
+      `;
+      jobsBody.appendChild(row);
+    });
+  }
+
+  function renderLlmRuns(rows) {
+    if (!llmBody) {
+      return;
+    }
+    llmBody.innerHTML = "";
+    rows.forEach((run) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${run.ts || ""}</td>
+        <td>${run.provider_id || ""}</td>
+        <td>${run.model_id || ""}</td>
+        <td>${run.prompt_name || ""}</td>
+        <td>${run.latency_ms || ""}</td>
+        <td>${run.ok ? "ok" : "error"}</td>
+        <td class="truncate" title="${run.error || ""}">${run.error || ""}</td>
+      `;
+      llmBody.appendChild(row);
+    });
+  }
+
+  async function loadOverview() {
+    if (error) {
+      error.style.display = "none";
+      error.textContent = "";
+    }
+    const data = await apiFetch("/admin/api/debug/overview");
+    renderCards(data);
+    renderJobs(data.last_jobs || []);
+    renderLlmRuns(data.last_llm_runs || []);
+    if (buildEl) {
+      buildEl.textContent = JSON.stringify(data.last_build_job || {}, null, 2);
+    }
+    if (cveEl) {
+      cveEl.textContent = JSON.stringify(data.last_cve_sync || {}, null, 2);
+    }
+    if (ingestEl) {
+      ingestEl.textContent = JSON.stringify(data.last_article_ingest || {}, null, 2);
+    }
+  }
+
+  if (refresh) {
+    refresh.addEventListener("click", () => {
+      loadOverview().catch((err) => {
+        if (error) {
+          error.textContent = err.message || String(err);
+          error.style.display = "block";
+        }
+      });
+    });
+  }
+
+  if (smoke) {
+    smoke.addEventListener("click", async () => {
+      try {
+        const data = await apiFetch("/admin/api/debug/smoke", {
+          method: "POST",
+          body: JSON.stringify({}),
+        });
+        showToast(`Smoke test enqueued: ${data.job_id}`);
+      } catch (err) {
+        if (error) {
+          error.textContent = err.message || String(err);
+          error.style.display = "block";
+        }
+      }
+    });
+  }
+
+  if (buildNow) {
+    buildNow.addEventListener("click", async () => {
+      try {
+        const data = await apiFetch("/jobs/enqueue", {
+          method: "POST",
+          body: JSON.stringify({ job_type: "build_site" }),
+        });
+        showToast(`Build enqueued: ${data.job_id}`);
+      } catch (err) {
+        if (error) {
+          error.textContent = err.message || String(err);
+          error.style.display = "block";
+        }
+      }
+    });
+  }
+
+  loadOverview().catch((err) => {
+    if (error) {
+      error.textContent = err.message || String(err);
+      error.style.display = "block";
+    }
+  });
+}
 async function wireAnalytics() {
   const chartEl = document.getElementById("articles-chart");
   const error = document.getElementById("analytics-error");
@@ -2161,6 +2388,13 @@ async function wireAnalytics() {
   }
   try {
     const data = await apiFetch("/admin/analytics/articles_per_day?days=30");
+    if (data.error) {
+      if (error) {
+        error.textContent = data.error;
+        error.style.display = "block";
+      }
+      return;
+    }
     const labels = data.data.map((row) => row.day);
     const counts = data.data.map((row) => row.count);
     new Chart(chartEl, {
@@ -2185,6 +2419,13 @@ async function wireAnalytics() {
     });
 
     const stats = await apiFetch("/admin/analytics/source_stats?days=7&runs=20");
+    if (stats.error) {
+      if (error) {
+        error.textContent = stats.error;
+        error.style.display = "block";
+      }
+      return;
+    }
     const table = document.querySelector("#source-stats tbody");
     if (table) {
       table.innerHTML = stats.data
@@ -2247,6 +2488,28 @@ function wireAiTest() {
   const modelField = document.getElementById("ai-test-model");
   const promptField = document.getElementById("ai-test-prompt");
   const output = document.getElementById("ai-test-output");
+  const runsBody = document.querySelector("#ai-runs-table tbody");
+
+  async function loadRuns() {
+    if (!runsBody) {
+      return;
+    }
+    const data = await apiFetch("/admin/api/ai/runs?limit=10");
+    runsBody.innerHTML = "";
+    (data.items || []).forEach((run) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${run.ts || ""}</td>
+        <td>${run.provider_id || ""}</td>
+        <td>${run.model_id || ""}</td>
+        <td>${run.prompt_name || ""}</td>
+        <td>${run.latency_ms || ""}</td>
+        <td>${run.ok ? "ok" : "error"}</td>
+        <td class="truncate" title="${run.error || ""}">${run.error || ""}</td>
+      `;
+      runsBody.appendChild(row);
+    });
+  }
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -2265,12 +2528,15 @@ function wireAiTest() {
       if (output) {
         output.textContent = JSON.stringify(payload, null, 2);
       }
+      loadRuns().catch((err) => console.error(err));
     } catch (err) {
       if (output) {
         output.textContent = err.message || String(err);
       }
     }
   });
+
+  loadRuns().catch((err) => console.error(err));
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -2298,4 +2564,5 @@ document.addEventListener("DOMContentLoaded", () => {
   wireProducts();
   wireProductDetail();
   wireDangerZone();
+  wireDebug();
 });

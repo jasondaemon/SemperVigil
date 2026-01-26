@@ -97,6 +97,7 @@ def run_once(builder_id: str) -> int:
         "stdout_tail": _tail(stdout),
         "stderr_tail": _tail(stderr),
         "duration_s": duration,
+        "output_path": "/site/public",
     }
     if complete_job(conn, job.id, result=result_payload):
         log_event(logger, logging.INFO, "build_succeeded", job_id=job.id)

@@ -27,8 +27,8 @@ def test_fetch_article_missing_url_fails(tmp_path, monkeypatch):
         (
             "source-1",
             "stable-1",
-            None,
-            None,
+            "",
+            "",
             "Title",
             None,
             None,
@@ -55,9 +55,8 @@ def test_fetch_article_missing_url_fails(tmp_path, monkeypatch):
     )
     job = claim_next_job(conn, "worker-1", allowed_types=["fetch_article_content"])
     logger = logging.getLogger("test")
-    try:
-        _handle_fetch_article_content(conn, config, job, job.payload, logger=logger)
-    except ValueError as exc:
-        assert str(exc) == "article_not_found"
-    else:
-        raise AssertionError("expected article_not_found")
+    result = _handle_fetch_article_content(conn, config, job, job.payload, logger=logger)
+    assert result["requeued"] is True
+    assert result["reason"] == "article_url_missing"
+    row = conn.execute("SELECT status FROM jobs WHERE id = ?", (job.id,)).fetchone()
+    assert row[0] == "queued"

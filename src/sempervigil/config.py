@@ -228,11 +228,21 @@ def get_runtime_config(conn) -> dict[str, Any]:
 
 
 def set_runtime_config(conn, cfg: dict[str, Any]) -> None:
-    cfg = _upgrade_runtime_config(cfg)
     errors = validate_runtime_config(cfg)
     if errors:
         raise ConfigError("Invalid config.runtime: " + "; ".join(errors))
     set_setting(conn, CONFIG_KEY, _deep_copy(cfg))
+
+
+def apply_runtime_config_patch(conn, patch: dict[str, Any]) -> dict[str, Any]:
+    current = get_runtime_config(conn)
+    merged = _deep_copy(current)
+    _merge_missing(merged, patch)
+    errors = validate_runtime_config(merged)
+    if errors:
+        raise ConfigError("Invalid config.runtime: " + "; ".join(errors))
+    set_setting(conn, CONFIG_KEY, _deep_copy(merged))
+    return merged
 
 
 def _upgrade_runtime_config(cfg: dict[str, Any]) -> dict[str, Any]:

@@ -295,6 +295,9 @@ def _get_migrations() -> list[tuple[str, Migration]]:
         ("009_products_catalog", _migration_products_catalog),
         ("010_events", _migration_events),
         ("011_product_key_normalize", _migration_product_key_normalize),
+        ("012_llm_runs", _migration_llm_runs),
+        ("013_cvss_lists", _migration_cvss_lists),
+        ("014_cve_product_versions", _migration_cve_product_versions),
     ]
 
 
@@ -576,6 +579,58 @@ def _migration_product_key_normalize(conn: sqlite3.Connection) -> None:
             "UPDATE products SET product_key = ? WHERE id = ?",
             (product_key, product_id),
         )
+
+
+def _migration_llm_runs(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS llm_runs (
+            id TEXT PRIMARY KEY,
+            ts TEXT NOT NULL,
+            job_id TEXT NULL,
+            provider_id TEXT NULL,
+            model_id TEXT NULL,
+            prompt_name TEXT NULL,
+            input_chars INTEGER NULL,
+            output_chars INTEGER NULL,
+            latency_ms INTEGER NULL,
+            ok INTEGER NOT NULL,
+            error TEXT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_runs_ts ON llm_runs(ts DESC)")
+
+
+def _migration_cvss_lists(conn: sqlite3.Connection) -> None:
+    if not _table_exists(conn, "cves"):
+        return
+    columns = _table_columns(conn, "cves")
+    if "cvss_v31_list_json" not in columns:
+        conn.execute("ALTER TABLE cves ADD COLUMN cvss_v31_list_json TEXT NULL")
+    if "cvss_v40_list_json" not in columns:
+        conn.execute("ALTER TABLE cves ADD COLUMN cvss_v40_list_json TEXT NULL")
+
+
+def _migration_cve_product_versions(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cve_product_versions (
+            cve_id TEXT NOT NULL REFERENCES cves(cve_id),
+            product_id INTEGER NOT NULL REFERENCES products(id),
+            version TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'nvd',
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (cve_id, product_id, version)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cve_product_versions_product ON cve_product_versions(product_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cve_product_versions_cve ON cve_product_versions(cve_id)"
+    )
 
 
 def _migrate_legacy_sources(conn: sqlite3.Connection) -> None:
