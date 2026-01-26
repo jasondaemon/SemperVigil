@@ -507,6 +507,8 @@ def _cmd_cve_sync(args: argparse.Namespace, logger: logging.Logger) -> int:
             backoff_seconds=float(settings.get("backoff_seconds", 2.0)),
             max_retries=int(settings.get("max_retries", 3)),
             prefer_v4=bool(settings.get("prefer_v4", True)),
+            scope_min_cvss=config.scope.min_cvss,
+            watchlist_enabled=config.personalization.watchlist_enabled,
             api_key=os.environ.get("NVD_API_KEY"),
             filters=settings.get("filters") or {},
         ),

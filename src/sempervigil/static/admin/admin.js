@@ -46,22 +46,47 @@ function wireDashboard() {
       {
         label: "Articles missing content",
         value: data.articles_missing_content_count || 0,
-        link: "/ui/content?type=articles",
+        link: "/ui/content?type=article&missing=content",
+      },
+      {
+        label: "Articles pending fetch",
+        value: data.articles_pending_fetch || 0,
+        link: "/ui/jobs",
       },
       {
         label: "Articles with content error",
         value: data.articles_with_content_error_count || 0,
-        link: "/ui/content?type=articles",
+        link: "/ui/content?type=article&content_error=1",
+      },
+      {
+        label: "Articles pending summarize",
+        value: data.articles_pending_summarize || 0,
+        link: "/ui/jobs",
       },
       {
         label: "Articles missing summary",
         value: data.articles_missing_summary_count || 0,
-        link: "/ui/content?type=articles",
+        link: "/ui/content?type=article&missing=summary",
+      },
+      {
+        label: "Articles pending publish",
+        value: data.articles_pending_publish || 0,
+        link: "/ui/jobs",
       },
       {
         label: "CVEs missing description",
         value: data.cves_missing_description_count || 0,
-        link: "/ui/cves",
+        link: "/ui/content?type=cve&missing=description",
+      },
+      {
+        label: "LLM configured",
+        value: data.llm_configured ? "yes" : "no",
+        link: "/ui/ai",
+      },
+      {
+        label: "LLM stages active",
+        value: `${data.llm_stage_active || 0}/${data.llm_stage_total || 0}`,
+        link: "/ui/ai",
       },
     ];
     items.forEach((item) => {
@@ -161,6 +186,238 @@ function wireLogs() {
   }, 4000);
 
   loadLogs().catch((err) => showToast(err.message || String(err)));
+}
+
+function wireWatchlist() {
+  const vendorTable = document.getElementById("watch-vendors-table");
+  const productTable = document.getElementById("watch-products-table");
+  if (!vendorTable || !productTable) {
+    return;
+  }
+  const vendorForm = document.getElementById("watch-vendor-form");
+  const vendorInput = document.getElementById("watch-vendor-name");
+  const productForm = document.getElementById("watch-product-form");
+  const productInput = document.getElementById("watch-product-name");
+  const productVendor = document.getElementById("watch-product-vendor");
+  const productMode = document.getElementById("watch-product-mode");
+  const suggestVendors = document.getElementById("watch-suggest-vendors");
+  const suggestProducts = document.getElementById("watch-suggest-products");
+  const recomputeBtn = document.getElementById("watch-recompute");
+
+  function renderVendors(items) {
+    const tbody = vendorTable.querySelector("tbody");
+    tbody.innerHTML = "";
+    items.forEach((item) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td><input type="checkbox" class="watch-vendor-toggle" data-id="${item.id}" ${item.enabled ? "checked" : ""}></td>
+        <td>${item.display_name}</td>
+        <td><button class="btn small danger watch-vendor-delete" data-id="${item.id}">Delete</button></td>
+      `;
+      tbody.appendChild(row);
+    });
+  }
+
+  function renderProducts(items) {
+    const tbody = productTable.querySelector("tbody");
+    tbody.innerHTML = "";
+    items.forEach((item) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td><input type="checkbox" class="watch-product-toggle" data-id="${item.id}" ${item.enabled ? "checked" : ""}></td>
+        <td>${item.vendor_norm || ""}</td>
+        <td>${item.display_name}</td>
+        <td>
+          <select class="watch-product-mode" data-id="${item.id}">
+            <option value="exact" ${item.match_mode === "exact" ? "selected" : ""}>exact</option>
+            <option value="contains" ${item.match_mode === "contains" ? "selected" : ""}>contains</option>
+          </select>
+        </td>
+        <td><button class="btn small danger watch-product-delete" data-id="${item.id}">Delete</button></td>
+      `;
+      tbody.appendChild(row);
+    });
+  }
+
+  function renderSuggestions(data) {
+    if (suggestVendors) {
+      suggestVendors.innerHTML = "";
+      (data.vendors || []).forEach((item) => {
+        const li = document.createElement("li");
+        li.innerHTML = `<button class="btn small secondary watch-suggest-vendor" data-name="${item.display_name}">Add</button> ${item.display_name} (${item.count})`;
+        suggestVendors.appendChild(li);
+      });
+    }
+    if (suggestProducts) {
+      suggestProducts.innerHTML = "";
+      (data.products || []).forEach((item) => {
+        const li = document.createElement("li");
+        li.innerHTML = `<button class="btn small secondary watch-suggest-product" data-name="${item.display_name}" data-vendor="${item.vendor_norm}">Add</button> ${item.display_name} (${item.count})`;
+        suggestProducts.appendChild(li);
+      });
+    }
+  }
+
+  async function refreshAll() {
+    const vendors = await apiFetch("/admin/api/watchlist/vendors");
+    renderVendors(vendors.items || []);
+    const products = await apiFetch("/admin/api/watchlist/products");
+    renderProducts(products.items || []);
+    const suggestions = await apiFetch("/admin/api/watchlist/suggestions");
+    renderSuggestions(suggestions);
+  }
+
+  vendorForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const name = vendorInput.value.trim();
+    if (!name) {
+      return;
+    }
+    await apiFetch("/admin/api/watchlist/vendors", {
+      method: "POST",
+      body: JSON.stringify({ display_name: name, enabled: true }),
+    });
+    vendorInput.value = "";
+    showToast("Vendor added");
+    refreshAll().catch((err) => showToast(err.message || String(err)));
+  });
+
+  productForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const name = productInput.value.trim();
+    if (!name) {
+      return;
+    }
+    const vendor = productVendor.value.trim() || null;
+    const mode = productMode.value;
+    await apiFetch("/admin/api/watchlist/products", {
+      method: "POST",
+      body: JSON.stringify({
+        display_name: name,
+        vendor_norm: vendor,
+        match_mode: mode,
+        enabled: true,
+      }),
+    });
+    productInput.value = "";
+    productVendor.value = "";
+    showToast("Product added");
+    refreshAll().catch((err) => showToast(err.message || String(err)));
+  });
+
+  vendorTable.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    if (target.classList.contains("watch-vendor-delete")) {
+      await apiFetch(`/admin/api/watchlist/vendors/${target.dataset.id}`, { method: "DELETE" });
+      showToast("Vendor removed");
+      refreshAll().catch((err) => showToast(err.message || String(err)));
+    }
+  });
+
+  vendorTable.addEventListener("change", async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) {
+      return;
+    }
+    if (!target.classList.contains("watch-vendor-toggle")) {
+      return;
+    }
+    await apiFetch(`/admin/api/watchlist/vendors/${target.dataset.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled: target.checked }),
+    });
+    showToast("Vendor updated");
+  });
+
+  productTable.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    if (target.classList.contains("watch-product-delete")) {
+      await apiFetch(`/admin/api/watchlist/products/${target.dataset.id}`, { method: "DELETE" });
+      showToast("Product removed");
+      refreshAll().catch((err) => showToast(err.message || String(err)));
+    }
+  });
+
+  productTable.addEventListener("change", async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    if (target.classList.contains("watch-product-toggle")) {
+      await apiFetch(`/admin/api/watchlist/products/${target.dataset.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled: target.checked }),
+      });
+      showToast("Product updated");
+      return;
+    }
+    if (target.classList.contains("watch-product-mode")) {
+      await apiFetch(`/admin/api/watchlist/products/${target.dataset.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled: true, match_mode: target.value }),
+      });
+      showToast("Mode updated");
+    }
+  });
+
+  if (suggestVendors) {
+    suggestVendors.addEventListener("click", async (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      if (!target.classList.contains("watch-suggest-vendor")) {
+        return;
+      }
+      const name = target.dataset.name;
+      await apiFetch("/admin/api/watchlist/vendors", {
+        method: "POST",
+        body: JSON.stringify({ display_name: name, enabled: true }),
+      });
+      showToast("Vendor added");
+      refreshAll().catch((err) => showToast(err.message || String(err)));
+    });
+  }
+
+  if (suggestProducts) {
+    suggestProducts.addEventListener("click", async (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      if (!target.classList.contains("watch-suggest-product")) {
+        return;
+      }
+      const name = target.dataset.name;
+      const vendor = target.dataset.vendor || null;
+      await apiFetch("/admin/api/watchlist/products", {
+        method: "POST",
+        body: JSON.stringify({
+          display_name: name,
+          vendor_norm: vendor,
+          match_mode: "exact",
+          enabled: true,
+        }),
+      });
+      showToast("Product added");
+      refreshAll().catch((err) => showToast(err.message || String(err)));
+    });
+  }
+
+  if (recomputeBtn) {
+    recomputeBtn.addEventListener("click", async () => {
+      await apiFetch("/admin/api/watchlist/recompute", { method: "POST" });
+      showToast("Scope recomputed");
+    });
+  }
+
+  refreshAll().catch((err) => showToast(err.message || String(err)));
 }
 
 function buildPageList(current, total) {
@@ -921,6 +1178,84 @@ function wireRuntimeConfig() {
   });
 }
 
+function wirePersonalization() {
+  const form = document.getElementById("personalization-form");
+  if (!form) {
+    return;
+  }
+  const error = document.getElementById("personalization-error");
+  const note = document.getElementById("personalization-note");
+  const watchlistEnabled = document.getElementById("watchlist-enabled");
+  const exposureMode = document.getElementById("watchlist-exposure");
+  const rssEnabled = document.getElementById("watchlist-rss-enabled");
+  const rssToken = document.getElementById("watchlist-rss-token");
+
+  function setError(message) {
+    if (!error) return;
+    if (message) {
+      error.textContent = message;
+      error.style.display = "block";
+    } else {
+      error.textContent = "";
+      error.style.display = "none";
+    }
+  }
+
+  function setNote(message) {
+    if (!note) return;
+    if (message) {
+      note.textContent = message;
+      note.style.display = "block";
+    } else {
+      note.textContent = "";
+      note.style.display = "none";
+    }
+  }
+
+  async function load() {
+    const data = await apiFetch("/admin/config/runtime");
+    const cfg = data.config || {};
+    const personalization = cfg.personalization || {};
+    if (watchlistEnabled) {
+      watchlistEnabled.checked = Boolean(personalization.watchlist_enabled);
+    }
+    if (exposureMode) {
+      exposureMode.value = personalization.watchlist_exposure_mode || "private_only";
+    }
+    if (rssEnabled) {
+      rssEnabled.checked = Boolean(personalization.rss_enabled);
+    }
+    if (rssToken) {
+      rssToken.value = personalization.rss_private_token || "";
+    }
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    setError("");
+    setNote("");
+    const patch = {
+      personalization: {
+        watchlist_enabled: Boolean(watchlistEnabled?.checked),
+        watchlist_exposure_mode: exposureMode?.value || "private_only",
+        rss_enabled: Boolean(rssEnabled?.checked),
+        rss_private_token: rssToken?.value || null,
+      },
+    };
+    try {
+      await apiFetch("/admin/api/config/patch", {
+        method: "PUT",
+        body: JSON.stringify({ config: patch }),
+      });
+      setNote("Personalization settings saved.");
+    } catch (err) {
+      setError(err.message || String(err));
+    }
+  });
+
+  load().catch((err) => setError(err.message || String(err)));
+}
+
 function parseJsonField(value, fallback) {
   if (!value) {
     return fallback;
@@ -1417,6 +1752,28 @@ function wireAiRouting() {
   });
 }
 
+function wireAiStageControls() {
+  const clearBtn = document.getElementById("ai-clear-queued");
+  const result = document.getElementById("ai-clear-queued-result");
+  if (!clearBtn) {
+    return;
+  }
+  clearBtn.addEventListener("click", async () => {
+    try {
+      const data = await apiFetch("/admin/ai/clear-queued", { method: "POST" });
+      if (result) {
+        result.textContent = `Canceled ${data.cleared || 0} queued LLM jobs.`;
+      }
+      showToast(`Canceled ${data.cleared || 0} queued LLM jobs.`);
+    } catch (err) {
+      if (result) {
+        result.textContent = err.message || String(err);
+      }
+      showToast(err.message || String(err));
+    }
+  });
+}
+
 function wireCveSearch() {
   const form = document.getElementById("cve-search-form");
   const table = document.getElementById("cve-table");
@@ -1457,6 +1814,8 @@ function wireCveSearch() {
     tbody.innerHTML = "";
     data.items.forEach((item) => {
       const row = document.createElement("tr");
+      const scopeText =
+        item.in_scope === null || item.in_scope === undefined ? "n/a" : item.in_scope ? "yes" : "no";
       row.innerHTML = `
         <td><a href="/ui/cves/${item.cve_id}">${item.cve_id}</a></td>
         <td>${item.published_at || ""}</td>
@@ -1464,7 +1823,7 @@ function wireCveSearch() {
         <td>${item.preferred_base_severity || ""}</td>
         <td>${item.preferred_base_score || ""}</td>
         <td class="truncate" title="${item.summary || ""}">${item.summary || ""}</td>
-        <td>${item.in_scope ? "yes" : "no"}</td>
+        <td>${scopeText}</td>
       `;
       tbody.appendChild(row);
     });
@@ -1500,12 +1859,23 @@ function wireCveDetail() {
   const cveId = container.dataset.cveId;
   apiFetch(`/admin/api/cves/${cveId}`)
     .then((item) => {
+      const watchlistEnabled = item.watchlist_enabled !== false;
+      const scopeBadge =
+        item.in_scope === null || item.in_scope === undefined
+          ? "Watchlist disabled"
+          : item.in_scope
+          ? "In Scope"
+          : "Out of Scope";
+      const scopeClass =
+        item.in_scope === true ? "status-ok" : item.in_scope === false ? "status-error" : "status-muted";
+      const scopeReasons = (item.scope_reasons || []).join(", ");
       const preferredVersion = item.preferred_cvss_version || "unknown";
       const v31 = item.cvss_v31 || null;
       const v40 = item.cvss_v40 || null;
       const v31List = item.cvss_v31_list || [];
       const v40List = item.cvss_v40_list || [];
       const products = item.affected_products || [];
+      const vendorProducts = item.vendor_products || [];
       const cpes = item.affected_cpes || [];
       const domains = item.reference_domains || [];
       const productVersions = item.product_versions || [];
@@ -1530,6 +1900,8 @@ function wireCveDetail() {
         item.preferred_base_severity ? `(${item.preferred_base_severity})` : ""
       }</div>
           <div>Preferred Vector: ${item.preferred_vector || ""}</div>
+          <div class="status-pill ${scopeClass}">${scopeBadge}</div>
+          ${scopeReasons ? `<div class="muted">Reasons: ${scopeReasons}</div>` : ""}
         </div>
         <h3>CVSS Versions</h3>
         <div class="kv">
@@ -1546,6 +1918,17 @@ function wireCveDetail() {
         <p>${item.description_text || ""}</p>
         <h3>Affected Products</h3>
         <pre class="mono">${products.length ? products.join("\\n") : "None found"}</pre>
+        ${vendorProducts.length && watchlistEnabled ? `
+          <div class="actions">
+            ${vendorProducts
+              .map(
+                (vp) =>
+                  `<button class="btn small secondary add-watch-vendor" data-vendor="${vp.vendor_display}">Watch Vendor ${vp.vendor_display}</button>
+                   <button class="btn small secondary add-watch-product" data-vendor="${vp.vendor_norm}" data-product="${vp.product_display}">Watch Product ${vp.product_display}</button>`
+              )
+              .join(" ")}
+          </div>
+        ` : ""}
         <h3>Product Versions</h3>
         <pre class="mono">${productVersions.length ? productVersions.join("\\n") : "None found"}</pre>
         <h3>Affected CPEs</h3>
@@ -1553,6 +1936,49 @@ function wireCveDetail() {
         <h3>Reference Domains</h3>
         <pre class="mono">${domains.length ? domains.join("\\n") : "None found"}</pre>
       `;
+      if (!watchlistEnabled) {
+        return;
+      }
+      container.querySelectorAll(".add-watch-vendor").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const name = btn.dataset.vendor;
+          if (!name) {
+            return;
+          }
+          try {
+            await apiFetch("/admin/api/watchlist/vendors", {
+              method: "POST",
+              body: JSON.stringify({ display_name: name, enabled: true }),
+            });
+            showToast(`Watching vendor ${name}`);
+          } catch (err) {
+            showToast(err.message || String(err));
+          }
+        });
+      });
+      container.querySelectorAll(".add-watch-product").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const name = btn.dataset.product;
+          const vendor = btn.dataset.vendor || "";
+          if (!name) {
+            return;
+          }
+          try {
+            await apiFetch("/admin/api/watchlist/products", {
+              method: "POST",
+              body: JSON.stringify({
+                display_name: name,
+                vendor_norm: vendor || null,
+                match_mode: "exact",
+                enabled: true,
+              }),
+            });
+            showToast(`Watching product ${name}`);
+          } catch (err) {
+            showToast(err.message || String(err));
+          }
+        });
+      });
     })
     .catch((err) => {
       container.textContent = err.message || String(err);
@@ -1733,6 +2159,12 @@ function wireContentSearch() {
   const tagList = document.getElementById("content-tag-list");
   const selectedTagsEl = document.getElementById("content-selected-tags");
   const tagsField = document.getElementById("content-tags");
+  const missingField = document.getElementById("content-missing");
+  const contentErrorField = document.getElementById("content-content-error");
+  const summaryErrorField = document.getElementById("content-summary-error");
+  const needsField = document.getElementById("content-needs");
+  const watchlistEnabled = form.dataset.watchlistEnabled === "true";
+  const watchlistOnlyField = document.getElementById("content-watchlist-only");
   let pageSize = parseInt(document.getElementById("content-page-size").value, 10);
   let currentPage = 1;
   let selectedTags = new Set();
@@ -1863,6 +2295,44 @@ function wireContentSearch() {
     pager.appendChild(info);
   }
 
+  function applyQueryParams() {
+    const params = new URLSearchParams(window.location.search);
+    const setValue = (id, key) => {
+      const el = document.getElementById(id);
+      if (el && params.has(key)) {
+        el.value = params.get(key) || "";
+      }
+    };
+    setValue("content-query", "query");
+    setValue("content-type", "type");
+    setValue("content-source", "source_id");
+    setValue("content-has-summary", "has_summary");
+    setValue("content-tags", "tags");
+    setValue("content-severity", "severity");
+    setValue("content-min-cvss", "min_cvss");
+    setValue("content-after", "after");
+    setValue("content-before", "before");
+    setValue("content-missing", "missing");
+    setValue("content-needs", "needs");
+    if (contentErrorField && params.get("content_error") === "1") {
+      contentErrorField.checked = true;
+    }
+    if (summaryErrorField && params.get("summary_error") === "1") {
+      summaryErrorField.checked = true;
+    }
+    if (watchlistOnlyField && params.get("watchlist_hit") === "true") {
+      watchlistOnlyField.checked = true;
+    }
+    const pageSizeField = document.getElementById("content-page-size");
+    if (pageSizeField && params.has("page_size")) {
+      pageSize = parseInt(params.get("page_size"), 10) || pageSize;
+      pageSizeField.value = String(pageSize);
+    }
+    if (params.has("page")) {
+      currentPage = parseInt(params.get("page"), 10) || currentPage;
+    }
+  }
+
   async function load(page) {
     currentPage = page;
     setError("");
@@ -1876,6 +2346,11 @@ function wireContentSearch() {
     const minCvss = document.getElementById("content-min-cvss").value;
     const after = document.getElementById("content-after").value;
     const before = document.getElementById("content-before").value;
+    const watchlistOnly = watchlistEnabled && watchlistOnlyField && watchlistOnlyField.checked;
+    const missing = missingField ? missingField.value : "";
+    const needs = needsField ? needsField.value : "";
+    const contentError = contentErrorField && contentErrorField.checked;
+    const summaryError = summaryErrorField && summaryErrorField.checked;
 
     if (query) params.set("query", query);
     if (type) params.set("type", type);
@@ -1886,6 +2361,11 @@ function wireContentSearch() {
     if (minCvss) params.set("min_cvss", minCvss);
     if (after) params.set("after", after);
     if (before) params.set("before", before);
+    if (missing) params.set("missing", missing);
+    if (needs) params.set("needs", needs);
+    if (contentError) params.set("content_error", "1");
+    if (summaryError) params.set("summary_error", "1");
+    if (watchlistOnly) params.set("watchlist_hit", "true");
     params.set("page", String(page));
     params.set("page_size", String(pageSize));
 
@@ -1901,12 +2381,39 @@ function wireContentSearch() {
       } else if (item.type === "cve") {
         link = `/ui/cves/${item.cve_id}`;
       }
+      const watchlistCell = watchlistEnabled
+        ? `<td>${
+            item.watchlist_hit || item.in_scope
+              ? '<span class="status-pill status-ok">hit</span>'
+              : '<span class="status-pill status-muted">-</span>'
+          }</td>`
+        : "";
+      let actions = "";
+      if (item.type === "article") {
+        const hasContent = item.has_content;
+        const hasSummary = item.has_summary;
+        const hasUrl = Boolean(item.url);
+        actions = `
+          <button class="btn small secondary action-fetch" data-article-id="${item.id}" ${
+            hasUrl ? "" : "disabled"
+          }>Fetch</button>
+          <button class="btn small secondary action-summarize" data-article-id="${item.id}" ${
+            hasContent ? "" : "disabled"
+          }>Summarize</button>
+          <button class="btn small secondary action-publish" data-article-id="${item.id}">Publish</button>
+          <button class="btn small action-pipeline" data-article-id="${item.id}">Run Pipeline</button>
+        `;
+      } else if (item.type === "cve") {
+        actions = `<button class="btn small secondary action-refresh-cve" data-cve-id="${item.cve_id}">Refresh</button>`;
+      }
       row.innerHTML = `
         <td>${item.type}</td>
         <td>${link ? `<a href="${link}">${item.type === "cve" ? item.cve_id : item.id}</a>` : ""}</td>
         <td>${date}</td>
         <td class="truncate" title="${title}">${title}</td>
         <td>${item.source_name || ""}</td>
+        ${watchlistCell}
+        <td class="actions">${actions}</td>
       `;
       tbody.appendChild(row);
     });
@@ -1923,6 +2430,44 @@ function wireContentSearch() {
     load(1).catch((err) => setError(err.message || String(err)));
   });
 
+  tbody.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    try {
+      if (target.classList.contains("action-fetch")) {
+        const articleId = target.dataset.articleId;
+        const result = await apiFetch(`/admin/api/articles/${articleId}/fetch`, { method: "POST" });
+        showToast(`${result.status}: ${result.job_id || ""}`.trim());
+      }
+      if (target.classList.contains("action-summarize")) {
+        const articleId = target.dataset.articleId;
+        const result = await apiFetch(`/admin/api/articles/${articleId}/summarize`, { method: "POST" });
+        showToast(`${result.status}: ${result.job_id || ""}`.trim());
+      }
+      if (target.classList.contains("action-publish")) {
+        const articleId = target.dataset.articleId;
+        const result = await apiFetch(`/admin/api/articles/${articleId}/publish`, { method: "POST" });
+        showToast(`${result.status}: ${result.job_id || ""}`.trim());
+      }
+      if (target.classList.contains("action-pipeline")) {
+        const articleId = target.dataset.articleId;
+        const result = await apiFetch(`/admin/api/articles/${articleId}/pipeline`, { method: "POST" });
+        const ids = result.job_ids ? result.job_ids.join(",") : result.job_id || "";
+        showToast(`${result.status}: ${ids}`.trim());
+      }
+      if (target.classList.contains("action-refresh-cve")) {
+        const cveId = target.dataset.cveId;
+        const result = await apiFetch(`/admin/api/cves/${cveId}/refresh`, { method: "POST" });
+        showToast(`${result.status}: ${result.job_id || ""}`.trim());
+      }
+    } catch (err) {
+      showToast(err.message || String(err));
+    }
+  });
+
+  applyQueryParams();
   if (tagList) {
     apiFetch("/admin/api/content/tags")
       .then((data) => renderTagList(data.tags || []))
@@ -2713,6 +3258,7 @@ document.addEventListener("DOMContentLoaded", () => {
   wireJobs();
   wireLogin();
   wireRuntimeConfig();
+  wirePersonalization();
   wireAnalytics();
   wireAiProviders();
   wireAiModels();
@@ -2720,6 +3266,7 @@ document.addEventListener("DOMContentLoaded", () => {
   wireAiSchemas();
   wireAiProfiles();
   wireAiRouting();
+  wireAiStageControls();
   wireAiTest();
   wireCveSearch();
   wireCveDetail();
@@ -2733,4 +3280,5 @@ document.addEventListener("DOMContentLoaded", () => {
   wireDangerZone();
   wireDebug();
   wireLogs();
+  wireWatchlist();
 });

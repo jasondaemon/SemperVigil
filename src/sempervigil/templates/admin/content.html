@@ -4,12 +4,12 @@
 {% block content %}
   <section class="panel">
     <h2>Content Browser</h2>
-    <form id="content-search-form" class="filters">
+    <form id="content-search-form" class="filters" data-watchlist-enabled="{{ 'true' if watchlist_enabled else 'false' }}">
       <input type="text" id="content-query" placeholder="Search title or summary">
       <select id="content-type">
         <option value="all">All</option>
-        <option value="articles">Articles</option>
-        <option value="cves">CVEs</option>
+        <option value="article">Articles</option>
+        <option value="cve">CVEs</option>
       </select>
       <select id="content-source">
         <option value="">All sources</option>
@@ -22,6 +22,27 @@
         <option value="1">Has summary</option>
         <option value="0">No summary</option>
       </select>
+      <select id="content-missing">
+        <option value="">Missing field</option>
+        <option value="content">Missing content</option>
+        <option value="summary">Missing summary</option>
+        <option value="description">Missing description (CVEs)</option>
+      </select>
+      <label class="inline-check">
+        <input type="checkbox" id="content-content-error">
+        Content error
+      </label>
+      <label class="inline-check">
+        <input type="checkbox" id="content-summary-error">
+        Summary error
+      </label>
+      <select id="content-needs">
+        <option value="">Pipeline state</option>
+        <option value="fetch">Needs fetch</option>
+        <option value="summarize">Needs summarize</option>
+        <option value="publish">Ready to publish</option>
+        <option value="attention">Needs attention</option>
+      </select>
       <input type="text" id="content-tags" placeholder="Tags (comma)">
       <select id="content-severity">
         <option value="">Any severity</option>
@@ -33,6 +54,12 @@
       <input type="number" step="0.1" id="content-min-cvss" placeholder="Min CVSS">
       <input type="date" id="content-after">
       <input type="date" id="content-before">
+      {% if watchlist_enabled %}
+      <label class="inline-check">
+        <input type="checkbox" id="content-watchlist-only">
+        Watchlist hits only
+      </label>
+      {% endif %}
       <select id="content-page-size">
         <option value="25">25</option>
         <option value="50" selected>50</option>
@@ -60,6 +87,10 @@
           <th>Date</th>
           <th>Title / Summary</th>
           <th>Source</th>
+          {% if watchlist_enabled %}
+          <th>Watchlist</th>
+          {% endif %}
+          <th>Actions</th>
         </tr>
       </thead>
       <tbody></tbody>

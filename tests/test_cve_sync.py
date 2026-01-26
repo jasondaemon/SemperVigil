@@ -65,7 +65,7 @@ def _make_cve_item(
 def test_snapshot_insert_creates_no_changes(tmp_path):
     conn = init_db(str(tmp_path / "state.sqlite3"))
     item = _make_cve_item("CVE-2025-1111", 5.0, "MEDIUM", "AV:N/AC:L")
-    result = process_cve_item(conn, item, prefer_v4=True, filters={})
+    result = process_cve_item(conn, item, prefer_v4=True, filters={}, scope_min_cvss=None, watchlist_enabled=False)
     assert result.new_snapshot is True
     assert result.change_count == 0
     assert conn.execute("SELECT COUNT(*) FROM cves").fetchone()[0] == 1
@@ -77,8 +77,8 @@ def test_severity_upgrade_detection(tmp_path):
     conn = init_db(str(tmp_path / "state.sqlite3"))
     first = _make_cve_item("CVE-2025-2222", 5.0, "MEDIUM", "AV:N/AC:L")
     second = _make_cve_item("CVE-2025-2222", 7.5, "HIGH", "AV:N/AC:L")
-    process_cve_item(conn, first, prefer_v4=True, filters={})
-    result = process_cve_item(conn, second, prefer_v4=True, filters={})
+    process_cve_item(conn, first, prefer_v4=True, filters={}, scope_min_cvss=None, watchlist_enabled=False)
+    result = process_cve_item(conn, second, prefer_v4=True, filters={}, scope_min_cvss=None, watchlist_enabled=False)
     assert result.change_count >= 1
     change = conn.execute(
         "SELECT change_type, from_severity, to_severity FROM cve_changes"
@@ -92,8 +92,8 @@ def test_vector_change_detection(tmp_path):
     conn = init_db(str(tmp_path / "state.sqlite3"))
     first = _make_cve_item("CVE-2025-3333", 5.0, "MEDIUM", "AV:N/AC:L")
     second = _make_cve_item("CVE-2025-3333", 5.0, "MEDIUM", "AV:L/AC:L")
-    process_cve_item(conn, first, prefer_v4=True, filters={})
-    process_cve_item(conn, second, prefer_v4=True, filters={})
+    process_cve_item(conn, first, prefer_v4=True, filters={}, scope_min_cvss=None, watchlist_enabled=False)
+    process_cve_item(conn, second, prefer_v4=True, filters={}, scope_min_cvss=None, watchlist_enabled=False)
     change = conn.execute(
         "SELECT change_type, vector_from, vector_to FROM cve_changes WHERE change_type = 'vector_change'"
     ).fetchone()
@@ -114,8 +114,8 @@ def test_preferred_severity_diff_on_v4_added(tmp_path):
         v40_severity="CRITICAL",
         v40_vector="AV:N/AC:L/AT:N",
     )
-    process_cve_item(conn, first, prefer_v4=True, filters={})
-    process_cve_item(conn, second, prefer_v4=True, filters={})
+    process_cve_item(conn, first, prefer_v4=True, filters={}, scope_min_cvss=None, watchlist_enabled=False)
+    process_cve_item(conn, second, prefer_v4=True, filters={}, scope_min_cvss=None, watchlist_enabled=False)
     change_types = {
         row[0]
         for row in conn.execute("SELECT change_type FROM cve_changes").fetchall()
@@ -127,8 +127,8 @@ def test_preferred_severity_diff_on_v4_added(tmp_path):
 def test_idempotent_rerun(tmp_path):
     conn = init_db(str(tmp_path / "state.sqlite3"))
     item = _make_cve_item("CVE-2025-5555", 4.0, "LOW", "AV:N/AC:L")
-    process_cve_item(conn, item, prefer_v4=True, filters={})
-    process_cve_item(conn, item, prefer_v4=True, filters={})
+    process_cve_item(conn, item, prefer_v4=True, filters={}, scope_min_cvss=None, watchlist_enabled=False)
+    process_cve_item(conn, item, prefer_v4=True, filters={}, scope_min_cvss=None, watchlist_enabled=False)
     assert conn.execute("SELECT COUNT(*) FROM cve_snapshots").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM cve_changes").fetchone()[0] == 0
 
@@ -137,7 +137,7 @@ def test_cve_sync_result_is_json_serializable(tmp_path, monkeypatch):
     conn = init_db(str(tmp_path / "state.sqlite3"))
     item = _make_cve_item("CVE-2025-6666", 6.0, "MEDIUM", "AV:N/AC:L")
 
-    def _fake_fetch_page(config, last_modified_start, last_modified_end, start_index):
+    def _fake_fetch_page(config, last_modified_start, last_modified_end, start_index, cve_id=None):
         if start_index > 0:
             return {"vulnerabilities": [], "totalResults": 1, "resultsPerPage": 1}
         return {"vulnerabilities": [{"cve": item}], "totalResults": 1, "resultsPerPage": 1}
@@ -152,6 +152,8 @@ def test_cve_sync_result_is_json_serializable(tmp_path, monkeypatch):
             backoff_seconds=0.0,
             max_retries=0,
             prefer_v4=True,
+            scope_min_cvss=None,
+            watchlist_enabled=False,
             api_key=None,
             filters={},
         ),

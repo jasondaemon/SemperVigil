@@ -4,11 +4,15 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
+from .normalize import normalize_name
+
 
 @dataclass(frozen=True)
 class CveSignals:
     vendors: list[str]
+    vendor_norms: list[str]
     products: list[str]
+    product_norms: list[str]
     product_versions: list[str]
     cpes: list[str]
     reference_domains: list[str]
@@ -51,7 +55,9 @@ def extract_signals(cve_item: dict[str, Any]) -> CveSignals:
 
     return CveSignals(
         vendors=sorted(vendors),
+        vendor_norms=sorted(_normalize_names(vendors)),
         products=sorted(products),
+        product_norms=sorted(_normalize_names(products)),
         product_versions=sorted(product_versions),
         cpes=sorted(cpes),
         reference_domains=sorted(reference_domains),
@@ -89,7 +95,9 @@ def matches_filters(
         haystack = " ".join(
             [description or ""]
             + signals.vendors
+            + signals.vendor_norms
             + signals.products
+            + signals.product_norms
             + signals.product_versions
             + signals.cpes
             + signals.reference_domains
@@ -104,6 +112,10 @@ def matches_filters(
 
 def _normalize_keywords(values: list[str]) -> list[str]:
     return [value.strip().lower() for value in values if value and value.strip()]
+
+
+def _normalize_names(values: set[str]) -> list[str]:
+    return [normalize_name(value) for value in values]
 
 
 def _collect_cpes(

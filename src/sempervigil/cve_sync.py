@@ -18,6 +18,7 @@ from .storage import (
     insert_cve_change,
     insert_cve_snapshot,
     link_cve_products_from_signals,
+    compute_scope_for_cves,
     set_setting,
     upsert_event_for_cve,
     upsert_cve,
@@ -32,6 +33,8 @@ class CveSyncConfig:
     backoff_seconds: float
     max_retries: int
     prefer_v4: bool
+    scope_min_cvss: float | None = None
+    watchlist_enabled: bool = False
     api_key: str | None = None
     filters: dict[str, Any] | None = None
 
@@ -41,6 +44,7 @@ def sync_cves(
     config: CveSyncConfig,
     last_modified_start: str,
     last_modified_end: str,
+    cve_id: str | None = None,
 ) -> dict[str, object]:
     logger = logging.getLogger("sempervigil.cve_sync")
     start_index = 0
@@ -56,6 +60,7 @@ def sync_cves(
             last_modified_start=last_modified_start,
             last_modified_end=last_modified_end,
             start_index=start_index,
+            cve_id=cve_id,
         )
         if payload is None:
             errors += 1
@@ -70,6 +75,8 @@ def sync_cves(
                 cve_item,
                 config.prefer_v4,
                 config.filters or {},
+                config.scope_min_cvss,
+                config.watchlist_enabled,
                 logger,
             )
             if processed is None:
@@ -80,6 +87,8 @@ def sync_cves(
             total_changes += processed.change_count
 
         start_index += int(payload.get("resultsPerPage", config.results_per_page))
+        if cve_id:
+            break
         if start_index >= int(payload.get("totalResults", 0)):
             break
         time.sleep(config.rate_limit_seconds)
@@ -107,6 +116,8 @@ def process_cve_item(
     cve_item: dict[str, Any],
     prefer_v4: bool,
     filters: dict[str, Any],
+    scope_min_cvss: float | None,
+    watchlist_enabled: bool,
     logger: logging.Logger | None = None,
 ) -> ProcessResult | None:
     cve_id = cve_item.get("id")
@@ -184,6 +195,8 @@ def process_cve_item(
         product_versions=signals.product_versions,
         source="nvd",
     )
+    if watchlist_enabled:
+        compute_scope_for_cves(conn, [cve_id], min_cvss=scope_min_cvss)
     events_settings = get_events_settings(conn)
     if events_settings.get("enabled", True):
         upsert_event_for_cve(
@@ -450,6 +463,7 @@ def _fetch_page(
     last_modified_start: str,
     last_modified_end: str,
     start_index: int,
+    cve_id: str | None = None,
 ) -> dict[str, Any] | None:
     params = {
         "lastModStartDate": last_modified_start,
@@ -457,6 +471,8 @@ def _fetch_page(
         "startIndex": start_index,
         "resultsPerPage": config.results_per_page,
     }
+    if cve_id:
+        params["cveId"] = cve_id
     url = f"{config.api_base}?{urlencode(params)}"
     headers = {"User-Agent": "SemperVigil/0.1"}
     if config.api_key:

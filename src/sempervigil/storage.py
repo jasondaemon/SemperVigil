@@ -854,6 +854,18 @@ def get_dashboard_metrics(conn: sqlite3.Connection) -> dict[str, object]:
         for job_type, status, count in cursor.fetchall():
             job_counts.setdefault(job_type, {})[status] = int(count or 0)
     metrics["job_counts_by_type_status"] = job_counts
+    metrics["articles_pending_fetch"] = (
+        job_counts.get("fetch_article_content", {}).get("queued", 0)
+        + job_counts.get("fetch_article_content", {}).get("running", 0)
+    )
+    metrics["articles_pending_summarize"] = (
+        job_counts.get("summarize_article_llm", {}).get("queued", 0)
+        + job_counts.get("summarize_article_llm", {}).get("running", 0)
+    )
+    metrics["articles_pending_publish"] = (
+        job_counts.get("write_article_markdown", {}).get("queued", 0)
+        + job_counts.get("write_article_markdown", {}).get("running", 0)
+    )
 
     article_columns = _table_columns(conn, "articles") if _table_exists(conn, "articles") else set()
     missing_content_count = 0
@@ -1085,6 +1097,29 @@ def cancel_all_jobs(conn: sqlite3.Connection, reason: str = "canceled_by_admin")
     return int(cursor.rowcount or 0)
 
 
+def cancel_jobs_by_type(
+    conn: sqlite3.Connection,
+    job_type: str,
+    status: str = "queued",
+    reason: str = "canceled_by_admin",
+) -> int:
+    now = utc_now_iso()
+    cursor = conn.execute(
+        """
+        UPDATE jobs
+        SET status = 'canceled',
+            finished_at = ?,
+            error = ?,
+            locked_by = NULL,
+            locked_at = NULL
+        WHERE job_type = ? AND status = ?
+        """,
+        (now, reason, job_type, status),
+    )
+    conn.commit()
+    return int(cursor.rowcount or 0)
+
+
 def is_job_canceled(conn: sqlite3.Connection, job_id: str) -> bool:
     row = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
     return bool(row and row[0] == "canceled")
@@ -1146,6 +1181,52 @@ def count_failed_article_jobs(
     )
     row = cursor.fetchone()
     return int(row[0] or 0)
+
+
+def get_pending_article_job_id(
+    conn: sqlite3.Connection, job_type: str, article_id: int
+) -> str | None:
+    if not _table_exists(conn, "jobs"):
+        return None
+    patterns = [
+        f'%\"article_id\":{article_id}%',
+        f'%\"article_id\":\"{article_id}\"%',
+    ]
+    for pattern in patterns:
+        row = conn.execute(
+            """
+            SELECT id FROM jobs
+            WHERE job_type = ? AND status IN ('queued', 'running') AND payload_json LIKE ?
+            ORDER BY requested_at ASC
+            LIMIT 1
+            """,
+            (job_type, pattern),
+        ).fetchone()
+        if row:
+            return row[0]
+    return None
+
+
+def get_pending_cve_job_id(conn: sqlite3.Connection, cve_id: str) -> str | None:
+    if not _table_exists(conn, "jobs"):
+        return None
+    patterns = [
+        f'%\"cve_id\":\"{cve_id}\"%',
+        f'%\"cve_id\":{json.dumps(cve_id)}%',
+    ]
+    for pattern in patterns:
+        row = conn.execute(
+            """
+            SELECT id FROM jobs
+            WHERE job_type = 'cve_sync' AND status IN ('queued', 'running') AND payload_json LIKE ?
+            ORDER BY requested_at ASC
+            LIMIT 1
+            """,
+            (pattern,),
+        ).fetchone()
+        if row:
+            return row[0]
+    return None
 
 
 def get_source_name(conn: sqlite3.Connection, source_id: str) -> str | None:
@@ -2849,9 +2930,15 @@ def search_articles(
     query: str | None,
     source_id: str | None,
     has_summary: bool | None,
+    missing: str | None,
+    content_error: bool | None,
+    summary_error: bool | None,
+    needs: str | None,
     after: str | None,
     before: str | None,
     tags: list[str] | None,
+    watchlist_enabled: bool,
+    watchlist_hit: bool | None,
     page: int,
     page_size: int,
 ) -> tuple[list[dict[str, object]], int]:
@@ -2874,6 +2961,16 @@ def search_articles(
     if source_id:
         where.append("a.source_id = ?")
         params.append(source_id)
+    content_missing_clause = None
+    if "has_full_content" in columns:
+        content_missing_clause = "a.has_full_content = 0"
+    elif "content_text" in columns:
+        content_missing_clause = "(a.content_text IS NULL OR a.content_text = '')"
+    elif "extracted_text_path" in columns:
+        content_missing_clause = "(a.extracted_text_path IS NULL OR a.extracted_text_path = '')"
+    summary_missing_clause = None
+    if "summary_llm" in columns:
+        summary_missing_clause = "(a.summary_llm IS NULL OR a.summary_llm = '')"
     if has_summary is True:
         if "summary_llm" in columns:
             where.append("a.summary_llm IS NOT NULL")
@@ -2882,6 +2979,64 @@ def search_articles(
     if has_summary is False:
         if "summary_llm" in columns:
             where.append("a.summary_llm IS NULL")
+    if missing == "content":
+        if content_missing_clause:
+            where.append(content_missing_clause)
+        else:
+            return [], 0
+    if missing == "summary":
+        if summary_missing_clause:
+            where.append(summary_missing_clause)
+        else:
+            return [], 0
+    if content_error:
+        if "content_error" in columns:
+            where.append("(a.content_error IS NOT NULL AND a.content_error != '')")
+        else:
+            return [], 0
+    if summary_error:
+        if "summary_error" in columns:
+            where.append("(a.summary_error IS NOT NULL AND a.summary_error != '')")
+        else:
+            return [], 0
+    if needs:
+        url_clause = None
+        if "original_url" in columns:
+            url_clause = "(a.original_url IS NOT NULL AND a.original_url != '')"
+        if needs == "fetch":
+            if content_missing_clause:
+                clause = content_missing_clause
+                if url_clause:
+                    clause = f"{clause} AND {url_clause}"
+                where.append(clause)
+            else:
+                return [], 0
+        elif needs == "summarize":
+            if summary_missing_clause and content_missing_clause:
+                where.append(f"({summary_missing_clause}) AND NOT ({content_missing_clause})")
+            elif summary_missing_clause:
+                where.append(summary_missing_clause)
+            else:
+                return [], 0
+        elif needs == "publish":
+            if summary_missing_clause and content_missing_clause:
+                where.append(f"(NOT {summary_missing_clause} OR NOT {content_missing_clause})")
+            elif summary_missing_clause:
+                where.append(f"NOT {summary_missing_clause}")
+            elif content_missing_clause:
+                where.append(f"NOT {content_missing_clause}")
+            else:
+                return [], 0
+        elif needs == "attention":
+            attention_parts = []
+            if "content_error" in columns:
+                attention_parts.append("(a.content_error IS NOT NULL AND a.content_error != '')")
+            if "summary_error" in columns:
+                attention_parts.append("(a.summary_error IS NOT NULL AND a.summary_error != '')")
+            if attention_parts:
+                where.append("(" + " OR ".join(attention_parts) + ")")
+            else:
+                return [], 0
     if after:
         if "published_at" in columns:
             where.append("a.published_at >= ?")
@@ -2900,6 +3055,23 @@ def search_articles(
         )
         params.extend(tags)
 
+    watchlist_available = (
+        watchlist_enabled
+        and _table_exists(conn, "article_cves")
+        and _table_exists(conn, "cve_scope")
+    )
+    if watchlist_available and watchlist_hit is not None:
+        where.append(
+            """
+            EXISTS (
+                SELECT 1 FROM article_cves ac
+                JOIN cve_scope cs ON cs.cve_id = ac.cve_id
+                WHERE ac.article_id = a.id AND cs.in_scope = ?
+            )
+            """.strip()
+        )
+        params.append(1 if watchlist_hit else 0)
+
     where_sql = " AND ".join(where)
     if where_sql:
         where_sql = "WHERE " + where_sql
@@ -2912,12 +3084,44 @@ def search_articles(
 
     offset = max(page - 1, 0) * page_size
     order_col = "a.published_at" if "published_at" in columns else "a.ingested_at"
+    watchlist_select = (
+        """
+        EXISTS (
+            SELECT 1 FROM article_cves ac
+            JOIN cve_scope cs ON cs.cve_id = ac.cve_id
+            WHERE ac.article_id = a.id AND cs.in_scope = 1
+        ) AS watchlist_hit
+        """
+        if watchlist_available
+        else "NULL AS watchlist_hit"
+    )
+    has_content_select = "NULL AS has_content"
+    if "has_full_content" in columns:
+        has_content_select = "CASE WHEN a.has_full_content = 1 THEN 1 ELSE 0 END AS has_content"
+    elif "content_text" in columns:
+        has_content_select = (
+            "CASE WHEN a.content_text IS NOT NULL AND a.content_text != '' THEN 1 ELSE 0 END AS has_content"
+        )
+    elif "extracted_text_path" in columns:
+        has_content_select = (
+            "CASE WHEN a.extracted_text_path IS NOT NULL AND a.extracted_text_path != '' THEN 1 ELSE 0 END AS has_content"
+        )
+    content_error_select = (
+        "a.content_error" if "content_error" in columns else "NULL AS content_error"
+    )
+    summary_error_select = (
+        "a.summary_error" if "summary_error" in columns else "NULL AS summary_error"
+    )
     cursor = conn.execute(
         f"""
         SELECT a.id, a.title, a.original_url, a.published_at, a.ingested_at,
                { 'a.summary_llm' if 'summary_llm' in columns else 'NULL' } as summary_llm,
                a.source_id, s.name,
-               GROUP_CONCAT(t.tag) as tags
+               GROUP_CONCAT(t.tag) as tags,
+               {watchlist_select},
+               {has_content_select},
+               {content_error_select},
+               {summary_error_select}
         FROM articles a
         LEFT JOIN sources s ON s.id = a.source_id
         LEFT JOIN article_tags t ON t.article_id = a.id
@@ -2939,6 +3143,10 @@ def search_articles(
         source_id,
         source_name,
         tags_csv,
+        watchlist_hit_value,
+        has_content_value,
+        content_error_value,
+        summary_error_value,
     ) in cursor.fetchall():
         items.append(
             {
@@ -2951,6 +3159,10 @@ def search_articles(
                 "source_id": source_id,
                 "source_name": source_name,
                 "tags": tags_csv.split(",") if tags_csv else [],
+                "watchlist_hit": bool(watchlist_hit_value) if watchlist_available else None,
+                "has_content": bool(has_content_value) if has_content_value is not None else None,
+                "content_error": content_error_value,
+                "summary_error": summary_error_value,
             }
         )
     return items, total
@@ -3000,6 +3212,13 @@ def get_cve(conn: sqlite3.Connection, cve_id: str) -> dict[str, object] | None:
     cvss_v31_list = json.loads(cvss_v31_list_json) if cvss_v31_list_json else []
     cvss_v40_list = json.loads(cvss_v40_list_json) if cvss_v40_list_json else []
     product_versions = _list_cve_product_versions(conn, cve_id)
+    vendor_products = list_cve_vendor_products(conn, cve_id)
+    scope = None
+    if _table_exists(conn, "cve_scope"):
+        scope = conn.execute(
+            "SELECT in_scope, reasons_json FROM cve_scope WHERE cve_id = ?",
+            (cve_id,),
+        ).fetchone()
     return {
         "cve_id": data.get("cve_id"),
         "published_at": data.get("published_at"),
@@ -3017,6 +3236,9 @@ def get_cve(conn: sqlite3.Connection, cve_id: str) -> dict[str, object] | None:
         "affected_cpes": json.loads(data.get("affected_cpes_json") or "[]"),
         "reference_domains": json.loads(data.get("reference_domains_json") or "[]"),
         "product_versions": product_versions,
+        "vendor_products": vendor_products,
+        "in_scope": bool(scope[0]) if scope else None,
+        "scope_reasons": json.loads(scope[1] or "[]") if scope else [],
         "updated_at": data.get("updated_at"),
     }
 
@@ -3035,6 +3257,7 @@ def search_cves(
     query: str | None,
     severities: list[str] | None,
     min_cvss: float | None,
+    missing_description: bool | None,
     after: str | None,
     before: str | None,
     vendor_keywords: list[str] | None,
@@ -3045,6 +3268,7 @@ def search_cves(
     page_size: int,
 ) -> tuple[list[dict[str, object]], int]:
     columns = _table_columns(conn, "cves") if _table_exists(conn, "cves") else set()
+    has_scope = _table_exists(conn, "cve_scope")
     where: list[str] = []
     params: list[object] = []
     if query:
@@ -3070,6 +3294,11 @@ def search_cves(
     if min_cvss is not None:
         where.append("preferred_base_score >= ?")
         params.append(min_cvss)
+    if missing_description:
+        if "description_text" in columns:
+            where.append("(description_text IS NULL OR description_text = '')")
+        else:
+            return [], 0
     if after:
         where.append("published_at >= ?")
         params.append(after)
@@ -3090,7 +3319,9 @@ def search_cves(
                 "(LOWER(description_text) LIKE ? OR LOWER(affected_products_json) LIKE ? OR LOWER(affected_cpes_json) LIKE ? OR LOWER(reference_domains_json) LIKE ?)"
             )
             params.extend([like, like, like, like])
-    if in_scope and settings:
+    if in_scope and has_scope:
+        where.append("cs.in_scope = 1")
+    elif in_scope and settings:
         filters = settings.get("filters") or {}
         scope_sevs = filters.get("severities") or []
         if scope_sevs:
@@ -3125,40 +3356,50 @@ def search_cves(
     if where_sql:
         where_sql = "WHERE " + where_sql
 
-    count_cursor = conn.execute(f"SELECT COUNT(1) FROM cves {where_sql}", params)
+    if has_scope:
+        count_cursor = conn.execute(
+            f"SELECT COUNT(1) FROM cves c LEFT JOIN cve_scope cs ON cs.cve_id = c.cve_id {where_sql}",
+            params,
+        )
+    else:
+        count_cursor = conn.execute(f"SELECT COUNT(1) FROM cves {where_sql}", params)
     total = count_cursor.fetchone()[0]
 
     offset = max(page - 1, 0) * page_size
     selected = [
-        "cve_id",
-        "published_at",
-        "last_modified_at",
-        "preferred_cvss_version",
-        "preferred_base_score",
-        "preferred_base_severity",
-        "preferred_vector",
-        "description_text",
-        "updated_at",
-        "affected_products_json",
-        "affected_cpes_json",
-        "reference_domains_json",
-        "cvss_v31_list_json",
-        "cvss_v40_list_json",
+        "c.cve_id",
+        "c.published_at",
+        "c.last_modified_at",
+        "c.preferred_cvss_version",
+        "c.preferred_base_score",
+        "c.preferred_base_severity",
+        "c.preferred_vector",
+        "c.description_text",
+        "c.updated_at",
+        "c.affected_products_json",
+        "c.affected_cpes_json",
+        "c.reference_domains_json",
+        "c.cvss_v31_list_json",
+        "c.cvss_v40_list_json",
     ]
-    selected = [col for col in selected if col in columns]
+    if has_scope:
+        selected.append("cs.in_scope")
+        selected.append("cs.reasons_json")
+    selected = [col for col in selected if col.split(".")[-1] in columns or col.startswith("cs.")]
     cursor = conn.execute(
         f"""
         SELECT {", ".join(selected)}
-        FROM cves
+        FROM cves c
+        {"LEFT JOIN cve_scope cs ON cs.cve_id = c.cve_id" if has_scope else ""}
         {where_sql}
-        ORDER BY last_modified_at DESC
+        ORDER BY c.last_modified_at DESC
         LIMIT ? OFFSET ?
         """,
         [*params, page_size, offset],
     )
     items = []
     for row in cursor.fetchall():
-        data = dict(zip(selected, row))
+        data = dict(zip([col.split(".")[-1] for col in selected], row))
         cvss_v31_list_json = data.get("cvss_v31_list_json")
         cvss_v40_list_json = data.get("cvss_v40_list_json")
         items.append(
@@ -3178,6 +3419,8 @@ def search_cves(
                 "cvss_v31_list": json.loads(cvss_v31_list_json) if cvss_v31_list_json else [],
                 "cvss_v40_list": json.loads(cvss_v40_list_json) if cvss_v40_list_json else [],
                 "product_versions": _list_cve_product_versions(conn, data.get("cve_id")),
+                "in_scope": bool(data.get("in_scope")) if has_scope else None,
+                "scope_reasons": json.loads(data.get("reasons_json") or "[]") if has_scope else [],
             }
         )
     return items, total
@@ -3204,6 +3447,350 @@ def _list_cve_product_versions(conn: sqlite3.Connection, cve_id: str | None) -> 
         for vendor, product, version in cursor.fetchall()
         if vendor and product and version
     ]
+
+
+def list_watchlist_vendors(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    if not _table_exists(conn, "watched_vendors"):
+        return []
+    cursor = conn.execute(
+        """
+        SELECT id, vendor_norm, display_name, enabled, created_at
+        FROM watched_vendors
+        ORDER BY display_name
+        """
+    )
+    return [
+        {
+            "id": row[0],
+            "vendor_norm": row[1],
+            "display_name": row[2],
+            "enabled": bool(row[3]),
+            "created_at": row[4],
+        }
+        for row in cursor.fetchall()
+    ]
+
+
+def list_watchlist_products(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    if not _table_exists(conn, "watched_products"):
+        return []
+    cursor = conn.execute(
+        """
+        SELECT id, vendor_norm, product_norm, display_name, match_mode, enabled, created_at
+        FROM watched_products
+        ORDER BY display_name
+        """
+    )
+    return [
+        {
+            "id": row[0],
+            "vendor_norm": row[1],
+            "product_norm": row[2],
+            "display_name": row[3],
+            "match_mode": row[4],
+            "enabled": bool(row[5]),
+            "created_at": row[6],
+        }
+        for row in cursor.fetchall()
+    ]
+
+
+def add_watchlist_vendor(conn: sqlite3.Connection, display_name: str) -> dict[str, object]:
+    vendor_norm = normalize_name(display_name)
+    record_id = f"wv_{uuid.uuid4().hex}"
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO watched_vendors
+            (id, vendor_norm, display_name, enabled, created_at)
+        VALUES (?, ?, ?, 1, ?)
+        """,
+        (record_id, vendor_norm, display_name, utc_now_iso()),
+    )
+    conn.execute(
+        """
+        UPDATE watched_vendors
+        SET display_name = ?, enabled = 1
+        WHERE vendor_norm = ?
+        """,
+        (display_name, vendor_norm),
+    )
+    conn.commit()
+    return {"id": record_id, "vendor_norm": vendor_norm, "display_name": display_name, "enabled": True}
+
+
+def add_watchlist_product(
+    conn: sqlite3.Connection,
+    display_name: str,
+    vendor_norm: str | None,
+    match_mode: str,
+) -> dict[str, object]:
+    product_norm = normalize_name(display_name)
+    vendor_norm_val = normalize_name(vendor_norm) if vendor_norm else None
+    record_id = f"wp_{uuid.uuid4().hex}"
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO watched_products
+            (id, vendor_norm, product_norm, display_name, match_mode, enabled, created_at)
+        VALUES (?, ?, ?, ?, ?, 1, ?)
+        """,
+        (record_id, vendor_norm_val, product_norm, display_name, match_mode, utc_now_iso()),
+    )
+    conn.commit()
+    return {
+        "id": record_id,
+        "vendor_norm": vendor_norm_val,
+        "product_norm": product_norm,
+        "display_name": display_name,
+        "match_mode": match_mode,
+        "enabled": True,
+    }
+
+
+def update_watchlist_vendor(conn: sqlite3.Connection, vendor_id: str, enabled: bool) -> None:
+    conn.execute(
+        "UPDATE watched_vendors SET enabled = ? WHERE id = ?",
+        (1 if enabled else 0, vendor_id),
+    )
+    conn.commit()
+
+
+def update_watchlist_product(
+    conn: sqlite3.Connection, product_id: str, enabled: bool, match_mode: str | None = None
+) -> None:
+    if match_mode:
+        conn.execute(
+            "UPDATE watched_products SET enabled = ?, match_mode = ? WHERE id = ?",
+            (1 if enabled else 0, match_mode, product_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE watched_products SET enabled = ? WHERE id = ?",
+            (1 if enabled else 0, product_id),
+        )
+    conn.commit()
+
+
+def delete_watchlist_vendor(conn: sqlite3.Connection, vendor_id: str) -> None:
+    conn.execute("DELETE FROM watched_vendors WHERE id = ?", (vendor_id,))
+    conn.commit()
+
+
+def delete_watchlist_product(conn: sqlite3.Connection, product_id: str) -> None:
+    conn.execute("DELETE FROM watched_products WHERE id = ?", (product_id,))
+    conn.commit()
+
+
+def list_watchlist_suggestions(conn: sqlite3.Connection, limit: int = 20) -> dict[str, list[dict[str, object]]]:
+    vendors: list[dict[str, object]] = []
+    products: list[dict[str, object]] = []
+    if _table_exists(conn, "cve_products") and _table_exists(conn, "products") and _table_exists(conn, "vendors"):
+        cursor = conn.execute(
+            """
+            SELECT v.display_name, v.name_norm, COUNT(DISTINCT cp.cve_id) AS cnt
+            FROM cve_products cp
+            JOIN products p ON p.id = cp.product_id
+            JOIN vendors v ON v.id = p.vendor_id
+            GROUP BY v.id
+            ORDER BY cnt DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        vendors = [
+            {"display_name": row[0], "vendor_norm": row[1], "count": int(row[2] or 0)}
+            for row in cursor.fetchall()
+        ]
+        cursor = conn.execute(
+            """
+            SELECT p.display_name, p.name_norm, v.name_norm, COUNT(DISTINCT cp.cve_id) AS cnt
+            FROM cve_products cp
+            JOIN products p ON p.id = cp.product_id
+            JOIN vendors v ON v.id = p.vendor_id
+            GROUP BY p.id
+            ORDER BY cnt DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        products = [
+            {
+                "display_name": row[0],
+                "product_norm": row[1],
+                "vendor_norm": row[2],
+                "count": int(row[3] or 0),
+            }
+            for row in cursor.fetchall()
+        ]
+    return {"vendors": vendors, "products": products}
+
+
+def list_cve_ids(conn: sqlite3.Connection) -> list[str]:
+    if not _table_exists(conn, "cves"):
+        return []
+    cursor = conn.execute("SELECT cve_id FROM cves")
+    return [row[0] for row in cursor.fetchall() if row and row[0]]
+
+
+def _cve_vendor_product_norms(conn: sqlite3.Connection, cve_id: str) -> list[tuple[str, str]]:
+    if not (_table_exists(conn, "cve_products") and _table_exists(conn, "products") and _table_exists(conn, "vendors")):
+        return []
+    cursor = conn.execute(
+        """
+        SELECT v.name_norm, p.name_norm
+        FROM cve_products cp
+        JOIN products p ON p.id = cp.product_id
+        JOIN vendors v ON v.id = p.vendor_id
+        WHERE cp.cve_id = ?
+        """,
+        (cve_id,),
+    )
+    return [(row[0], row[1]) for row in cursor.fetchall()]
+
+
+def evaluate_cve_scope(
+    conn: sqlite3.Connection, cve_id: str, min_cvss: float | None = None
+) -> dict[str, object]:
+    reasons: list[str] = []
+    in_scope = False
+    if not _table_exists(conn, "cves"):
+        return {"in_scope": False, "reasons": []}
+    row = conn.execute(
+        "SELECT preferred_base_score FROM cves WHERE cve_id = ?",
+        (cve_id,),
+    ).fetchone()
+    preferred_score = row[0] if row else None
+    if min_cvss is not None and preferred_score is not None:
+        if float(preferred_score) >= float(min_cvss):
+            in_scope = True
+            reasons.append(f"severity>={min_cvss}")
+
+    vendor_matches = []
+    if _table_exists(conn, "watched_vendors"):
+        cursor = conn.execute(
+            "SELECT vendor_norm FROM watched_vendors WHERE enabled = 1"
+        )
+        vendor_matches = [row[0] for row in cursor.fetchall()]
+    product_matches = []
+    if _table_exists(conn, "watched_products"):
+        cursor = conn.execute(
+            "SELECT vendor_norm, product_norm, match_mode FROM watched_products WHERE enabled = 1"
+        )
+        product_matches = [(row[0], row[1], row[2]) for row in cursor.fetchall()]
+
+    pairs = _cve_vendor_product_norms(conn, cve_id)
+    for vendor_norm, product_norm in pairs:
+        if vendor_norm in vendor_matches:
+            in_scope = True
+            reasons.append(f"matched_vendor:{vendor_norm}")
+        for watch_vendor, watch_product, match_mode in product_matches:
+            if watch_vendor and watch_vendor != vendor_norm:
+                continue
+            if match_mode == "contains":
+                if watch_product and watch_product in product_norm:
+                    in_scope = True
+                    reasons.append(f"matched_product:{vendor_norm}:{watch_product}")
+            else:
+                if watch_product == product_norm:
+                    in_scope = True
+                    reasons.append(f"matched_product:{vendor_norm}:{product_norm}")
+    return {"in_scope": in_scope, "reasons": reasons}
+
+
+def upsert_cve_scope(conn: sqlite3.Connection, cve_id: str, in_scope: bool, reasons: list[str]) -> None:
+    if not _table_exists(conn, "cve_scope"):
+        return
+    conn.execute(
+        """
+        INSERT INTO cve_scope (id, cve_id, in_scope, reasons_json, computed_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(cve_id) DO UPDATE SET
+            in_scope=excluded.in_scope,
+            reasons_json=excluded.reasons_json,
+            computed_at=excluded.computed_at
+        """,
+        (
+            cve_id,
+            cve_id,
+            1 if in_scope else 0,
+            json_dumps(reasons),
+            utc_now_iso(),
+        ),
+    )
+    conn.commit()
+
+
+def compute_scope_for_cves(
+    conn: sqlite3.Connection, cve_ids: list[str], min_cvss: float | None = None
+) -> dict[str, int]:
+    updated = 0
+    for cve_id in cve_ids:
+        result = evaluate_cve_scope(conn, cve_id, min_cvss=min_cvss)
+        upsert_cve_scope(conn, cve_id, bool(result["in_scope"]), list(result["reasons"]))
+        updated += 1
+    return {"updated": updated}
+
+
+def list_cve_vendor_products(conn: sqlite3.Connection, cve_id: str) -> list[dict[str, object]]:
+    if not (_table_exists(conn, "cve_products") and _table_exists(conn, "products") and _table_exists(conn, "vendors")):
+        return []
+    cursor = conn.execute(
+        """
+        SELECT v.display_name, v.name_norm, p.display_name, p.name_norm, p.product_key
+        FROM cve_products cp
+        JOIN products p ON p.id = cp.product_id
+        JOIN vendors v ON v.id = p.vendor_id
+        WHERE cp.cve_id = ?
+        ORDER BY v.display_name, p.display_name
+        """,
+        (cve_id,),
+    )
+    return [
+        {
+            "vendor_display": row[0],
+            "vendor_norm": row[1],
+            "product_display": row[2],
+            "product_norm": row[3],
+            "product_key": row[4],
+        }
+        for row in cursor.fetchall()
+    ]
+
+
+def _list_article_cve_ids(conn: sqlite3.Connection, article_id: int) -> list[str]:
+    if not _table_exists(conn, "article_cves"):
+        return []
+    cursor = conn.execute(
+        "SELECT cve_id FROM article_cves WHERE article_id = ?",
+        (article_id,),
+    )
+    return [row[0] for row in cursor.fetchall() if row and row[0]]
+
+
+def compute_watchlist_hits(
+    conn: sqlite3.Connection,
+    *,
+    item_type: str,
+    item_key: str | int,
+    min_cvss: float | None = None,
+) -> dict[str, object]:
+    if item_type == "cve":
+        result = evaluate_cve_scope(conn, str(item_key), min_cvss=min_cvss)
+        return {"hit": bool(result["in_scope"]), "reasons": list(result["reasons"])}
+    if item_type == "article":
+        reasons: list[str] = []
+        hit = False
+        try:
+            article_id = int(item_key)
+        except (TypeError, ValueError):
+            return {"hit": False, "reasons": []}
+        for cve_id in _list_article_cve_ids(conn, article_id):
+            result = evaluate_cve_scope(conn, str(cve_id), min_cvss=min_cvss)
+            if result["in_scope"]:
+                hit = True
+                reasons.append(f"cve:{cve_id}")
+                reasons.extend(list(result["reasons"]))
+        return {"hit": hit, "reasons": reasons}
+    return {"hit": False, "reasons": []}
 
 
 def cve_data_completeness(conn: sqlite3.Connection, limit: int = 20) -> dict[str, object]:

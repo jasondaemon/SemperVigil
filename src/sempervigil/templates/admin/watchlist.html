@@ -1,0 +1,70 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "system" %}
+{% set nav_subactive = "watchlist" %}
+{% block content %}
+  <section class="panel">
+    <h2>Watchlist</h2>
+    <p class="muted">
+      Use the watchlist to mark vendors/products as in-scope for CVE prioritization.
+      This is sensitive operational data; avoid enabling public exposure unless explicitly required.
+    </p>
+    <div class="grid">
+      <div>
+        <h3>Vendors</h3>
+        <form id="watch-vendor-form" class="inline-form">
+          <input type="text" id="watch-vendor-name" placeholder="Vendor name" required>
+          <button class="btn" type="submit">Add Vendor</button>
+        </form>
+        <table class="table" id="watch-vendors-table">
+          <thead>
+            <tr>
+              <th>Enabled</th>
+              <th>Vendor</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div>
+        <h3>Products</h3>
+        <form id="watch-product-form" class="inline-form">
+          <input type="text" id="watch-product-name" placeholder="Product name" required>
+          <input type="text" id="watch-product-vendor" placeholder="Vendor (optional)">
+          <select id="watch-product-mode">
+            <option value="exact">exact</option>
+            <option value="contains">contains</option>
+          </select>
+          <button class="btn" type="submit">Add Product</button>
+        </form>
+        <table class="table" id="watch-products-table">
+          <thead>
+            <tr>
+              <th>Enabled</th>
+              <th>Vendor</th>
+              <th>Product</th>
+              <th>Mode</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h3>Import Suggestions</h3>
+    <div class="grid">
+      <div>
+        <h4>Top Vendors</h4>
+        <ul id="watch-suggest-vendors"></ul>
+      </div>
+      <div>
+        <h4>Top Products</h4>
+        <ul id="watch-suggest-products"></ul>
+      </div>
+    </div>
+    <button class="btn secondary" type="button" id="watch-recompute">Recompute Scope</button>
+  </section>
+{% endblock %}

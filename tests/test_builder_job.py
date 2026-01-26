@@ -1,8 +1,10 @@
 import copy
+from datetime import datetime, timezone
 
 from sempervigil import builder
 from sempervigil.config import DEFAULT_CONFIG, set_runtime_config
 from sempervigil.storage import enqueue_job, init_db
+from sempervigil.utils import utc_now_iso
 
 
 def _seed_runtime_config(tmp_path, monkeypatch):
@@ -35,3 +37,44 @@ def test_build_job_writes_result(tmp_path, monkeypatch):
     assert row is not None
     assert "stdout_tail" in row[0]
     assert "stderr_tail" in row[0]
+
+
+def test_build_job_debounce_requeues(tmp_path, monkeypatch):
+    conn = _seed_runtime_config(tmp_path, monkeypatch)
+    now = utc_now_iso()
+    conn.execute(
+        """
+        INSERT INTO jobs
+            (id, job_type, status, payload_json, result_json, requested_at, started_at,
+             finished_at, locked_by, locked_at, error)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "job_prev_build",
+            "build_site",
+            "succeeded",
+            None,
+            None,
+            now,
+            now,
+            now,
+            None,
+            None,
+            None,
+        ),
+    )
+    conn.commit()
+    enqueue_job(conn, "build_site", None)
+
+    def fake_run(conn, job_id):
+        raise AssertionError("build should have been debounced")
+
+    monkeypatch.setattr(builder, "_run_hugo_until_done", fake_run)
+    builder.run_once("builder-test")
+    row = conn.execute(
+        "SELECT status, requested_at FROM jobs WHERE job_type = 'build_site' ORDER BY requested_at DESC LIMIT 1"
+    ).fetchone()
+    assert row is not None
+    assert row[0] == "queued"
+    requested_at = datetime.fromisoformat(row[1]).astimezone(timezone.utc)
+    assert requested_at > datetime.fromisoformat(now).astimezone(timezone.utc)

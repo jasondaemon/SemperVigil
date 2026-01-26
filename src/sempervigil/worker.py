@@ -27,6 +27,7 @@ from .signals import build_cve_evidence, extract_cve_ids
 from .pipelines.content_fetch import fetch_article_content
 from .pipelines.daily_brief import write_daily_brief
 from .pipelines.summarize_llm import summarize_with_llm
+from .services.ai_service import get_active_profile_for_stage
 from .storage import (
     claim_next_job,
     complete_job,
@@ -69,6 +70,7 @@ from .storage import (
     list_article_ids_missing_content,
     list_article_ids_missing_summary,
     list_article_ids_for_source_since,
+    compute_watchlist_hits,
 )
 from .utils import configure_logging, log_event, utc_now_iso
 
@@ -174,8 +176,8 @@ def _handle_ingest_source(
     job_id: str | None = None,
 ) -> dict[str, object]:
     # Pipeline order: ingest creates article stubs first, then enqueues
-    # fetch_article_content (if enabled + URL present), summarize_article_llm,
-    # and write_article_markdown jobs.
+    # fetch_article_content (if enabled + URL present). Summarization runs
+    # after fetch if configured, and publish runs after summarize or fetch.
     source_id = payload.get("source_id") if payload else None
     if not source_id:
         raise ValueError("ingest_source requires source_id")
@@ -281,20 +283,7 @@ def _handle_ingest_source(
         return {"canceled": True}
 
     insert_articles(conn, result.articles)
-    batch_id = str(uuid.uuid4())
-    batch_total = len(result.articles)
-    if batch_total:
-        log_event(
-            logger,
-            logging.INFO,
-            "batch_start",
-            job_type="write_article_markdown",
-            batch_id=batch_id,
-            total=batch_total,
-            source_id=source.id,
-            source_name=source.name,
-        )
-    for index, article in enumerate(result.articles, start=1):
+    for article in result.articles:
         if job_id and is_job_canceled(conn, job_id):
             return {"canceled": True}
         cve_ids = extract_cve_ids(
@@ -310,7 +299,7 @@ def _handle_ingest_source(
         if article_id is None:
             article_id = get_article_id(conn, article.source_id, article.stable_id)
         if article_id is not None:
-            _maybe_enqueue_fetch(conn, article_id, article.source_id)
+            _maybe_enqueue_fetch(conn, config, article_id, article.source_id, logger)
         events_settings = get_events_settings(conn)
         if events_settings.get("enabled", True) and cve_ids and article_id is not None:
             window_days = int(events_settings.get("merge_window_days", 14))
@@ -329,28 +318,26 @@ def _handle_ingest_source(
                 cve_ids=cve_ids,
                 published_at=article.published_at or article.ingested_at,
             )
-        enqueue_job(
-            conn,
-            "write_article_markdown",
-            {
-                "article_id": article_id,
-                "stable_id": article.stable_id,
-                "title": article.title,
-                "source_id": article.source_id,
-                "published_at": article.published_at,
-                "published_at_source": article.published_at_source,
-                "ingested_at": article.ingested_at,
-                "summary": article.summary,
-                "tags": article.tags,
-                "original_url": article.original_url,
-                "normalized_url": article.normalized_url,
-                "batch_id": batch_id,
-                "batch_total": batch_total,
-                "batch_index": index,
-            },
-        )
     if config.publishing.write_json_index:
-        write_json_index(result.articles, config.publishing.json_index_path)
+        extra_by_stable: dict[str, dict[str, object]] | None = None
+        if (
+            config.personalization.watchlist_enabled
+            and config.personalization.watchlist_exposure_mode == "public_highlights"
+        ):
+            extra_by_stable = {}
+            for article in result.articles:
+                article_id = get_article_id(conn, article.source_id, article.stable_id)
+                if article_id is None:
+                    continue
+                hit = compute_watchlist_hits(
+                    conn,
+                    item_type="article",
+                    item_key=article_id,
+                    min_cvss=config.scope.min_cvss,
+                )
+                if hit.get("hit"):
+                    extra_by_stable[article.stable_id] = {"watchlist_hit": True}
+        write_json_index(result.articles, config.publishing.json_index_path, extra_by_stable)
     _maybe_pause_source(conn, source.id, logger)
     return {
         "source_id": source.id,
@@ -460,7 +447,14 @@ def _handle_write_article_markdown(
         summary=payload.get("summary") or None,
         tags=list(payload.get("tags") or []),
     )
-    path = write_article_markdown(article, config.paths.output_dir)
+    extra_frontmatter = None
+    if (
+        config.personalization.watchlist_enabled
+        and config.personalization.watchlist_exposure_mode == "public_highlights"
+        and payload.get("watchlist_hit") is True
+    ):
+        extra_frontmatter = {"watchlist_hit": True}
+    path = write_article_markdown(article, config.paths.output_dir, extra_frontmatter=extra_frontmatter)
     progress = ""
     if batch_total and batch_index:
         progress = f"{batch_index}/{batch_total}"
@@ -548,6 +542,7 @@ def _handle_fetch_article_content(
             article_id=article_id,
             attempts=attempts,
         )
+        _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         raise ValueError("article_not_ready")
     try:
         result = fetch_article_content(
@@ -579,8 +574,10 @@ def _handle_fetch_article_content(
             content_error=f"fetch_failed:{exc}",
             has_full_content=False,
         )
+        _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         raise
-    _maybe_enqueue_summarize(conn, int(article_id), article["source_id"])
+    if not _maybe_enqueue_summarize(conn, int(article_id), article["source_id"], logger):
+        _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
     return {"article_id": article_id, "has_full_content": has_full_content}
 
 
@@ -593,6 +590,38 @@ def _handle_summarize_article_llm(
     article = get_article_by_id(conn, int(article_id))
     if not article:
         raise ValueError("article_not_found")
+    profile, reason = get_active_profile_for_stage(conn, "summarize_article")
+    if not profile:
+        update_article_summary(
+            conn,
+            int(article_id),
+            summary_llm=None,
+            summary_model=None,
+            summary_generated_at=utc_now_iso(),
+            summary_error=f"llm_stage_{reason}",
+        )
+        _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
+        log_event(
+            logger,
+            logging.INFO,
+            "llm_stage_skipped",
+            stage="summarize_article",
+            reason=reason,
+            article_id=article_id,
+            source_id=article["source_id"],
+        )
+        return {"skipped": True, "error": "llm_stage_disabled", "reason": reason}
+    if not is_llm_configured():
+        update_article_summary(
+            conn,
+            int(article_id),
+            summary_llm=None,
+            summary_model=None,
+            summary_generated_at=utc_now_iso(),
+            summary_error="llm_not_configured",
+        )
+        _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
+        return {"skipped": True, "error": "llm_not_configured"}
     source_name = get_source_name(conn, article["source_id"]) or ""
     content = article["content_text"] or article["summary"] or article["title"]
     input_chars = len(content or "")
@@ -627,6 +656,7 @@ def _handle_summarize_article_llm(
             ok=True,
             error=None,
         )
+        _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         return result
     except Exception as exc:  # noqa: BLE001
         insert_llm_run(
@@ -649,6 +679,7 @@ def _handle_summarize_article_llm(
             summary_generated_at=utc_now_iso(),
             summary_error=str(exc),
         )
+        _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         raise
 
 
@@ -829,7 +860,7 @@ def _handle_source_acquire(conn, config, job, logger: logging.Logger) -> dict[st
 
     missing_content_ids = list_article_ids_missing_content(conn, source.id)
     for article_id in missing_content_ids:
-        _maybe_enqueue_fetch(conn, article_id, source.id)
+        _maybe_enqueue_fetch(conn, config, article_id, source.id, logger)
     _run_jobs_inline(
         conn,
         config,
@@ -840,7 +871,7 @@ def _handle_source_acquire(conn, config, job, logger: logging.Logger) -> dict[st
 
     missing_summary_ids = list_article_ids_missing_summary(conn, source.id)
     for article_id in missing_summary_ids:
-        _maybe_enqueue_summarize(conn, article_id, source.id)
+        _maybe_enqueue_summarize(conn, article_id, source.id, logger)
     _run_jobs_inline(
         conn,
         config,
@@ -852,7 +883,7 @@ def _handle_source_acquire(conn, config, job, logger: logging.Logger) -> dict[st
     new_article_ids = list_article_ids_for_source_since(conn, source.id, start_marker)
     publish_ids = sorted(set(new_article_ids + missing_content_ids + missing_summary_ids))
     for article_id in publish_ids:
-        _enqueue_write_from_article(conn, article_id, source.id)
+        _enqueue_write_from_article(conn, config, article_id, source.id)
     _run_jobs_inline(
         conn,
         config,
@@ -993,7 +1024,9 @@ def _handle_ingest_due_sources(conn, logger: logging.Logger) -> dict[str, object
     return {"enqueued_count": len(enqueued), "source_ids": enqueued}
 
 
-def _handle_cve_sync(conn, config, logger: logging.Logger) -> dict[str, object]:
+def _handle_cve_sync(
+    conn, config, logger: logging.Logger, payload: dict[str, object] | None = None
+) -> dict[str, object]:
     settings = get_cve_settings(conn)
     if not settings.get("enabled", True):
         return {"status": "disabled"}
@@ -1006,6 +1039,9 @@ def _handle_cve_sync(conn, config, logger: logging.Logger) -> dict[str, object]:
     end_iso = isoformat_utc(now)
     api_key = os.environ.get("NVD_API_KEY")
     nvd = settings.get("nvd") or {}
+    cve_id = None
+    if payload and payload.get("cve_id"):
+        cve_id = str(payload.get("cve_id"))
     result = sync_cves(
         conn,
         CveSyncConfig(
@@ -1015,14 +1051,19 @@ def _handle_cve_sync(conn, config, logger: logging.Logger) -> dict[str, object]:
             backoff_seconds=float(settings.get("backoff_seconds", 2.0)),
             max_retries=int(settings.get("max_retries", 3)),
             prefer_v4=bool(settings.get("prefer_v4", True)),
+            scope_min_cvss=config.scope.min_cvss,
+            watchlist_enabled=config.personalization.watchlist_enabled,
             api_key=api_key,
             filters=settings.get("filters") or {},
         ),
         last_modified_start=start_iso,
         last_modified_end=end_iso,
+        cve_id=cve_id,
     )
     result["start"] = start_iso
     result["end"] = end_iso
+    if cve_id:
+        result["cve_id"] = cve_id
     events_settings = get_events_settings(conn)
     if events_settings.get("enabled", True):
         _publish_events(conn, config, logger)
@@ -1169,7 +1210,7 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
     if job.job_type == "test_source":
         return _handle_test_source(conn, config, job.payload, logger)
     if job.job_type == "cve_sync":
-        return _handle_cve_sync(conn, config, logger)
+        return _handle_cve_sync(conn, config, logger, job.payload)
     if job.job_type == "events_rebuild":
         return _handle_events_rebuild(conn, config, job.payload or {}, logger)
     if job.job_type == "source_acquire":
@@ -1224,9 +1265,17 @@ def _job_context_fields(conn, job) -> dict[str, object]:
     return {"source_id": source_id, "source_name": source_name}
 
 
-def _maybe_enqueue_fetch(conn, article_id: int, source_id: str) -> None:
+def is_llm_configured() -> bool:
+    return bool(os.environ.get("SV_LLM_BASE_URL") and os.environ.get("SV_LLM_API_KEY"))
+
+
+def _maybe_enqueue_fetch(
+    conn, config, article_id: int, source_id: str, logger: logging.Logger
+) -> None:
     if os.environ.get("SV_FETCH_FULL_CONTENT", "1") != "1":
-        _maybe_enqueue_summarize(conn, article_id, source_id)
+        if _maybe_enqueue_summarize(conn, article_id, source_id, logger):
+            return
+        _enqueue_write_from_article(conn, config, article_id, source_id)
         return
     article = get_article_by_id(conn, article_id)
     if not article:
@@ -1234,7 +1283,9 @@ def _maybe_enqueue_fetch(conn, article_id: int, source_id: str) -> None:
     if not (article.get("original_url") or article.get("normalized_url")):
         return
     if article["has_full_content"]:
-        _maybe_enqueue_summarize(conn, article_id, source_id)
+        if _maybe_enqueue_summarize(conn, article_id, source_id, logger):
+            return
+        _enqueue_write_from_article(conn, config, article_id, source_id)
         return
     if has_pending_article_job(conn, "fetch_article_content", article_id):
         return
@@ -1250,6 +1301,7 @@ def _maybe_enqueue_fetch(conn, article_id: int, source_id: str) -> None:
             content_error="max_retries_exceeded",
             has_full_content=False,
         )
+        _enqueue_write_from_article(conn, config, article_id, source_id)
         return
     payload = {"article_id": article_id, "source_id": source_id}
     if attempts > 0:
@@ -1258,20 +1310,46 @@ def _maybe_enqueue_fetch(conn, article_id: int, source_id: str) -> None:
     enqueue_job(conn, "fetch_article_content", payload)
 
 
-def _maybe_enqueue_summarize(conn, article_id: int, source_id: str) -> None:
+def _maybe_enqueue_summarize(
+    conn, article_id: int, source_id: str, logger: logging.Logger
+) -> bool:
+    profile, reason = get_active_profile_for_stage(conn, "summarize_article")
+    if not profile:
+        log_event(
+            logger,
+            logging.INFO,
+            "llm_stage_skipped",
+            stage="summarize_article",
+            reason=reason,
+            article_id=article_id,
+            source_id=source_id,
+        )
+        return False
+    if not is_llm_configured():
+        log_event(
+            logger,
+            logging.INFO,
+            "llm_stage_skipped",
+            stage="summarize_article",
+            reason="llm_not_configured",
+            article_id=article_id,
+            source_id=source_id,
+        )
+        return False
     article = get_article_by_id(conn, article_id)
     if not article:
-        return
+        return False
     if article.get("summary_llm"):
-        return
+        return False
     enqueue_job(
         conn,
         "summarize_article_llm",
-        {"article_id": article_id, "source_id": source_id},
+        {"article_id": article_id, "source_id": source_id, "profile_id": profile.get("id")},
     )
+    return True
 
 
-def _enqueue_write_from_article(conn, article_id: int, source_id: str) -> None:
+def _enqueue_write_from_article(conn, config, article_id: int, source_id: str) -> None:
     article = get_article_by_id(conn, article_id)
     if not article:
         return
@@ -1300,6 +1378,18 @@ def _enqueue_write_from_article(conn, article_id: int, source_id: str) -> None:
         "original_url": article.get("original_url"),
         "normalized_url": article.get("normalized_url"),
     }
+    if (
+        config.personalization.watchlist_enabled
+        and config.personalization.watchlist_exposure_mode == "public_highlights"
+    ):
+        hit = compute_watchlist_hits(
+            conn,
+            item_type="article",
+            item_key=article_id,
+            min_cvss=config.scope.min_cvss,
+        )
+        if hit.get("hit"):
+            payload["watchlist_hit"] = True
     enqueue_job(conn, "write_article_markdown", payload)
 
 

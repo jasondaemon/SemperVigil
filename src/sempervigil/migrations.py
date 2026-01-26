@@ -298,6 +298,7 @@ def _get_migrations() -> list[tuple[str, Migration]]:
         ("012_llm_runs", _migration_llm_runs),
         ("013_cvss_lists", _migration_cvss_lists),
         ("014_cve_product_versions", _migration_cve_product_versions),
+        ("015_watchlist", _migration_watchlist),
     ]
 
 
@@ -630,6 +631,53 @@ def _migration_cve_product_versions(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_cve_product_versions_cve ON cve_product_versions(cve_id)"
+    )
+
+
+def _migration_watchlist(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS watched_vendors (
+            id TEXT PRIMARY KEY,
+            vendor_norm TEXT NOT NULL UNIQUE,
+            display_name TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS watched_products (
+            id TEXT PRIMARY KEY,
+            vendor_norm TEXT NULL,
+            product_norm TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            match_mode TEXT NOT NULL DEFAULT 'exact',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cve_scope (
+            id TEXT PRIMARY KEY,
+            cve_id TEXT NOT NULL UNIQUE,
+            in_scope INTEGER NOT NULL,
+            reasons_json TEXT NOT NULL,
+            computed_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_watched_vendors_norm ON watched_vendors(vendor_norm)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_watched_products_norm ON watched_products(product_norm)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cve_scope_cve ON cve_scope(cve_id)"
     )
 
 

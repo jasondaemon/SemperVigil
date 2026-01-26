@@ -622,6 +622,56 @@ def set_pipeline_routing(conn: sqlite3.Connection, stage_name: str, profile_id: 
     conn.commit()
 
 
+def get_active_profile_for_stage(
+    conn: sqlite3.Connection, stage_name: str
+) -> tuple[dict[str, Any] | None, str]:
+    routing = {row["stage_name"]: row["profile_id"] for row in list_pipeline_routing(conn)}
+    profile_id = routing.get(stage_name)
+    if not profile_id:
+        return None, "no_routing"
+    profile = get_profile(conn, profile_id)
+    if not profile:
+        return None, "profile_missing"
+    if not profile.get("is_enabled", True):
+        return None, "profile_disabled"
+    provider = get_provider(conn, profile["primary_provider_id"])
+    if not provider:
+        return None, "provider_missing"
+    if not provider.get("is_enabled", True):
+        return None, "provider_disabled"
+    model = get_model(conn, profile["primary_model_id"])
+    if not model:
+        return None, "model_missing"
+    if not model.get("is_enabled", True):
+        return None, "model_disabled"
+    prompt = get_prompt(conn, profile["prompt_id"])
+    if not prompt:
+        return None, "prompt_missing"
+    return profile, "active"
+
+
+def list_stage_statuses(conn: sqlite3.Connection, stages: list[str]) -> list[dict[str, Any]]:
+    statuses: list[dict[str, Any]] = []
+    for stage_name in stages:
+        profile, reason = get_active_profile_for_stage(conn, stage_name)
+        if profile:
+            status = "active"
+        elif reason in {"no_routing", "profile_disabled", "provider_disabled", "model_disabled"}:
+            status = "disabled"
+        else:
+            status = "misconfigured"
+        statuses.append(
+            {
+                "stage_name": stage_name,
+                "status": status,
+                "reason": reason,
+                "profile_id": profile["id"] if profile else None,
+                "profile_name": profile.get("name") if profile else None,
+            }
+        )
+    return statuses
+
+
 def update_provider_test_status(
     conn: sqlite3.Connection, provider_id: str, status: str, error: str | None
 ) -> None:

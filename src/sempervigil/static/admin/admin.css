@@ -233,6 +233,24 @@ th, td {
   color: #991b1b;
 }
 
+.status-muted {
+  background: #e5e7eb;
+  color: #6b7280;
+}
+
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #374151;
+}
+
+.stacked-form {
+  display: grid;
+  gap: 12px;
+}
+
 .panel {
   margin-top: 20px;
   padding: 16px;

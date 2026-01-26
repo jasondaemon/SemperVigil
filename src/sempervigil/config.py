@@ -65,6 +65,7 @@ class IngestConfig:
 @dataclass(frozen=True)
 class JobsConfig:
     lock_timeout_seconds: int
+    build_debounce_seconds: int
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,19 @@ class CveConfig:
     backoff_seconds: float
     max_retries: int
     prefer_v4: bool
+
+
+@dataclass(frozen=True)
+class ScopeConfig:
+    min_cvss: float | None
+
+
+@dataclass(frozen=True)
+class PersonalizationConfig:
+    watchlist_enabled: bool
+    watchlist_exposure_mode: str
+    rss_enabled: bool
+    rss_private_token: str | None
 
 
 @dataclass(frozen=True)
@@ -103,6 +117,8 @@ class Config:
     ingest: IngestConfig
     jobs: JobsConfig
     cve: CveConfig
+    scope: ScopeConfig
+    personalization: PersonalizationConfig
     llm: dict[str, Any]
     per_source_tweaks: PerSourceTweaks
 
@@ -143,6 +159,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "jobs": {
         "lock_timeout_seconds": 600,
+        "build_debounce_seconds": 600,
     },
     "cve": {
         "enabled": True,
@@ -152,6 +169,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "backoff_seconds": 2.0,
         "max_retries": 3,
         "prefer_v4": True,
+    },
+    "scope": {
+        "min_cvss": None,
+    },
+    "personalization": {
+        "watchlist_enabled": False,
+        "watchlist_exposure_mode": "private_only",
+        "rss_enabled": False,
+        "rss_private_token": None,
     },
     "llm": {
         "enabled": False,
@@ -386,6 +412,20 @@ def load_runtime_config(conn) -> Config:
 def validate_runtime_config(cfg: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     _validate_dict(cfg, DEFAULT_CONFIG, "config.runtime", errors)
+    personalization = cfg.get("personalization") if isinstance(cfg, dict) else None
+    if isinstance(personalization, dict):
+        exposure_mode = personalization.get("watchlist_exposure_mode")
+        if exposure_mode not in ("private_only", "public_highlights"):
+            errors.append(
+                "config.runtime.personalization.watchlist_exposure_mode must be private_only or public_highlights"
+            )
+        if not isinstance(personalization.get("watchlist_enabled"), bool):
+            errors.append("config.runtime.personalization.watchlist_enabled must be a boolean")
+        if not isinstance(personalization.get("rss_enabled"), bool):
+            errors.append("config.runtime.personalization.rss_enabled must be a boolean")
+        rss_token = personalization.get("rss_private_token")
+        if rss_token is not None and not isinstance(rss_token, str):
+            errors.append("config.runtime.personalization.rss_private_token must be a string or null")
     return errors
 
 
@@ -453,6 +493,8 @@ def _build_config(cfg: dict[str, Any]) -> Config:
     ingest_cfg = cfg.get("ingest") or {}
     jobs_cfg = cfg.get("jobs") or {}
     cve_cfg = cfg.get("cve") or {}
+    scope_cfg = cfg.get("scope") or {}
+    personalization_cfg = cfg.get("personalization") or {}
     tweaks_cfg = cfg.get("per_source_tweaks") or {}
 
     app = AppConfig(
@@ -497,7 +539,11 @@ def _build_config(cfg: dict[str, Any]) -> Config:
     )
 
     ingest = IngestConfig(http=http, dedupe=dedupe, filters=filters)
-    jobs = JobsConfig(lock_timeout_seconds=int(jobs_cfg.get("lock_timeout_seconds")))
+    build_debounce = jobs_cfg.get("build_debounce_seconds", 600)
+    jobs = JobsConfig(
+        lock_timeout_seconds=int(jobs_cfg.get("lock_timeout_seconds")),
+        build_debounce_seconds=int(build_debounce),
+    )
 
     cve = CveConfig(
         enabled=bool(cve_cfg.get("enabled")),
@@ -507,6 +553,17 @@ def _build_config(cfg: dict[str, Any]) -> Config:
         backoff_seconds=float(cve_cfg.get("backoff_seconds")),
         max_retries=int(cve_cfg.get("max_retries")),
         prefer_v4=bool(cve_cfg.get("prefer_v4")),
+    )
+
+    scope = ScopeConfig(
+        min_cvss=scope_cfg.get("min_cvss"),
+    )
+
+    personalization = PersonalizationConfig(
+        watchlist_enabled=bool(personalization_cfg.get("watchlist_enabled")),
+        watchlist_exposure_mode=str(personalization_cfg.get("watchlist_exposure_mode") or "private_only"),
+        rss_enabled=bool(personalization_cfg.get("rss_enabled")),
+        rss_private_token=personalization_cfg.get("rss_private_token"),
     )
 
     url_norm_cfg = tweaks_cfg.get("url_normalization") or {}
@@ -535,6 +592,8 @@ def _build_config(cfg: dict[str, Any]) -> Config:
         ingest=ingest,
         jobs=jobs,
         cve=cve,
+        scope=scope,
+        personalization=personalization,
         llm=dict(cfg.get("llm") or {}),
         per_source_tweaks=per_source_tweaks,
     )

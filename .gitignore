@@ -36,6 +36,7 @@ site/resources/
 site/.hugo_build.lock
 site/content/posts/
 site/content/tags/
+site/content/**/
 
 # --- Docker ---
 *.pid

@@ -304,3 +304,6 @@ Index payload design:
 - Parse version ranges where possible
 - Add exploit-signal classifier
 - Add product pages and “all high/critical for product” views
+
+### Development stages.
+

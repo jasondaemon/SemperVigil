@@ -24,6 +24,10 @@
           <a class="dropdown-item {% if subactive == 'sources' %}active{% endif %}" href="/ui/sources">Sources</a>
           <a class="dropdown-item {% if subactive == 'health' %}active{% endif %}" href="/ui/health">Source Health/History</a>
           <a class="dropdown-item {% if subactive == 'jobs' %}active{% endif %}" href="/ui/jobs">Jobs</a>
+          <a class="dropdown-item {% if subactive == 'personalization' %}active{% endif %}" href="/ui/personalization">Personalization</a>
+          {% if watchlist_enabled %}
+          <a class="dropdown-item {% if subactive == 'watchlist' %}active{% endif %}" href="/ui/watchlist">Watchlist</a>
+          {% endif %}
           <a class="dropdown-item {% if subactive == 'logs' %}active{% endif %}" href="/ui/logs">Log Tail</a>
           <a class="dropdown-item {% if subactive == 'debug' %}active{% endif %}" href="/ui/debug">Ops / Debug</a>
           <a class="dropdown-item {% if subactive == 'runtime_config' %}active{% endif %}" href="/ui/config">Runtime Config</a>

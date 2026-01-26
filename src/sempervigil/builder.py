@@ -5,10 +5,18 @@ import logging
 import os
 import subprocess
 import time
+from datetime import datetime, timedelta, timezone
 
 from .config import ConfigError, get_state_db_path, load_runtime_config
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
-from .storage import claim_next_job, complete_job, fail_job, init_db, is_job_canceled
+from .storage import (
+    claim_next_job,
+    complete_job,
+    fail_job,
+    init_db,
+    is_job_canceled,
+    requeue_job,
+)
 from .utils import configure_logging, log_event
 
 
@@ -19,6 +27,24 @@ def _setup_logging() -> logging.Logger:
 def _tail(text: str, max_lines: int = 120) -> str:
     lines = (text or "").splitlines()
     return "\n".join(lines[-max_lines:])
+
+
+def _last_successful_build_at(conn) -> datetime | None:
+    row = conn.execute(
+        """
+        SELECT finished_at
+        FROM jobs
+        WHERE job_type = 'build_site' AND status = 'succeeded' AND finished_at IS NOT NULL
+        ORDER BY finished_at DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    if not row or not row[0]:
+        return None
+    try:
+        return datetime.fromisoformat(row[0])
+    except ValueError:
+        return None
 
 
 def _run_hugo_until_done(conn, job_id: str) -> tuple[int, str, str, bool]:
@@ -71,6 +97,24 @@ def run_once(builder_id: str) -> int:
     if is_job_canceled(conn, job.id):
         log_event(logger, logging.INFO, "build_canceled", job_id=job.id)
         return 0
+
+    debounce_seconds = int(config.jobs.build_debounce_seconds)
+    if debounce_seconds > 0:
+        last_finished = _last_successful_build_at(conn)
+        if last_finished:
+            next_time = last_finished + timedelta(seconds=debounce_seconds)
+            if datetime.now(tz=timezone.utc) < next_time:
+                payload = dict(job.payload or {})
+                payload["not_before"] = next_time.isoformat()
+                requeue_job(conn, job.id, payload, payload["not_before"])
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "build_debounced",
+                    job_id=job.id,
+                    not_before=payload["not_before"],
+                )
+                return 0
 
     log_event(logger, logging.INFO, "build_claimed", job_id=job.id)
     start = time.time()

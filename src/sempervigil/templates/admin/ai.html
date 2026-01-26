@@ -19,6 +19,45 @@ SEMPERVIGIL_KEY_ID=v1</pre>
     </details>
   </section>
 
+  <section class="panel" id="ai-stages">
+    <h3>Pipeline Stage Status</h3>
+    <p class="muted">LLM stages run only when a valid, enabled profile is routed to the stage.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Stage</th>
+          <th>Status</th>
+          <th>Profile</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in stage_statuses %}
+        <tr>
+          <td class="mono">{{ item.stage_name }}</td>
+          <td>
+            {% if item.status == "active" %}
+              <span class="status-pill status-ok">active</span>
+            {% elif item.status == "disabled" %}
+              <span class="status-pill status-muted">disabled</span>
+            {% else %}
+              <span class="status-pill status-error">misconfigured</span>
+            {% endif %}
+          </td>
+          <td class="mono">{{ item.profile_name or "" }}</td>
+          <td class="mono">{{ item.reason }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="actions">
+      <button class="btn secondary" type="button" id="ai-clear-queued">
+        Cancel queued LLM jobs without routing
+      </button>
+    </div>
+    <p class="muted" id="ai-clear-queued-result"></p>
+  </section>
+
   <section class="panel" id="ai-providers">
     <h3>Providers</h3>
     <p class="muted">Configure endpoints and credentials for each LLM provider.</p>

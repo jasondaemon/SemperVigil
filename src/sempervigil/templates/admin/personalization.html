@@ -1,0 +1,43 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "system" %}
+{% set nav_subactive = "personalization" %}
+{% block content %}
+  <section class="panel">
+    <h2>Personalization</h2>
+    <p class="muted">
+      Personalization can surface sensitive focus areas. Only enable watchlist features if this
+      instance is private and access-controlled.
+    </p>
+    <form id="personalization-form" class="stacked-form" data-watchlist-enabled="{{ 'true' if watchlist_enabled else 'false' }}">
+      <div class="form-row">
+        <label>
+          <input type="checkbox" id="watchlist-enabled">
+          Enable watchlist features
+        </label>
+      </div>
+      <div class="form-row">
+        <label for="watchlist-exposure">Watchlist exposure mode</label>
+        <select id="watchlist-exposure">
+          <option value="private_only">Private only (admin UI)</option>
+          <option value="public_highlights">Public highlights (badges + daily block)</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>
+          <input type="checkbox" id="watchlist-rss-enabled" disabled>
+          Enable private RSS (stub)
+        </label>
+        <p class="muted">RSS delivery is not implemented yet. Token support is reserved for future use.</p>
+      </div>
+      <div class="form-row">
+        <label for="watchlist-rss-token">RSS private token (reserved)</label>
+        <input type="text" id="watchlist-rss-token" placeholder="Not active yet" disabled>
+      </div>
+      <div class="form-row">
+        <button class="btn primary" type="submit">Save personalization settings</button>
+      </div>
+      <p class="error" id="personalization-error" style="display:none;"></p>
+      <p class="note" id="personalization-note" style="display:none;"></p>
+    </form>
+  </section>
+{% endblock %}

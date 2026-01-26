@@ -17,7 +17,9 @@ def _safe_filename(article: Article) -> str:
     return f"{date_part}-{slug}-{article.stable_id[:8]}.md"
 
 
-def write_article_markdown(article: Article, output_dir: str) -> str:
+def write_article_markdown(
+    article: Article, output_dir: str, extra_frontmatter: dict[str, object] | None = None
+) -> str:
     os.makedirs(output_dir, exist_ok=True)
     filename = _safe_filename(article)
     path = os.path.join(output_dir, filename)
@@ -30,6 +32,8 @@ def write_article_markdown(article: Article, output_dir: str) -> str:
         "draft": False,
         "source_url": article.normalized_url,
     }
+    if extra_frontmatter:
+        frontmatter.update(extra_frontmatter)
     summary = article.summary or ""
     body = "\n".join(
         [
@@ -58,7 +62,11 @@ def write_hugo_markdown(articles: Iterable[Article], output_dir: str) -> list[st
     return written
 
 
-def write_json_index(articles: Iterable[Article], path: str) -> None:
+def write_json_index(
+    articles: Iterable[Article],
+    path: str,
+    extra_by_stable_id: dict[str, dict[str, object]] | None = None,
+) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     payload = [
         {
@@ -71,6 +79,7 @@ def write_json_index(articles: Iterable[Article], path: str) -> None:
             "published_at": article.published_at,
             "ingested_at": article.ingested_at,
             "tags": article.tags,
+            **(extra_by_stable_id.get(article.stable_id, {}) if extra_by_stable_id else {}),
         }
         for article in articles
     ]

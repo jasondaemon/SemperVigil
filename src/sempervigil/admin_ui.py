@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
@@ -22,6 +22,7 @@ from .services.ai_service import (
     list_prompts,
     list_providers,
     list_schemas,
+    list_stage_statuses,
 )
 from .storage import (
     count_articles_since,
@@ -50,12 +51,15 @@ def _base_context(request: Request) -> dict[str, object]:
     conn = _get_conn()
     cfg = get_runtime_config(conn)
     publishing = cfg.get("publishing") or {}
+    personalization = cfg.get("personalization") or {}
     site_url = str(publishing.get("public_base_url") or "").strip()
     return {
         "request": request,
         "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
         "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
         "site_url": site_url or None,
+        "watchlist_enabled": bool(personalization.get("watchlist_enabled")),
+        "watchlist_exposure_mode": personalization.get("watchlist_exposure_mode") or "private_only",
     }
 
 
@@ -91,6 +95,31 @@ def ui_router(token_guard) -> APIRouter:
             {
                 **_base_context(request),
                 "sources": items,
+            },
+        )
+
+    @router.get("/watchlist", response_class=HTMLResponse)
+    def watchlist(request: Request):
+        base = _base_context(request)
+        if not base.get("watchlist_enabled"):
+            raise HTTPException(status_code=404, detail="watchlist_disabled")
+        return TEMPLATES.TemplateResponse(
+            "admin/watchlist.html",
+            {
+                **base,
+                "nav_active": "system",
+                "nav_subactive": "watchlist",
+            },
+        )
+
+    @router.get("/personalization", response_class=HTMLResponse)
+    def personalization(request: Request):
+        return TEMPLATES.TemplateResponse(
+            "admin/personalization.html",
+            {
+                **_base_context(request),
+                "nav_active": "system",
+                "nav_subactive": "personalization",
             },
         )
 
@@ -194,6 +223,7 @@ def ui_router(token_guard) -> APIRouter:
                 "profiles": list_profiles(conn),
                 "routing": list_pipeline_routing(conn),
                 "stages": STAGE_NAMES,
+                "stage_statuses": list_stage_statuses(conn, STAGE_NAMES),
             },
         )
 
