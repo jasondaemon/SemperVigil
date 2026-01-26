@@ -2767,6 +2767,7 @@ def rebuild_events_from_cves(
     window_days: int,
     min_shared_products: int,
     limit: int | None = None,
+    logger: logging.Logger | None = None,
 ) -> dict[str, object]:
     stats = {
         "events_created": 0,
@@ -2876,13 +2877,14 @@ def rebuild_events_from_cves(
         conn.commit()
         stats["events_pruned_no_articles"] = pruned_zero
         stats["events_pruned_weak_article"] = pruned_weak
-        log_event(
-            logger,
-            logging.INFO,
-            "events_pruned",
-            no_articles=pruned_zero,
-            weak_article=pruned_weak,
-        )
+        if logger:
+            log_event(
+                logger,
+                logging.INFO,
+                "events_pruned",
+                no_articles=pruned_zero,
+                weak_article=pruned_weak,
+            )
     return stats
 
 
