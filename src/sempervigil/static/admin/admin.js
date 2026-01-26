@@ -22,6 +22,15 @@ function showToast(message) {
   setTimeout(() => toast.remove(), 2500);
 }
 
+function esc(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 function wireDashboard() {
   const backlog = document.getElementById("dashboard-backlog");
   const jobsPanel = document.getElementById("dashboard-job-counts");
@@ -2495,24 +2504,56 @@ function wireContentArticle() {
   const articleId = container.dataset.articleId;
   apiFetch(`/admin/api/content/articles/${articleId}`)
     .then((item) => {
-      const summary = item.summary_llm || item.summary || "";
+      const summaryRaw = item.summary_llm || "";
+      const legacySummary = item.summary || "";
       const content = item.content_text || "";
       const htmlExcerpt = item.content_html_excerpt || "";
       const error = item.content_error || "";
+      let summaryBlock = "";
+      let rawJsonBlock = "";
+      if (summaryRaw) {
+        try {
+          const parsed = JSON.parse(summaryRaw);
+          if (parsed && typeof parsed === "object") {
+            if (parsed.summary) {
+              summaryBlock += `<p>${esc(parsed.summary)}</p>`;
+            }
+            const bullets = parsed.bullets || parsed.key_points || parsed.tldr;
+            if (Array.isArray(bullets) && bullets.length) {
+              summaryBlock += `<ul>${bullets
+                .map((bullet) => `<li>${esc(bullet)}</li>`)
+                .join("")}</ul>`;
+            }
+            rawJsonBlock = `
+              <details>
+                <summary>Raw JSON</summary>
+                <pre class="mono wrap-pre">${esc(JSON.stringify(parsed, null, 2))}</pre>
+              </details>
+            `;
+          }
+        } catch (err) {
+          summaryBlock = `<pre class="mono wrap-pre">${esc(summaryRaw)}</pre>`;
+        }
+      }
+      if (!summaryBlock) {
+        const fallback = legacySummary || "No summary available.";
+        summaryBlock = `<pre class="mono wrap-pre">${esc(fallback)}</pre>`;
+      }
       container.innerHTML = `
         <div class="kv">
-          <div><strong>${item.title || ""}</strong></div>
-          <div>Source: ${item.source_id || ""}</div>
-          <div>Published: ${item.published_at || ""}</div>
-          <div>Ingested: ${item.ingested_at || ""}</div>
-          <div><a href="${item.original_url}" target="_blank" rel="noopener">Open URL</a></div>
+          <div><strong>${esc(item.title || "")}</strong></div>
+          <div>Source: ${esc(item.source_id || "")}</div>
+          <div>Published: ${esc(item.published_at || "")}</div>
+          <div>Ingested: ${esc(item.ingested_at || "")}</div>
+          <div><a href="${esc(item.original_url || "")}" target="_blank" rel="noopener">Open URL</a></div>
         </div>
         <h3>Summary</h3>
-        <pre class="mono wrap-pre">${summary || "No summary available."}</pre>
+        ${summaryBlock}
+        ${rawJsonBlock}
         <h3>Content</h3>
-        <pre class="mono wrap-pre">${content || "No extracted content available."}</pre>
-        ${htmlExcerpt ? `<h3>HTML Excerpt</h3><pre class="mono wrap-pre">${htmlExcerpt}</pre>` : ""}
-        ${error ? `<p class="error">Content error: ${error}</p>` : ""}
+        <pre class="mono wrap-pre">${esc(content || "No extracted content available.")}</pre>
+        ${htmlExcerpt ? `<h3>HTML Excerpt</h3><pre class="mono wrap-pre">${esc(htmlExcerpt)}</pre>` : ""}
+        ${error ? `<p class="error">Content error: ${esc(error)}</p>` : ""}
       `;
     })
     .catch((err) => {

@@ -26,7 +26,7 @@ from .publish import write_article_markdown, write_events_index, write_events_ma
 from .signals import build_cve_evidence, extract_cve_ids
 from .pipelines.content_fetch import fetch_article_content
 from .pipelines.daily_brief import write_daily_brief
-from .pipelines.summarize_llm import summarize_with_llm
+from .llm.router import run_profile
 from .services.ai_service import get_active_profile_for_stage
 from .storage import (
     claim_next_job,
@@ -610,61 +610,71 @@ def _handle_summarize_article_llm(
             article_id=article_id,
             source_id=article["source_id"],
         )
-        return {"skipped": True, "error": "llm_stage_disabled", "reason": reason}
-    if not is_llm_configured():
+        raise ValueError(f"llm_stage_{reason}")
+    source_name = get_source_name(conn, article["source_id"]) or ""
+    content = article.get("content_text") or article.get("summary") or article.get("title") or ""
+    if not content.strip():
         update_article_summary(
             conn,
             int(article_id),
             summary_llm=None,
             summary_model=None,
             summary_generated_at=utc_now_iso(),
-            summary_error="llm_not_configured",
+            summary_error="missing_content",
         )
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
-        return {"skipped": True, "error": "llm_not_configured"}
-    source_name = get_source_name(conn, article["source_id"]) or ""
-    content = article["content_text"] or article["summary"] or article["title"]
+        raise ValueError("missing_content")
     input_chars = len(content or "")
     start = time.time()
     try:
-        result = summarize_with_llm(
-            title=article["title"],
-            source=source_name,
-            published_at=article["published_at"],
-            url=article["original_url"],
-            content=content,
-            logger=logger,
+        input_text = (
+            f"Title: {article.get('title')}\n"
+            f"Source: {source_name}\n"
+            f"Published: {article.get('published_at') or 'unknown'}\n"
+            f"URL: {article.get('original_url') or article.get('normalized_url')}\n\n"
+            f"Content:\n{content}\n"
         )
+        result = run_profile(conn, profile["id"], input_text, logger)
         latency_ms = int((time.time() - start) * 1000)
+        parsed = result.get("parsed")
+        raw = result.get("raw") if isinstance(result, dict) else None
+        if isinstance(parsed, (dict, list)):
+            summary_payload = json.dumps(parsed)
+            summary_text = parsed.get("summary") if isinstance(parsed, dict) else None
+        elif isinstance(raw, str):
+            summary_payload = json.dumps({"summary": raw})
+            summary_text = raw
+        else:
+            raise ValueError("llm_empty_output")
         update_article_summary(
             conn,
             int(article_id),
-            summary_llm=json.dumps(result),
-            summary_model=result.get("model"),
+            summary_llm=summary_payload,
+            summary_model=profile.get("model_name") or profile.get("primary_model_id"),
             summary_generated_at=utc_now_iso(),
             summary_error=None,
         )
         insert_llm_run(
             conn,
             job_id=None,
-            provider_id="env",
-            model_id=result.get("model"),
-            prompt_name="summarize_article_llm",
+            provider_id=profile.get("primary_provider_id"),
+            model_id=profile.get("primary_model_id"),
+            prompt_name=profile.get("name") or "summarize_article",
             input_chars=input_chars,
-            output_chars=len(result.get("summary") or ""),
+            output_chars=len(summary_text or ""),
             latency_ms=latency_ms,
             ok=True,
             error=None,
         )
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
-        return result
+        return {"ok": True, "summary": summary_text, "profile_id": profile.get("id")}
     except Exception as exc:  # noqa: BLE001
         insert_llm_run(
             conn,
             job_id=None,
-            provider_id="env",
-            model_id=None,
-            prompt_name="summarize_article_llm",
+            provider_id=profile.get("primary_provider_id") if profile else None,
+            model_id=profile.get("primary_model_id") if profile else None,
+            prompt_name=profile.get("name") if profile else "summarize_article",
             input_chars=input_chars,
             output_chars=0,
             latency_ms=int((time.time() - start) * 1000),
@@ -1321,17 +1331,6 @@ def _maybe_enqueue_summarize(
             "llm_stage_skipped",
             stage="summarize_article",
             reason=reason,
-            article_id=article_id,
-            source_id=source_id,
-        )
-        return False
-    if not is_llm_configured():
-        log_event(
-            logger,
-            logging.INFO,
-            "llm_stage_skipped",
-            stage="summarize_article",
-            reason="llm_not_configured",
             article_id=article_id,
             source_id=source_id,
         )

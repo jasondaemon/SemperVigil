@@ -365,10 +365,10 @@ SEMPERVIGIL_KEY_ID=v1</pre>
       </thead>
       <tbody>
         {% for stage in stages %}
-        {% set current = None %}
+        {% set ns = namespace(current="") %}
         {% for row in routing %}
           {% if row.stage_name == stage %}
-            {% set current = row.profile_id %}
+            {% set ns.current = row.profile_id %}
           {% endif %}
         {% endfor %}
         <tr data-stage-name="{{ stage }}">
@@ -377,7 +377,7 @@ SEMPERVIGIL_KEY_ID=v1</pre>
             <select class="route-profile">
               <option value="">(none)</option>
               {% for profile in profiles %}
-              <option value="{{ profile.id }}" {% if profile.id == current %}selected{% endif %}>
+              <option value="{{ profile.id }}" {% if profile.id == ns.current %}selected{% endif %}>
                 {{ profile.name }}
               </option>
               {% endfor %}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import uuid
@@ -10,7 +11,7 @@ from typing import Iterable
 from .migrations import apply_migrations
 from .models import Article, Job, Source, SourceTactic
 from .normalize import cpe_to_vendor_product, normalize_name
-from .utils import json_dumps, utc_now_iso, utc_now_iso_offset
+from .utils import json_dumps, log_event, utc_now_iso, utc_now_iso_offset
 
 
 def init_db(path: str) -> sqlite3.Connection:
@@ -2819,6 +2820,69 @@ def rebuild_events_from_cves(
                 published_at or ingested_at,
             )
             stats["articles_linked"] += linked
+    if _table_exists(conn, "events") and _table_exists(conn, "event_items"):
+        logger = logging.getLogger("sempervigil.events")
+        keywords = [
+            "exploited in the wild",
+            "active exploitation",
+            "actively exploited",
+            "mass exploitation",
+            "ransomware",
+            "breach",
+            "compromised",
+            "intrusion",
+            "zero-day",
+            "0day",
+            "botnet",
+            "campaign",
+            "attackers",
+            "observed exploitation",
+            "weaponized",
+        ]
+        article_columns = _table_columns(conn, "articles") if _table_exists(conn, "articles") else set()
+        title_sel = "a.title" if "title" in article_columns else "''"
+        summary_sel = "a.summary" if "summary" in article_columns else "''"
+        content_sel = "a.content_text" if "content_text" in article_columns else "''"
+        pruned_zero = 0
+        pruned_weak = 0
+        event_ids = [row[0] for row in conn.execute("SELECT id FROM events").fetchall()]
+        for event_id in event_ids:
+            rows = conn.execute(
+                f"""
+                SELECT {title_sel}, {summary_sel}, {content_sel}
+                FROM event_items ei
+                JOIN articles a ON a.id = CAST(ei.item_key AS INTEGER)
+                WHERE ei.event_id = ? AND ei.item_type = 'article'
+                """,
+                (event_id,),
+            ).fetchall()
+            article_count = len(rows)
+            incident_signal = False
+            for title, summary, content in rows:
+                combined = f"{title or ''} {summary or ''} {content or ''}".lower()
+                if any(keyword in combined for keyword in keywords):
+                    incident_signal = True
+                    break
+            if article_count == 0 or (article_count == 1 and not incident_signal):
+                if _table_exists(conn, "event_items"):
+                    conn.execute("DELETE FROM event_items WHERE event_id = ?", (event_id,))
+                if _table_exists(conn, "event_signals"):
+                    conn.execute("DELETE FROM event_signals WHERE event_id = ?", (event_id,))
+                conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+                if article_count == 0:
+                    pruned_zero += 1
+                else:
+                    pruned_weak += 1
+        conn.commit()
+        stats["events_pruned_no_articles"] = pruned_zero
+        stats["events_pruned_weak_article"] = pruned_weak
+        log_event(
+            logger,
+            logging.INFO,
+            "events_pruned",
+            no_articles=pruned_zero,
+            weak_article=pruned_weak,
+        )
     return stats
 
 

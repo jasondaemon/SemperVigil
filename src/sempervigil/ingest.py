@@ -6,9 +6,11 @@ import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
 import feedparser
+from bs4 import BeautifulSoup
 
 from .config import Config
 from .models import Article, Decision, Source, SourceTactic
@@ -251,26 +253,6 @@ def _run_tactic(
             strategy=dedupe_strategy,
         )
 
-    if tactic.tactic_type in {"html_index", "sitemap", "article_html", "jsonfeed"}:
-        return (
-            SourceResult(
-                source_id=source.id,
-                status="not_implemented",
-                http_status=None,
-                found_count=0,
-                accepted_count=0,
-                skipped_duplicates=0,
-                skipped_filters=0,
-                skipped_missing_url=0,
-                already_seen_count=0,
-                error=f"Tactic {tactic.tactic_type} not implemented",
-                articles=[],
-                decisions=[],
-                raw_entry=None,
-            ),
-            {"tactic_type": tactic.tactic_type, "status": "not_implemented"},
-        )
-
     feed_url = tactic.config.get("feed_url") if tactic.config else None
     if not feed_url:
         return (
@@ -299,6 +281,174 @@ def _run_tactic(
     http_cfg = config.ingest.http
     request_headers = {"User-Agent": http_cfg.user_agent}
     request_headers.update({str(k): str(v) for k, v in headers.items()})
+
+    if tactic.tactic_type == "html_index":
+        http_status, content, error = _fetch_url(
+            feed_url,
+            headers=request_headers,
+            timeout=http_cfg.timeout_seconds,
+            max_retries=http_cfg.max_retries,
+            backoff_seconds=http_cfg.backoff_seconds,
+        )
+        if error or not content:
+            return (
+                SourceResult(
+                    source_id=source.id,
+                    status="error",
+                    http_status=http_status,
+                    found_count=0,
+                    accepted_count=0,
+                    skipped_duplicates=0,
+                    skipped_filters=0,
+                    skipped_missing_url=0,
+                    already_seen_count=0,
+                    error=error or "empty response",
+                    articles=[],
+                    decisions=[],
+                    raw_entry=None,
+                ),
+                {
+                    "tactic_type": tactic.tactic_type,
+                    "status": "error",
+                    "http_status": http_status,
+                    "error": error or "empty response",
+                },
+            )
+        soup = BeautifulSoup(content, "html.parser")
+        entry_selector = tactic.config.get("entry_selector") if tactic.config else None
+        link_selector = tactic.config.get("link_selector") if tactic.config else None
+        containers = soup.select(entry_selector) if entry_selector else [soup]
+        urls: list[str] = []
+        seen_urls: set[str] = set()
+        entries: list[dict[str, Any]] = []
+        for container in containers:
+            anchors = container.select(link_selector) if link_selector else container.find_all("a")
+            for anchor in anchors:
+                href = anchor.get("href")
+                if not href:
+                    continue
+                if href.startswith("#"):
+                    continue
+                parsed = urlparse(href)
+                if parsed.scheme in {"mailto", "javascript"}:
+                    continue
+                url = urljoin(feed_url, href)
+                parsed_url = urlparse(url)
+                if parsed_url.scheme not in {"http", "https"}:
+                    continue
+                if url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                text = anchor.get_text(" ", strip=True) or url
+                entries.append({"link": url, "title": text, "summary": ""})
+                urls.append(url)
+        accepted: list[Article] = []
+        decisions: list[Decision] = []
+        seen_ids: set[str] = set()
+        skipped_duplicates = 0
+        skipped_filters = 0
+        skipped_missing_url = 0
+        already_seen_count = 0
+        raw_entry = dict(entries[0]) if test_mode and entries else None
+        fetched_at = utc_now_iso()
+        total_entries = len(entries)
+        for index, entry in enumerate(entries, start=1):
+            decision, article = evaluate_entry(
+                entry,
+                source,
+                policy,
+                config,
+                conn,
+                seen_ids,
+                fetched_at,
+                ignore_dedupe=ignore_dedupe,
+            )
+            if logger.isEnabledFor(logging.DEBUG) and total_entries:
+                log_event(
+                    logger,
+                    logging.DEBUG,
+                    "ingest_progress",
+                    source_id=source.id,
+                    source_name=source.name,
+                    i=index,
+                    total=total_entries,
+                )
+            decisions.append(decision)
+            if "already_seen" in decision.reasons:
+                already_seen_count += 1
+            if decision.decision == "ACCEPT" and article:
+                seen_ids.add(article.stable_id)
+                accepted.append(article)
+                continue
+            if decision.decision == "SKIP" and "missing_url" in decision.reasons:
+                skipped_missing_url += 1
+            if decision.decision == "SKIP" and (
+                any(reason.startswith("deny_keywords") for reason in decision.reasons)
+                or "allow_keywords:miss" in decision.reasons
+            ):
+                skipped_filters += 1
+            if decision.decision == "SKIP" and "duplicate" in decision.reasons:
+                skipped_duplicates += 1
+        log_event(
+            logger,
+            logging.INFO,
+            "source_parsed",
+            source_id=source.id,
+            found_count=len(entries),
+            accepted_count=len(accepted),
+        )
+        if test_mode:
+            log_event(
+                logger,
+                logging.INFO,
+                "source_preview",
+                source_id=source.id,
+                preview=json.dumps([decision.__dict__ for decision in decisions[:20]]),
+            )
+        return (
+            SourceResult(
+                source_id=source.id,
+                status="ok",
+                http_status=http_status,
+                found_count=len(entries),
+                accepted_count=len(accepted),
+                skipped_duplicates=skipped_duplicates,
+                skipped_filters=skipped_filters,
+                skipped_missing_url=skipped_missing_url,
+                already_seen_count=already_seen_count,
+                error=None,
+                articles=accepted,
+                decisions=decisions,
+                raw_entry=raw_entry,
+            ),
+            {
+                "tactic_type": tactic.tactic_type,
+                "status": "ok",
+                "http_status": http_status,
+                "found_count": len(entries),
+                "accepted_count": len(accepted),
+            },
+        )
+
+    if tactic.tactic_type in {"sitemap", "article_html", "jsonfeed"}:
+        return (
+            SourceResult(
+                source_id=source.id,
+                status="not_implemented",
+                http_status=None,
+                found_count=0,
+                accepted_count=0,
+                skipped_duplicates=0,
+                skipped_filters=0,
+                skipped_missing_url=0,
+                already_seen_count=0,
+                error=f"Tactic {tactic.tactic_type} not implemented",
+                articles=[],
+                decisions=[],
+                raw_entry=None,
+            ),
+            {"tactic_type": tactic.tactic_type, "status": "not_implemented"},
+        )
 
     http_status, content, error = _fetch_url(
         feed_url,
