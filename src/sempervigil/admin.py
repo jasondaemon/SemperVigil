@@ -321,10 +321,10 @@ def logs_tail(service: str, lines: int = 200) -> dict[str, object]:
 def dashboard_metrics() -> dict[str, object]:
     conn = _get_conn()
     metrics = get_dashboard_metrics(conn)
-    metrics["llm_configured"] = bool(os.environ.get("SV_LLM_BASE_URL") and os.environ.get("SV_LLM_API_KEY"))
     stage_statuses = list_stage_statuses(conn, STAGE_NAMES)
     metrics["llm_stage_active"] = sum(1 for item in stage_statuses if item["status"] == "active")
     metrics["llm_stage_total"] = len(stage_statuses)
+    metrics["llm_configured"] = metrics["llm_stage_active"] > 0
     return metrics
 
 

@@ -1494,6 +1494,7 @@ function wireAiPrompts() {
   if (!form) {
     return;
   }
+  const tableBody = document.getElementById("prompt-table-body");
   const idField = document.getElementById("prompt-id");
   const nameField = document.getElementById("prompt-name");
   const versionField = document.getElementById("prompt-version");
@@ -1509,6 +1510,27 @@ function wireAiPrompts() {
     systemField.value = "";
     userField.value = "";
     notesField.value = "";
+  }
+
+  async function refreshPrompts() {
+    if (!tableBody) {
+      return;
+    }
+    const prompts = await apiFetch("/admin/ai/prompts");
+    tableBody.innerHTML = prompts
+      .map(
+        (prompt) => `
+        <tr data-prompt-id="${esc(prompt.id)}">
+          <td class="prompt-name">${esc(prompt.name)}</td>
+          <td class="prompt-version">${esc(prompt.version)}</td>
+          <td class="actions">
+            <button class="btn small edit-prompt" type="button">Edit</button>
+            <button class="btn small danger delete-prompt" type="button">Delete</button>
+          </td>
+        </tr>
+      `
+      )
+      .join("");
   }
 
   resetBtn.addEventListener("click", resetForm);
@@ -1527,36 +1549,53 @@ function wireAiPrompts() {
     const method = idField.value ? "PATCH" : "POST";
     try {
       await apiFetch(target, { method, body: JSON.stringify(payload) });
-      window.location.reload();
+      await refreshPrompts();
+      showToast("Prompt saved");
     } catch (err) {
       alert(err);
     }
   });
 
-  document.querySelectorAll(".edit-prompt").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const row = btn.closest("tr");
-      idField.value = row.dataset.promptId;
-      nameField.value = row.querySelector(".prompt-name").textContent.trim();
-      versionField.value = row.querySelector(".prompt-version").textContent.trim();
-    });
-  });
-
-  document.querySelectorAll(".delete-prompt").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const row = btn.closest("tr");
-      const promptId = row.dataset.promptId;
-      if (!confirm("Delete prompt?")) {
+  if (tableBody) {
+    tableBody.addEventListener("click", async (event) => {
+      const btn = event.target.closest("button");
+      if (!btn) {
         return;
       }
-      try {
-        await apiFetch(`/admin/ai/prompts/${promptId}`, { method: "DELETE" });
-        window.location.reload();
-      } catch (err) {
-        alert(err);
+      const row = btn.closest("tr");
+      if (!row) {
+        return;
+      }
+      const promptId = row.dataset.promptId;
+      if (btn.classList.contains("edit-prompt")) {
+        try {
+          const prompt = await apiFetch(`/admin/ai/prompts/${promptId}`);
+          idField.value = prompt.id || "";
+          nameField.value = prompt.name || "";
+          versionField.value = prompt.version || "v1";
+          systemField.value = prompt.system_template || "";
+          userField.value = prompt.user_template || "";
+          notesField.value = prompt.notes || "";
+        } catch (err) {
+          alert(err);
+        }
+      }
+      if (btn.classList.contains("delete-prompt")) {
+        if (!confirm("Delete prompt?")) {
+          return;
+        }
+        try {
+          await apiFetch(`/admin/ai/prompts/${promptId}`, { method: "DELETE" });
+          await refreshPrompts();
+          showToast("Prompt deleted");
+        } catch (err) {
+          alert(err);
+        }
       }
     });
-  });
+  }
+
+  refreshPrompts().catch(() => {});
 }
 
 function wireAiSchemas() {

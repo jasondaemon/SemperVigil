@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -108,6 +109,9 @@ def run_profile(
     profile = get_profile(conn, profile_id)
     if not profile:
         raise ValueError("profile_not_found")
+    safe_text = str(text or "")
+    if len(safe_text) > 50000:
+        safe_text = safe_text[:50000] + "\n\n[TRUNCATED: input exceeded 50000 chars]"
     prompt = get_prompt(conn, profile["prompt_id"])
     if not prompt:
         raise ValueError("prompt_not_found")
@@ -123,7 +127,7 @@ def run_profile(
                 prompt,
                 schema,
                 profile.get("params") or {},
-                text,
+                safe_text,
                 logger,
             )
             return output
@@ -262,15 +266,34 @@ def _http_request(
     request.add_header("Content-Type", "application/json")
     for key, value in headers.items():
         request.add_header(key, value)
-    timeout = int(provider.get("timeout_s", 30))
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        raw = exc.read().decode("utf-8", errors="ignore")
-        raise ValueError(f"http_error {exc.code}: {raw[:500]}") from exc
-    except urllib.error.URLError as exc:
-        raise ValueError(f"network_error: {exc}") from exc
+    timeout = max(75, int(provider.get("timeout_s", 75)))
+    backoff = [1, 2]
+    attempts = 0
+    while True:
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                raw = response.read().decode("utf-8")
+            break
+        except urllib.error.HTTPError as exc:
+            if exc.code in {429, 503} and attempts < len(backoff):
+                time.sleep(backoff[attempts])
+                attempts += 1
+                continue
+            raw = exc.read().decode("utf-8", errors="ignore")
+            raise ValueError(f"http_error {exc.code}: {raw[:500]}") from exc
+        except urllib.error.URLError as exc:
+            is_timeout = isinstance(exc.reason, (TimeoutError, socket.timeout))
+            if is_timeout and attempts < len(backoff):
+                time.sleep(backoff[attempts])
+                attempts += 1
+                continue
+            raise ValueError(f"network_error: {exc}") from exc
+        except socket.timeout as exc:
+            if attempts < len(backoff):
+                time.sleep(backoff[attempts])
+                attempts += 1
+                continue
+            raise ValueError(f"timeout: {exc}") from exc
     try:
         return json.loads(raw)
     except json.JSONDecodeError:

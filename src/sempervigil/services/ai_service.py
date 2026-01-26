@@ -303,9 +303,9 @@ def list_prompts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                 "id": row[0],
                 "name": row[1],
                 "version": row[2],
-                "system_template": row[3],
-                "user_template": row[4],
-                "notes": row[5],
+                "system_template": row[3] or "",
+                "user_template": row[4] or "",
+                "notes": row[5] or "",
                 "created_at": row[6],
             }
         )

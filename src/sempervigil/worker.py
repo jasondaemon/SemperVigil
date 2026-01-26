@@ -1275,10 +1275,6 @@ def _job_context_fields(conn, job) -> dict[str, object]:
     return {"source_id": source_id, "source_name": source_name}
 
 
-def is_llm_configured() -> bool:
-    return bool(os.environ.get("SV_LLM_BASE_URL") and os.environ.get("SV_LLM_API_KEY"))
-
-
 def _maybe_enqueue_fetch(
     conn, config, article_id: int, source_id: str, logger: logging.Logger
 ) -> None:
@@ -1330,7 +1326,8 @@ def _maybe_enqueue_summarize(
             logging.INFO,
             "llm_stage_skipped",
             stage="summarize_article",
-            reason=reason,
+            reason="no_profile_routed",
+            detail=reason,
             article_id=article_id,
             source_id=source_id,
         )
