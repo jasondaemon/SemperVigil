@@ -66,7 +66,8 @@ def main() -> int:
         cursor = sqlite_conn.execute(f"SELECT {cols_sql} FROM {table}")
         for batch in _chunked(cursor.fetchall(), 500):
             pg_conn.execute("BEGIN")
-            pg_conn.executemany(insert_sql, batch)
+            with pg_conn.cursor() as pg_cursor:
+                pg_cursor.executemany(insert_sql, batch)
             pg_conn.commit()
 
     sqlite_conn.close()

@@ -5,6 +5,7 @@ import dataclasses
 import hashlib
 import json
 import logging
+import sys
 import os
 import re
 import unicodedata
@@ -31,6 +32,7 @@ def configure_logging(logger_name: str, default_level: str = "INFO") -> logging.
             level=getattr(logging, level_name, logging.INFO),
             format="%(asctime)s %(levelname)s %(message)s",
         )
+    _ensure_stdout_handler(level_name)
     _maybe_add_file_handler(level_name)
     _apply_log_overrides()
     return logging.getLogger(logger_name)
@@ -58,6 +60,17 @@ def _maybe_add_file_handler(level_name: str) -> None:
             return
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     handler = logging.FileHandler(log_path)
+    handler.setLevel(getattr(logging, level_name, logging.INFO))
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    root.addHandler(handler)
+
+
+def _ensure_stdout_handler(level_name: str) -> None:
+    root = logging.getLogger()
+    for handler in root.handlers:
+        if isinstance(handler, logging.StreamHandler) and handler.stream is sys.stdout:
+            return
+    handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(getattr(logging, level_name, logging.INFO))
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     root.addHandler(handler)

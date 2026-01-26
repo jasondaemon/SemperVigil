@@ -4,28 +4,40 @@ set -euo pipefail
 echo "🧹 SemperVigil full recycle starting…"
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-sempervigil}"
 
-echo "🛑 Stopping running containers..."
-docker compose down
+# --- helpers ---
+SERVICES="$(docker compose config --services)"
+has() { echo "$SERVICES" | grep -qx "$1"; }
 
+DB_USER="${SV_DB_USER:-sempervigil}"
+ADMIN_PORT="${SV_ADMIN_PORT:-8001}"
+WEB_PORT="${SV_WEB_PORT:-8080}"
+
+# --- stop ---
+echo "🛑 Stopping running containers..."
+docker compose down --remove-orphans
+
+# --- build ---
 echo "🔨 Rebuilding images (no cache)..."
 docker compose build --no-cache
 
-echo "🗄️  Starting database..."
-docker compose up -d db
+# --- db up ---
+if has "db"; then
+  echo "🗄️  Starting database..."
+  docker compose up -d db
 
-echo "⏳ Waiting for Postgres to be ready..."
-until docker exec "$(docker compose ps -q db)" pg_isready -U "${SV_DB_USER:-sempervigil}" >/dev/null 2>&1; do
-  sleep 1
-done
-echo "✅ Database is ready."
-
-# --- detect services ---
-SERVICES="$(docker compose config --services)"
-has() { echo "$SERVICES" | grep -qx "$1"; }
+  echo "⏳ Waiting for Postgres to be ready..."
+  until docker exec "$(docker compose ps -q db)" pg_isready -U "$DB_USER" >/dev/null 2>&1; do
+    sleep 1
+  done
+  echo "✅ Database is ready."
+else
+  echo "⚠️  No db service found; continuing..."
+fi
 
 echo "📋 Compose services:"
 echo "$SERVICES" | sed 's/^/  - /'
 
+# --- identify workers ---
 FETCH_SVC=""
 LLM_SVC=""
 
@@ -33,7 +45,7 @@ if has "worker_fetch"; then FETCH_SVC="worker_fetch"; fi
 if has "worker_llm"; then LLM_SVC="worker_llm"; fi
 
 # Legacy fallback
-if [[ -z "$FETCH_SVC" && -z "$LLM_SVC" && $(echo "$SERVICES" | grep -c '^worker$' || true) -gt 0 ]]; then
+if [[ -z "$FETCH_SVC" && -z "$LLM_SVC" ]] && echo "$SERVICES" | grep -qx "worker"; then
   echo "⚠️  Detected legacy single worker service: worker"
   FETCH_SVC="worker"
 fi
@@ -43,9 +55,15 @@ if [[ -z "$FETCH_SVC" && -z "$LLM_SVC" ]]; then
   exit 1
 fi
 
-echo "⚙️  Starting admin..."
-docker compose up -d admin
+# --- start admin ---
+if has "admin"; then
+  echo "⚙️  Starting admin..."
+  docker compose up -d admin
+else
+  echo "⚠️  No admin service found; skipping..."
+fi
 
+# --- start workers (IMPORTANT: specify service names so Compose doesn't start everything) ---
 echo "⚙️  Starting workers..."
 if [[ "$FETCH_SVC" == "worker_fetch" ]]; then
   docker compose up -d --scale worker_fetch=2 worker_fetch
@@ -57,18 +75,32 @@ if [[ -n "$LLM_SVC" ]]; then
   docker compose up -d --scale worker_llm=1 worker_llm
 fi
 
-# Self-heal: ensure builder isn't running as a daemon service
+# --- build site once (do NOT run builder as a service) ---
 if has "builder"; then
+  echo "🧽 Ensuring builder service isn't running..."
   docker compose stop builder >/dev/null 2>&1 || true
   docker compose rm -f builder >/dev/null 2>&1 || true
+
+  echo "📝 Running Hugo site build (one-shot)..."
+  # Use timeout to prevent hangs if --once is missing or builder blocks
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 10m docker compose run --rm --no-deps builder sempervigil-builder --once
+  else
+    # Fallback if timeout isn't installed
+    docker compose run --rm --no-deps builder sempervigil-builder --once
+  fi
+else
+  echo "⚠️  No builder service found; skipping site build..."
 fi
 
-echo "📝 Running Hugo site build..."
-docker compose run --rm builder
-
-echo "🌍 Starting public web server..."
-docker compose up -d web
+# --- start web ---
+if has "web"; then
+  echo "🌍 Starting public web server..."
+  docker compose up -d web
+else
+  echo "⚠️  No web service found; skipping..."
+fi
 
 echo "🎉 SemperVigil recycle complete."
-echo "   Admin: http://localhost:${SV_ADMIN_PORT:-8001}"
-echo "   Site:  http://localhost:${SV_WEB_PORT:-8080}"
+echo "   Admin: http://localhost:${ADMIN_PORT}"
+echo "   Site:  http://localhost:${WEB_PORT}"
