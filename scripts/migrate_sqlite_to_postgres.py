@@ -5,6 +5,9 @@ import os
 import sqlite3
 from typing import Iterable
 
+from sempervigil.db import DBConn
+from sempervigil.migrations_pg import apply_migrations_pg
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -47,6 +50,8 @@ def main() -> int:
 
     sqlite_conn = sqlite3.connect(args.sqlite)
     pg_conn = psycopg.connect(args.pg_url)
+    pg_wrapper = DBConn(pg_conn, "postgres")
+    apply_migrations_pg(pg_wrapper)
     pg_conn.autocommit = False
 
     tables = _list_tables(sqlite_conn)
