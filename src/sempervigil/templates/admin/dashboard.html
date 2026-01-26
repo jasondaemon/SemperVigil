@@ -20,6 +20,20 @@
     </div>
   </section>
 
+  <section class="panel" id="dashboard-pipeline">
+    <h2>Pipeline Status</h2>
+    <p class="muted">
+      Ingest creates article stubs first. Fetch content runs next (if enabled + URL present),
+      summarization follows fetch (or runs immediately if fetch is disabled), and markdown publish
+      runs per-article. Site build is a separate job.
+    </p>
+    <div class="actions">
+      <button class="btn secondary" id="dashboard-pipeline-check" type="button">Run Pipeline Check</button>
+    </div>
+    <div class="grid" id="dashboard-backlog"></div>
+    <div class="panel" id="dashboard-job-counts"></div>
+  </section>
+
   <section class="panel">
     <h2>Recent Jobs</h2>
     <table>

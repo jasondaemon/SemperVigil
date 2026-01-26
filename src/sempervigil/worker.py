@@ -37,11 +37,14 @@ from .storage import (
     get_setting,
     get_article_id,
     get_article_by_id,
+    get_article_tags,
     get_event,
     get_batch_job_counts,
     get_job,
     is_job_canceled,
     init_db,
+    has_pending_article_job,
+    count_failed_article_jobs,
     insert_articles,
     link_article_to_events,
     list_due_sources,
@@ -63,6 +66,9 @@ from .storage import (
     update_article_content,
     update_article_summary,
     update_job_result,
+    list_article_ids_missing_content,
+    list_article_ids_missing_summary,
+    list_article_ids_for_source_since,
 )
 from .utils import configure_logging, log_event, utc_now_iso
 
@@ -76,6 +82,7 @@ WORKER_JOB_TYPES = [
     "summarize_article_llm",
     "build_daily_brief",
     "write_article_markdown",
+    "source_acquire",
     "smoke_test",
 ]
 
@@ -166,6 +173,9 @@ def _handle_ingest_source(
     logger: logging.Logger,
     job_id: str | None = None,
 ) -> dict[str, object]:
+    # Pipeline order: ingest creates article stubs first, then enqueues
+    # fetch_article_content (if enabled + URL present), summarize_article_llm,
+    # and write_article_markdown jobs.
     source_id = payload.get("source_id") if payload else None
     if not source_id:
         raise ValueError("ingest_source requires source_id")
@@ -785,6 +795,124 @@ def _handle_smoke_test(conn, config, job, logger: logging.Logger) -> dict[str, o
     return result
 
 
+def _handle_source_acquire(conn, config, job, logger: logging.Logger) -> dict[str, object]:
+    payload = job.payload or {}
+    source_id = payload.get("source_id")
+    if not source_id:
+        raise ValueError("source_acquire requires source_id")
+    source = get_source(conn, str(source_id))
+    if source is None:
+        raise ValueError(f"Source not found: {source_id}")
+    limit = payload.get("limit")
+    also_build = bool(payload.get("also_build"))
+    also_events = bool(payload.get("also_events_rebuild"))
+    timeout_seconds = int(payload.get("timeout_seconds") or 300)
+
+    started = time.time()
+    result: dict[str, object] = {"source_id": source.id, "counts": {}, "errors": []}
+    start_marker = utc_now_iso()
+
+    ingest_payload: dict[str, object] = {"source_id": source.id}
+    if isinstance(limit, int):
+        ingest_payload["limit"] = limit
+    ingest_job_id = enqueue_job(conn, "ingest_source", ingest_payload)
+    result["ingest_job_id"] = ingest_job_id
+    _run_jobs_inline(
+        conn,
+        config,
+        logger,
+        allowed_types=["ingest_source"],
+        timeout_seconds=timeout_seconds,
+    )
+    ingest_job = get_job(conn, ingest_job_id)
+    result["counts"]["ingested"] = int((ingest_job.result or {}).get("accepted_count") or 0) if ingest_job else 0
+
+    missing_content_ids = list_article_ids_missing_content(conn, source.id)
+    for article_id in missing_content_ids:
+        _maybe_enqueue_fetch(conn, article_id, source.id)
+    _run_jobs_inline(
+        conn,
+        config,
+        logger,
+        allowed_types=["fetch_article_content"],
+        timeout_seconds=timeout_seconds,
+    )
+
+    missing_summary_ids = list_article_ids_missing_summary(conn, source.id)
+    for article_id in missing_summary_ids:
+        _maybe_enqueue_summarize(conn, article_id, source.id)
+    _run_jobs_inline(
+        conn,
+        config,
+        logger,
+        allowed_types=["summarize_article_llm"],
+        timeout_seconds=timeout_seconds,
+    )
+
+    new_article_ids = list_article_ids_for_source_since(conn, source.id, start_marker)
+    publish_ids = sorted(set(new_article_ids + missing_content_ids + missing_summary_ids))
+    for article_id in publish_ids:
+        _enqueue_write_from_article(conn, article_id, source.id)
+    _run_jobs_inline(
+        conn,
+        config,
+        logger,
+        allowed_types=["write_article_markdown"],
+        timeout_seconds=timeout_seconds,
+    )
+
+    jobs = list_jobs_by_types_since(
+        conn,
+        types=["fetch_article_content", "summarize_article_llm", "write_article_markdown"],
+        since=start_marker,
+    )
+    for job_row in jobs:
+        if job_row.status == "failed" and job_row.error:
+            result["errors"].append(
+                {"job_type": job_row.job_type, "job_id": job_row.id, "error": job_row.error}
+            )
+    result["counts"]["fetched_ok"] = sum(
+        1 for j in jobs if j.job_type == "fetch_article_content" and j.status == "succeeded"
+    )
+    result["counts"]["fetched_failed"] = sum(
+        1 for j in jobs if j.job_type == "fetch_article_content" and j.status == "failed"
+    )
+    result["counts"]["summarized_ok"] = sum(
+        1 for j in jobs if j.job_type == "summarize_article_llm" and j.status == "succeeded"
+    )
+    result["counts"]["summarized_failed"] = sum(
+        1 for j in jobs if j.job_type == "summarize_article_llm" and j.status == "failed"
+    )
+    result["counts"]["markdown_ok"] = sum(
+        1 for j in jobs if j.job_type == "write_article_markdown" and j.status == "succeeded"
+    )
+    result["counts"]["markdown_failed"] = sum(
+        1 for j in jobs if j.job_type == "write_article_markdown" and j.status == "failed"
+    )
+
+    if also_events:
+        events_job_id = enqueue_job(conn, "events_rebuild", None)
+        _run_jobs_inline(
+            conn,
+            config,
+            logger,
+            allowed_types=["events_rebuild"],
+            timeout_seconds=timeout_seconds,
+        )
+        result["events_job_id"] = events_job_id
+
+    if also_build:
+        build_job_id = enqueue_job(conn, "build_site", None, debounce=True)
+        result["build_job_id"] = build_job_id
+        _wait_for_job(conn, build_job_id, timeout_seconds)
+        build_job = get_job(conn, build_job_id)
+        if build_job:
+            result["build_ok"] = build_job.status == "succeeded"
+            result["build_exit_code"] = (build_job.result or {}).get("exit_code")
+    result["duration_s"] = round(time.time() - started, 2)
+    return result
+
+
 def _run_jobs_inline(
     conn,
     config,
@@ -848,6 +976,8 @@ def _wait_for_job(conn, job_id: str, timeout_seconds: int) -> Job | None:
 
 
 def _handle_ingest_due_sources(conn, logger: logging.Logger) -> dict[str, object]:
+    # Enqueue ingest_source jobs for due sources; downstream steps are queued
+    # by ingest_source after article stubs are inserted.
     now = utc_now_iso()
     sources = list_due_sources(conn, now)
     enqueued: list[str] = []
@@ -1042,6 +1172,8 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         return _handle_cve_sync(conn, config, logger)
     if job.job_type == "events_rebuild":
         return _handle_events_rebuild(conn, config, job.payload or {}, logger)
+    if job.job_type == "source_acquire":
+        return _handle_source_acquire(conn, config, job, logger)
     if job.job_type == "fetch_article_content":
         return _handle_fetch_article_content(conn, config, job, job.payload, logger)
     if job.job_type == "summarize_article_llm":
@@ -1069,11 +1201,17 @@ def _job_context_fields(conn, job) -> dict[str, object]:
         payload = job.payload or {}
         source_id = str(payload.get("source_id") or "")
         source_name = get_source_name(conn, source_id) or ""
+        article_url = payload.get("original_url")
+        article_id = payload.get("article_id")
+        if not article_url and article_id:
+            article = get_article_by_id(conn, int(article_id))
+            if article:
+                article_url = article.get("original_url") or article.get("normalized_url")
         return {
             "source_id": source_id,
             "source_name": source_name,
-            "article_id": payload.get("article_id"),
-            "article_url": payload.get("original_url"),
+            "article_id": article_id,
+            "article_url": article_url,
         }
     if job.job_type in {"ingest_source", "test_source"}:
         payload = job.payload or {}
@@ -1098,13 +1236,26 @@ def _maybe_enqueue_fetch(conn, article_id: int, source_id: str) -> None:
     if article["has_full_content"]:
         _maybe_enqueue_summarize(conn, article_id, source_id)
         return
-    if article["content_fetched_at"]:
+    if has_pending_article_job(conn, "fetch_article_content", article_id):
         return
-    enqueue_job(
-        conn,
-        "fetch_article_content",
-        {"article_id": article_id, "source_id": source_id},
-    )
+    attempts = count_failed_article_jobs(conn, "fetch_article_content", article_id)
+    backoff = [30, 120, 600]
+    if attempts >= len(backoff):
+        update_article_content(
+            conn,
+            article_id,
+            content_text=None,
+            content_html=None,
+            content_fetched_at=article.get("content_fetched_at"),
+            content_error="max_retries_exceeded",
+            has_full_content=False,
+        )
+        return
+    payload = {"article_id": article_id, "source_id": source_id}
+    if attempts > 0:
+        delay = backoff[min(attempts - 1, len(backoff) - 1)]
+        payload["not_before"] = utc_now_iso_offset(seconds=delay)
+    enqueue_job(conn, "fetch_article_content", payload)
 
 
 def _maybe_enqueue_summarize(conn, article_id: int, source_id: str) -> None:
@@ -1118,6 +1269,38 @@ def _maybe_enqueue_summarize(conn, article_id: int, source_id: str) -> None:
         "summarize_article_llm",
         {"article_id": article_id, "source_id": source_id},
     )
+
+
+def _enqueue_write_from_article(conn, article_id: int, source_id: str) -> None:
+    article = get_article_by_id(conn, article_id)
+    if not article:
+        return
+    stable_id = article.get("stable_id")
+    if not stable_id:
+        return
+    summary_text = article.get("summary") or ""
+    summary_llm = article.get("summary_llm")
+    if summary_llm:
+        try:
+            parsed = json.loads(summary_llm)
+            if isinstance(parsed, dict) and parsed.get("summary"):
+                summary_text = parsed.get("summary") or summary_text
+        except json.JSONDecodeError:
+            summary_text = summary_llm
+    payload = {
+        "article_id": article_id,
+        "stable_id": stable_id,
+        "title": article.get("title"),
+        "source_id": source_id,
+        "published_at": article.get("published_at"),
+        "published_at_source": article.get("published_at_source"),
+        "ingested_at": article.get("ingested_at"),
+        "summary": summary_text or None,
+        "tags": get_article_tags(conn, article_id),
+        "original_url": article.get("original_url"),
+        "normalized_url": article.get("normalized_url"),
+    }
+    enqueue_job(conn, "write_article_markdown", payload)
 
 
 if __name__ == "__main__":

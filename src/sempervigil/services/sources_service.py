@@ -13,6 +13,7 @@ from ..utils import json_dumps, utc_now_iso
 
 def list_sources(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     columns = _table_columns(conn, "sources")
+    acquire_map = _active_acquire_jobs(conn)
     select_cols = [
         "id",
         "name",
@@ -43,6 +44,9 @@ def list_sources(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         data["url"] = data.get("url") or data.get("base_url")
         data["kind"] = data.get("kind")
         data["tags"] = _parse_tags(data.get("tags_json"))
+        if data.get("id") in acquire_map:
+            data["acquire_status"] = acquire_map[data["id"]]["status"]
+            data["acquire_job_id"] = acquire_map[data["id"]]["job_id"]
         rows.append(data)
     return rows
 
@@ -228,6 +232,37 @@ def _parse_tags(tags: Any) -> list[str]:
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    cursor = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = ?", (table,)
+    )
+    return cursor.fetchone() is not None
+
+
+def _active_acquire_jobs(conn: sqlite3.Connection) -> dict[str, dict[str, str]]:
+    if not _table_exists(conn, "jobs"):
+        return {}
+    cursor = conn.execute(
+        """
+        SELECT id, status, payload_json, requested_at
+        FROM jobs
+        WHERE job_type = 'source_acquire' AND status IN ('queued', 'running')
+        ORDER BY requested_at DESC
+        """
+    )
+    mapping: dict[str, dict[str, str]] = {}
+    for job_id, status, payload_json, _ in cursor.fetchall():
+        try:
+            payload = json.loads(payload_json) if payload_json else {}
+        except json.JSONDecodeError:
+            payload = {}
+        source_id = payload.get("source_id")
+        if not source_id or source_id in mapping:
+            continue
+        mapping[str(source_id)] = {"job_id": job_id, "status": status}
+    return mapping
 
 
 def _int_or_default(*values: Any) -> int:

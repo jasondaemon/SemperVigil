@@ -38,6 +38,7 @@ from .storage import (
     delete_all_content,
     delete_all_cves,
     delete_all_events,
+    get_dashboard_metrics,
     get_event,
     get_article_by_id,
     get_cve,
@@ -103,6 +104,28 @@ from .services.ai_service import (
 )
 from .llm import STAGE_NAMES, test_model, test_profile, test_provider
 from .utils import configure_logging, log_event, utc_now_iso_offset
+
+_LOG_SERVICES = {
+    "admin": "/data/logs/admin.log",
+    "worker": "/data/logs/worker.log",
+    "builder": "/data/logs/builder.log",
+}
+
+
+def _read_log_tail(path: str, max_lines: int, max_bytes: int) -> str:
+    if max_lines <= 0:
+        return ""
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            read_size = min(size, max_bytes)
+            handle.seek(-read_size, os.SEEK_END)
+            data = handle.read().decode("utf-8", errors="replace")
+    except FileNotFoundError:
+        return ""
+    lines = data.splitlines()
+    return "\n".join(lines[-max_lines:])
 
 app = FastAPI(title="SemperVigil Admin API")
 
@@ -187,6 +210,12 @@ class SmokeRequest(BaseModel):
     per_source_limit: int = 10
 
 
+class SourceAcquireRequest(BaseModel):
+    limit: int | None = None
+    also_build: bool = False
+    also_events_rebuild: bool = False
+
+
 @app.get("/")
 def root() -> dict[str, str]:
     return {"service": "SemperVigil Admin API"}
@@ -229,6 +258,23 @@ def runtime_config_patch(payload: RuntimeConfigRequest) -> dict[str, object]:
     except ConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "ok", "config": cfg}
+
+
+@app.get("/admin/api/logs/tail", dependencies=[Depends(_require_admin_token)])
+def logs_tail(service: str, lines: int = 200) -> dict[str, object]:
+    service_key = str(service or "").strip().lower()
+    if service_key not in _LOG_SERVICES:
+        raise HTTPException(status_code=400, detail="invalid_service")
+    line_limit = max(1, min(int(lines or 200), 500))
+    path = _LOG_SERVICES[service_key]
+    text = _read_log_tail(path, line_limit, max_bytes=200_000)
+    return {"service": service_key, "lines": line_limit, "text": text}
+
+
+@app.get("/admin/api/dashboard/metrics", dependencies=[Depends(_require_admin_token)])
+def dashboard_metrics() -> dict[str, object]:
+    conn = _get_conn()
+    return get_dashboard_metrics(conn)
 
 
 @app.get("/admin/api/cves/settings", dependencies=[Depends(_require_admin_token)])
@@ -729,6 +775,23 @@ def sources_test(
         "accepted_count": result.accepted_count,
         "items": preview,
     }
+
+
+@app.post("/admin/api/sources/{source_id}/acquire", dependencies=[Depends(_require_admin_token)])
+def sources_acquire(source_id: str, payload: SourceAcquireRequest) -> dict[str, object]:
+    conn = _get_conn()
+    source = get_source(conn, source_id)
+    if not source:
+        raise HTTPException(status_code=404, detail="source_not_found")
+    job_payload: dict[str, object] = {"source_id": source_id}
+    if payload.limit is not None:
+        job_payload["limit"] = int(payload.limit)
+    if payload.also_build:
+        job_payload["also_build"] = True
+    if payload.also_events_rebuild:
+        job_payload["also_events_rebuild"] = True
+    job_id = enqueue_job(conn, "source_acquire", job_payload)
+    return {"job_id": job_id}
 
 
 @app.get("/sources/{source_id}/health")

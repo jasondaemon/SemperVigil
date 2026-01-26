@@ -22,6 +22,147 @@ function showToast(message) {
   setTimeout(() => toast.remove(), 2500);
 }
 
+function wireDashboard() {
+  const backlog = document.getElementById("dashboard-backlog");
+  const jobsPanel = document.getElementById("dashboard-job-counts");
+  const checkBtn = document.getElementById("dashboard-pipeline-check");
+  if (!backlog || !jobsPanel) {
+    return;
+  }
+
+  const jobTypes = [
+    "ingest_source",
+    "fetch_article_content",
+    "summarize_article_llm",
+    "write_article_markdown",
+    "cve_sync",
+    "events_rebuild",
+    "build_site",
+  ];
+
+  function renderBacklog(data) {
+    backlog.innerHTML = "";
+    const items = [
+      {
+        label: "Articles missing content",
+        value: data.articles_missing_content_count || 0,
+        link: "/ui/content?type=articles",
+      },
+      {
+        label: "Articles with content error",
+        value: data.articles_with_content_error_count || 0,
+        link: "/ui/content?type=articles",
+      },
+      {
+        label: "Articles missing summary",
+        value: data.articles_missing_summary_count || 0,
+        link: "/ui/content?type=articles",
+      },
+      {
+        label: "CVEs missing description",
+        value: data.cves_missing_description_count || 0,
+        link: "/ui/cves",
+      },
+    ];
+    items.forEach((item) => {
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = `
+        <div class="card-title">${item.label}</div>
+        <div class="card-value"><a href="${item.link}">${item.value}</a></div>
+      `;
+      backlog.appendChild(card);
+    });
+  }
+
+  function renderJobCounts(counts) {
+    jobsPanel.innerHTML = "<h3>Job Queue</h3>";
+    const table = document.createElement("table");
+    table.className = "table compact";
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Job Type</th>
+          <th>Queued</th>
+          <th>Running</th>
+          <th>Failed</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+    const body = table.querySelector("tbody");
+    jobTypes.forEach((jobType) => {
+      const statusMap = counts[jobType] || {};
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${jobType}</td>
+        <td>${statusMap.queued || 0}</td>
+        <td>${statusMap.running || 0}</td>
+        <td>${statusMap.failed || 0}</td>
+      `;
+      body.appendChild(row);
+    });
+    jobsPanel.appendChild(table);
+  }
+
+  async function loadMetrics() {
+    const data = await apiFetch("/admin/api/dashboard/metrics");
+    renderBacklog(data);
+    renderJobCounts(data.job_counts_by_type_status || {});
+  }
+
+  if (checkBtn) {
+    checkBtn.addEventListener("click", () => {
+      loadMetrics().catch((err) => showToast(err.message || String(err)));
+    });
+  }
+
+  loadMetrics().catch((err) => showToast(err.message || String(err)));
+  setInterval(() => {
+    loadMetrics().catch(() => undefined);
+  }, 10000);
+}
+
+function wireLogs() {
+  const output = document.getElementById("logs-output");
+  if (!output) {
+    return;
+  }
+  const serviceSelect = document.getElementById("logs-service");
+  const linesSelect = document.getElementById("logs-lines");
+  const autoToggle = document.getElementById("logs-auto");
+  const refreshBtn = document.getElementById("logs-refresh");
+
+  async function loadLogs() {
+    const service = serviceSelect.value;
+    const lines = linesSelect.value;
+    const data = await apiFetch(`/admin/api/logs/tail?service=${service}&lines=${lines}`);
+    output.textContent = data.text || "";
+  }
+
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", () => {
+      loadLogs().catch((err) => showToast(err.message || String(err)));
+    });
+  }
+
+  [serviceSelect, linesSelect].forEach((el) => {
+    if (el) {
+      el.addEventListener("change", () => {
+        loadLogs().catch((err) => showToast(err.message || String(err)));
+      });
+    }
+  });
+
+  setInterval(() => {
+    if (autoToggle && autoToggle.checked) {
+      loadLogs().catch(() => undefined);
+    }
+  }, 4000);
+
+  loadLogs().catch((err) => showToast(err.message || String(err)));
+}
+
 function buildPageList(current, total) {
   const pages = new Set([1, total, current - 2, current - 1, current, current + 1, current + 2]);
   return Array.from(pages)
@@ -187,6 +328,8 @@ function wireSources() {
     sources.forEach((source) => {
       const row = document.createElement("tr");
       row.dataset.sourceId = source.id;
+      const acquiring = source.acquire_status === "queued" || source.acquire_status === "running";
+      const acquireLabel = acquiring ? `Acquire (${source.acquire_status})` : "Acquire";
       row.innerHTML = `
         <td><input type="checkbox" class="toggle-enabled" ${source.enabled ? "checked" : ""}></td>
         <td class="source-name">${source.name}</td>
@@ -202,6 +345,9 @@ function wireSources() {
         <td>${source.last_ok_at || ""}</td>
         <td class="truncate" title="${source.last_error || ""}">${source.last_error || ""}</td>
         <td class="table-actions">
+          <label class="checkbox small inline"><input type="checkbox" class="acquire-build"> Build</label>
+          <label class="checkbox small inline"><input type="checkbox" class="acquire-events"> Events</label>
+          <button class="btn small secondary acquire-source" type="button" ${acquiring ? "disabled" : ""}>${acquireLabel}</button>
           <button class="btn small test-source" type="button">Test</button>
           <button class="btn small secondary history-source" type="button">History</button>
           <button class="btn small secondary edit-source" type="button">Edit</button>
@@ -300,6 +446,26 @@ function wireSources() {
         try {
           await apiFetch(`/sources/${sourceId}`, { method: "DELETE" });
           showToast("Source deleted");
+          await refreshSources();
+        } catch (err) {
+          alert(err);
+        }
+        return;
+      }
+
+      if (target.classList.contains("acquire-source")) {
+        const buildBox = row.querySelector(".acquire-build");
+        const eventsBox = row.querySelector(".acquire-events");
+        const payload = {
+          also_build: buildBox ? buildBox.checked : false,
+          also_events_rebuild: eventsBox ? eventsBox.checked : false,
+        };
+        try {
+          const result = await apiFetch(`/admin/api/sources/${sourceId}/acquire`, {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+          showToast(`Acquire enqueued: ${result.job_id}`);
           await refreshSources();
         } catch (err) {
           alert(err);
@@ -2542,6 +2708,7 @@ function wireAiTest() {
 document.addEventListener("DOMContentLoaded", () => {
   wireNavDropdowns();
   wireEnqueueButtons();
+  wireDashboard();
   wireSources();
   wireJobs();
   wireLogin();
@@ -2565,4 +2732,5 @@ document.addEventListener("DOMContentLoaded", () => {
   wireProductDetail();
   wireDangerZone();
   wireDebug();
+  wireLogs();
 });

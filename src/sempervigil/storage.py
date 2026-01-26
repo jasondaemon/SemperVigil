@@ -840,6 +840,66 @@ def count_table(conn: sqlite3.Connection, table: str) -> int:
     return int(row[0] or 0)
 
 
+def get_dashboard_metrics(conn: sqlite3.Connection) -> dict[str, object]:
+    metrics: dict[str, object] = {}
+    job_counts: dict[str, dict[str, int]] = {}
+    if _table_exists(conn, "jobs"):
+        cursor = conn.execute(
+            """
+            SELECT job_type, status, COUNT(*)
+            FROM jobs
+            GROUP BY job_type, status
+            """
+        )
+        for job_type, status, count in cursor.fetchall():
+            job_counts.setdefault(job_type, {})[status] = int(count or 0)
+    metrics["job_counts_by_type_status"] = job_counts
+
+    article_columns = _table_columns(conn, "articles") if _table_exists(conn, "articles") else set()
+    missing_content_count = 0
+    content_error_count = 0
+    missing_summary_count = 0
+    if article_columns:
+        url_clause = "original_url IS NOT NULL AND original_url != ''" if "original_url" in article_columns else None
+        if "has_full_content" in article_columns:
+            content_clause = "has_full_content = 0"
+        elif "content_text" in article_columns:
+            content_clause = "(content_text IS NULL OR content_text = '')"
+        elif "extracted_text_path" in article_columns:
+            content_clause = "(extracted_text_path IS NULL OR extracted_text_path = '')"
+        else:
+            content_clause = None
+        if content_clause:
+            where = content_clause
+            if url_clause:
+                where = f"{where} AND {url_clause}"
+            row = conn.execute(f"SELECT COUNT(*) FROM articles WHERE {where}").fetchone()
+            missing_content_count = int(row[0] or 0)
+        if "content_error" in article_columns:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM articles WHERE content_error IS NOT NULL AND content_error != ''"
+            ).fetchone()
+            content_error_count = int(row[0] or 0)
+        if "summary_llm" in article_columns:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM articles WHERE summary_llm IS NULL OR summary_llm = ''"
+            ).fetchone()
+            missing_summary_count = int(row[0] or 0)
+
+    metrics["articles_missing_content_count"] = missing_content_count
+    metrics["articles_with_content_error_count"] = content_error_count
+    metrics["articles_missing_summary_count"] = missing_summary_count
+
+    cve_missing_desc = 0
+    if _table_exists(conn, "cves") and "description_text" in _table_columns(conn, "cves"):
+        row = conn.execute(
+            "SELECT COUNT(*) FROM cves WHERE description_text IS NULL OR description_text = ''"
+        ).fetchone()
+        cve_missing_desc = int(row[0] or 0)
+    metrics["cves_missing_description_count"] = cve_missing_desc
+    return metrics
+
+
 def get_last_job_by_type(conn: sqlite3.Connection, job_type: str) -> Job | None:
     if not _table_exists(conn, "jobs"):
         return None
@@ -1052,6 +1112,40 @@ def has_pending_job(
             (job_type,),
         )
     return cursor.fetchone() is not None
+
+
+def has_pending_article_job(
+    conn: sqlite3.Connection, job_type: str, article_id: int
+) -> bool:
+    if not _table_exists(conn, "jobs"):
+        return False
+    pattern = f'%\"article_id\":{article_id}%'
+    cursor = conn.execute(
+        """
+        SELECT 1 FROM jobs
+        WHERE job_type = ? AND status IN ('queued', 'running') AND payload_json LIKE ?
+        LIMIT 1
+        """,
+        (job_type, pattern),
+    )
+    return cursor.fetchone() is not None
+
+
+def count_failed_article_jobs(
+    conn: sqlite3.Connection, job_type: str, article_id: int
+) -> int:
+    if not _table_exists(conn, "jobs"):
+        return 0
+    pattern = f'%\"article_id\":{article_id}%'
+    cursor = conn.execute(
+        """
+        SELECT COUNT(*) FROM jobs
+        WHERE job_type = ? AND status = 'failed' AND payload_json LIKE ?
+        """,
+        (job_type, pattern),
+    )
+    row = cursor.fetchone()
+    return int(row[0] or 0)
 
 
 def get_source_name(conn: sqlite3.Connection, source_id: str) -> str | None:
@@ -1654,10 +1748,12 @@ def get_article_by_id(conn: sqlite3.Connection, article_id: int) -> dict[str, ob
     wanted = [
         "id",
         "source_id",
+        "stable_id",
         "original_url",
         "normalized_url",
         "title",
         "published_at",
+        "published_at_source",
         "ingested_at",
         "summary",
         "content_text",
@@ -1699,10 +1795,12 @@ def get_article_by_id(conn: sqlite3.Connection, article_id: int) -> dict[str, ob
     return {
         "id": article.get("id"),
         "source_id": article.get("source_id"),
+        "stable_id": article.get("stable_id"),
         "original_url": article.get("original_url"),
         "normalized_url": article.get("normalized_url"),
         "title": article.get("title"),
         "published_at": article.get("published_at"),
+        "published_at_source": article.get("published_at_source"),
         "ingested_at": article.get("ingested_at"),
         "summary": article.get("summary"),
         "content_text": content_text,
@@ -1719,6 +1817,76 @@ def get_article_by_id(conn: sqlite3.Connection, article_id: int) -> dict[str, ob
         "created_at": article.get("created_at"),
         "updated_at": article.get("updated_at"),
     }
+
+
+def get_article_tags(conn: sqlite3.Connection, article_id: int) -> list[str]:
+    if not _table_exists(conn, "article_tags"):
+        return []
+    cursor = conn.execute(
+        "SELECT tag FROM article_tags WHERE article_id = ? ORDER BY tag",
+        (article_id,),
+    )
+    return [row[0] for row in cursor.fetchall() if row and row[0]]
+
+
+def list_article_ids_missing_content(conn: sqlite3.Connection, source_id: str) -> list[int]:
+    if not _table_exists(conn, "articles"):
+        return []
+    columns = _table_columns(conn, "articles")
+    clauses: list[str] = ["source_id = ?"]
+    params: list[object] = [source_id]
+    url_parts: list[str] = []
+    if "original_url" in columns:
+        url_parts.append("(original_url IS NOT NULL AND original_url != '')")
+    if "normalized_url" in columns:
+        url_parts.append("(normalized_url IS NOT NULL AND normalized_url != '')")
+    if url_parts:
+        clauses.append("(" + " OR ".join(url_parts) + ")")
+    if "has_full_content" in columns:
+        clauses.append("has_full_content = 0")
+    elif "content_text" in columns:
+        clauses.append("(content_text IS NULL OR content_text = '')")
+    elif "extracted_text_path" in columns:
+        clauses.append("(extracted_text_path IS NULL OR extracted_text_path = '')")
+    where_sql = " AND ".join(clauses)
+    cursor = conn.execute(
+        f"SELECT id FROM articles WHERE {where_sql} ORDER BY ingested_at DESC",
+        params,
+    )
+    return [int(row[0]) for row in cursor.fetchall()]
+
+
+def list_article_ids_missing_summary(conn: sqlite3.Connection, source_id: str) -> list[int]:
+    if not _table_exists(conn, "articles"):
+        return []
+    columns = _table_columns(conn, "articles")
+    if "summary_llm" not in columns:
+        return []
+    cursor = conn.execute(
+        """
+        SELECT id FROM articles
+        WHERE source_id = ? AND (summary_llm IS NULL OR summary_llm = '')
+        ORDER BY ingested_at DESC
+        """,
+        (source_id,),
+    )
+    return [int(row[0]) for row in cursor.fetchall()]
+
+
+def list_article_ids_for_source_since(
+    conn: sqlite3.Connection, source_id: str, since_iso: str
+) -> list[int]:
+    if not _table_exists(conn, "articles"):
+        return []
+    cursor = conn.execute(
+        """
+        SELECT id FROM articles
+        WHERE source_id = ? AND ingested_at >= ?
+        ORDER BY ingested_at DESC
+        """,
+        (source_id, since_iso),
+    )
+    return [int(row[0]) for row in cursor.fetchall()]
 
 
 def _load_text_file(path: str, limit: int = 250_000) -> str | None:

@@ -1,0 +1,28 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "system" %}
+{% set nav_subactive = "logs" %}
+{% block content %}
+  <section class="panel">
+    <h2>Log Tail</h2>
+    <div class="filters inline">
+      <label>Service
+        <select id="logs-service">
+          <option value="admin">admin</option>
+          <option value="worker" selected>worker</option>
+          <option value="builder">builder</option>
+        </select>
+      </label>
+      <label>Lines
+        <select id="logs-lines">
+          <option value="50">50</option>
+          <option value="100">100</option>
+          <option value="200" selected>200</option>
+          <option value="500">500</option>
+        </select>
+      </label>
+      <label class="checkbox"><input type="checkbox" id="logs-auto" checked> Auto-refresh</label>
+      <button class="btn secondary" type="button" id="logs-refresh">Refresh</button>
+    </div>
+    <pre class="mono log-tail" id="logs-output"></pre>
+  </section>
+{% endblock %}

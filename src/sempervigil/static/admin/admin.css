@@ -555,3 +555,13 @@ th, td {
   align-items: center;
   gap: 6px;
 }
+
+.log-tail {
+  max-height: 420px;
+  overflow: auto;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 12px;
+  border-radius: 8px;
+  white-space: pre-wrap;
+}

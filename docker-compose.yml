@@ -11,6 +11,7 @@ services:
       SV_ENV: ${SV_ENV:-dev}
       SV_DATA_DIR: /data
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
+      SV_LOG_FILE: /data/logs/admin.log
       SV_UMASK: ${SV_UMASK:-002}
       SV_ADMIN_TOKEN: ${SV_ADMIN_TOKEN:-}
     command:
@@ -43,6 +44,7 @@ services:
       SV_ENV: ${SV_ENV:-dev}
       SV_DATA_DIR: /data
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
+      SV_LOG_FILE: /data/logs/worker.log
       SV_UMASK: ${SV_UMASK:-002}
     command:
       - sh
@@ -71,6 +73,7 @@ services:
       - .env
     environment:
       SV_UMASK: ${SV_UMASK:-002}
+      SV_LOG_FILE: /data/logs/builder.log
       SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-http://localhost:${SV_WEB_PORT:-8080}/}
       HUGO_CACHEDIR: /tmp/hugo_cache
     working_dir: /repo

@@ -72,6 +72,9 @@
           <td>{{ source.last_ok_at or "" }}</td>
           <td class="truncate">{{ source.last_error or "" }}</td>
           <td class="table-actions">
+            <label class="checkbox small inline"><input type="checkbox" class="acquire-build"> Build</label>
+            <label class="checkbox small inline"><input type="checkbox" class="acquire-events"> Events</label>
+            <button class="btn small secondary acquire-source" type="button">Acquire</button>
             <button class="btn small test-source" type="button">Test</button>
             <button class="btn small secondary history-source" type="button">History</button>
             <button class="btn small secondary edit-source" type="button">Edit</button>

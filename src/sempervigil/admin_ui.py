@@ -106,6 +106,17 @@ def ui_router(token_guard) -> APIRouter:
             },
         )
 
+    @router.get("/logs", response_class=HTMLResponse)
+    def logs(request: Request):
+        return TEMPLATES.TemplateResponse(
+            "admin/logs.html",
+            {
+                **_base_context(request),
+                "nav_active": "system",
+                "nav_subactive": "logs",
+            },
+        )
+
     @router.get("/health", response_class=HTMLResponse)
     def health(request: Request):
         conn = _get_conn()

@@ -31,6 +31,7 @@ def configure_logging(logger_name: str, default_level: str = "INFO") -> logging.
             level=getattr(logging, level_name, logging.INFO),
             format="%(asctime)s %(levelname)s %(message)s",
         )
+    _maybe_add_file_handler(level_name)
     _apply_log_overrides()
     return logging.getLogger(logger_name)
 
@@ -45,6 +46,21 @@ def _apply_log_overrides() -> None:
         name, level = item.split("=", 1)
         logger = logging.getLogger(name.strip())
         logger.setLevel(getattr(logging, level.strip().upper(), logging.INFO))
+
+
+def _maybe_add_file_handler(level_name: str) -> None:
+    log_path = os.environ.get("SV_LOG_FILE")
+    if not log_path:
+        return
+    root = logging.getLogger()
+    for handler in root.handlers:
+        if isinstance(handler, logging.FileHandler) and handler.baseFilename == log_path:
+            return
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    handler = logging.FileHandler(log_path)
+    handler.setLevel(getattr(logging, level_name, logging.INFO))
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    root.addHandler(handler)
 
 
 def json_dumps(value: Any) -> str:

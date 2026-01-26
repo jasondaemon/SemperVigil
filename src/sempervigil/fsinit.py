@@ -19,6 +19,7 @@ def ensure_runtime_dirs(paths: Iterable[str]) -> None:
 def build_default_paths(data_dir: str, output_dir: str) -> list[str]:
     paths = [
         data_dir,
+        os.path.join(data_dir, "logs"),
         "/site",
         "/site/public",
         "/site/static/sempervigil",
