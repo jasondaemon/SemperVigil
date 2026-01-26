@@ -143,6 +143,7 @@ services:
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - .:/repo:ro
+      - sv_data:/data              # ✅ add this
       - sv_site:/site
       - sv_hugo_cache:/tmp/hugo_cache
       # Let Hugo write generated resources (image pipeline, etc.)
