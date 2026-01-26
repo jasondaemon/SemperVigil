@@ -11,7 +11,7 @@ try:
     from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 except Exception:  # noqa: BLE001
     ProxyHeadersMiddleware = None
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
 
 from .config import (
@@ -30,6 +30,7 @@ from .admin_ui import TEMPLATES, ui_router
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .storage import enqueue_job, get_source_run_streaks, init_db, list_jobs, cancel_job, cancel_all_jobs, count_articles_total
 from .cve_filters import CveSignals, matches_filters
+from .cve_sync import CveSyncConfig, isoformat_utc, preview_cves
 from .storage import (
     count_articles_since,
     delete_all_articles,
@@ -167,6 +168,11 @@ class CveSettingsRequest(BaseModel):
     settings: dict
 
 
+class CveTestRequest(BaseModel):
+    hours: int = 24
+    limit: int = 5
+
+
 class ClearRequest(BaseModel):
     confirm: str
     delete_files: bool = False
@@ -234,6 +240,36 @@ def cve_settings_run() -> dict[str, object]:
     conn = _get_conn()
     job_id = enqueue_job(conn, "cve_sync", None, debounce=True)
     return {"job_id": job_id}
+
+
+@app.post("/admin/api/cves/test", dependencies=[Depends(_require_admin_token)])
+def cve_settings_test(payload: CveTestRequest) -> dict[str, object]:
+    conn = _get_conn()
+    settings = get_cve_settings(conn)
+    now = datetime.now(tz=timezone.utc)
+    start = now - timedelta(hours=max(1, int(payload.hours)))
+    start_iso = isoformat_utc(start)
+    end_iso = isoformat_utc(now)
+    api_key = os.environ.get("NVD_API_KEY")
+    nvd = settings.get("nvd") or {}
+    result = preview_cves(
+        CveSyncConfig(
+            api_base=str(nvd.get("api_base") or "https://services.nvd.nist.gov/rest/json/cves/2.0"),
+            results_per_page=int(nvd.get("results_per_page") or 2000),
+            rate_limit_seconds=float(settings.get("rate_limit_seconds", 1.0)),
+            backoff_seconds=float(settings.get("backoff_seconds", 2.0)),
+            max_retries=int(settings.get("max_retries", 3)),
+            prefer_v4=bool(settings.get("prefer_v4", True)),
+            api_key=api_key,
+            filters=settings.get("filters") or {},
+        ),
+        last_modified_start=start_iso,
+        last_modified_end=end_iso,
+        limit=payload.limit,
+    )
+    result["start"] = start_iso
+    result["end"] = end_iso
+    return result
 
 
 @app.get("/ui/login")
@@ -322,6 +358,21 @@ def cancel_job_api(job_id: str, request: Request) -> dict[str, object]:
     if not canceled:
         raise HTTPException(status_code=404, detail="job_not_cancelable")
     return {"status": "ok", "job_id": job_id}
+
+
+@app.post("/jobs/cancel-all", dependencies=[Depends(_require_admin_token)])
+def cancel_all_jobs_api(request: Request) -> dict[str, object]:
+    conn = _get_conn()
+    canceled = cancel_all_jobs(conn, reason="canceled_by_admin")
+    logger = logging.getLogger("sempervigil.admin")
+    log_event(
+        logger,
+        logging.WARNING,
+        "jobs_canceled_all",
+        client=request.client.host if request.client else "unknown",
+        canceled=canceled,
+    )
+    return {"status": "ok", "canceled": canceled}
 
 
 @app.get("/jobs")

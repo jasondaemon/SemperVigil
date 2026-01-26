@@ -27,9 +27,18 @@
       <div class="actions">
         <button class="btn" type="submit">Save Settings</button>
         <button class="btn secondary" type="button" id="cve-run-now">Run Sync Now</button>
+        <button class="btn secondary" type="button" id="cve-test-now">Test CVE Sync</button>
       </div>
       <p class="error" id="cve-settings-error" style="display:none;"></p>
     </form>
+    <div class="panel" id="cve-test-panel">
+      <h3>Test CVE Sync</h3>
+      <div class="filters inline">
+        <label>Window (hours)<input type="number" id="cve-test-hours" value="24"></label>
+        <label>Preview items<input type="number" id="cve-test-limit" value="5"></label>
+      </div>
+      <pre class="mono" id="cve-test-output"></pre>
+    </div>
     <div class="panel-note" id="cve-settings-note"></div>
   </section>
 {% endblock %}

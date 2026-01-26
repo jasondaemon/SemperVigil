@@ -397,6 +397,7 @@ function wireSources() {
 
 function wireJobs() {
   const refresh = document.getElementById("jobs-refresh");
+  const cancelAll = document.getElementById("jobs-cancel-all");
   const table = document.getElementById("jobs-table");
   const tbody = document.getElementById("jobs-table-body");
   if (!refresh || !table || !tbody) {
@@ -448,6 +449,21 @@ function wireJobs() {
   refresh.addEventListener("click", () => {
     refreshJobs().catch((err) => alert(err));
   });
+
+  if (cancelAll) {
+    cancelAll.addEventListener("click", async () => {
+      if (!confirm("Cancel all queued and running jobs?")) {
+        return;
+      }
+      try {
+        const data = await apiFetch("/jobs/cancel-all", { method: "POST" });
+        showToast(`Canceled ${data.canceled} jobs`);
+        refreshJobs().catch((err) => alert(err));
+      } catch (err) {
+        alert(err.message || String(err));
+      }
+    });
+  }
 
   tbody.addEventListener("click", async (event) => {
     const target = event.target;
@@ -1428,6 +1444,8 @@ function wireCveSettings() {
   });
 
   const runNow = document.getElementById("cve-run-now");
+  const testNow = document.getElementById("cve-test-now");
+  const testOutput = document.getElementById("cve-test-output");
   if (runNow) {
     runNow.addEventListener("click", async () => {
       try {
@@ -1436,6 +1454,23 @@ function wireCveSettings() {
       } catch (err) {
         error.textContent = err.message || String(err);
         error.style.display = "block";
+      }
+    });
+  }
+
+  if (testNow && testOutput) {
+    testNow.addEventListener("click", async () => {
+      try {
+        testOutput.textContent = "Running test...";
+        const hours = parseInt(document.getElementById("cve-test-hours").value, 10) || 24;
+        const limit = parseInt(document.getElementById("cve-test-limit").value, 10) || 5;
+        const data = await apiFetch("/admin/api/cves/test", {
+          method: "POST",
+          body: JSON.stringify({ hours, limit }),
+        });
+        testOutput.textContent = JSON.stringify(data, null, 2);
+      } catch (err) {
+        testOutput.textContent = err.message || String(err);
       }
     });
   }

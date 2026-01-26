@@ -456,3 +456,66 @@ def _fetch_page(
 
 def isoformat_utc(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def preview_cves(
+    config: CveSyncConfig,
+    last_modified_start: str,
+    last_modified_end: str,
+    limit: int = 5,
+) -> dict[str, object]:
+    payload = _fetch_page(
+        config,
+        last_modified_start=last_modified_start,
+        last_modified_end=last_modified_end,
+        start_index=0,
+    )
+    if payload is None:
+        return {"status": "error", "error": "fetch_failed", "items": []}
+    vulnerabilities = payload.get("vulnerabilities") or []
+    found = 0
+    accepted = 0
+    filtered = 0
+    items: list[dict[str, object]] = []
+    for entry in vulnerabilities:
+        cve_item = entry.get("cve") or {}
+        cve_id = cve_item.get("id")
+        if not cve_id:
+            continue
+        found += 1
+        description = _extract_description(cve_item.get("descriptions"))
+        metrics = cve_item.get("metrics") or {}
+        v31 = _extract_cvss(metrics.get("cvssMetricV31"))
+        v40 = _extract_cvss(metrics.get("cvssMetricV40"))
+        preferred = _select_preferred_metrics(v31, v40, config.prefer_v4)
+        signals = extract_signals(cve_item)
+        is_match = True
+        if config.filters:
+            is_match = matches_filters(
+                preferred_score=preferred.base_score,
+                preferred_severity=preferred.base_severity,
+                description=description,
+                signals=signals,
+                filters=config.filters,
+            )
+        if is_match:
+            accepted += 1
+        else:
+            filtered += 1
+        if len(items) < max(0, int(limit)):
+            items.append(
+                {
+                    "cve_id": cve_id,
+                    "decision": "accepted" if is_match else "filtered",
+                    "preferred_severity": preferred.base_severity,
+                    "preferred_score": preferred.base_score,
+                    "description": (description or "")[:240],
+                }
+            )
+    return {
+        "status": "ok",
+        "found": found,
+        "accepted": accepted,
+        "filtered": filtered,
+        "items": items,
+    }
