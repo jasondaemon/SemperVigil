@@ -26,16 +26,11 @@ has() { echo "$SERVICES" | grep -qx "$1"; }
 echo "📋 Compose services:"
 echo "$SERVICES" | sed 's/^/  - /'
 
-# Determine worker services
 FETCH_SVC=""
 LLM_SVC=""
 
-if has "worker_fetch"; then
-  FETCH_SVC="worker_fetch"
-fi
-if has "worker_llm"; then
-  LLM_SVC="worker_llm"
-fi
+if has "worker_fetch"; then FETCH_SVC="worker_fetch"; fi
+if has "worker_llm"; then LLM_SVC="worker_llm"; fi
 
 # Legacy fallback
 if [[ -z "$FETCH_SVC" && -z "$LLM_SVC" && $(echo "$SERVICES" | grep -c '^worker$' || true) -gt 0 ]]; then
@@ -45,7 +40,6 @@ fi
 
 if [[ -z "$FETCH_SVC" && -z "$LLM_SVC" ]]; then
   echo "❌ Could not find worker services (worker_fetch/worker_llm or worker)."
-  echo "   If you are using profiles, try: docker compose --profile <name> config --services"
   exit 1
 fi
 
@@ -54,13 +48,19 @@ docker compose up -d admin
 
 echo "⚙️  Starting workers..."
 if [[ "$FETCH_SVC" == "worker_fetch" ]]; then
-  docker compose up -d --scale worker_fetch=2
+  docker compose up -d --scale worker_fetch=2 worker_fetch
 elif [[ "$FETCH_SVC" == "worker" ]]; then
-  docker compose up -d --scale worker=2
+  docker compose up -d --scale worker=2 worker
 fi
 
 if [[ -n "$LLM_SVC" ]]; then
-  docker compose up -d --scale worker_llm=1
+  docker compose up -d --scale worker_llm=1 worker_llm
+fi
+
+# Self-heal: ensure builder isn't running as a daemon service
+if has "builder"; then
+  docker compose stop builder >/dev/null 2>&1 || true
+  docker compose rm -f builder >/dev/null 2>&1 || true
 fi
 
 echo "📝 Running Hugo site build..."
