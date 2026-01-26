@@ -397,12 +397,76 @@ function wireSources() {
 
 function wireJobs() {
   const refresh = document.getElementById("jobs-refresh");
-  if (!refresh) {
+  const table = document.getElementById("jobs-table");
+  const tbody = document.getElementById("jobs-table-body");
+  if (!refresh || !table || !tbody) {
     return;
   }
+
+  function formatResult(job) {
+    if (job.job_type === "build_site" && job.result) {
+      const exitCode = job.result.exit_code ?? "";
+      const stdout = job.result.stdout_tail || "";
+      const stderr = job.result.stderr_tail || "";
+      const tail = stderr || stdout;
+      return `exit=${exitCode} ${tail}`.trim();
+    }
+    return job.error || (job.result ? JSON.stringify(job.result) : "");
+  }
+
+  function renderRows(jobs) {
+    tbody.innerHTML = "";
+    jobs.forEach((job) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td class="mono">${job.id}</td>
+        <td>${job.job_type}</td>
+        <td>${job.status}</td>
+        <td>${job.requested_at || ""}</td>
+        <td>${job.started_at || ""}</td>
+        <td>${job.finished_at || ""}</td>
+        <td class="truncate" title="${formatResult(job)}">${formatResult(job)}</td>
+      `;
+      tbody.appendChild(row);
+    });
+  }
+
+  async function refreshJobs() {
+    const jobs = await apiFetch("/jobs");
+    renderRows(jobs);
+    return jobs;
+  }
+
   refresh.addEventListener("click", () => {
-    window.location.reload();
+    refreshJobs().catch((err) => alert(err));
   });
+
+  let polling = false;
+  async function poll() {
+    if (polling) {
+      return;
+    }
+    polling = true;
+    try {
+      const jobs = await refreshJobs();
+      const running = jobs.some(
+        (job) =>
+          job.job_type === "build_site" && (job.status === "queued" || job.status === "running")
+      );
+      if (running) {
+        setTimeout(() => {
+          polling = false;
+          poll();
+        }, 4000);
+      } else {
+        polling = false;
+      }
+    } catch (err) {
+      polling = false;
+    }
+  }
+
+  poll();
 }
 
 function wireLogin() {
@@ -1601,7 +1665,7 @@ function wireContentArticle() {
     })
     .catch((err) => {
       container.textContent = err.message || String(err);
-  });
+    });
 }
 
 function wireEvents() {
@@ -2106,6 +2170,41 @@ async function wireAnalytics() {
   }
 }
 
+function wireAiTest() {
+  const form = document.getElementById("ai-test-form");
+  if (!form) {
+    return;
+  }
+  const providerField = document.getElementById("ai-test-provider");
+  const modelField = document.getElementById("ai-test-model");
+  const promptField = document.getElementById("ai-test-prompt");
+  const output = document.getElementById("ai-test-output");
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (output) {
+      output.textContent = "Running...";
+    }
+    try {
+      const payload = await apiFetch("/admin/api/ai/test", {
+        method: "POST",
+        body: JSON.stringify({
+          provider_id: providerField.value,
+          model_id: modelField.value,
+          prompt: promptField.value,
+        }),
+      });
+      if (output) {
+        output.textContent = JSON.stringify(payload, null, 2);
+      }
+    } catch (err) {
+      if (output) {
+        output.textContent = err.message || String(err);
+      }
+    }
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   wireNavDropdowns();
   wireEnqueueButtons();
@@ -2120,6 +2219,7 @@ document.addEventListener("DOMContentLoaded", () => {
   wireAiSchemas();
   wireAiProfiles();
   wireAiRouting();
+  wireAiTest();
   wireCveSearch();
   wireCveDetail();
   wireCveSettings();

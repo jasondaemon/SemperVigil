@@ -12,8 +12,8 @@
         <p><strong>Generate a master key:</strong></p>
         <pre class="mono">python -c "import os,base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"</pre>
         <p><strong>Set environment:</strong></p>
-        <pre class="mono">SEMPERIVGIL_MASTER_KEY=&lt;generated&gt;
-SEMPERIVGIL_KEY_ID=v1</pre>
+        <pre class="mono">SEMPERVIGIL_MASTER_KEY=&lt;generated&gt;
+SEMPERVIGIL_KEY_ID=v1</pre>
         <p><strong>Warning:</strong> If you lose the master key, previously saved provider keys cannot be decrypted and must be re-entered.</p>
       </div>
     </details>
@@ -73,6 +73,33 @@ SEMPERIVGIL_KEY_ID=v1</pre>
         {% endfor %}
       </tbody>
     </table>
+  </section>
+
+  <section class="panel" id="ai-test">
+    <h3>Test Provider/Model</h3>
+    <form id="ai-test-form" class="grid">
+      <label>Provider
+        <select id="ai-test-provider">
+          {% for provider in providers %}
+          <option value="{{ provider.id }}">{{ provider.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Model
+        <select id="ai-test-model">
+          {% for model in models %}
+          <option value="{{ model.id }}">{{ model.model_name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Prompt
+        <textarea id="ai-test-prompt" rows="3">Ping from SemperVigil.</textarea>
+      </label>
+      <div class="actions">
+        <button class="btn" type="submit">Run Test</button>
+      </div>
+    </form>
+    <pre class="mono" id="ai-test-output"></pre>
   </section>
 
   <section class="panel" id="ai-models">

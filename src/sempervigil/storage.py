@@ -978,9 +978,9 @@ def get_source_stats(
     extracted_text_col = "extracted_text_path" in article_columns
     rows = []
     sources = conn.execute(
-        "SELECT id, name, last_ok_at, last_error FROM sources ORDER BY name"
+        "SELECT id, name, enabled, interval_minutes FROM sources ORDER BY name"
     ).fetchall()
-    for source_id, name, last_ok_at, last_error in sources:
+    for source_id, name, enabled, interval_minutes in sources:
         total_articles = conn.execute(
             "SELECT COUNT(*) FROM articles WHERE source_id = ?",
             (source_id,),
@@ -1038,10 +1038,47 @@ def get_source_stats(
         else:
             run_count = 0
             ok_count = 0
+        last_run_row = None
+        if _table_exists(conn, "source_runs"):
+            last_run_row = conn.execute(
+                "SELECT started_at FROM source_runs WHERE source_id = ? ORDER BY started_at DESC LIMIT 1",
+                (source_id,),
+            ).fetchone()
+        last_run_at = last_run_row[0] if last_run_row else None
+
+        last_ok_row = None
+        last_error_row = None
+        if _table_exists(conn, "source_health_history"):
+            last_ok_row = conn.execute(
+                """
+                SELECT ts
+                FROM source_health_history
+                WHERE source_id = ? AND ok = 1
+                ORDER BY ts DESC
+                LIMIT 1
+                """,
+                (source_id,),
+            ).fetchone()
+            last_error_row = conn.execute(
+                """
+                SELECT last_error
+                FROM source_health_history
+                WHERE source_id = ? AND ok = 0 AND last_error IS NOT NULL
+                ORDER BY ts DESC
+                LIMIT 1
+                """,
+                (source_id,),
+            ).fetchone()
+        last_ok_at = last_ok_row[0] if last_ok_row else None
+        last_error = last_error_row[0] if last_error_row else None
+
         rows.append(
             {
                 "source_id": source_id,
                 "source_name": name,
+                "enabled": bool(enabled),
+                "interval_minutes": interval_minutes,
+                "last_run_at": last_run_at,
                 "articles_per_day_avg": round(recent_articles / max(days, 1), 2),
                 "last_ok_at": last_ok_at,
                 "last_error": last_error,
@@ -1079,34 +1116,52 @@ def claim_next_job(
             """,
             (cutoff,),
         )
-    if allowed_types:
-        placeholders = ",".join("?" for _ in allowed_types)
-        cursor = conn.execute(
-            f"""
-            SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
-                   finished_at, locked_by, locked_at, error
-            FROM jobs
-            WHERE status = 'queued' AND locked_by IS NULL AND job_type IN ({placeholders})
-            ORDER BY requested_at ASC
-            LIMIT 1
-            """,
-            tuple(allowed_types),
-        )
-    else:
-        cursor = conn.execute(
-            """
-            SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
-                   finished_at, locked_by, locked_at, error
-            FROM jobs
-            WHERE status = 'queued' AND locked_by IS NULL
-            ORDER BY requested_at ASC
-            LIMIT 1
-            """
-        )
-    row = cursor.fetchone()
-    if not row:
-        conn.execute("COMMIT")
-        return None
+    for _ in range(20):
+        if allowed_types:
+            placeholders = ",".join("?" for _ in allowed_types)
+            cursor = conn.execute(
+                f"""
+                SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
+                       finished_at, locked_by, locked_at, error
+                FROM jobs
+                WHERE status = 'queued' AND locked_by IS NULL AND job_type IN ({placeholders})
+                ORDER BY requested_at ASC
+                LIMIT 1
+                """,
+                tuple(allowed_types),
+            )
+        else:
+            cursor = conn.execute(
+                """
+                SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
+                       finished_at, locked_by, locked_at, error
+                FROM jobs
+                WHERE status = 'queued' AND locked_by IS NULL
+                ORDER BY requested_at ASC
+                LIMIT 1
+                """
+            )
+        row = cursor.fetchone()
+        if not row:
+            conn.execute("COMMIT")
+            return None
+        payload_json = row[3]
+        try:
+            payload = json.loads(payload_json) if payload_json else {}
+        except json.JSONDecodeError:
+            payload = {}
+        not_before = payload.get("not_before")
+        if not_before and isinstance(not_before, str) and not_before > utc_now_iso():
+            conn.execute(
+                """
+                UPDATE jobs
+                SET requested_at = ?
+                WHERE id = ?
+                """,
+                (not_before, row[0]),
+            )
+            continue
+        break
     job_id = row[0]
     now = utc_now_iso()
     result = conn.execute(
@@ -1163,6 +1218,32 @@ def fail_job(conn: sqlite3.Connection, job_id: str, error: str) -> bool:
         WHERE id = ? AND status = 'running'
         """,
         (now, error, job_id),
+    )
+    conn.commit()
+    return cursor.rowcount == 1
+
+
+def requeue_job(
+    conn: sqlite3.Connection,
+    job_id: str,
+    payload: dict[str, object],
+    requested_at: str,
+) -> bool:
+    cursor = conn.execute(
+        """
+        UPDATE jobs
+        SET status = 'queued',
+            requested_at = ?,
+            payload_json = ?,
+            result_json = NULL,
+            started_at = NULL,
+            finished_at = NULL,
+            locked_by = NULL,
+            locked_at = NULL,
+            error = NULL
+        WHERE id = ? AND status = 'running'
+        """,
+        (requested_at, json_dumps(payload), job_id),
     )
     conn.commit()
     return cursor.rowcount == 1

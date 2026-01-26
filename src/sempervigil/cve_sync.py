@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import json
 import time
 from dataclasses import asdict, dataclass
@@ -21,7 +22,7 @@ from .storage import (
     upsert_event_for_cve,
     upsert_cve,
 )
-from .utils import json_dumps, utc_now_iso
+from .utils import json_dumps, log_event, utc_now_iso
 
 @dataclass(frozen=True)
 class CveSyncConfig:
@@ -41,6 +42,7 @@ def sync_cves(
     last_modified_start: str,
     last_modified_end: str,
 ) -> dict[str, object]:
+    logger = logging.getLogger("sempervigil.cve_sync")
     start_index = 0
     total_processed = 0
     total_new = 0
@@ -63,7 +65,13 @@ def sync_cves(
             break
         for item in vulnerabilities:
             cve_item = item.get("cve") or {}
-            processed = process_cve_item(conn, cve_item, config.prefer_v4, config.filters or {})
+            processed = process_cve_item(
+                conn,
+                cve_item,
+                config.prefer_v4,
+                config.filters or {},
+                logger,
+            )
             if processed is None:
                 filtered += 1
                 continue
@@ -95,14 +103,18 @@ class ProcessResult:
 
 
 def process_cve_item(
-    conn, cve_item: dict[str, Any], prefer_v4: bool, filters: dict[str, Any]
+    conn,
+    cve_item: dict[str, Any],
+    prefer_v4: bool,
+    filters: dict[str, Any],
+    logger: logging.Logger | None = None,
 ) -> ProcessResult | None:
     cve_id = cve_item.get("id")
     if not cve_id:
         return ProcessResult(new_snapshot=False, change_count=0)
     published_at = cve_item.get("published")
     last_modified_at = cve_item.get("lastModified")
-    description = _extract_description(cve_item.get("descriptions") or [])
+    description = _extract_description(cve_item.get("descriptions"))
 
     metrics = cve_item.get("metrics") or {}
     v31 = _extract_cvss(metrics.get("cvssMetricV31"))
@@ -110,6 +122,18 @@ def process_cve_item(
 
     preferred = _select_preferred_metrics(v31, v40, prefer_v4)
     signals = extract_signals(cve_item)
+    if logger:
+        log_event(
+            logger,
+            logging.DEBUG,
+            "cve_signals_extracted",
+            cve_id=cve_id,
+            description_len=len(description or ""),
+            vendors=len(signals.vendors),
+            products=len(signals.products),
+            cpes=len(signals.cpes),
+            domains=len(signals.reference_domains),
+        )
     if filters and not matches_filters(
         preferred_score=preferred.base_score,
         preferred_severity=preferred.base_severity,
@@ -348,10 +372,24 @@ def _change_evidence(rule_id: str, fields: dict[str, object]) -> dict[str, objec
     return {"reasons": [rule_id], "evidence": fields}
 
 
-def _extract_description(descriptions: list[dict[str, Any]]) -> str | None:
-    for entry in descriptions:
-        if entry.get("lang") == "en":
-            return entry.get("value")
+def _extract_description(descriptions: Any) -> str | None:
+    if isinstance(descriptions, str):
+        text = descriptions.strip()
+        return text or None
+    if isinstance(descriptions, dict):
+        text = str(descriptions.get("value") or "").strip()
+        return text or None
+    if isinstance(descriptions, list):
+        for entry in descriptions:
+            if isinstance(entry, dict) and entry.get("lang") == "en":
+                text = str(entry.get("value") or "").strip()
+                if text:
+                    return text
+        for entry in descriptions:
+            if isinstance(entry, dict):
+                text = str(entry.get("value") or "").strip()
+                if text:
+                    return text
     return None
 
 

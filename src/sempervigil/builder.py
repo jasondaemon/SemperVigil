@@ -16,7 +16,12 @@ def _setup_logging() -> logging.Logger:
     return configure_logging("sempervigil.hugo")
 
 
-def _run_hugo() -> tuple[int, str]:
+def _tail(text: str, max_lines: int = 120) -> str:
+    lines = (text or "").splitlines()
+    return "\n".join(lines[-max_lines:])
+
+
+def _run_hugo() -> tuple[int, str, str]:
     cmd = ["/bin/sh", "/tools/hugo-build.sh"]
     result = subprocess.run(
         cmd,
@@ -24,8 +29,9 @@ def _run_hugo() -> tuple[int, str]:
         capture_output=True,
         text=True,
     )
-    output = (result.stdout or "") + (result.stderr or "")
-    return result.returncode, output.strip()
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    return result.returncode, stdout, stderr
 
 
 def run_once(builder_id: str) -> int:
@@ -49,19 +55,28 @@ def run_once(builder_id: str) -> int:
         return 0
 
     log_event(logger, logging.INFO, "build_claimed", job_id=job.id)
+    start = time.time()
     try:
-        returncode, output = _run_hugo()
+        returncode, stdout, stderr = _run_hugo()
     except Exception as exc:  # noqa: BLE001
         fail_job(conn, job.id, str(exc))
         log_event(logger, logging.ERROR, "build_failed", job_id=job.id, error=str(exc))
         return 1
 
     if returncode != 0:
-        fail_job(conn, job.id, output or f"hugo exited with {returncode}")
-        log_event(logger, logging.ERROR, "build_failed", job_id=job.id, output=output)
+        tail = _tail(stderr or stdout)
+        fail_job(conn, job.id, tail or f"hugo exited with {returncode}")
+        log_event(logger, logging.ERROR, "build_failed", job_id=job.id, output=tail)
         return 1
 
-    if complete_job(conn, job.id, result={"output": output}):
+    duration = round(time.time() - start, 2)
+    result_payload = {
+        "exit_code": returncode,
+        "stdout_tail": _tail(stdout),
+        "stderr_tail": _tail(stderr),
+        "duration_s": duration,
+    }
+    if complete_job(conn, job.id, result=result_payload):
         log_event(logger, logging.INFO, "build_succeeded", job_id=job.id)
     else:
         log_event(logger, logging.ERROR, "build_complete_failed", job_id=job.id)

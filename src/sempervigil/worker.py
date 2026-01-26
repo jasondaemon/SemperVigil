@@ -113,6 +113,19 @@ def run_once(worker_id: str) -> int:
         )
         return 1
 
+    if result.get("requeued"):
+        fields = _job_context_fields(conn, job)
+        log_event(
+            logger,
+            logging.INFO,
+            "job_requeued",
+            job_id=job.id,
+            reason=result.get("reason"),
+            attempt=result.get("attempt"),
+            **fields,
+        )
+        return 0
+
     if complete_job(conn, job.id, result=result):
         fields = _job_context_fields(conn, job)
         log_event(logger, logging.INFO, "job_succeeded", job_id=job.id, **fields)
@@ -454,7 +467,7 @@ def _handle_write_article_markdown(
 
 
 def _handle_fetch_article_content(
-    conn, config, payload: dict[str, object], logger: logging.Logger
+    conn, config, job, payload: dict[str, object], logger: logging.Logger
 ) -> dict[str, object]:
     article_id = payload.get("article_id") if payload else None
     if not article_id:
@@ -462,7 +475,9 @@ def _handle_fetch_article_content(
     article = get_article_by_id(conn, int(article_id))
     if not article:
         raise ValueError("article_not_found")
-    url = article["original_url"]
+    url = article.get("original_url") or article.get("normalized_url") or ""
+    if not url:
+        raise ValueError("article_not_found")
     try:
         result = fetch_article_content(
             url,
@@ -760,7 +775,7 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
     if job.job_type == "events_rebuild":
         return _handle_events_rebuild(conn, config, job.payload or {}, logger)
     if job.job_type == "fetch_article_content":
-        return _handle_fetch_article_content(conn, config, job.payload, logger)
+        return _handle_fetch_article_content(conn, config, job, job.payload, logger)
     if job.job_type == "summarize_article_llm":
         return _handle_summarize_article_llm(conn, config, job.payload, logger)
     if job.job_type == "build_daily_brief":
@@ -807,6 +822,8 @@ def _maybe_enqueue_fetch(conn, article_id: int, source_id: str) -> None:
         return
     article = get_article_by_id(conn, article_id)
     if not article:
+        return
+    if not (article.get("original_url") or article.get("normalized_url")):
         return
     if article["has_full_content"]:
         _maybe_enqueue_summarize(conn, article_id, source_id)

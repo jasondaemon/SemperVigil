@@ -96,7 +96,7 @@ from .services.ai_service import (
     update_provider_test_status,
     update_schema,
 )
-from .llm import STAGE_NAMES, test_profile, test_provider
+from .llm import STAGE_NAMES, test_model, test_profile, test_provider
 from .utils import configure_logging, log_event, utc_now_iso_offset
 
 app = FastAPI(title="SemperVigil Admin API")
@@ -400,6 +400,12 @@ class ProfileTestRequest(BaseModel):
 
 class DailyBriefRequest(BaseModel):
     date: str | None = None
+
+
+class AiTestRequest(BaseModel):
+    provider_id: str
+    model_id: str
+    prompt: str
 
 
 class AnalyticsRequest(BaseModel):
@@ -1207,3 +1213,13 @@ def build_brief(payload: DailyBriefRequest, _: None = Depends(_require_admin_tok
         {"date": payload.date} if payload.date else {},
     )
     return {"job_id": job_id}
+
+
+@app.post("/admin/api/ai/test", dependencies=[Depends(_require_admin_token)])
+def api_ai_test(payload: AiTestRequest) -> dict[str, object]:
+    conn = _get_conn()
+    logger = logging.getLogger("sempervigil.admin")
+    try:
+        return test_model(conn, payload.provider_id, payload.model_id, payload.prompt, logger)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

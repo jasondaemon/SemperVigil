@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -66,6 +67,39 @@ def test_profile(
 ) -> dict[str, Any]:
     result = run_profile(conn, profile_id, text, logger)
     return result
+
+
+def test_model(
+    conn,
+    provider_id: str,
+    model_id: str,
+    text: str,
+    logger: logging.Logger,
+) -> dict[str, Any]:
+    provider = get_provider(conn, provider_id)
+    if not provider:
+        raise ValueError("provider_not_found")
+    model = get_model(conn, model_id)
+    if not model:
+        raise ValueError("model_not_found")
+    api_key = load_provider_secret(conn, provider_id)
+    base_url = provider.get("base_url") or _default_base_url(provider["type"])
+    messages = [
+        {"role": "system", "content": "You are a concise assistant."},
+        {"role": "user", "content": text},
+    ]
+    start = time.time()
+    raw = _call_provider(
+        provider["type"],
+        base_url,
+        api_key,
+        model["model_name"],
+        messages,
+        {},
+        provider,
+    )
+    latency_ms = int((time.time() - start) * 1000)
+    return {"ok": True, "latency_ms": latency_ms, "output": raw[:800]}
 
 
 def run_profile(
