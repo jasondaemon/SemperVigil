@@ -47,13 +47,18 @@ services:
       - svnet
     restart: unless-stopped
 
-  # 2) Worker (internal)
+    # 2) Worker (internal)
   # Recommended scaling: worker_fetch=2, worker_llm=1
   worker_fetch:
     build:
       context: .
       dockerfile: docker/ingest/Dockerfile
-    container_name: sempervigil-worker-fetch
+    # NOTE: no container_name so we can scale this service
+    hostname: worker-fetch
+    labels:
+      com.sempervigil.role: "worker"
+      com.sempervigil.queue: "fetch"
+      com.sempervigil.service: "worker_fetch"
     env_file:
       - .env
     environment:
@@ -85,7 +90,12 @@ services:
     build:
       context: .
       dockerfile: docker/ingest/Dockerfile
-    container_name: sempervigil-worker-llm
+    # NOTE: no container_name so we can scale this service
+    hostname: worker-llm
+    labels:
+      com.sempervigil.role: "worker"
+      com.sempervigil.queue: "llm"
+      com.sempervigil.service: "worker_llm"
     env_file:
       - .env
     environment:
