@@ -2,22 +2,14 @@
 set -euo pipefail
 
 echo "🧹 SemperVigil full recycle starting…"
-
-# Optional: set project name explicitly (recommended)
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-sempervigil}"
 
-# 1) Stop everything (keep volumes)
 echo "🛑 Stopping running containers..."
 docker compose down
 
-# Uncomment the next line if you EVER want a truly clean slate (DELETES DB + site)
-# docker compose down -v
-
-# 2) Rebuild images with fresh code
 echo "🔨 Rebuilding images (no cache)..."
 docker compose build --no-cache
 
-# 3) Start Postgres first
 echo "🗄️  Starting database..."
 docker compose up -d db
 
@@ -27,17 +19,53 @@ until docker exec "$(docker compose ps -q db)" pg_isready -U "${SV_DB_USER:-semp
 done
 echo "✅ Database is ready."
 
-# 4) Start admin + workers (runs migrations, starts pipelines)
-echo "⚙️  Starting admin and workers..."
-docker compose up -d admin \
-  --scale worker_fetch=2 \
-  --scale worker_llm=1
+# --- detect services ---
+SERVICES="$(docker compose config --services)"
+has() { echo "$SERVICES" | grep -qx "$1"; }
 
-# 5) Run Hugo build once (on-demand)
+echo "📋 Compose services:"
+echo "$SERVICES" | sed 's/^/  - /'
+
+# Determine worker services
+FETCH_SVC=""
+LLM_SVC=""
+
+if has "worker_fetch"; then
+  FETCH_SVC="worker_fetch"
+fi
+if has "worker_llm"; then
+  LLM_SVC="worker_llm"
+fi
+
+# Legacy fallback
+if [[ -z "$FETCH_SVC" && -z "$LLM_SVC" && $(echo "$SERVICES" | grep -c '^worker$' || true) -gt 0 ]]; then
+  echo "⚠️  Detected legacy single worker service: worker"
+  FETCH_SVC="worker"
+fi
+
+if [[ -z "$FETCH_SVC" && -z "$LLM_SVC" ]]; then
+  echo "❌ Could not find worker services (worker_fetch/worker_llm or worker)."
+  echo "   If you are using profiles, try: docker compose --profile <name> config --services"
+  exit 1
+fi
+
+echo "⚙️  Starting admin..."
+docker compose up -d admin
+
+echo "⚙️  Starting workers..."
+if [[ "$FETCH_SVC" == "worker_fetch" ]]; then
+  docker compose up -d --scale worker_fetch=2
+elif [[ "$FETCH_SVC" == "worker" ]]; then
+  docker compose up -d --scale worker=2
+fi
+
+if [[ -n "$LLM_SVC" ]]; then
+  docker compose up -d --scale worker_llm=1
+fi
+
 echo "📝 Running Hugo site build..."
 docker compose run --rm builder
 
-# 6) Start public web server
 echo "🌍 Starting public web server..."
 docker compose up -d web
 
