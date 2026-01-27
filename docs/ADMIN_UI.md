@@ -11,7 +11,8 @@ login via `/ui/login`.
 - Content: search across articles and CVEs.
 - CVEs: browse/search CVEs; settings under CVE Settings.
 - Products: browse normalized vendor/product entries and related CVEs/events.
-- Events: deterministic event clusters from CVEs/products.
+- Events: deterministic event clusters from CVEs/products, with optional Web Enrichment.
+  - Event detail includes a Web Enrichment panel to search SearXNG and promote sources to articles.
 - AI Config: providers/models/prompts/profiles + test.
 - Runtime Config: DB-backed runtime settings.
 - Danger Zone: destructive dev-only clears (articles/CVEs/all).

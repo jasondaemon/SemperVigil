@@ -56,6 +56,15 @@ def apply_migrations_pg(conn) -> None:
             )
             conn.commit()
             logger.info("migration_applied version=pg_events_005")
+            applied.add("pg_events_005")
+        if "pg_event_enrich_006" not in applied:
+            _migrate_event_web_sources(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_event_enrich_006", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_event_enrich_006")
         else:
             conn.commit()
         return
@@ -102,6 +111,15 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_events_005")
+
+    conn.execute("BEGIN")
+    _migrate_event_web_sources(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_event_enrich_006", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_event_enrich_006")
 
 
 def _bootstrap_schema(conn) -> None:
@@ -656,3 +674,50 @@ def _migrate_events_visibility(conn) -> None:
     conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS reasons JSONB NOT NULL DEFAULT '[]'::jsonb")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_visibility ON events(visibility)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_kind_visibility ON events(kind, visibility)")
+
+
+def _migrate_event_web_sources(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS event_web_sources (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+            url TEXT NOT NULL,
+            url_hash TEXT NOT NULL,
+            title TEXT,
+            snippet TEXT,
+            domain TEXT,
+            published_at TEXT NULL,
+            engine TEXT NULL,
+            category TEXT NULL,
+            score INTEGER NOT NULL DEFAULT 0,
+            score_reasons JSONB NOT NULL DEFAULT '{}'::jsonb,
+            status TEXT NOT NULL DEFAULT 'new',
+            discovered_at TEXT NOT NULL DEFAULT now(),
+            promoted_article_id BIGINT NULL REFERENCES articles(id) ON DELETE SET NULL,
+            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+            UNIQUE (event_id, url_hash)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_event_web_sources_event ON event_web_sources(event_id, discovered_at DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_event_web_sources_status ON event_web_sources(event_id, status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_event_web_sources_domain ON event_web_sources(domain)")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS article_candidates (
+            id TEXT PRIMARY KEY,
+            url TEXT NOT NULL UNIQUE,
+            url_hash TEXT NOT NULL UNIQUE,
+            title TEXT,
+            snippet TEXT,
+            domain TEXT,
+            discovered_at TEXT NOT NULL DEFAULT now(),
+            status TEXT NOT NULL DEFAULT 'new',
+            score INTEGER NOT NULL DEFAULT 0,
+            score_reasons JSONB NOT NULL DEFAULT '{}'::jsonb,
+            metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+        )
+        """
+    )

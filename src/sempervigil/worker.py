@@ -9,6 +9,7 @@ import uuid
 from dataclasses import replace
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+from urllib.parse import urlparse
 
 from .config import (
     ConfigError,
@@ -29,6 +30,9 @@ from .pipelines.daily_brief import write_daily_brief
 from .llm.router import run_profile
 from .services.ai_service import get_active_profile_for_stage
 from .normalize import normalize_name
+from .searxng import searxng_search
+from .enrichment.query import build_event_enrich_query
+from .enrichment.scoring import score_web_result
 from .storage import (
     claim_next_job,
     complete_job,
@@ -83,6 +87,10 @@ from .storage import (
     try_acquire_lease,
     release_lease,
     update_event_summary_from_articles,
+    list_event_web_sources,
+    upsert_event_web_source,
+    mark_event_web_source_status,
+    promote_event_web_source_to_article,
 )
 from .utils import configure_logging, log_event, utc_now_iso, utc_now_iso_offset
 
@@ -97,6 +105,9 @@ WORKER_JOB_TYPES = [
     "build_daily_brief",
     "write_article_markdown",
     "derive_events_from_articles",
+    "enrich_event_from_web",
+    "promote_event_web_source_to_article",
+    "enrich_event_summary_llm",
     "source_acquire",
     "smoke_test",
 ]
@@ -1076,6 +1087,86 @@ def _handle_derive_events_from_articles(
     }
 
 
+def _handle_enrich_event_from_web(
+    conn, config, payload: dict[str, object], logger: logging.Logger
+) -> dict[str, object]:
+    event_id = str(payload.get("event_id") or "")
+    if not event_id:
+        raise ValueError("event_id is required")
+    event = get_event(conn, event_id)
+    if not event:
+        raise ValueError("event_not_found")
+    query = str(payload.get("query") or "").strip() or build_event_enrich_query(event)
+    searx_url = os.getenv("SV_SEARXNG_URL", "").strip()
+    timeout_s = int(os.getenv("SV_SEARXNG_TIMEOUT_S", "10"))
+    max_results = int(payload.get("max_results") or os.getenv("SV_SEARXNG_MAX_RESULTS", "10"))
+    categories = os.getenv("SV_SEARXNG_CATEGORIES")
+    engines = os.getenv("SV_SEARXNG_ENGINES")
+    keep_low = bool(payload.get("keep_low", False))
+    promote_on_enrich = bool(payload.get("promote_on_enrich", False))
+    min_score = int(os.getenv("SV_ENRICH_MIN_SCORE", "10"))
+    results = searxng_search(
+        query,
+        url=searx_url,
+        timeout_s=timeout_s,
+        categories=categories,
+        engines=engines,
+        language=None,
+        max_results=max_results,
+    )
+    saved = 0
+    promoted = 0
+    scored_results: list[tuple[int, dict[str, object], dict[str, int]]] = []
+    for item in results:
+        url_value = str(item.get("url") or "").strip()
+        if not url_value:
+            continue
+        item["domain"] = urlparse(url_value).netloc.lower()
+        score, reasons = score_web_result(event, item)
+        scored_results.append((score, item, reasons))
+    for score, item, reasons in scored_results:
+        if score < min_score and not keep_low:
+            continue
+        source_id = upsert_event_web_source(conn, event_id, item, score, reasons)
+        if source_id:
+            saved += 1
+            if promote_on_enrich:
+                article_id = promote_event_web_source_to_article(conn, source_id)
+                if article_id:
+                    promoted += 1
+    return {
+        "event_id": event_id,
+        "query": query,
+        "results": len(results),
+        "saved": saved,
+        "promoted": promoted,
+    }
+
+
+def _handle_promote_event_web_source(
+    conn, config, payload: dict[str, object], logger: logging.Logger
+) -> dict[str, object]:
+    source_id = str(payload.get("source_id") or "")
+    if not source_id:
+        raise ValueError("source_id is required")
+    article_id = promote_event_web_source_to_article(conn, source_id)
+    if not article_id:
+        raise ValueError("promotion_failed")
+    return {"source_id": source_id, "article_id": article_id}
+
+
+def _handle_enrich_event_summary_llm(
+    conn, config, payload: dict[str, object], logger: logging.Logger
+) -> dict[str, object]:
+    if os.getenv("SV_ENRICH_ENABLE_LLM", "0") not in {"1", "true", "yes"}:
+        return {"status": "skipped", "reason": "llm_disabled"}
+    event_id = str(payload.get("event_id") or "")
+    if not event_id:
+        raise ValueError("event_id is required")
+    summary = update_event_summary_from_articles(conn, event_id)
+    return {"event_id": event_id, "summary": summary}
+
+
 def _handle_source_acquire(conn, config, job, logger: logging.Logger) -> dict[str, object]:
     payload = job.payload or {}
     source_id = payload.get("source_id")
@@ -1522,6 +1613,12 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         return result
     if job.job_type == "derive_events_from_articles":
         return _handle_derive_events_from_articles(conn, config, job.payload or {}, logger)
+    if job.job_type == "enrich_event_from_web":
+        return _handle_enrich_event_from_web(conn, config, job.payload or {}, logger)
+    if job.job_type == "promote_event_web_source_to_article":
+        return _handle_promote_event_web_source(conn, config, job.payload or {}, logger)
+    if job.job_type == "enrich_event_summary_llm":
+        return _handle_enrich_event_summary_llm(conn, config, job.payload or {}, logger)
     if job.job_type == "smoke_test":
         return _handle_smoke_test(conn, config, job, logger)
     raise ValueError(f"unsupported job type {job.job_type}")

@@ -188,6 +188,26 @@ Reverse proxy notes (Nginx Proxy Manager):
 
 AI Configuration:
 - Use `http://<host>:8001/ui/ai` to configure providers, models, prompts, schemas, profiles, and routing
+
+Event web enrichment (SearXNG):
+- Use the Event detail page "Web Enrichment" panel to search for supporting URLs.
+- Web results are stored first; nothing is promoted to Articles unless you click **Promote**.
+- Set these env vars in `.env` (see `.env.example`):
+  - `SV_SEARXNG_URL`, `SV_SEARXNG_ENGINES`, `SV_SEARXNG_CATEGORIES`
+  - `SV_ENRICH_MIN_SCORE`, `SV_ENRICH_DOMAIN_ALLOWLIST`, `SV_ENRICH_DOMAIN_BLOCKLIST`
+  - `SV_ENRICH_ENABLE_LLM=0` (LLM summary enrichment is optional and off by default)
+
+Optional SearXNG service (not enabled by default):
+```yaml
+searxng:
+  image: searxng/searxng:latest
+  environment:
+    - BASE_URL=http://searxng:8080/
+  ports:
+    - "8085:8080"
+  volumes:
+    - ./searxng:/etc/searxng
+```
 - API keys entered in the UI are encrypted at rest using AES-GCM
 - Use the “Test” buttons in the UI to verify providers and profiles
 - Generate a master key:

@@ -10,10 +10,12 @@ import struct
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Iterable, Any
+from urllib.parse import urlparse
 
 from .db import connect_db
 from .models import Article, Job, Source, SourceTactic
 from .normalize import cpe_to_vendor_product, normalize_name
+from .enrichment.url import normalize_url, url_hash
 from .utils import json_dumps, log_event, utc_now_iso, utc_now_iso_offset
 from psycopg import errors as pg_errors
 
@@ -3378,6 +3380,181 @@ def list_events_for_product(
         for row in cursor.fetchall()
     ]
     return items, total
+
+
+def list_event_web_sources(
+    conn: Any,
+    event_id: str,
+    include_discarded: bool = False,
+) -> list[dict[str, object]]:
+    if not _table_exists(conn, "event_web_sources"):
+        return []
+    status_filter = "" if include_discarded else " AND status != 'discarded'"
+    cursor = conn.execute(
+        """
+        SELECT id, url, title, snippet, domain, published_at, engine, category,
+               score, score_reasons, status, discovered_at, promoted_article_id, metadata
+        FROM event_web_sources
+        WHERE event_id = %s
+        """
+        + status_filter
+        + " ORDER BY discovered_at DESC",
+        (event_id,),
+    )
+    rows = []
+    for row in cursor.fetchall():
+        rows.append(
+            {
+                "id": row[0],
+                "url": row[1],
+                "title": row[2],
+                "snippet": row[3],
+                "domain": row[4],
+                "published_at": row[5],
+                "engine": row[6],
+                "category": row[7],
+                "score": row[8],
+                "score_reasons": json.loads(row[9]) if row[9] else {},
+                "status": row[10],
+                "discovered_at": row[11],
+                "promoted_article_id": row[12],
+                "metadata": json.loads(row[13]) if row[13] else {},
+            }
+        )
+    return rows
+
+
+def upsert_event_web_source(
+    conn: Any,
+    event_id: str,
+    result: dict[str, object],
+    score: int,
+    reasons: dict[str, int],
+) -> str | None:
+    if not _table_exists(conn, "event_web_sources"):
+        return None
+    raw_url = str(result.get("url") or "").strip()
+    if not raw_url:
+        return None
+    normalized = normalize_url(raw_url)
+    if not normalized:
+        return None
+    hash_value = url_hash(normalized)
+    domain = (urlparse(normalized).netloc or "").lower()
+    source_id = f"evtws_{uuid.uuid4().hex}"
+    conn.execute(
+        """
+        INSERT INTO event_web_sources
+            (id, event_id, url, url_hash, title, snippet, domain, published_at,
+             engine, category, score, score_reasons, status, discovered_at, metadata)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'new', %s, %s)
+        ON CONFLICT(event_id, url_hash) DO UPDATE SET
+            title=excluded.title,
+            snippet=excluded.snippet,
+            domain=excluded.domain,
+            published_at=excluded.published_at,
+            engine=excluded.engine,
+            category=excluded.category,
+            score=excluded.score,
+            score_reasons=excluded.score_reasons,
+            discovered_at=excluded.discovered_at
+        RETURNING id
+        """,
+        (
+            source_id,
+            event_id,
+            normalized,
+            hash_value,
+            result.get("title"),
+            result.get("snippet"),
+            domain,
+            result.get("published_at"),
+            result.get("engine"),
+            result.get("category"),
+            score,
+            json_dumps(reasons or {}),
+            utc_now_iso(),
+            json_dumps(result.get("metadata") or {}),
+        ),
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT id FROM event_web_sources WHERE event_id = %s AND url_hash = %s",
+        (event_id, hash_value),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def mark_event_web_source_status(conn: Any, source_id: str, status: str) -> None:
+    if not _table_exists(conn, "event_web_sources"):
+        return
+    conn.execute(
+        "UPDATE event_web_sources SET status = %s WHERE id = %s",
+        (status, source_id),
+    )
+    conn.commit()
+
+
+def promote_event_web_source_to_article(conn: Any, source_id: str) -> int | None:
+    if not _table_exists(conn, "event_web_sources"):
+        return None
+    row = conn.execute(
+        """
+        SELECT event_id, url, title, snippet, domain, promoted_article_id
+        FROM event_web_sources
+        WHERE id = %s
+        """,
+        (source_id,),
+    ).fetchone()
+    if not row:
+        return None
+    event_id, url, title, snippet, domain, promoted_article_id = row
+    if promoted_article_id:
+        return promoted_article_id
+    source_id_value = "web_enrich"
+    upsert_source(
+        conn,
+        {
+            "id": source_id_value,
+            "name": "Web Enrichment",
+            "enabled": True,
+            "base_url": None,
+            "topic_key": None,
+            "default_frequency_minutes": 1440,
+            "pause_until": None,
+            "paused_reason": None,
+            "robots_notes": None,
+        },
+    )
+    stable_id = url_hash(normalize_url(url))
+    article = Article(
+        id=None,
+        stable_id=stable_id,
+        original_url=url,
+        normalized_url=normalize_url(url),
+        title=title or url,
+        source_id=source_id_value,
+        published_at=None,
+        published_at_source=None,
+        ingested_at=utc_now_iso(),
+        summary=snippet or None,
+        tags=[],
+    )
+    insert_articles(conn, [article])
+    article_id = get_article_id(conn, source_id_value, stable_id)
+    if not article_id:
+        return None
+    link_event_article(conn, event_id, article_id, "enrich")
+    conn.execute(
+        """
+        UPDATE event_web_sources
+        SET status = 'promoted', promoted_article_id = %s
+        WHERE id = %s
+        """,
+        (article_id, source_id),
+    )
+    conn.commit()
+    return article_id
 
 
 def rebuild_events_from_cves(

@@ -3010,6 +3010,68 @@ function wireEventDetail() {
   const cveTable = document.getElementById("event-cves-table");
   const productsList = document.getElementById("event-products-list");
   const articlesTable = document.getElementById("event-articles-table");
+  const webTable = document.getElementById("event-web-sources-table");
+  const webError = document.getElementById("event-web-error");
+  const webSearchBtn = document.getElementById("event-web-search");
+  const webQueryInput = document.getElementById("event-web-query");
+  const webKeepLow = document.getElementById("event-web-keep-low");
+  const webPromote = document.getElementById("event-web-promote");
+  const webShowDiscarded = document.getElementById("event-web-show-discarded");
+  const webShowLow = document.getElementById("event-web-show-low");
+
+  function setWebError(message) {
+    if (!webError) {
+      return;
+    }
+    if (message) {
+      webError.textContent = message;
+      webError.style.display = "block";
+    } else {
+      webError.textContent = "";
+      webError.style.display = "none";
+    }
+  }
+
+  async function loadWebSources() {
+    if (!webTable) {
+      return;
+    }
+    setWebError("");
+    const includeDiscarded = webShowDiscarded && webShowDiscarded.checked;
+    const data = await apiFetch(
+      `/admin/api/events/${eventId}/web_sources?include_discarded=${includeDiscarded ? "true" : "false"}`
+    );
+    const body = webTable.querySelector("tbody");
+    body.innerHTML = "";
+    const showLow = webShowLow ? webShowLow.checked : true;
+    (data.items || []).forEach((item) => {
+      if (!showLow && (item.score ?? 0) < 10) {
+        return;
+      }
+      const row = document.createElement("tr");
+      const published = item.published_at || "";
+      const status = item.status || "new";
+      const title = item.title || item.url || "";
+      row.innerHTML = `
+        <td><span class="badge muted">${item.score ?? 0}</span></td>
+        <td class="truncate" title="${esc(item.domain || "")}">${esc(item.domain || "")}</td>
+        <td><span data-ts="${esc(published)}"></span></td>
+        <td class="line-clamp-2" title="${esc(title)}"><a href="${esc(item.url)}" target="_blank" rel="noopener">${esc(title)}</a></td>
+        <td class="line-clamp-2" title="${esc(item.snippet || "")}">${esc(item.snippet || "")}</td>
+        <td>${statusBadge(status)}</td>
+        <td class="table-actions">
+          <button class="btn small secondary web-promote" data-source-id="${item.id}" ${
+            status === "promoted" ? "disabled" : ""
+          }>Promote</button>
+          <button class="btn small secondary web-discard" data-source-id="${item.id}" ${
+            status === "discarded" ? "disabled" : ""
+          }>Discard</button>
+        </td>
+      `;
+      body.appendChild(row);
+    });
+    applyTimestampFormatting(webTable);
+  }
 
   apiFetch(`/admin/api/events/${eventId}`)
     .then((event) => {
@@ -3112,6 +3174,69 @@ function wireEventDetail() {
           body.appendChild(row);
         });
       }
+      if (webShowDiscarded) {
+        webShowDiscarded.addEventListener("change", () => {
+          loadWebSources().catch((err) => setWebError(err.message || String(err)));
+        });
+      }
+      if (webShowLow) {
+        webShowLow.addEventListener("change", () => {
+          loadWebSources().catch((err) => setWebError(err.message || String(err)));
+        });
+      }
+      if (webSearchBtn) {
+        webSearchBtn.addEventListener("click", async () => {
+          try {
+            const payload = {
+              query: webQueryInput ? webQueryInput.value.trim() : "",
+              keep_low: webKeepLow ? webKeepLow.checked : false,
+              promote_on_enrich: webPromote ? webPromote.checked : false,
+            };
+            const result = await apiFetch(`/admin/api/events/${eventId}/enrich/web`, {
+              method: "POST",
+              body: JSON.stringify(payload),
+            });
+            showToast(`Enrichment queued (${result.job_id || ""})`.trim());
+          } catch (err) {
+            setWebError(err.message || String(err));
+          }
+        });
+      }
+      if (webTable) {
+        webTable.addEventListener("click", async (event) => {
+          const target = event.target;
+          if (!(target instanceof HTMLElement)) {
+            return;
+          }
+          if (target.classList.contains("web-promote")) {
+            const sourceId = target.dataset.sourceId;
+            try {
+              const result = await apiFetch(
+                `/admin/api/events/${eventId}/web_sources/${sourceId}/promote`,
+                { method: "POST" }
+              );
+              showToast(`Promote queued (${result.job_id || ""})`.trim());
+              loadWebSources().catch((err) => setWebError(err.message || String(err)));
+            } catch (err) {
+              setWebError(err.message || String(err));
+            }
+          }
+          if (target.classList.contains("web-discard")) {
+            const sourceId = target.dataset.sourceId;
+            try {
+              await apiFetch(
+                `/admin/api/events/${eventId}/web_sources/${sourceId}/discard`,
+                { method: "POST" }
+              );
+              showToast("Discarded");
+              loadWebSources().catch((err) => setWebError(err.message || String(err)));
+            } catch (err) {
+              setWebError(err.message || String(err));
+            }
+          }
+        });
+      }
+      loadWebSources().catch((err) => setWebError(err.message || String(err)));
     })
     .catch((err) => {
       container.innerHTML = `<div class="error-banner">${err.message || String(err)}</div>`;

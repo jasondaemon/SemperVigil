@@ -70,6 +70,7 @@ from .storage import (
     list_events_with_counts,
     list_events_for_product,
     list_source_health_events,
+    list_event_web_sources,
     list_llm_runs,
     insert_llm_run,
     query_products,
@@ -94,6 +95,8 @@ from .storage import (
     link_event_article,
     update_event_summary_from_articles,
     normalize_cve_cluster_event_keys,
+    mark_event_web_source_status,
+    promote_event_web_source_to_article,
 )
 from .ingest import process_source
 from .services.sources_service import (
@@ -1197,6 +1200,77 @@ def api_events_derive(payload: EventsDeriveRequest | None = None) -> dict[str, o
         "derive_events_from_articles",
         data if data else None,
         debounce=False,
+    )
+    return {"status": "queued", "job_id": job_id}
+
+
+class EventEnrichWebRequest(BaseModel):
+    query: str | None = None
+    max_results: int | None = None
+    promote_on_enrich: bool = False
+    keep_low: bool = False
+
+
+@app.post(
+    "/admin/api/events/{event_id}/enrich/web",
+    dependencies=[Depends(_require_admin_token)],
+)
+def api_event_enrich_web(
+    event_id: str, payload: EventEnrichWebRequest | None = None
+) -> dict[str, object]:
+    conn = _get_conn()
+    data = payload.model_dump() if payload else {}
+    data["event_id"] = event_id
+    job_id = enqueue_job(conn, "enrich_event_from_web", data, debounce=True)
+    return {"status": "queued", "job_id": job_id}
+
+
+@app.get(
+    "/admin/api/events/{event_id}/web_sources",
+    dependencies=[Depends(_require_admin_token)],
+)
+def api_event_web_sources(event_id: str, include_discarded: bool = False) -> dict[str, object]:
+    conn = _get_conn()
+    sources = list_event_web_sources(conn, event_id, include_discarded=include_discarded)
+    return {"items": sources}
+
+
+@app.post(
+    "/admin/api/events/{event_id}/web_sources/{source_id}/promote",
+    dependencies=[Depends(_require_admin_token)],
+)
+def api_event_web_source_promote(event_id: str, source_id: str) -> dict[str, object]:
+    conn = _get_conn()
+    job_id = enqueue_job(
+        conn,
+        "promote_event_web_source_to_article",
+        {"source_id": source_id},
+        debounce=False,
+    )
+    return {"status": "queued", "job_id": job_id}
+
+
+@app.post(
+    "/admin/api/events/{event_id}/web_sources/{source_id}/discard",
+    dependencies=[Depends(_require_admin_token)],
+)
+def api_event_web_source_discard(event_id: str, source_id: str) -> dict[str, object]:
+    conn = _get_conn()
+    mark_event_web_source_status(conn, source_id, "discarded")
+    return {"status": "ok", "source_id": source_id}
+
+
+@app.post(
+    "/admin/api/events/{event_id}/enrich/llm",
+    dependencies=[Depends(_require_admin_token)],
+)
+def api_event_enrich_llm(event_id: str) -> dict[str, object]:
+    conn = _get_conn()
+    job_id = enqueue_job(
+        conn,
+        "enrich_event_summary_llm",
+        {"event_id": event_id},
+        debounce=True,
     )
     return {"status": "queued", "job_id": job_id}
 

@@ -52,5 +52,35 @@
       <tbody></tbody>
     </table>
   </div>
+  <div class="panel">
+    <div class="panel-header">
+      <h2>Web Enrichment</h2>
+    </div>
+    <div class="filters inline">
+      <input class="input" type="text" id="event-web-query" placeholder="Search query (optional override)">
+      <label class="checkbox"><input type="checkbox" id="event-web-keep-low"> Keep low score</label>
+      <label class="checkbox"><input type="checkbox" id="event-web-promote"> Auto-promote</label>
+      <button class="btn secondary" type="button" id="event-web-search">Search Web</button>
+    </div>
+    <div class="filters inline">
+      <label class="checkbox"><input type="checkbox" id="event-web-show-discarded"> Show discarded</label>
+      <label class="checkbox"><input type="checkbox" id="event-web-show-low"> Show low score</label>
+    </div>
+    <div id="event-web-error" class="error-banner" style="display:none;"></div>
+    <table class="table-compact" id="event-web-sources-table">
+      <thead>
+        <tr>
+          <th>Score</th>
+          <th>Domain</th>
+          <th>Published</th>
+          <th>Title</th>
+          <th>Snippet</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
 </section>
 {% endblock %}
