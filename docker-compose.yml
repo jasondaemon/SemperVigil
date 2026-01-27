@@ -145,7 +145,8 @@ services:
       SV_DATA_DIR: /data
       SV_LOG_FILE: /data/logs/builder.log
       SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-http://localhost:${SV_WEB_PORT:-8080}/}
-      HUGO_CACHEDIR: /tmp/hugo_cache
+      SV_HUGO_CACHE_DIR: /data/hugo_cache
+      SV_HUGO_MODULES_DIR: /data/hugo_modules
       SV_DB_URL: ${SV_DB_URL:-}
       SV_HUGO_SOURCE_DIR: /site-src
       SV_HUGO_OUTPUT_DIR: /site
@@ -156,10 +157,6 @@ services:
       - ${SV_DATA_DIR:-/nfs/sempervigil/data}:/data
       - ${SV_SITE_SRC_DIR:-/nfs/sempervigil/site-src}:/site-src
       - ${SV_SITE_PUBLIC_DIR:-/nfs/sempervigil/site-public}:/site
-
-      # caches (safe to write)
-      - sv_hugo_cache:/tmp/hugo_cache
-      - sv_hugo_modules:/tmp/hugo_modules
 
       - ./tools:/tools:ro
 
@@ -208,8 +205,6 @@ services:
       SV_DB_URL: ${SV_DB_URL:-}
 
 volumes:
-  sv_hugo_cache:
-  sv_hugo_modules:
   sempervigil_pgdata:
 
 networks:

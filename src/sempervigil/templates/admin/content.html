@@ -28,38 +28,8 @@
         <option value="summary">Missing summary</option>
         <option value="description">Missing description (CVEs)</option>
       </select>
-      <label class="inline-check">
-        <input type="checkbox" id="content-content-error">
-        Content error
-      </label>
-      <label class="inline-check">
-        <input type="checkbox" id="content-summary-error">
-        Summary error
-      </label>
-      <select id="content-needs">
-        <option value="">Pipeline state</option>
-        <option value="fetch">Needs fetch</option>
-        <option value="summarize">Needs summarize</option>
-        <option value="publish">Ready to publish</option>
-        <option value="attention">Needs attention</option>
-      </select>
-      <input type="text" id="content-tags" placeholder="Tags (comma)">
-      <select id="content-severity">
-        <option value="">Any severity</option>
-        <option value="CRITICAL">CRITICAL</option>
-        <option value="HIGH">HIGH</option>
-        <option value="MEDIUM">MEDIUM</option>
-        <option value="LOW">LOW</option>
-      </select>
-      <input type="number" step="0.1" id="content-min-cvss" placeholder="Min CVSS">
       <input type="date" id="content-after">
       <input type="date" id="content-before">
-      {% if watchlist_enabled %}
-      <label class="inline-check">
-        <input type="checkbox" id="content-watchlist-only">
-        Watchlist hits only
-      </label>
-      {% endif %}
       <select id="content-page-size">
         <option value="25">25</option>
         <option value="50" selected>50</option>
@@ -67,6 +37,41 @@
       </select>
       <button class="btn" type="submit">Search</button>
     </form>
+    <details class="filters-advanced">
+      <summary>Advanced filters</summary>
+      <div class="filters">
+        <label class="inline-check">
+          <input type="checkbox" id="content-content-error">
+          Content error
+        </label>
+        <label class="inline-check">
+          <input type="checkbox" id="content-summary-error">
+          Summary error
+        </label>
+        <select id="content-needs">
+          <option value="">Pipeline state</option>
+          <option value="fetch">Needs fetch</option>
+          <option value="summarize">Needs summarize</option>
+          <option value="publish">Ready to publish</option>
+          <option value="attention">Needs attention</option>
+        </select>
+        <input type="text" id="content-tags" placeholder="Tags (comma)">
+        <select id="content-severity">
+          <option value="">Any severity</option>
+          <option value="CRITICAL">CRITICAL</option>
+          <option value="HIGH">HIGH</option>
+          <option value="MEDIUM">MEDIUM</option>
+          <option value="LOW">LOW</option>
+        </select>
+        <input type="number" step="0.1" id="content-min-cvss" placeholder="Min CVSS">
+        {% if watchlist_enabled %}
+        <label class="inline-check">
+          <input type="checkbox" id="content-watchlist-only">
+          Watchlist hits only
+        </label>
+        {% endif %}
+      </div>
+    </details>
     <p class="error" id="content-error" style="display:none;"></p>
     <div class="tag-panel">
       <div class="tag-panel-header">Tags</div>
@@ -79,7 +84,7 @@
   </section>
 
   <section class="panel">
-    <table id="content-table">
+    <table id="content-table" class="table-compact">
       <thead>
         <tr>
           <th>Type</th>

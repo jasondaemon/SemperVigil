@@ -431,6 +431,7 @@ def _apply_hugo_path_overrides(config: Config) -> Config:
         scope=config.scope,
         personalization=config.personalization,
         llm=config.llm,
+        per_source_tweaks=config.per_source_tweaks,
     )
 
 

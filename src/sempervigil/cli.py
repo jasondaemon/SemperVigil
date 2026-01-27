@@ -622,6 +622,7 @@ def build_parser() -> argparse.ArgumentParser:
             "build_site",
             "cve_sync",
             "write_article_markdown",
+            "derive_events_from_articles",
         ],
         help="Job type to enqueue",
     )

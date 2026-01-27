@@ -6,6 +6,7 @@ sh /tools/ensure-dirs.sh
 SOURCE_DIR="${SV_HUGO_SOURCE_DIR:-/repo/site}"
 OUTPUT_DIR="${SV_HUGO_OUTPUT_DIR:-/site}"
 CACHE_DIR="${SV_HUGO_CACHE_DIR:-/tmp/hugo_cache}"
+MODULES_DIR="${SV_HUGO_MODULES_DIR:-/tmp/hugo_modules}"
 
 if [ ! -f "${SOURCE_DIR}/hugo.toml" ] && [ ! -d "${SOURCE_DIR}/config" ] && [ ! -d "${SOURCE_DIR}/config/_default" ]; then
   if [ -d "/repo/site" ]; then
@@ -14,6 +15,7 @@ if [ ! -f "${SOURCE_DIR}/hugo.toml" ] && [ ! -d "${SOURCE_DIR}/config" ] && [ ! 
   fi
 fi
 mkdir -p "${SOURCE_DIR}/resources"
+export HUGO_MODCACHEDIR="$MODULES_DIR"
 
 hugo -s "$SOURCE_DIR" -d "$OUTPUT_DIR" --baseURL "${SV_HUGO_BASEURL:-/}" --minify --gc --cleanDestinationDir --logLevel info --noBuildLock --cacheDir "$CACHE_DIR"
 

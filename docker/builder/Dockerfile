@@ -1,5 +1,5 @@
 # docker/builder/Dockerfile
-FROM hugomods/hugo:exts
+FROM hugomods/hugo:0.154.5
 
 WORKDIR /app
 COPY . /app

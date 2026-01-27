@@ -2640,10 +2640,15 @@ def list_event_articles(conn: Any, event_id: str) -> list[dict[str, object]]:
 
 
 def update_event_summary_from_articles(conn: Any, event_id: str) -> str | None:
+    article_cols = _table_columns(conn, "articles")
+    summary_llm_col = "a.summary_llm" if "summary_llm" in article_cols else "NULL AS summary_llm"
+    summary_col = "a.summary" if "summary" in article_cols else "NULL AS summary"
+    content_col = "a.content_text" if "content_text" in article_cols else "NULL AS content_text"
+    select_cols = f"a.title, {summary_llm_col}, {summary_col}, {content_col}"
     if _table_exists(conn, "event_articles"):
         cursor = conn.execute(
-            """
-            SELECT a.title, a.summary_llm, a.summary, a.content_text
+            f"""
+            SELECT {select_cols}
             FROM event_articles ea
             JOIN articles a ON a.id = ea.article_id
             WHERE ea.event_id = %s
@@ -2654,8 +2659,8 @@ def update_event_summary_from_articles(conn: Any, event_id: str) -> str | None:
         )
     else:
         cursor = conn.execute(
-            """
-            SELECT a.title, a.summary_llm, a.summary, a.content_text
+            f"""
+            SELECT {select_cols}
             FROM event_items ei
             JOIN articles a ON a.id = CAST(ei.item_key AS INTEGER)
             WHERE ei.event_id = %s AND ei.item_type = 'article'

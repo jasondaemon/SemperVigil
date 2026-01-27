@@ -31,7 +31,7 @@ function esc(value) {
     .replaceAll("'", "&#39;");
 }
 
-function formatTimestamp(value) {
+function formatAbsolute(value) {
   if (!value) {
     return "";
   }
@@ -39,37 +39,169 @@ function formatTimestamp(value) {
   if (Number.isNaN(date.getTime())) {
     return String(value);
   }
-  const pad = (num) => String(num).padStart(2, "0");
   const tz = document.body?.dataset?.timezone || "";
-  if (tz) {
-    const formatter = new Intl.DateTimeFormat("en-US", {
-      timeZone: tz,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    });
-    const parts = Object.fromEntries(
-      formatter.formatToParts(date).map((part) => [part.type, part.value])
-    );
-    return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz || undefined,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const parts = Object.fromEntries(
+    formatter.formatToParts(date).map((part) => [part.type, part.value])
+  );
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
+function formatRelative(value) {
+  if (!value) {
+    return "";
   }
-  const year = date.getFullYear();
-  const month = pad(date.getMonth() + 1);
-  const day = pad(date.getDate());
-  const hours = pad(date.getHours());
-  const minutes = pad(date.getMinutes());
-  const seconds = pad(date.getSeconds());
-  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMin = Math.round(diffMs / 60000);
+  if (diffMin >= 0 && diffMin < 60) {
+    return `${diffMin}m ago`;
+  }
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr >= 0 && diffHr < 24) {
+    return `${diffHr}h ago`;
+  }
+  const tz = document.body?.dataset?.timezone || "";
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz || undefined,
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = Object.fromEntries(
+    formatter.formatToParts(date).map((part) => [part.type, part.value])
+  );
+  return `${parts.month} ${parts.day} ${parts.hour}:${parts.minute}`;
+}
+
+function formatTimestamp(value) {
+  return formatAbsolute(value);
 }
 
 function applyTimestampFormatting(root = document) {
   root.querySelectorAll("[data-ts]").forEach((el) => {
     const raw = el.getAttribute("data-ts");
-    el.textContent = formatTimestamp(raw);
+    if (!raw) {
+      return;
+    }
+    el.textContent = formatRelative(raw);
+    if (!el.title) {
+      el.title = formatAbsolute(raw);
+    }
+  });
+}
+
+function shortId(value) {
+  const id = String(value || "");
+  if (id.length <= 12) {
+    return id;
+  }
+  return `${id.slice(0, 6)}…${id.slice(-4)}`;
+}
+
+function renderShortId(value, href) {
+  const full = String(value || "");
+  const short = shortId(full);
+  const link = href ? `<a class="id-short" href="${href}" title="${esc(full)}">${short}</a>` : `<span class="id-short" title="${esc(full)}">${short}</span>`;
+  return `
+    <span class="id-wrap" data-full="${esc(full)}">
+      ${link}
+      <button class="id-copy" type="button" title="Copy ID" data-copy="${esc(full)}">⧉</button>
+    </span>
+  `;
+}
+
+function statusBadge(status) {
+  const value = String(status || "unknown");
+  let cls = "badge muted";
+  if (value === "succeeded" || value === "ok" || value === "active") cls = "badge success";
+  if (value === "failed" || value === "error") cls = "badge error";
+  if (value === "running" || value === "queued") cls = "badge warn";
+  return `<span class="${cls}">${esc(value)}</span>`;
+}
+
+function applyShortIds(root = document) {
+  root.querySelectorAll(".id-short").forEach((el) => {
+    const full = el.getAttribute("title") || el.textContent || "";
+    if (!full) return;
+    el.textContent = shortId(full);
+  });
+}
+
+function formatWhen(job) {
+  const when = job.finished_at || job.started_at || job.requested_at || "";
+  const titleParts = [
+    job.requested_at ? `requested: ${formatAbsolute(job.requested_at)}` : null,
+    job.started_at ? `started: ${formatAbsolute(job.started_at)}` : null,
+    job.finished_at ? `finished: ${formatAbsolute(job.finished_at)}` : null,
+  ].filter(Boolean);
+  const title = titleParts.join(" | ");
+  return `<span data-ts="${esc(when)}" title="${esc(title)}">${esc(formatRelative(when))}</span>`;
+}
+
+function wireCopyButtons(root = document) {
+  root.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    const value = target.dataset.copy;
+    if (!value) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(value);
+      showToast("Copied");
+    } catch (err) {
+      console.error(err);
+    }
+  });
+}
+
+function wireActionMenus(root = document) {
+  const closeAll = () => {
+    root.querySelectorAll(".action-menu.open").forEach((menu) => menu.classList.remove("open"));
+  };
+  root.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    const toggle = target.closest(".action-menu-button");
+    if (toggle) {
+      const menu = toggle.closest(".action-menu");
+      if (!menu) return;
+      const isOpen = menu.classList.contains("open");
+      closeAll();
+      if (!isOpen) {
+        menu.classList.add("open");
+      }
+      event.preventDefault();
+      return;
+    }
+    if (!target.closest(".action-menu")) {
+      closeAll();
+    }
+  });
+  root.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeAll();
+    }
   });
 }
 
@@ -906,7 +1038,11 @@ function wireJobs() {
         const exitCode = job.result.exit_code ?? "";
         const stdout = job.result.stdout_tail || "";
         const stderr = job.result.stderr_tail || "";
+        const errorNote = job.error
+          ? `<div class="error-indicator" title="${esc(job.error)}">⚠</div>`
+          : "";
         resultHtml = `
+          ${errorNote}
           <div class="mono">exit=${exitCode}</div>
           <details class="job-logs">
             <summary>View logs</summary>
@@ -914,18 +1050,20 @@ function wireJobs() {
             ${stderr ? `<div class="mono">stderr:</div><pre class="mono">${stderr}</pre>` : ""}
           </details>
         `;
+      } else if (job.error) {
+        resultHtml = `<span class="error-indicator" title="${esc(job.error)}">⚠</span>`;
       } else {
         const text = formatResult(job);
-        resultHtml = `<div class="truncate" title="${text}">${text}</div>`;
+        resultHtml = text
+          ? `<div class="truncate" title="${esc(text)}">${esc(text)}</div>`
+          : `<span class="muted">—</span>`;
       }
       const row = document.createElement("tr");
       row.innerHTML = `
-        <td class="mono">${job.id}</td>
-        <td>${job.job_type}</td>
-        <td>${job.status}</td>
-        <td>${formatTimestamp(job.requested_at)}</td>
-        <td>${formatTimestamp(job.started_at)}</td>
-        <td>${formatTimestamp(job.finished_at)}</td>
+        <td>${renderShortId(job.id, `/ui/jobs/${job.id}`)}</td>
+        <td>${esc(job.job_type)}</td>
+        <td>${statusBadge(job.status)}</td>
+        <td>${formatWhen(job)}</td>
         <td>${resultHtml}</td>
         <td>
           ${
@@ -937,6 +1075,7 @@ function wireJobs() {
       `;
       tbody.appendChild(row);
     });
+    applyTimestampFormatting(tbody);
     requestAnimationFrame(() => {
       tbody.querySelectorAll(".job-logs pre").forEach((node) => {
         node.scrollTop = node.scrollHeight;
@@ -2482,6 +2621,7 @@ function wireContentSearch() {
       } else if (item.type === "cve") {
         link = `/ui/cves/${item.cve_id}`;
       }
+      const idValue = item.type === "cve" ? item.cve_id : item.id;
       const watchlistCell = watchlistEnabled
         ? `<td>${
             item.watchlist_hit || item.in_scope
@@ -2495,30 +2635,47 @@ function wireContentSearch() {
         const hasSummary = item.has_summary;
         const hasUrl = Boolean(item.url);
         actions = `
-          <button class="btn small secondary action-fetch" data-article-id="${item.id}" ${
-            hasUrl ? "" : "disabled"
-          }>Fetch</button>
-          <button class="btn small secondary action-summarize" data-article-id="${item.id}" ${
-            hasContent ? "" : "disabled"
-          }>Summarize</button>
-          <button class="btn small secondary action-publish" data-article-id="${item.id}">Publish</button>
-          <button class="btn small action-pipeline" data-article-id="${item.id}">Run Pipeline</button>
-          <button class="btn small secondary action-derive-event" data-article-id="${item.id}">Derive Event</button>
+          <div class="table-actions">
+            <button class="btn small action-pipeline" data-article-id="${item.id}">Run Pipeline</button>
+            <div class="action-menu">
+              <button class="action-menu-button" type="button" aria-label="More actions">⋮</button>
+              <div class="action-menu-list">
+                <button type="button" class="action-fetch" data-article-id="${item.id}" ${
+                  hasUrl ? "" : "disabled"
+                }>Fetch content</button>
+                <button type="button" class="action-summarize" data-article-id="${item.id}" ${
+                  hasContent ? "" : "disabled"
+                }>Generate summary</button>
+                <button type="button" class="action-publish" data-article-id="${item.id}">Publish markdown</button>
+                <button type="button" class="action-derive-event" data-article-id="${item.id}">Derive event</button>
+              </div>
+            </div>
+          </div>
         `;
       } else if (item.type === "cve") {
-        actions = `<button class="btn small secondary action-refresh-cve" data-cve-id="${item.cve_id}">Refresh</button>`;
+        actions = `
+          <div class="table-actions">
+            <div class="action-menu">
+              <button class="action-menu-button" type="button" aria-label="More actions">⋮</button>
+              <div class="action-menu-list">
+                <button type="button" class="action-refresh-cve" data-cve-id="${item.cve_id}">Refresh CVE</button>
+              </div>
+            </div>
+          </div>
+        `;
       }
       row.innerHTML = `
-        <td>${item.type}</td>
-        <td>${link ? `<a href="${link}">${item.type === "cve" ? item.cve_id : item.id}</a>` : ""}</td>
-        <td>${esc(formatTimestamp(date))}</td>
-        <td class="truncate" title="${title}">${title}</td>
-        <td>${item.source_name || ""}</td>
+        <td>${esc(item.type)}</td>
+        <td>${link ? renderShortId(idValue, link) : renderShortId(idValue)}</td>
+        <td><span data-ts="${esc(date)}"></span></td>
+        <td class="line-clamp-2" title="${esc(title)}">${esc(title)}</td>
+        <td class="truncate" title="${esc(item.source_name || "")}">${esc(item.source_name || "")}</td>
         ${watchlistCell}
         <td class="actions">${actions}</td>
       `;
       tbody.appendChild(row);
     });
+    applyTimestampFormatting(tbody);
     renderPager(data.total, data.page, data.page_size);
   }
 
@@ -2713,18 +2870,19 @@ function wireEvents() {
     tbody.innerHTML = "";
     data.items.forEach((event) => {
       const row = document.createElement("tr");
+      const when = event.last_seen_at || event.last_article_at || event.created_at || "";
       row.innerHTML = `
-        <td><a href="/ui/events/${event.id}">${event.id}</a></td>
-        <td class="truncate" title="${event.title || ""}">${event.title || ""}</td>
-        <td>${event.kind || ""}</td>
-        <td>${event.severity || ""}</td>
-        <td>${event.status || ""}</td>
-        <td>${esc(formatTimestamp(event.last_seen_at || event.last_article_at))}</td>
-        <td>${event.article_count ?? 0}</td>
-        <td class="mono">${event.source || "events"}</td>
+        <td>${renderShortId(event.id, `/ui/events/${event.id}`)}</td>
+        <td class="line-clamp-2" title="${esc(event.title || "")}">${esc(event.title || "")}</td>
+        <td><span class="badge muted">${esc(event.kind || "")}</span></td>
+        <td><span class="badge muted">${esc(event.severity || "UNKNOWN")}</span></td>
+        <td>${statusBadge(event.status || "")}</td>
+        <td><span data-ts="${esc(when)}"></span></td>
+        <td><span class="badge muted">📰 ${event.article_count ?? 0}</span></td>
       `;
       tbody.appendChild(row);
     });
+    applyTimestampFormatting(tbody);
     renderPager(pager, data.total, data.page, data.page_size, load);
   }
 
@@ -3557,5 +3715,8 @@ document.addEventListener("DOMContentLoaded", () => {
   wireDebug();
   wireLogs();
   wireWatchlist();
+  wireCopyButtons();
+  wireActionMenus();
   applyTimestampFormatting();
+  applyShortIds();
 });
