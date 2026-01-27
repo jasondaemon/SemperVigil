@@ -63,7 +63,6 @@ from .storage import (
     record_source_run,
     rebuild_events_from_cves,
     upsert_cve_links,
-    upsert_event_for_cve,
     upsert_event_by_key,
     upsert_event_item,
     list_product_keys_for_cve,
@@ -384,16 +383,6 @@ def _handle_ingest_source(
             _maybe_enqueue_fetch(conn, config, article_id, article.source_id, logger)
         events_settings = get_events_settings(conn)
         if events_settings.get("enabled", True) and cve_ids and article_id is not None:
-            window_days = int(events_settings.get("merge_window_days", 14))
-            min_shared = int(events_settings.get("min_shared_products_to_merge", 1))
-            for cve_id in cve_ids:
-                upsert_event_for_cve(
-                    conn,
-                    cve_id=cve_id,
-                    published_at=article.published_at or article.ingested_at,
-                    window_days=window_days,
-                    min_shared_products=min_shared,
-                )
             link_article_to_events(
                 conn,
                 article_id=article_id,
@@ -984,6 +973,32 @@ def _derive_event_kind(text: str) -> str:
     return "other"
 
 
+def _derive_confidence_tier(text: str) -> str:
+    lowered = text.lower()
+    confirmed = ("confirmed", "official", "cisa", "fbi", "patched", "fixed")
+    likely = ("likely", "suspected", "reportedly", "investigating", "possible")
+    if any(word in lowered for word in confirmed):
+        return "confirmed"
+    if any(word in lowered for word in likely):
+        return "likely"
+    return "watch"
+
+
+def _event_kind_label(kind: str) -> str:
+    labels = {
+        "breach": "Breach",
+        "compromise": "Compromise",
+        "ransomware": "Ransomware",
+        "intrusion": "Intrusion",
+        "malware_campaign": "Campaign",
+        "campaign": "Campaign",
+        "exploit": "Exploit",
+        "outage": "Outage",
+        "advisory": "Advisory",
+    }
+    return labels.get(kind, kind.title() if kind else "Event")
+
+
 def _handle_derive_events_from_articles(
     conn, config, payload: dict[str, object], logger: logging.Logger
 ) -> dict[str, object]:
@@ -1014,23 +1029,40 @@ def _handle_derive_events_from_articles(
     if not combined:
         return {"status": "skipped", "reason": "no_content"}
     kind = _derive_event_kind(combined)
-    entity = _extract_event_entity(title) or article.get("source_id") or "unknown"
+    cve_ids = list_article_cve_ids(conn, article_id)
+    entity = _extract_event_entity(title)
+    if not entity and kind in {"exploit", "advisory"}:
+        for cve_id in cve_ids:
+            product_keys = list_product_keys_for_cve(conn, cve_id)
+            if product_keys:
+                display = get_product_display_by_key(conn, product_keys[0])
+                if display:
+                    entity = f"{display['vendor']} {display['product']}".strip()
+                    break
+    if not entity:
+        return {"status": "skipped", "reason": "entity_missing"}
     bucket = (article.get("published_at") or article.get("ingested_at") or "")[:10]
-    event_key = f"evt:{kind}:{normalize_name(str(entity))}:{bucket or 'unknown'}"
+    bucket = bucket or utc_now_iso()[:10]
+    kind_label = _event_kind_label(kind)
+    event_title = f"{entity} — {kind_label} — {bucket}"
+    event_key = f"evt:{kind}:{normalize_name(str(entity))}:{bucket}"
+    confidence_tier = _derive_confidence_tier(combined)
     event_id, _ = upsert_event_by_key(
         conn,
         event_key=event_key,
         kind=kind,
-        title=title or f"Event: {entity}",
+        title=event_title,
         severity="UNKNOWN",
         first_seen_at=article.get("published_at") or article.get("ingested_at") or utc_now_iso(),
         last_seen_at=utc_now_iso(),
         status="open",
         meta={"seed_article_id": article_id},
         manual=False,
+        visibility="active",
+        confidence_tier=confidence_tier,
+        reasons=["derived:article"],
     )
     link_event_article(conn, event_id, article_id, "auto")
-    cve_ids = list_article_cve_ids(conn, article_id)
     for cve_id in cve_ids:
         upsert_event_item(conn, event_id, "cve", cve_id)
         for product_key in list_product_keys_for_cve(conn, cve_id):

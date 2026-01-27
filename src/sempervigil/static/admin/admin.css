@@ -513,6 +513,19 @@ th, td {
   cursor: not-allowed;
 }
 
+.banner {
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+
+.banner.warning {
+  background: #fff7ed;
+  color: #9a3412;
+  border: 1px solid #fed7aa;
+}
+
 .stat-card {
   border: 1px solid #e5e7eb;
   border-radius: 8px;

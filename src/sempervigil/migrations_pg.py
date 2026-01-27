@@ -47,6 +47,15 @@ def apply_migrations_pg(conn) -> None:
             )
             conn.commit()
             logger.info("migration_applied version=pg_events_004")
+            applied.add("pg_events_004")
+        if "pg_events_005" not in applied:
+            _migrate_events_visibility(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_events_005", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_events_005")
         else:
             conn.commit()
         return
@@ -84,6 +93,15 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_events_004")
+
+    conn.execute("BEGIN")
+    _migrate_events_visibility(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_events_005", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_events_005")
 
 
 def _bootstrap_schema(conn) -> None:
@@ -457,7 +475,11 @@ def _bootstrap_schema(conn) -> None:
             occurred_at TEXT NULL,
             summary_updated_at TEXT NULL,
             confidence REAL NULL,
-            manual INTEGER NOT NULL DEFAULT 0
+            manual INTEGER NOT NULL DEFAULT 0,
+            is_manual INTEGER NOT NULL DEFAULT 0,
+            visibility TEXT NOT NULL DEFAULT 'active',
+            confidence_tier TEXT NOT NULL DEFAULT 'watch',
+            reasons JSONB NOT NULL DEFAULT '[]'::jsonb
         )
         """
     )
@@ -625,3 +647,12 @@ def _migrate_events_articles(conn) -> None:
 def _migrate_events_manual(conn) -> None:
     conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS manual INTEGER NOT NULL DEFAULT 0")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_manual ON events(manual)")
+
+
+def _migrate_events_visibility(conn) -> None:
+    conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS is_manual INTEGER NOT NULL DEFAULT 0")
+    conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'active'")
+    conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS confidence_tier TEXT NOT NULL DEFAULT 'watch'")
+    conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS reasons JSONB NOT NULL DEFAULT '[]'::jsonb")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_visibility ON events(visibility)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_kind_visibility ON events(kind, visibility)")

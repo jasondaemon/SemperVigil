@@ -12,7 +12,6 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from .cve_filters import extract_signals, matches_filters, normalize_severity
-from .config import get_events_settings
 from .storage import (
     get_latest_cve_snapshot,
     insert_cve_change,
@@ -20,7 +19,6 @@ from .storage import (
     link_cve_products_from_signals,
     compute_scope_for_cves,
     set_setting,
-    upsert_event_for_cve,
     upsert_cve,
 )
 from .utils import json_dumps, log_event, utc_now_iso
@@ -197,24 +195,6 @@ def process_cve_item(
     )
     if watchlist_enabled:
         compute_scope_for_cves(conn, [cve_id], min_cvss=scope_min_cvss)
-    events_settings = get_events_settings(conn)
-    if events_settings.get("enabled", True):
-        event_id, action = upsert_event_for_cve(
-            conn,
-            cve_id=cve_id,
-            published_at=published_at,
-            window_days=int(events_settings.get("merge_window_days", 14)),
-            min_shared_products=int(events_settings.get("min_shared_products_to_merge", 1)),
-        )
-        if action.startswith("skipped"):
-            log_event(
-                logger,
-                logging.INFO,
-                "event_skip_cve",
-                cve_id=cve_id,
-                reason=action,
-            )
-
     observed_at = utc_now_iso()
     inserted = insert_cve_snapshot(
         conn,

@@ -2793,13 +2793,17 @@ function wireEvents() {
   if (purgeBtn) {
     purgeBtn.addEventListener("click", async () => {
       const dryRunBox = document.getElementById("events-purge-dry");
+      const modeSelect = document.getElementById("events-purge-mode");
       const minArticles = document.getElementById("events-purge-min-articles");
       const olderDays = document.getElementById("events-purge-older");
       const kindsCve = document.getElementById("events-purge-cve-only");
+      const emptyOnly = document.getElementById("events-purge-empty-only");
       const dryRun = dryRunBox ? dryRunBox.checked : true;
+      const mode = modeSelect ? modeSelect.value : "suppress";
       const minArticlesValue = minArticles ? parseInt(minArticles.value, 10) : 2;
       const olderDaysValue = olderDays ? parseInt(olderDays.value, 10) : 30;
       const includeKinds = kindsCve && kindsCve.checked ? ["cve_cluster"] : null;
+      const onlyEmpty = emptyOnly ? emptyOnly.checked : true;
       if (
         !confirm(
           dryRun
@@ -2814,9 +2818,11 @@ function wireEvents() {
           method: "POST",
           body: JSON.stringify({
             dry_run: dryRun,
-            min_articles: Number.isNaN(minArticlesValue) ? 2 : minArticlesValue,
+            mode: mode,
+            min_articles: Number.isNaN(minArticlesValue) ? 1 : minArticlesValue,
             older_than_days: Number.isNaN(olderDaysValue) ? null : olderDaysValue,
-            include_kinds: includeKinds,
+            kinds: includeKinds,
+            only_empty_cve_clusters: onlyEmpty,
           }),
         });
         const stats = payload.stats || {};
@@ -2825,7 +2831,7 @@ function wireEvents() {
         showToast(
           dryRun
             ? `Dry run: ${deleted} would be deleted (candidates ${candidates})`
-            : `Purged ${deleted} events (candidates ${candidates})`
+            : `${mode === "suppress" ? "Suppressed" : "Deleted"} ${deleted} events (candidates ${candidates})`
         );
         load(1).catch((err) => setError(err.message || String(err)));
       } catch (err) {
@@ -2853,11 +2859,15 @@ function wireEventDetail() {
       const attachBtn = document.getElementById("event-attach-article");
       const attachInput = document.getElementById("event-attach-article-id");
       const meta = `
+        ${event.visibility && event.visibility !== "active"
+          ? `<div class="banner warning">Visibility: ${esc(event.visibility)}</div>`
+          : ""}
         <div class="meta-grid">
           <div><strong>ID:</strong> ${event.id}</div>
           <div><strong>Kind:</strong> ${event.kind}</div>
           <div><strong>Status:</strong> ${event.status}</div>
           <div><strong>Severity:</strong> ${event.severity || "UNKNOWN"}</div>
+          <div><strong>Confidence:</strong> ${event.confidence_tier || "watch"}</div>
           <div><strong>First seen:</strong> ${esc(formatTimestamp(event.first_seen_at))}</div>
           <div><strong>Last seen:</strong> ${esc(formatTimestamp(event.last_seen_at))}</div>
         </div>

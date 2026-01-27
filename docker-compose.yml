@@ -125,7 +125,7 @@ services:
       - svnet
     restart: unless-stopped
 
-  # 3) Builder (on-demand Hugo build)
+    # 3) Builder (on-demand Hugo build)
   builder:
     profiles:
       - build
@@ -140,21 +140,50 @@ services:
       SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-http://localhost:${SV_WEB_PORT:-8080}/}
       HUGO_CACHEDIR: /tmp/hugo_cache
       SV_DB_URL: ${SV_DB_URL:-}
-      SV_HUGO_SOURCE_DIR: /repo/site
+
+      # IMPORTANT: build from a writable copy, not the read-only bind mount
+      SV_HUGO_SOURCE_DIR: /tmp/site-src
       SV_HUGO_OUTPUT_DIR: /site
+
+      # (Optional but helpful if your builder code supports it)
+      SV_HUGO_TMP_SOURCE_DIR: /tmp/site-src
     working_dir: /repo
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - .:/repo:ro
-      - sv_data:/data              # ✅ add this
+      - sv_data:/data
       - sv_site:/site
+
+      # caches (safe to write)
       - sv_hugo_cache:/tmp/hugo_cache
-      # Let Hugo write generated resources (image pipeline, etc.)
-      - sv_hugo_resources:/repo/site/resources
-      # If your theme uses Hugo Modules, this prevents module cache pain too
       - sv_hugo_modules:/tmp/hugo_modules
+
+      # If your theme uses Hugo image pipeline and expects persistence, keep this.
+      # Otherwise, you can REMOVE this line entirely (recommended for portability),
+      # because /tmp/site-src will have its own writable resources/ each run.
+      # - sv_hugo_resources:/tmp/site-src/resources
+
       - ./tools:/tools:ro
-    command: ["sempervigil-builder", "--once"]
+
+    # Copy Hugo source into a writable temp dir, then run the builder once.
+    # (Doesn't require any code changes in the python builder.)
+    command:
+      - sh
+      - -lc
+      - |
+        set -e
+        umask ${SV_UMASK:-002}
+        sh /tools/ensure-dirs.sh
+
+        rm -rf /tmp/site-src
+        mkdir -p /tmp/site-src
+        cp -a /repo/site/. /tmp/site-src/
+
+        # If your site expects a "resources" dir, ensure it exists
+        mkdir -p /tmp/site-src/resources
+
+        # Run the builder once (it will run Hugo using SV_HUGO_SOURCE_DIR/SV_HUGO_OUTPUT_DIR)
+        sempervigil-builder --once
     networks:
       - svnet
     restart: "no"

@@ -2358,6 +2358,9 @@ def create_event(
     occurred_at: str | None = None,
     confidence: float | None = None,
     manual: bool = False,
+    visibility: str = "active",
+    confidence_tier: str = "watch",
+    reasons: list[str] | None = None,
 ) -> str:
     event_id = f"evt_{uuid.uuid4().hex[:12]}"
     now = utc_now_iso()
@@ -2366,8 +2369,9 @@ def create_event(
         INSERT INTO events
             (id, kind, title, summary, severity, created_at, updated_at,
              first_seen_at, last_seen_at, status, meta_json, event_key,
-             occurred_at, summary_updated_at, confidence, manual)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             occurred_at, summary_updated_at, confidence, manual, is_manual,
+             visibility, confidence_tier, reasons)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             event_id,
@@ -2386,6 +2390,10 @@ def create_event(
             now if summary else None,
             confidence,
             1 if manual else 0,
+            1 if manual else 0,
+            visibility,
+            confidence_tier,
+            json_dumps(reasons or []),
         ),
     )
     conn.commit()
@@ -2406,6 +2414,9 @@ def upsert_event_by_key(
     occurred_at: str | None = None,
     confidence: float | None = None,
     manual: bool = False,
+    visibility: str = "active",
+    confidence_tier: str = "watch",
+    reasons: list[str] | None = None,
 ) -> tuple[str, bool]:
     row = conn.execute(
         "SELECT id FROM events WHERE event_key = %s",
@@ -2426,7 +2437,11 @@ def upsert_event_by_key(
                 occurred_at = COALESCE(%s, occurred_at),
                 confidence = COALESCE(%s, confidence),
                 status = %s,
-                manual = CASE WHEN %s THEN 1 ELSE manual END
+                manual = CASE WHEN %s THEN 1 ELSE manual END,
+                is_manual = CASE WHEN %s THEN 1 ELSE is_manual END,
+                visibility = %s,
+                confidence_tier = %s,
+                reasons = COALESCE(%s, reasons)
             WHERE id = %s
             """,
             (
@@ -2442,6 +2457,10 @@ def upsert_event_by_key(
                 confidence,
                 status,
                 1 if manual else 0,
+                1 if manual else 0,
+                visibility,
+                confidence_tier,
+                json_dumps(reasons) if reasons is not None else None,
                 event_id,
             ),
         )
@@ -2461,6 +2480,9 @@ def upsert_event_by_key(
         occurred_at=occurred_at,
         confidence=confidence,
         manual=manual,
+        visibility=visibility,
+        confidence_tier=confidence_tier,
+        reasons=reasons,
     )
     return event_id, True
 
@@ -2492,15 +2514,28 @@ def link_event_article(conn: Any, event_id: str, article_id: int, added_by: str)
         )
     else:
         upsert_event_item(conn, event_id, "article", str(article_id))
-    conn.execute(
-        """
-        UPDATE events
-        SET updated_at = %s,
-            last_seen_at = %s
-        WHERE id = %s
-        """,
-        (now, now, event_id),
-    )
+    columns = _table_columns(conn, "events")
+    if "visibility" in columns:
+        conn.execute(
+            """
+            UPDATE events
+            SET updated_at = %s,
+                last_seen_at = %s,
+                visibility = 'active'
+            WHERE id = %s
+            """,
+            (now, now, event_id),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE events
+            SET updated_at = %s,
+                last_seen_at = %s
+            WHERE id = %s
+            """,
+            (now, now, event_id),
+        )
     conn.commit()
 
 
@@ -2692,6 +2727,22 @@ def update_event_rollups(conn: Any, event_id: str) -> None:
     conn.commit()
 
 
+def _ensure_json_list(value: object) -> list[object]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        if isinstance(parsed, list):
+            return parsed
+        return []
+    return []
+
+
 def _find_event_for_cve(conn: Any, cve_id: str) -> str | None:
     if _table_exists(conn, "events"):
         columns = _table_columns(conn, "events")
@@ -2837,11 +2888,15 @@ def list_events(
     before: str | None,
     page: int,
     page_size: int,
+    include_suppressed: bool = False,
 ) -> tuple[list[dict[str, object]], int]:
     if not _table_exists(conn, "events"):
         return [], 0
     where: list[str] = []
     params: list[object] = []
+    columns = _table_columns(conn, "events")
+    if not include_suppressed and "visibility" in columns:
+        where.append("visibility = 'active'")
     if status:
         where.append("status = %s")
         params.append(status)
@@ -2873,7 +2928,8 @@ def list_events(
     cursor = conn.execute(
         f"""
         SELECT id, kind, title, summary, severity, created_at, updated_at,
-               first_seen_at, last_seen_at, status, event_key, occurred_at, summary_updated_at, confidence, manual
+               first_seen_at, last_seen_at, status, event_key, occurred_at, summary_updated_at, confidence, manual,
+               visibility, confidence_tier, reasons, is_manual
         FROM events
         {where_sql}
         ORDER BY last_seen_at DESC
@@ -2898,6 +2954,10 @@ def list_events(
             "summary_updated_at": row[12],
             "confidence": row[13],
             "manual": bool(row[14]),
+            "visibility": row[15],
+            "confidence_tier": row[16],
+            "reasons": _ensure_json_list(row[17]),
+            "is_manual": bool(row[18]),
         }
         for row in cursor.fetchall()
     ]
@@ -2915,11 +2975,15 @@ def list_events_with_counts(
     page: int,
     page_size: int,
     include_legacy: bool = False,
+    include_suppressed: bool = False,
 ) -> tuple[list[dict[str, object]], int]:
     if not _table_exists(conn, "events"):
         return [], 0
     where: list[str] = []
     params: list[object] = []
+    columns = _table_columns(conn, "events")
+    if not include_suppressed and "visibility" in columns:
+        where.append("e.visibility = 'active'")
     if status:
         where.append("e.status = %s")
         params.append(status)
@@ -3000,7 +3064,7 @@ def list_events_with_counts(
         f"""
         SELECT e.id, e.kind, e.title, e.summary, e.severity, e.created_at, e.updated_at,
                e.first_seen_at, e.last_seen_at, e.status, e.event_key, e.occurred_at,
-               e.summary_updated_at, e.confidence, e.manual,
+               e.summary_updated_at, e.confidence, e.manual, e.visibility, e.confidence_tier, e.reasons, e.is_manual,
                COALESCE(ac.article_count, 0) AS article_count,
                ac.last_article_at,
                ec.cve_ids,
@@ -3034,10 +3098,14 @@ def list_events_with_counts(
                 "summary_updated_at": row[12],
                 "confidence": row[13],
                 "manual": bool(row[14]),
-                "article_count": int(row[15] or 0),
-                "last_article_at": row[16],
-                "cve_ids": row[17].split(",") if row[17] else [],
-                "product_keys": row[18].split(",") if row[18] else [],
+                "visibility": row[15],
+                "confidence_tier": row[16],
+                "reasons": _ensure_json_list(row[17]),
+                "is_manual": bool(row[18]),
+                "article_count": int(row[19] or 0),
+                "last_article_at": row[20],
+                "cve_ids": row[21].split(",") if row[21] else [],
+                "product_keys": row[22].split(",") if row[22] else [],
                 "source": "events",
             }
         )
@@ -3090,7 +3158,8 @@ def get_event(conn: Any, event_id: str) -> dict[str, object] | None:
         """
         SELECT id, kind, title, summary, severity, created_at, updated_at,
                first_seen_at, last_seen_at, status, meta_json,
-               event_key, occurred_at, summary_updated_at, confidence, manual
+               event_key, occurred_at, summary_updated_at, confidence, manual,
+               visibility, confidence_tier, reasons, is_manual
         FROM events
         WHERE id = %s
         """,
@@ -3116,6 +3185,10 @@ def get_event(conn: Any, event_id: str) -> dict[str, object] | None:
         "summary_updated_at": row[13],
         "confidence": row[14],
         "manual": bool(row[15]),
+        "visibility": row[16],
+        "confidence_tier": row[17],
+        "reasons": _ensure_json_list(row[18]),
+        "is_manual": bool(row[19]),
     }
     cves_cursor = conn.execute(
         """
@@ -3202,13 +3275,16 @@ def list_events_for_product(
 ) -> tuple[list[dict[str, object]], int]:
     if not _table_exists(conn, "event_items"):
         return [], 0
+    columns = _table_columns(conn, "events")
+    visibility_filter = " AND e.visibility = 'active'" if "visibility" in columns else ""
     count_cursor = conn.execute(
         """
         SELECT COUNT(DISTINCT e.id)
         FROM event_items ei
         JOIN events e ON e.id = ei.event_id
         WHERE ei.item_type = 'product' AND ei.item_key = %s
-        """,
+        """
+        + visibility_filter,
         (product_key,),
     )
     total = count_cursor.fetchone()[0]
@@ -3219,6 +3295,9 @@ def list_events_for_product(
         FROM event_items ei
         JOIN events e ON e.id = ei.event_id
         WHERE ei.item_type = 'product' AND ei.item_key = %s
+        """
+        + visibility_filter
+        + """
         ORDER BY e.last_seen_at DESC
         LIMIT %s OFFSET %s
         """,
@@ -3252,36 +3331,6 @@ def rebuild_events_from_cves(
         "cves_processed": 0,
         "articles_linked": 0,
     }
-    if _table_exists(conn, "events"):
-        cursor = conn.execute(
-            """
-            SELECT id FROM events
-            WHERE kind = 'cve_cluster' OR event_key LIKE 'cve:%'
-            """
-        )
-        event_ids = [row[0] for row in cursor.fetchall()]
-        if event_ids:
-            placeholders = ",".join("%s" for _ in event_ids)
-            if _table_exists(conn, "event_items"):
-                conn.execute(
-                    f"DELETE FROM event_items WHERE event_id IN ({placeholders})",
-                    event_ids,
-                )
-            if _table_exists(conn, "event_articles"):
-                conn.execute(
-                    f"DELETE FROM event_articles WHERE event_id IN ({placeholders})",
-                    event_ids,
-                )
-            if _table_exists(conn, "event_signals"):
-                conn.execute(
-                    f"DELETE FROM event_signals WHERE event_id IN ({placeholders})",
-                    event_ids,
-                )
-            conn.execute(
-                f"DELETE FROM events WHERE id IN ({placeholders})",
-                event_ids,
-            )
-            conn.commit()
     if not _table_exists(conn, "cves"):
         return stats
     cursor = conn.execute(
@@ -3320,90 +3369,6 @@ def rebuild_events_from_cves(
                 published_at or ingested_at,
             )
             stats["articles_linked"] += linked
-    if _table_exists(conn, "events") and (
-        _table_exists(conn, "event_items") or _table_exists(conn, "event_articles")
-    ):
-        logger = logging.getLogger("sempervigil.events")
-        keywords = [
-            "exploited in the wild",
-            "active exploitation",
-            "actively exploited",
-            "mass exploitation",
-            "ransomware",
-            "breach",
-            "compromised",
-            "intrusion",
-            "zero-day",
-            "0day",
-            "botnet",
-            "campaign",
-            "attackers",
-            "observed exploitation",
-            "weaponized",
-        ]
-        article_columns = _table_columns(conn, "articles") if _table_exists(conn, "articles") else set()
-        title_sel = "a.title" if "title" in article_columns else "''"
-        summary_sel = "a.summary" if "summary" in article_columns else "''"
-        content_sel = "a.content_text" if "content_text" in article_columns else "''"
-        pruned_zero = 0
-        pruned_weak = 0
-        event_ids = [
-            row[0]
-            for row in conn.execute(
-                "SELECT id FROM events WHERE kind = 'cve_cluster' OR event_key LIKE 'cve:%'"
-            ).fetchall()
-        ]
-        for event_id in event_ids:
-            if _table_exists(conn, "event_articles"):
-                rows = conn.execute(
-                    f"""
-                    SELECT {title_sel}, {summary_sel}, {content_sel}
-                    FROM event_articles ea
-                    JOIN articles a ON a.id = ea.article_id
-                    WHERE ea.event_id = %s
-                    """,
-                    (event_id,),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    f"""
-                    SELECT {title_sel}, {summary_sel}, {content_sel}
-                    FROM event_items ei
-                    JOIN articles a ON a.id = CAST(ei.item_key AS INTEGER)
-                    WHERE ei.event_id = %s AND ei.item_type = 'article'
-                    """,
-                    (event_id,),
-                ).fetchall()
-            article_count = len(rows)
-            incident_signal = False
-            for title, summary, content in rows:
-                combined = f"{title or ''} {summary or ''} {content or ''}".lower()
-                if any(keyword in combined for keyword in keywords):
-                    incident_signal = True
-                    break
-            if article_count == 0 or (article_count == 1 and not incident_signal):
-                if _table_exists(conn, "event_items"):
-                    conn.execute("DELETE FROM event_items WHERE event_id = %s", (event_id,))
-                if _table_exists(conn, "event_articles"):
-                    conn.execute("DELETE FROM event_articles WHERE event_id = %s", (event_id,))
-                if _table_exists(conn, "event_signals"):
-                    conn.execute("DELETE FROM event_signals WHERE event_id = %s", (event_id,))
-                conn.execute("DELETE FROM events WHERE id = %s", (event_id,))
-                if article_count == 0:
-                    pruned_zero += 1
-                else:
-                    pruned_weak += 1
-        conn.commit()
-        stats["events_pruned_no_articles"] = pruned_zero
-        stats["events_pruned_weak_article"] = pruned_weak
-        if logger:
-            log_event(
-                logger,
-                logging.INFO,
-                "events_pruned",
-                no_articles=pruned_zero,
-                weak_article=pruned_weak,
-            )
     return stats
 
 
@@ -3482,47 +3447,36 @@ def purge_weak_events(
     conn: Any,
     *,
     dry_run: bool = False,
-    min_articles: int = 2,
-    min_signal: int = 1,
+    mode: str = "suppress",
+    min_articles: int = 1,
     older_than_days: int | None = None,
-    include_kinds: list[str] | None = None,
-    include_prefixes: list[str] | None = None,
+    kinds: list[str] | None = None,
+    only_empty_cve_clusters: bool = True,
     exclude_manual: bool = True,
 ) -> dict[str, object]:
     if not _table_exists(conn, "events"):
-        return {"scanned": 0, "purged": 0, "kept": 0, "reasons": {}}
-    rows = conn.execute(
-        """
-        SELECT id, kind, status, event_key, last_seen_at, confidence, manual, summary, created_at, updated_at
-        FROM events
-        """
-    ).fetchall()
-    strong_kinds = {
-        "breach",
-        "compromise",
-        "ransomware",
-        "intrusion",
-        "malware_campaign",
-        "data_leak",
-        "outage_security",
-    }
-    now = datetime.now(tz=timezone.utc)
-    include_kinds = include_kinds or ["cve_cluster"]
-    include_prefixes = include_prefixes or ["cve:", "cve::"]
+        return {"candidates": 0, "deleted": 0, "kept": 0, "by_reason": {}}
+    columns = _table_columns(conn, "events")
+    manual_expr = "COALESCE(is_manual, manual)" if "is_manual" in columns else "manual"
+    visibility_supported = "visibility" in columns
+    kinds = kinds or ["cve_cluster"]
     stats = {
         "dry_run": dry_run,
+        "mode": mode,
         "candidates": 0,
         "deleted": 0,
         "kept": 0,
         "by_reason": {},
         "sample_deleted": [],
-        "updated_keys": 0,
-        "sample_updated": [],
     }
-    if not dry_run:
-        normalized = normalize_cve_cluster_event_keys(conn)
-        stats["updated_keys"] = int(normalized.get("updated", 0) or 0)
-        stats["sample_updated"] = list(normalized.get("sample") or [])
+    now = datetime.now(tz=timezone.utc)
+    rows = conn.execute(
+        f"""
+        SELECT id, kind, event_key, created_at, updated_at, last_seen_at, summary,
+               confidence, {manual_expr} AS manual
+        FROM events
+        """
+    ).fetchall()
 
     def note(reason: str) -> None:
         stats["by_reason"][reason] = stats["by_reason"].get(reason, 0) + 1
@@ -3551,50 +3505,26 @@ def purge_weak_events(
         )
         return cursor.fetchone() is not None
 
-    def _article_tags(event_id: str) -> list[str]:
-        if not _table_exists(conn, "article_tags"):
-            return []
-        if _table_exists(conn, "event_articles"):
-            cursor = conn.execute(
-                """
-                SELECT DISTINCT t.tag
-                FROM event_articles ea
-                JOIN article_tags t ON t.article_id = ea.article_id
-                WHERE ea.event_id = %s
-                """,
-                (event_id,),
-            )
-        elif _table_exists(conn, "event_items"):
-            cursor = conn.execute(
-                """
-                SELECT DISTINCT t.tag
-                FROM event_items ei
-                JOIN article_tags t ON t.article_id = CAST(ei.item_key AS INTEGER)
-                WHERE ei.event_id = %s AND ei.item_type = 'article'
-                """,
-                (event_id,),
-            )
-        else:
-            return []
-        return [row[0] for row in cursor.fetchall() if row and row[0]]
+    strong_kinds = {
+        "breach",
+        "compromise",
+        "ransomware",
+        "intrusion",
+        "malware_campaign",
+        "data_leak",
+        "outage_security",
+    }
 
     purge_ids: list[str] = []
-    for (
-        event_id,
-        kind,
-        status,
-        event_key,
-        last_seen_at,
-        confidence,
-        manual,
-        summary,
-        created_at,
-        updated_at,
-    ) in rows:
+    for event_id, kind, event_key, created_at, updated_at, last_seen_at, summary, confidence, manual in rows:
         stats["candidates"] += 1
         if exclude_manual and manual:
             stats["kept"] += 1
             note("manual")
+            continue
+        if exclude_manual and kind == "manual":
+            stats["kept"] += 1
+            note("manual_kind")
             continue
         if exclude_manual and event_key and str(event_key).startswith("manual:"):
             stats["kept"] += 1
@@ -3602,35 +3532,27 @@ def purge_weak_events(
             continue
         article_count = _article_count(event_id)
         has_product = _has_product(event_id)
-        tags = _article_tags(event_id)
-        tag_signal = any(
-            tag in {"breach", "compromise", "ransomware", "intrusion", "data_leak", "outage"}
-            for tag in tags
-        )
-        strong_signal = (kind in strong_kinds) or (
-            confidence is not None and float(confidence) >= float(min_signal)
-        )
+        strong_signal = bool(summary) or (kind in strong_kinds)
         if has_product and article_count >= 1:
             strong_signal = True
-        if summary:
-            strong_signal = True
-        if tag_signal:
-            strong_signal = True
-        is_cve = False
-        if event_key:
-            is_cve = any(str(event_key).startswith(prefix) for prefix in include_prefixes)
-        if kind and kind in include_kinds:
-            is_cve = True
-        if include_kinds and not is_cve:
-            stats["kept"] += 1
-            note("not_included_kind")
+        if only_empty_cve_clusters and kind == "cve_cluster" and article_count == 0:
+            purge_ids.append(event_id)
+            note("cve_cluster_empty")
             continue
-        if exclude_manual and kind == "manual":
+        if kind not in kinds:
             stats["kept"] += 1
-            note("manual_kind")
+            note("kind_skipped")
             continue
-        too_old = False
+        if article_count >= min_articles:
+            stats["kept"] += 1
+            note("has_articles")
+            continue
+        if strong_signal and article_count >= 1:
+            stats["kept"] += 1
+            note("strong_signal")
+            continue
         if older_than_days is not None:
+            too_old = False
             for raw_dt in (last_seen_at, updated_at, created_at):
                 if not raw_dt:
                     continue
@@ -3643,19 +3565,12 @@ def purge_weak_events(
                         break
                 except ValueError:
                     continue
-        if article_count == 0 and not strong_signal:
-            reason = "cve_orphan" if is_cve else "orphan"
-            purge_ids.append(event_id)
-            note(reason)
-            continue
-        if article_count < min_articles and not strong_signal:
-            reason = "cve_weak" if is_cve else "weak"
-            if older_than_days is None or too_old:
-                purge_ids.append(event_id)
-                note(reason)
+            if not too_old:
+                stats["kept"] += 1
+                note("not_old_enough")
                 continue
-        stats["kept"] += 1
-        note("kept")
+        purge_ids.append(event_id)
+        note("purged")
 
     if not purge_ids or dry_run:
         stats["deleted"] = 0
@@ -3666,22 +3581,28 @@ def purge_weak_events(
 
     placeholders = ",".join("%s" for _ in purge_ids)
     with conn.transaction():
-        if _table_exists(conn, "event_articles"):
+        if mode == "suppress" and visibility_supported:
             conn.execute(
-                f"DELETE FROM event_articles WHERE event_id IN ({placeholders})",
+                f"UPDATE events SET visibility = 'suppressed' WHERE id IN ({placeholders})",
                 purge_ids,
             )
-        if _table_exists(conn, "event_items"):
-            conn.execute(
-                f"DELETE FROM event_items WHERE event_id IN ({placeholders})",
-                purge_ids,
-            )
-        if _table_exists(conn, "event_signals"):
-            conn.execute(
-                f"DELETE FROM event_signals WHERE event_id IN ({placeholders})",
-                purge_ids,
-            )
-        conn.execute(f"DELETE FROM events WHERE id IN ({placeholders})", purge_ids)
+        else:
+            if _table_exists(conn, "event_articles"):
+                conn.execute(
+                    f"DELETE FROM event_articles WHERE event_id IN ({placeholders})",
+                    purge_ids,
+                )
+            if _table_exists(conn, "event_items"):
+                conn.execute(
+                    f"DELETE FROM event_items WHERE event_id IN ({placeholders})",
+                    purge_ids,
+                )
+            if _table_exists(conn, "event_signals"):
+                conn.execute(
+                    f"DELETE FROM event_signals WHERE event_id IN ({placeholders})",
+                    purge_ids,
+                )
+            conn.execute(f"DELETE FROM events WHERE id IN ({placeholders})", purge_ids)
     stats["deleted"] = len(purge_ids)
     stats["sample_deleted"] = [
         {"event_id": event_id, "reason": "purged"} for event_id in purge_ids[:25]

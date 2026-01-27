@@ -1061,6 +1061,7 @@ def api_events(
     after: str | None = None,
     before: str | None = None,
     include_legacy: bool = False,
+    include_suppressed: bool = False,
     page: int = 1,
     page_size: int = 50,
 ) -> dict[str, object]:
@@ -1074,6 +1075,7 @@ def api_events(
         after=after,
         before=before,
         include_legacy=include_legacy,
+        include_suppressed=include_suppressed,
         page=page,
         page_size=page_size,
     )
@@ -1115,6 +1117,9 @@ class EventCreateRequest(BaseModel):
     event_key: str | None = None
     confidence: float | None = None
     manual: bool = True
+    visibility: str = "active"
+    confidence_tier: str = "watch"
+    reasons: list[str] | None = None
 
 
 @app.post("/admin/api/events", dependencies=[Depends(_require_admin_token)])
@@ -1137,6 +1142,9 @@ def api_event_create(payload: EventCreateRequest) -> dict[str, object]:
         summary=payload.summary,
         confidence=payload.confidence,
         manual=payload.manual,
+        visibility=payload.visibility,
+        confidence_tier=payload.confidence_tier,
+        reasons=payload.reasons,
     )
     event = get_event(conn, event_id)
     return event or {"id": event_id}
@@ -1195,9 +1203,11 @@ def api_events_derive(payload: EventsDeriveRequest | None = None) -> dict[str, o
 
 class EventsPurgeRequest(BaseModel):
     dry_run: bool = False
-    min_articles: int = 2
-    min_signal: int = 1
+    mode: str = "suppress"
+    min_articles: int = 1
     older_than_days: int | None = None
+    kinds: list[str] | None = None
+    only_empty_cve_clusters: bool = True
 
 
 @app.post("/admin/api/events/purge", dependencies=[Depends(_require_admin_token)])
@@ -1210,25 +1220,27 @@ def api_events_purge(payload: EventsPurgeRequest | None = None) -> dict[str, obj
         logging.INFO,
         "events_purge_start",
         dry_run=bool(data.get("dry_run", False)),
-        min_articles=data.get("min_articles", 2),
-        min_signal=data.get("min_signal", 1),
+        mode=data.get("mode", "suppress"),
+        min_articles=data.get("min_articles", 1),
         older_than_days=data.get("older_than_days"),
+        kinds=data.get("kinds"),
+        only_empty_cve_clusters=bool(data.get("only_empty_cve_clusters", True)),
     )
     stats = purge_weak_events(
         conn,
         dry_run=bool(data.get("dry_run", False)),
-        min_articles=int(data.get("min_articles", 2)),
-        min_signal=int(data.get("min_signal", 1)),
+        mode=str(data.get("mode") or "suppress"),
+        min_articles=int(data.get("min_articles", 1)),
         older_than_days=data.get("older_than_days"),
-        include_kinds=data.get("include_kinds") or None,
-        include_prefixes=data.get("include_prefixes") or None,
+        kinds=data.get("kinds"),
+        only_empty_cve_clusters=bool(data.get("only_empty_cve_clusters", True)),
     )
     log_event(
         logger,
         logging.INFO,
         "events_purge_done",
-        scanned=stats.get("scanned", 0),
-        purged=stats.get("purged", 0),
+        scanned=stats.get("candidates", 0),
+        purged=stats.get("deleted", 0),
         kept=stats.get("kept", 0),
     )
     return {"status": "ok", "stats": stats}
