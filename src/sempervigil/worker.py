@@ -69,6 +69,7 @@ from .storage import (
     list_product_keys_for_cve,
     list_article_cve_ids,
     list_event_ids_for_article,
+    list_article_ids_without_event,
     link_event_article,
     get_source_run_streaks,
     get_source_name,
@@ -987,8 +988,20 @@ def _handle_derive_events_from_articles(
     conn, config, payload: dict[str, object], logger: logging.Logger
 ) -> dict[str, object]:
     article_id = payload.get("article_id")
-    if not isinstance(article_id, int):
-        return {"status": "skipped", "reason": "missing_article_id"}
+    if article_id is None:
+        limit = int(payload.get("limit") or 100) if payload else 100
+        article_ids = list_article_ids_without_event(conn, limit=limit)
+        linked = 0
+        skipped = 0
+        for item_id in article_ids:
+            result = _handle_derive_events_from_articles(
+                conn, config, {"article_id": int(item_id)}, logger
+            )
+            if result.get("status") == "linked":
+                linked += 1
+            else:
+                skipped += 1
+        return {"status": "batch", "linked": linked, "skipped": skipped, "total": len(article_ids)}
     if list_event_ids_for_article(conn, article_id):
         return {"status": "skipped", "reason": "already_linked"}
     article = get_article_by_id(conn, article_id)
@@ -1014,6 +1027,7 @@ def _handle_derive_events_from_articles(
         last_seen_at=utc_now_iso(),
         status="open",
         meta={"seed_article_id": article_id},
+        manual=False,
     )
     link_event_article(conn, event_id, article_id, "auto")
     cve_ids = list_article_cve_ids(conn, article_id)
@@ -1022,6 +1036,7 @@ def _handle_derive_events_from_articles(
         for product_key in list_product_keys_for_cve(conn, cve_id):
             upsert_event_item(conn, event_id, "product", product_key)
     update_event_summary_from_articles(conn, event_id)
+    enqueue_build_site_if_needed(conn, reason="derive_events_from_articles")
     return {
         "status": "linked",
         "event_id": event_id,

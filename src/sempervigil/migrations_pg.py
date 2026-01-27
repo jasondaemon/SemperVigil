@@ -38,6 +38,15 @@ def apply_migrations_pg(conn) -> None:
             )
             conn.commit()
             logger.info("migration_applied version=pg_events_003")
+            applied.add("pg_events_003")
+        if "pg_events_004" not in applied:
+            _migrate_events_manual(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_events_004", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_events_004")
         else:
             conn.commit()
         return
@@ -66,6 +75,15 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_events_003")
+
+    conn.execute("BEGIN")
+    _migrate_events_manual(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_events_004", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_events_004")
 
 
 def _bootstrap_schema(conn) -> None:
@@ -438,7 +456,8 @@ def _bootstrap_schema(conn) -> None:
             event_key TEXT NULL,
             occurred_at TEXT NULL,
             summary_updated_at TEXT NULL,
-            confidence REAL NULL
+            confidence REAL NULL,
+            manual INTEGER NOT NULL DEFAULT 0
         )
         """
     )
@@ -601,3 +620,8 @@ def _migrate_events_articles(conn) -> None:
         )
         """
     )
+
+
+def _migrate_events_manual(conn) -> None:
+    conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS manual INTEGER NOT NULL DEFAULT 0")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_manual ON events(manual)")

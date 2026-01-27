@@ -50,6 +50,7 @@ from .storage import (
     delete_all_content,
     delete_all_cves,
     delete_all_events,
+    purge_weak_events,
     get_dashboard_metrics,
     get_event,
     get_article_by_id,
@@ -136,7 +137,7 @@ from .services.ai_service import (
     update_schema,
 )
 from .llm import STAGE_NAMES, test_model, test_profile, test_provider
-from .utils import configure_logging, log_event, utc_now_iso_offset
+from .utils import configure_logging, log_event, utc_now_iso, utc_now_iso_offset
 
 _LOG_SERVICES = {
     "admin": "/data/logs/admin.log",
@@ -1109,6 +1110,7 @@ class EventCreateRequest(BaseModel):
     summary: str | None = None
     event_key: str | None = None
     confidence: float | None = None
+    manual: bool = True
 
 
 @app.post("/admin/api/events", dependencies=[Depends(_require_admin_token)])
@@ -1130,6 +1132,7 @@ def api_event_create(payload: EventCreateRequest) -> dict[str, object]:
         status=payload.status,
         summary=payload.summary,
         confidence=payload.confidence,
+        manual=payload.manual,
     )
     event = get_event(conn, event_id)
     return event or {"id": event_id}
@@ -1184,6 +1187,45 @@ def api_events_derive(payload: EventsDeriveRequest | None = None) -> dict[str, o
         debounce=False,
     )
     return {"status": "queued", "job_id": job_id}
+
+
+class EventsPurgeRequest(BaseModel):
+    dry_run: bool = False
+    min_articles: int = 2
+    min_signal: int = 1
+    older_than_days: int | None = None
+
+
+@app.post("/admin/api/events/purge", dependencies=[Depends(_require_admin_token)])
+def api_events_purge(payload: EventsPurgeRequest | None = None) -> dict[str, object]:
+    conn = _get_conn()
+    data = payload.model_dump() if payload else {}
+    logger = logging.getLogger("sempervigil.events")
+    log_event(
+        logger,
+        logging.INFO,
+        "events_purge_start",
+        dry_run=bool(data.get("dry_run", False)),
+        min_articles=data.get("min_articles", 2),
+        min_signal=data.get("min_signal", 1),
+        older_than_days=data.get("older_than_days"),
+    )
+    stats = purge_weak_events(
+        conn,
+        dry_run=bool(data.get("dry_run", False)),
+        min_articles=int(data.get("min_articles", 2)),
+        min_signal=int(data.get("min_signal", 1)),
+        older_than_days=data.get("older_than_days"),
+    )
+    log_event(
+        logger,
+        logging.INFO,
+        "events_purge_done",
+        scanned=stats.get("scanned", 0),
+        purged=stats.get("purged", 0),
+        kept=stats.get("kept", 0),
+    )
+    return {"status": "ok", "stats": stats}
 
 
 @app.get("/admin/api/products", dependencies=[Depends(_require_admin_token)])

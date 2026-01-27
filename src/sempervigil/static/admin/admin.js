@@ -2503,6 +2503,7 @@ function wireContentSearch() {
           }>Summarize</button>
           <button class="btn small secondary action-publish" data-article-id="${item.id}">Publish</button>
           <button class="btn small action-pipeline" data-article-id="${item.id}">Run Pipeline</button>
+          <button class="btn small secondary action-derive-event" data-article-id="${item.id}">Derive Event</button>
         `;
       } else if (item.type === "cve") {
         actions = `<button class="btn small secondary action-refresh-cve" data-cve-id="${item.cve_id}">Refresh</button>`;
@@ -2561,6 +2562,14 @@ function wireContentSearch() {
       if (target.classList.contains("action-refresh-cve")) {
         const cveId = target.dataset.cveId;
         const result = await apiFetch(`/admin/api/cves/${cveId}/refresh`, { method: "POST" });
+        showToast(`${result.status}: ${result.job_id || ""}`.trim());
+      }
+      if (target.classList.contains("action-derive-event")) {
+        const articleId = target.dataset.articleId;
+        const result = await apiFetch(`/admin/api/events/derive`, {
+          method: "POST",
+          body: JSON.stringify({ article_id: parseInt(articleId, 10) }),
+        });
         showToast(`${result.status}: ${result.job_id || ""}`.trim());
       }
     } catch (err) {
@@ -2662,7 +2671,9 @@ function wireEvents() {
   const pager = document.getElementById("events-pager");
   const error = document.getElementById("events-error");
   const form = document.getElementById("events-filters");
+  const deriveBtn = document.getElementById("events-derive");
   const rebuildBtn = document.getElementById("events-rebuild");
+  const purgeBtn = document.getElementById("events-purge");
   let pageSize = 50;
 
   function setError(message) {
@@ -2741,6 +2752,43 @@ function wireEvents() {
     });
   }
 
+  if (deriveBtn) {
+    deriveBtn.addEventListener("click", async () => {
+      try {
+        const payload = await apiFetch("/admin/api/events/derive", {
+          method: "POST",
+          body: JSON.stringify({}),
+        });
+        if (payload && payload.job_id) {
+          showToast(`Event derivation queued (${payload.job_id})`);
+        } else {
+          showToast("Event derivation queued");
+        }
+      } catch (err) {
+        setError(err.message || String(err));
+      }
+    });
+  }
+
+  if (purgeBtn) {
+    purgeBtn.addEventListener("click", async () => {
+      if (!confirm("Purge weak events? Manual events will be kept.")) {
+        return;
+      }
+      try {
+        const payload = await apiFetch("/admin/api/events/purge", {
+          method: "POST",
+          body: JSON.stringify({ dry_run: false }),
+        });
+        const stats = payload.stats || {};
+        showToast(`Purged ${stats.purged || 0} events (kept ${stats.kept || 0})`);
+        load(1).catch((err) => setError(err.message || String(err)));
+      } catch (err) {
+        setError(err.message || String(err));
+      }
+    });
+  }
+
   load(1).catch((err) => setError(err.message || String(err)));
 }
 
@@ -2756,6 +2804,9 @@ function wireEventDetail() {
 
   apiFetch(`/admin/api/events/${eventId}`)
     .then((event) => {
+      const summaryBtn = document.getElementById("event-summary-refresh");
+      const attachBtn = document.getElementById("event-attach-article");
+      const attachInput = document.getElementById("event-attach-article-id");
       const meta = `
         <div class="meta-grid">
           <div><strong>ID:</strong> ${event.id}</div>
@@ -2768,6 +2819,39 @@ function wireEventDetail() {
         ${event.summary ? `<p class="summary">${event.summary}</p>` : ""}
       `;
       container.innerHTML = meta;
+      if (summaryBtn) {
+        summaryBtn.addEventListener("click", async () => {
+          try {
+            const payload = await apiFetch(`/admin/api/events/${eventId}/summary`, {
+              method: "POST",
+            });
+            showToast(payload.summary ? "Summary rebuilt" : "No summary generated");
+            wireEventDetail();
+          } catch (err) {
+            showToast(err.message || String(err));
+          }
+        });
+      }
+      if (attachBtn && attachInput) {
+        attachBtn.addEventListener("click", async () => {
+          const articleId = parseInt(attachInput.value, 10);
+          if (!articleId) {
+            showToast("Enter a valid article id");
+            return;
+          }
+          try {
+            await apiFetch(`/admin/api/events/${eventId}/articles`, {
+              method: "POST",
+              body: JSON.stringify({ article_id: articleId }),
+            });
+            showToast("Article attached");
+            attachInput.value = "";
+            wireEventDetail();
+          } catch (err) {
+            showToast(err.message || String(err));
+          }
+        });
+      }
       const cves = (event.items && event.items.cves) || [];
       if (cveTable) {
         const body = cveTable.querySelector("tbody");

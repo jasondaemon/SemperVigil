@@ -148,6 +148,14 @@ Admin UI:
 open http://<host>:8001/ui
 ```
 
+Event derivation + purge:
+- Use the Events page buttons for **Derive Events** and **Purge Weak Events**.
+- Manual events are never purged.
+- Purge defaults: keep events with at least 2 linked articles or strong signal kinds.
+- For API use:
+  - `POST /admin/api/events/derive`
+  - `POST /admin/api/events/purge` (supports `dry_run=true`)
+
 Add your first source in the Sources tab (DB-backed).
 Analytics and daily brief tools are available at `/ui/analytics`.
 

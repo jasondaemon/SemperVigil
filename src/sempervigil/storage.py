@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 import logging
 import os
 import hashlib
@@ -2353,6 +2354,7 @@ def create_event(
     status: str = "open",
     occurred_at: str | None = None,
     confidence: float | None = None,
+    manual: bool = False,
 ) -> str:
     event_id = f"evt_{uuid.uuid4().hex[:12]}"
     now = utc_now_iso()
@@ -2361,8 +2363,8 @@ def create_event(
         INSERT INTO events
             (id, kind, title, summary, severity, created_at, updated_at,
              first_seen_at, last_seen_at, status, meta_json, event_key,
-             occurred_at, summary_updated_at, confidence)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             occurred_at, summary_updated_at, confidence, manual)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             event_id,
@@ -2380,6 +2382,7 @@ def create_event(
             occurred_at,
             now if summary else None,
             confidence,
+            1 if manual else 0,
         ),
     )
     conn.commit()
@@ -2399,6 +2402,7 @@ def upsert_event_by_key(
     status: str = "open",
     occurred_at: str | None = None,
     confidence: float | None = None,
+    manual: bool = False,
 ) -> tuple[str, bool]:
     row = conn.execute(
         "SELECT id FROM events WHERE event_key = %s",
@@ -2418,7 +2422,8 @@ def upsert_event_by_key(
                 summary_updated_at = CASE WHEN %s IS NOT NULL THEN %s ELSE summary_updated_at END,
                 occurred_at = COALESCE(%s, occurred_at),
                 confidence = COALESCE(%s, confidence),
-                status = %s
+                status = %s,
+                manual = CASE WHEN %s THEN 1 ELSE manual END
             WHERE id = %s
             """,
             (
@@ -2433,6 +2438,7 @@ def upsert_event_by_key(
                 occurred_at,
                 confidence,
                 status,
+                1 if manual else 0,
                 event_id,
             ),
         )
@@ -2451,6 +2457,7 @@ def upsert_event_by_key(
         status=status,
         occurred_at=occurred_at,
         confidence=confidence,
+        manual=manual,
     )
     return event_id, True
 
@@ -2863,7 +2870,7 @@ def list_events(
     cursor = conn.execute(
         f"""
         SELECT id, kind, title, summary, severity, created_at, updated_at,
-               first_seen_at, last_seen_at, status, event_key, occurred_at, summary_updated_at, confidence
+               first_seen_at, last_seen_at, status, event_key, occurred_at, summary_updated_at, confidence, manual
         FROM events
         {where_sql}
         ORDER BY last_seen_at DESC
@@ -2887,6 +2894,7 @@ def list_events(
             "occurred_at": row[11],
             "summary_updated_at": row[12],
             "confidence": row[13],
+            "manual": bool(row[14]),
         }
         for row in cursor.fetchall()
     ]
@@ -2900,7 +2908,7 @@ def get_event(conn: Any, event_id: str) -> dict[str, object] | None:
         """
         SELECT id, kind, title, summary, severity, created_at, updated_at,
                first_seen_at, last_seen_at, status, meta_json,
-               event_key, occurred_at, summary_updated_at, confidence
+               event_key, occurred_at, summary_updated_at, confidence, manual
         FROM events
         WHERE id = %s
         """,
@@ -2925,6 +2933,7 @@ def get_event(conn: Any, event_id: str) -> dict[str, object] | None:
         "occurred_at": row[12],
         "summary_updated_at": row[13],
         "confidence": row[14],
+        "manual": bool(row[15]),
     }
     cves_cursor = conn.execute(
         """
@@ -3284,6 +3293,130 @@ def delete_all_events(conn: Any) -> dict[str, object]:
         if _table_exists(conn, "events"):
             cursor = conn.execute("DELETE FROM events")
             stats["tables"]["events"] = cursor.rowcount
+    return stats
+
+
+def purge_weak_events(
+    conn: Any,
+    *,
+    dry_run: bool = False,
+    min_articles: int = 2,
+    min_signal: int = 1,
+    older_than_days: int | None = None,
+) -> dict[str, object]:
+    if not _table_exists(conn, "events"):
+        return {"scanned": 0, "purged": 0, "kept": 0, "reasons": {}}
+    rows = conn.execute(
+        """
+        SELECT id, kind, status, event_key, last_seen_at, confidence, manual
+        FROM events
+        """
+    ).fetchall()
+    strong_kinds = {
+        "breach",
+        "compromise",
+        "ransomware",
+        "intrusion",
+        "malware_campaign",
+        "data_leak",
+        "outage_security",
+    }
+    now = datetime.now(tz=timezone.utc)
+    stats = {"scanned": 0, "purged": 0, "kept": 0, "reasons": {}}
+
+    def note(reason: str) -> None:
+        stats["reasons"][reason] = stats["reasons"].get(reason, 0) + 1
+
+    def _article_count(event_id: str) -> int:
+        if _table_exists(conn, "event_articles"):
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM event_articles WHERE event_id = %s",
+                (event_id,),
+            )
+        elif _table_exists(conn, "event_items"):
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM event_items WHERE event_id = %s AND item_type = 'article'",
+                (event_id,),
+            )
+        else:
+            return 0
+        return int(cursor.fetchone()[0])
+
+    def _has_product(event_id: str) -> bool:
+        if not _table_exists(conn, "event_items"):
+            return False
+        cursor = conn.execute(
+            "SELECT 1 FROM event_items WHERE event_id = %s AND item_type = 'product' LIMIT 1",
+            (event_id,),
+        )
+        return cursor.fetchone() is not None
+
+    purge_ids: list[str] = []
+    for event_id, kind, status, event_key, last_seen_at, confidence, manual in rows:
+        stats["scanned"] += 1
+        if manual:
+            stats["kept"] += 1
+            note("manual")
+            continue
+        article_count = _article_count(event_id)
+        has_product = _has_product(event_id)
+        strong_signal = (kind in strong_kinds) or (
+            confidence is not None and float(confidence) >= float(min_signal)
+        )
+        if has_product and article_count >= 1:
+            strong_signal = True
+        if article_count == 0:
+            if event_key and str(event_key).startswith("cve:") and not strong_signal:
+                purge_ids.append(event_id)
+                note("cve_orphan")
+                continue
+            if not strong_signal:
+                purge_ids.append(event_id)
+                note("orphan")
+                continue
+        if article_count < min_articles and not strong_signal:
+            if event_key and str(event_key).startswith("cve:"):
+                purge_ids.append(event_id)
+                note("cve_weak")
+                continue
+            if older_than_days is not None and last_seen_at:
+                try:
+                    last_dt = datetime.fromisoformat(str(last_seen_at))
+                    if last_dt.tzinfo is None:
+                        last_dt = last_dt.replace(tzinfo=timezone.utc)
+                    if last_dt + timedelta(days=older_than_days) < now:
+                        purge_ids.append(event_id)
+                        note("stale_weak")
+                        continue
+                except ValueError:
+                    pass
+        stats["kept"] += 1
+        note("kept")
+
+    if not purge_ids or dry_run:
+        stats["purged"] = 0
+        stats["purge_ids"] = purge_ids if dry_run else []
+        return stats
+
+    placeholders = ",".join("%s" for _ in purge_ids)
+    with conn.transaction():
+        if _table_exists(conn, "event_articles"):
+            conn.execute(
+                f"DELETE FROM event_articles WHERE event_id IN ({placeholders})",
+                purge_ids,
+            )
+        if _table_exists(conn, "event_items"):
+            conn.execute(
+                f"DELETE FROM event_items WHERE event_id IN ({placeholders})",
+                purge_ids,
+            )
+        if _table_exists(conn, "event_signals"):
+            conn.execute(
+                f"DELETE FROM event_signals WHERE event_id IN ({placeholders})",
+                purge_ids,
+            )
+        conn.execute(f"DELETE FROM events WHERE id IN ({placeholders})", purge_ids)
+    stats["purged"] = len(purge_ids)
     return stats
 
 
@@ -4189,6 +4322,46 @@ def list_event_ids_for_article(conn: Any, article_id: int) -> list[str]:
         )
         return [row[0] for row in cursor.fetchall() if row and row[0]]
     return []
+
+
+def list_article_ids_without_event(conn: Any, limit: int = 200) -> list[int]:
+    if not _table_exists(conn, "articles"):
+        return []
+    if _table_exists(conn, "event_articles"):
+        cursor = conn.execute(
+            """
+            SELECT a.id
+            FROM articles a
+            LEFT JOIN event_articles ea ON ea.article_id = a.id
+            WHERE ea.article_id IS NULL
+            ORDER BY a.published_at DESC NULLS LAST
+            LIMIT %s
+            """,
+            (limit,),
+        )
+    elif _table_exists(conn, "event_items"):
+        cursor = conn.execute(
+            """
+            SELECT a.id
+            FROM articles a
+            LEFT JOIN event_items ei ON ei.item_type = 'article' AND ei.item_key = CAST(a.id AS TEXT)
+            WHERE ei.event_id IS NULL
+            ORDER BY a.published_at DESC NULLS LAST
+            LIMIT %s
+            """,
+            (limit,),
+        )
+    else:
+        cursor = conn.execute(
+            """
+            SELECT id
+            FROM articles
+            ORDER BY published_at DESC NULLS LAST
+            LIMIT %s
+            """,
+            (limit,),
+        )
+    return [row[0] for row in cursor.fetchall() if row and row[0] is not None]
 
 
 def compute_watchlist_hits(
