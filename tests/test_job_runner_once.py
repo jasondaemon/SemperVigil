@@ -2,7 +2,7 @@ from sempervigil.storage import claim_next_job, complete_job, enqueue_job, init_
 
 
 def test_job_runner_claims_one_job_fifo(tmp_path):
-    conn = init_db(str(tmp_path / "state.sqlite3"))
+    conn = init_db()
     first = enqueue_job(conn, "test_source", {"source_id": "a"})
     second = enqueue_job(conn, "test_source", {"source_id": "b"})
 

@@ -12,7 +12,6 @@ from .config import (
     bootstrap_events_settings,
     bootstrap_runtime_config,
     get_runtime_config,
-    get_state_db_path,
 )
 from .services.sources_service import list_sources
 from .services.ai_service import (
@@ -41,7 +40,7 @@ ADMIN_COOKIE_NAME = "sv_admin_token"
 
 
 def _get_conn():
-    conn = init_db(get_state_db_path())
+    conn = init_db()
     bootstrap_runtime_config(conn)
     bootstrap_events_settings(conn)
     return conn

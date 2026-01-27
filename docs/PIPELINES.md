@@ -3,7 +3,7 @@
 ## Article Ingest
 
 1) Ingest job pulls enabled sources (RSS/Atom).
-2) Articles are normalized, deduped, and stored in SQLite.
+2) Articles are normalized, deduped, and stored in Postgres.
 3) Fetch content (optional) and store readable text.
 4) Summarize (optional).
 5) Write Hugo markdown under `/site/content/posts`.

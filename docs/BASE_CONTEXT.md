@@ -67,7 +67,7 @@ It is an **analysis pipeline** that progresses from:
 - Legacy scripts exist **outside this repo** at `../legacyscripts/`
   - They may be referenced for logic
   - They will **not** be committed
-- SQLite is the current system of record
+- Postgres is the current system of record
 - Docker Compose is the orchestration mechanism
 
 ---
@@ -228,7 +228,7 @@ Key design principles:
 - CVEs are timelines, not snapshots
 - Inference is explicit and auditable
 
-SQLite is sufficient for:
+Postgres is sufficient for:
 - multi-year storage
 - tens to hundreds of thousands of articles
 - structured summaries and metrics

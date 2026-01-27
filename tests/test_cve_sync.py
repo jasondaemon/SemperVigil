@@ -63,7 +63,7 @@ def _make_cve_item(
 
 
 def test_snapshot_insert_creates_no_changes(tmp_path):
-    conn = init_db(str(tmp_path / "state.sqlite3"))
+    conn = init_db()
     item = _make_cve_item("CVE-2025-1111", 5.0, "MEDIUM", "AV:N/AC:L")
     result = process_cve_item(conn, item, prefer_v4=True, filters={}, scope_min_cvss=None, watchlist_enabled=False)
     assert result.new_snapshot is True
@@ -74,7 +74,7 @@ def test_snapshot_insert_creates_no_changes(tmp_path):
 
 
 def test_severity_upgrade_detection(tmp_path):
-    conn = init_db(str(tmp_path / "state.sqlite3"))
+    conn = init_db()
     first = _make_cve_item("CVE-2025-2222", 5.0, "MEDIUM", "AV:N/AC:L")
     second = _make_cve_item("CVE-2025-2222", 7.5, "HIGH", "AV:N/AC:L")
     process_cve_item(conn, first, prefer_v4=True, filters={}, scope_min_cvss=None, watchlist_enabled=False)
@@ -89,7 +89,7 @@ def test_severity_upgrade_detection(tmp_path):
 
 
 def test_vector_change_detection(tmp_path):
-    conn = init_db(str(tmp_path / "state.sqlite3"))
+    conn = init_db()
     first = _make_cve_item("CVE-2025-3333", 5.0, "MEDIUM", "AV:N/AC:L")
     second = _make_cve_item("CVE-2025-3333", 5.0, "MEDIUM", "AV:L/AC:L")
     process_cve_item(conn, first, prefer_v4=True, filters={}, scope_min_cvss=None, watchlist_enabled=False)
@@ -103,7 +103,7 @@ def test_vector_change_detection(tmp_path):
 
 
 def test_preferred_severity_diff_on_v4_added(tmp_path):
-    conn = init_db(str(tmp_path / "state.sqlite3"))
+    conn = init_db()
     first = _make_cve_item("CVE-2025-4444", 7.0, "HIGH", "AV:N/AC:L")
     second = _make_cve_item(
         "CVE-2025-4444",
@@ -125,7 +125,7 @@ def test_preferred_severity_diff_on_v4_added(tmp_path):
 
 
 def test_idempotent_rerun(tmp_path):
-    conn = init_db(str(tmp_path / "state.sqlite3"))
+    conn = init_db()
     item = _make_cve_item("CVE-2025-5555", 4.0, "LOW", "AV:N/AC:L")
     process_cve_item(conn, item, prefer_v4=True, filters={}, scope_min_cvss=None, watchlist_enabled=False)
     process_cve_item(conn, item, prefer_v4=True, filters={}, scope_min_cvss=None, watchlist_enabled=False)
@@ -134,7 +134,7 @@ def test_idempotent_rerun(tmp_path):
 
 
 def test_cve_sync_result_is_json_serializable(tmp_path, monkeypatch):
-    conn = init_db(str(tmp_path / "state.sqlite3"))
+    conn = init_db()
     item = _make_cve_item("CVE-2025-6666", 6.0, "MEDIUM", "AV:N/AC:L")
 
     def _fake_fetch_page(config, last_modified_start, last_modified_end, start_index, cve_id=None):
@@ -175,7 +175,7 @@ def test_snapshot_hash_with_preferred_dict(tmp_path):
     digest = _snapshot_hash(payload)
     assert isinstance(digest, str)
 
-    conn = init_db(str(tmp_path / "state.sqlite3"))
+    conn = init_db()
     inserted = insert_cve_snapshot(
         conn,
         cve_id="CVE-2025-7777",

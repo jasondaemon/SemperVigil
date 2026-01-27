@@ -29,7 +29,7 @@ def _seed_cve(conn, cve_id: str, published_at: str) -> None:
 
 
 def test_event_merge_shared_product(tmp_path):
-    conn = init_db(str(tmp_path / "state.sqlite3"))
+    conn = init_db()
     vendor_id = upsert_vendor(conn, "Acme")
     product_id, _ = upsert_product(conn, vendor_id, "Widget")
     now = utc_now_iso()
@@ -57,7 +57,7 @@ def test_event_merge_shared_product(tmp_path):
 
 
 def test_event_separate_outside_window(tmp_path):
-    conn = init_db(str(tmp_path / "state.sqlite3"))
+    conn = init_db()
     vendor_id = upsert_vendor(conn, "Acme")
     product_id, _ = upsert_product(conn, vendor_id, "Widget")
     now = utc_now_iso()

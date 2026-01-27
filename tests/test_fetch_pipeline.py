@@ -82,7 +82,7 @@ def test_fetch_enqueues_summarize_when_llm_configured(tmp_path, monkeypatch):
     monkeypatch.setenv("SV_DATA_DIR", str(data_dir))
     monkeypatch.setenv("SV_LLM_BASE_URL", "http://llm")
     monkeypatch.setenv("SV_LLM_API_KEY", "sk-test")
-    conn = init_db(str(data_dir / "state.sqlite3"))
+    conn = init_db()
     config = load_runtime_config(conn)
     _seed_summarize_profile(conn)
 
@@ -106,7 +106,7 @@ def test_fetch_enqueues_summarize_when_llm_configured(tmp_path, monkeypatch):
 def test_fetch_enqueues_publish_when_llm_disabled(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     monkeypatch.setenv("SV_DATA_DIR", str(data_dir))
-    conn = init_db(str(data_dir / "state.sqlite3"))
+    conn = init_db()
     config = load_runtime_config(conn)
 
     article_id = _insert_article(conn, "https://example.com/b")
@@ -130,7 +130,7 @@ def test_summarize_enqueues_publish(tmp_path, monkeypatch):
     monkeypatch.setenv("SV_DATA_DIR", str(data_dir))
     monkeypatch.setenv("SV_LLM_BASE_URL", "http://llm")
     monkeypatch.setenv("SV_LLM_API_KEY", "sk-test")
-    conn = init_db(str(data_dir / "state.sqlite3"))
+    conn = init_db()
     config = load_runtime_config(conn)
     _seed_summarize_profile(conn)
     article_id = _insert_article(conn, "https://example.com/c")

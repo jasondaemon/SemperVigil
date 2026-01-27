@@ -11,10 +11,9 @@ from sempervigil.storage import init_db, insert_articles, upsert_cve, upsert_sou
 def _seed_runtime_config(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     monkeypatch.setenv("SV_DATA_DIR", str(data_dir))
-    conn = init_db(str(data_dir / "state.sqlite3"))
+    conn = init_db()
     config = copy.deepcopy(DEFAULT_CONFIG)
     config["paths"]["data_dir"] = str(data_dir)
-    config["paths"]["state_db"] = str(data_dir / "state.sqlite3")
     config["paths"]["output_dir"] = str(tmp_path / "site" / "content" / "posts")
     config["paths"]["run_reports_dir"] = str(data_dir / "reports")
     config["publishing"]["json_index_path"] = str(

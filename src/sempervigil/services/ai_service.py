@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import uuid
 from typing import Any
 
@@ -9,7 +8,7 @@ from ..security.secrets import decrypt_secret, encrypt_secret
 from ..utils import json_dumps, utc_now_iso
 
 
-def list_providers(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def list_providers(conn: Any) -> list[dict[str, Any]]:
     cursor = conn.execute(
         """
         SELECT p.id, p.name, p.type, p.base_url, p.is_enabled, p.timeout_s, p.retries,
@@ -53,14 +52,14 @@ def list_providers(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return rows
 
 
-def get_provider(conn: sqlite3.Connection, provider_id: str) -> dict[str, Any] | None:
+def get_provider(conn: Any, provider_id: str) -> dict[str, Any] | None:
     for provider in list_providers(conn):
         if provider["id"] == provider_id:
             return provider
     return None
 
 
-def create_provider(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str, Any]:
+def create_provider(conn: Any, payload: dict[str, Any]) -> dict[str, Any]:
     name = str(payload.get("name") or "").strip()
     if not name:
         raise ValueError("name is required")
@@ -78,7 +77,7 @@ def create_provider(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[s
         INSERT INTO llm_providers
             (id, name, type, base_url, is_enabled, timeout_s, retries,
              created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             provider_id,
@@ -96,7 +95,7 @@ def create_provider(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[s
     return get_provider(conn, provider_id) or {}
 
 
-def update_provider(conn: sqlite3.Connection, provider_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+def update_provider(conn: Any, provider_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     current = get_provider(conn, provider_id)
     if not current:
         raise ValueError("provider_not_found")
@@ -110,9 +109,9 @@ def update_provider(conn: sqlite3.Connection, provider_id: str, payload: dict[st
     conn.execute(
         """
         UPDATE llm_providers
-        SET name = ?, type = ?, base_url = ?, is_enabled = ?, timeout_s = ?,
-            retries = ?, updated_at = ?
-        WHERE id = ?
+        SET name = %s, type = %s, base_url = %s, is_enabled = %s, timeout_s = %s,
+            retries = %s, updated_at = %s
+        WHERE id = %s
         """,
         (
             name,
@@ -129,15 +128,15 @@ def update_provider(conn: sqlite3.Connection, provider_id: str, payload: dict[st
     return get_provider(conn, provider_id) or {}
 
 
-def delete_provider(conn: sqlite3.Connection, provider_id: str) -> None:
-    conn.execute("DELETE FROM llm_provider_secrets WHERE provider_id = ?", (provider_id,))
-    conn.execute("DELETE FROM llm_models WHERE provider_id = ?", (provider_id,))
-    conn.execute("DELETE FROM llm_profiles WHERE primary_provider_id = ?", (provider_id,))
-    conn.execute("DELETE FROM llm_providers WHERE id = ?", (provider_id,))
+def delete_provider(conn: Any, provider_id: str) -> None:
+    conn.execute("DELETE FROM llm_provider_secrets WHERE provider_id = %s", (provider_id,))
+    conn.execute("DELETE FROM llm_models WHERE provider_id = %s", (provider_id,))
+    conn.execute("DELETE FROM llm_profiles WHERE primary_provider_id = %s", (provider_id,))
+    conn.execute("DELETE FROM llm_providers WHERE id = %s", (provider_id,))
     conn.commit()
 
 
-def set_provider_secret(conn: sqlite3.Connection, provider_id: str, api_key: str) -> dict[str, Any]:
+def set_provider_secret(conn: Any, provider_id: str, api_key: str) -> dict[str, Any]:
     provider = get_provider(conn, provider_id)
     if not provider:
         raise ValueError("provider_not_found")
@@ -148,7 +147,7 @@ def set_provider_secret(conn: sqlite3.Connection, provider_id: str, api_key: str
         """
         INSERT INTO llm_provider_secrets
             (provider_id, key_id, api_key_enc, api_key_last4, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s)
         ON CONFLICT(provider_id) DO UPDATE SET
             key_id=excluded.key_id,
             api_key_enc=excluded.api_key_enc,
@@ -161,14 +160,14 @@ def set_provider_secret(conn: sqlite3.Connection, provider_id: str, api_key: str
     return get_provider(conn, provider_id) or {}
 
 
-def clear_provider_secret(conn: sqlite3.Connection, provider_id: str) -> None:
-    conn.execute("DELETE FROM llm_provider_secrets WHERE provider_id = ?", (provider_id,))
+def clear_provider_secret(conn: Any, provider_id: str) -> None:
+    conn.execute("DELETE FROM llm_provider_secrets WHERE provider_id = %s", (provider_id,))
     conn.commit()
 
 
-def load_provider_secret(conn: sqlite3.Connection, provider_id: str) -> str | None:
+def load_provider_secret(conn: Any, provider_id: str) -> str | None:
     row = conn.execute(
-        "SELECT api_key_enc FROM llm_provider_secrets WHERE provider_id = ?",
+        "SELECT api_key_enc FROM llm_provider_secrets WHERE provider_id = %s",
         (provider_id,),
     ).fetchone()
     if not row:
@@ -176,7 +175,7 @@ def load_provider_secret(conn: sqlite3.Connection, provider_id: str) -> str | No
     return decrypt_secret(row[0], _provider_aad(provider_id))
 
 
-def list_models(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def list_models(conn: Any) -> list[dict[str, Any]]:
     cursor = conn.execute(
         """
         SELECT m.id, m.provider_id, m.model_name, m.max_context,
@@ -213,7 +212,7 @@ def list_models(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return rows
 
 
-def create_model(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str, Any]:
+def create_model(conn: Any, payload: dict[str, Any]) -> dict[str, Any]:
     provider_id = str(payload.get("provider_id") or "").strip()
     if not provider_id:
         raise ValueError("provider_id is required")
@@ -229,7 +228,7 @@ def create_model(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str,
         """
         INSERT INTO llm_models
             (id, provider_id, model_name, max_context, default_params_json, tags_json, is_enabled)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         """,
         (
             model_id,
@@ -245,7 +244,7 @@ def create_model(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str,
     return get_model(conn, model_id) or {}
 
 
-def update_model(conn: sqlite3.Connection, model_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+def update_model(conn: Any, model_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     current = get_model(conn, model_id)
     if not current:
         raise ValueError("model_not_found")
@@ -258,9 +257,9 @@ def update_model(conn: sqlite3.Connection, model_id: str, payload: dict[str, Any
     conn.execute(
         """
         UPDATE llm_models
-        SET provider_id = ?, model_name = ?, max_context = ?, default_params_json = ?,
-            tags_json = ?, is_enabled = ?
-        WHERE id = ?
+        SET provider_id = %s, model_name = %s, max_context = %s, default_params_json = %s,
+            tags_json = %s, is_enabled = %s
+        WHERE id = %s
         """,
         (
             provider_id,
@@ -276,19 +275,19 @@ def update_model(conn: sqlite3.Connection, model_id: str, payload: dict[str, Any
     return get_model(conn, model_id) or {}
 
 
-def delete_model(conn: sqlite3.Connection, model_id: str) -> None:
-    conn.execute("DELETE FROM llm_models WHERE id = ?", (model_id,))
+def delete_model(conn: Any, model_id: str) -> None:
+    conn.execute("DELETE FROM llm_models WHERE id = %s", (model_id,))
     conn.commit()
 
 
-def get_model(conn: sqlite3.Connection, model_id: str) -> dict[str, Any] | None:
+def get_model(conn: Any, model_id: str) -> dict[str, Any] | None:
     for model in list_models(conn):
         if model["id"] == model_id:
             return model
     return None
 
 
-def list_prompts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def list_prompts(conn: Any) -> list[dict[str, Any]]:
     cursor = conn.execute(
         """
         SELECT id, name, version, system_template, user_template, notes, created_at
@@ -312,7 +311,7 @@ def list_prompts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return rows
 
 
-def create_prompt(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str, Any]:
+def create_prompt(conn: Any, payload: dict[str, Any]) -> dict[str, Any]:
     name = str(payload.get("name") or "").strip()
     if not name:
         raise ValueError("name is required")
@@ -328,7 +327,7 @@ def create_prompt(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str
         """
         INSERT INTO llm_prompts
             (id, name, version, system_template, user_template, notes, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         """,
         (prompt_id, name, version, system_template, user_template, notes, now),
     )
@@ -336,7 +335,7 @@ def create_prompt(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str
     return get_prompt(conn, prompt_id) or {}
 
 
-def update_prompt(conn: sqlite3.Connection, prompt_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+def update_prompt(conn: Any, prompt_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     current = get_prompt(conn, prompt_id)
     if not current:
         raise ValueError("prompt_not_found")
@@ -348,8 +347,8 @@ def update_prompt(conn: sqlite3.Connection, prompt_id: str, payload: dict[str, A
     conn.execute(
         """
         UPDATE llm_prompts
-        SET name = ?, version = ?, system_template = ?, user_template = ?, notes = ?
-        WHERE id = ?
+        SET name = %s, version = %s, system_template = %s, user_template = %s, notes = %s
+        WHERE id = %s
         """,
         (name, version, system_template, user_template, notes, prompt_id),
     )
@@ -357,19 +356,19 @@ def update_prompt(conn: sqlite3.Connection, prompt_id: str, payload: dict[str, A
     return get_prompt(conn, prompt_id) or {}
 
 
-def delete_prompt(conn: sqlite3.Connection, prompt_id: str) -> None:
-    conn.execute("DELETE FROM llm_prompts WHERE id = ?", (prompt_id,))
+def delete_prompt(conn: Any, prompt_id: str) -> None:
+    conn.execute("DELETE FROM llm_prompts WHERE id = %s", (prompt_id,))
     conn.commit()
 
 
-def get_prompt(conn: sqlite3.Connection, prompt_id: str) -> dict[str, Any] | None:
+def get_prompt(conn: Any, prompt_id: str) -> dict[str, Any] | None:
     for prompt in list_prompts(conn):
         if prompt["id"] == prompt_id:
             return prompt
     return None
 
 
-def list_schemas(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def list_schemas(conn: Any) -> list[dict[str, Any]]:
     cursor = conn.execute(
         """
         SELECT id, name, version, json_schema, created_at
@@ -391,7 +390,7 @@ def list_schemas(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return rows
 
 
-def create_schema(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str, Any]:
+def create_schema(conn: Any, payload: dict[str, Any]) -> dict[str, Any]:
     name = str(payload.get("name") or "").strip()
     if not name:
         raise ValueError("name is required")
@@ -405,7 +404,7 @@ def create_schema(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str
         """
         INSERT INTO llm_schemas
             (id, name, version, json_schema, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
         """,
         (schema_id, name, version, json_dumps(schema), now),
     )
@@ -413,7 +412,7 @@ def create_schema(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str
     return get_schema(conn, schema_id) or {}
 
 
-def update_schema(conn: sqlite3.Connection, schema_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+def update_schema(conn: Any, schema_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     current = get_schema(conn, schema_id)
     if not current:
         raise ValueError("schema_not_found")
@@ -423,8 +422,8 @@ def update_schema(conn: sqlite3.Connection, schema_id: str, payload: dict[str, A
     conn.execute(
         """
         UPDATE llm_schemas
-        SET name = ?, version = ?, json_schema = ?
-        WHERE id = ?
+        SET name = %s, version = %s, json_schema = %s
+        WHERE id = %s
         """,
         (name, version, json_dumps(schema), schema_id),
     )
@@ -432,19 +431,19 @@ def update_schema(conn: sqlite3.Connection, schema_id: str, payload: dict[str, A
     return get_schema(conn, schema_id) or {}
 
 
-def delete_schema(conn: sqlite3.Connection, schema_id: str) -> None:
-    conn.execute("DELETE FROM llm_schemas WHERE id = ?", (schema_id,))
+def delete_schema(conn: Any, schema_id: str) -> None:
+    conn.execute("DELETE FROM llm_schemas WHERE id = %s", (schema_id,))
     conn.commit()
 
 
-def get_schema(conn: sqlite3.Connection, schema_id: str) -> dict[str, Any] | None:
+def get_schema(conn: Any, schema_id: str) -> dict[str, Any] | None:
     for schema in list_schemas(conn):
         if schema["id"] == schema_id:
             return schema
     return None
 
 
-def list_profiles(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def list_profiles(conn: Any) -> list[dict[str, Any]]:
     cursor = conn.execute(
         """
         SELECT p.id, p.name, p.primary_provider_id, p.primary_model_id, p.prompt_id,
@@ -497,7 +496,7 @@ def list_profiles(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return rows
 
 
-def create_profile(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str, Any]:
+def create_profile(conn: Any, payload: dict[str, Any]) -> dict[str, Any]:
     name = str(payload.get("name") or "").strip()
     if not name:
         raise ValueError("name is required")
@@ -517,7 +516,7 @@ def create_profile(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[st
         INSERT INTO llm_profiles
             (id, name, primary_provider_id, primary_model_id, prompt_id, schema_id,
              params_json, fallback_json, is_enabled, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             profile_id,
@@ -537,7 +536,7 @@ def create_profile(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[st
     return get_profile(conn, profile_id) or {}
 
 
-def update_profile(conn: sqlite3.Connection, profile_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+def update_profile(conn: Any, profile_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     current = get_profile(conn, profile_id)
     if not current:
         raise ValueError("profile_not_found")
@@ -553,9 +552,9 @@ def update_profile(conn: sqlite3.Connection, profile_id: str, payload: dict[str,
     conn.execute(
         """
         UPDATE llm_profiles
-        SET name = ?, primary_provider_id = ?, primary_model_id = ?, prompt_id = ?,
-            schema_id = ?, params_json = ?, fallback_json = ?, is_enabled = ?, updated_at = ?
-        WHERE id = ?
+        SET name = %s, primary_provider_id = %s, primary_model_id = %s, prompt_id = %s,
+            schema_id = %s, params_json = %s, fallback_json = %s, is_enabled = %s, updated_at = %s
+        WHERE id = %s
         """,
         (
             name,
@@ -574,19 +573,19 @@ def update_profile(conn: sqlite3.Connection, profile_id: str, payload: dict[str,
     return get_profile(conn, profile_id) or {}
 
 
-def delete_profile(conn: sqlite3.Connection, profile_id: str) -> None:
-    conn.execute("DELETE FROM llm_profiles WHERE id = ?", (profile_id,))
+def delete_profile(conn: Any, profile_id: str) -> None:
+    conn.execute("DELETE FROM llm_profiles WHERE id = %s", (profile_id,))
     conn.commit()
 
 
-def get_profile(conn: sqlite3.Connection, profile_id: str) -> dict[str, Any] | None:
+def get_profile(conn: Any, profile_id: str) -> dict[str, Any] | None:
     for profile in list_profiles(conn):
         if profile["id"] == profile_id:
             return profile
     return None
 
 
-def list_pipeline_routing(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def list_pipeline_routing(conn: Any) -> list[dict[str, Any]]:
     cursor = conn.execute(
         """
         SELECT stage_name, profile_id, rules_json, updated_at
@@ -607,12 +606,12 @@ def list_pipeline_routing(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return rows
 
 
-def set_pipeline_routing(conn: sqlite3.Connection, stage_name: str, profile_id: str) -> None:
+def set_pipeline_routing(conn: Any, stage_name: str, profile_id: str) -> None:
     now = utc_now_iso()
     conn.execute(
         """
         INSERT INTO pipeline_stage_config (stage_name, profile_id, updated_at)
-        VALUES (?, ?, ?)
+        VALUES (%s, %s, %s)
         ON CONFLICT(stage_name) DO UPDATE SET
             profile_id=excluded.profile_id,
             updated_at=excluded.updated_at
@@ -623,7 +622,7 @@ def set_pipeline_routing(conn: sqlite3.Connection, stage_name: str, profile_id: 
 
 
 def get_active_profile_for_stage(
-    conn: sqlite3.Connection, stage_name: str
+    conn: Any, stage_name: str
 ) -> tuple[dict[str, Any] | None, str]:
     routing = {row["stage_name"]: row["profile_id"] for row in list_pipeline_routing(conn)}
     profile_id = routing.get(stage_name)
@@ -650,7 +649,7 @@ def get_active_profile_for_stage(
     return profile, "active"
 
 
-def list_stage_statuses(conn: sqlite3.Connection, stages: list[str]) -> list[dict[str, Any]]:
+def list_stage_statuses(conn: Any, stages: list[str]) -> list[dict[str, Any]]:
     statuses: list[dict[str, Any]] = []
     for stage_name in stages:
         profile, reason = get_active_profile_for_stage(conn, stage_name)
@@ -673,13 +672,13 @@ def list_stage_statuses(conn: sqlite3.Connection, stages: list[str]) -> list[dic
 
 
 def update_provider_test_status(
-    conn: sqlite3.Connection, provider_id: str, status: str, error: str | None
+    conn: Any, provider_id: str, status: str, error: str | None
 ) -> None:
     conn.execute(
         """
         UPDATE llm_providers
-        SET last_test_status = ?, last_test_at = ?, last_test_error = ?, updated_at = ?
-        WHERE id = ?
+        SET last_test_status = %s, last_test_at = %s, last_test_error = %s, updated_at = %s
+        WHERE id = %s
         """,
         (status, utc_now_iso(), error, utc_now_iso(), provider_id),
     )

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import uuid
 from dataclasses import asdict
 from typing import Any
@@ -11,7 +10,7 @@ from ..storage import upsert_tactic
 from ..utils import json_dumps, utc_now_iso
 
 
-def list_sources(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def list_sources(conn: Any) -> list[dict[str, Any]]:
     columns = _table_columns(conn, "sources")
     acquire_map = _active_acquire_jobs(conn)
     select_cols = [
@@ -51,14 +50,14 @@ def list_sources(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return rows
 
 
-def get_source(conn: sqlite3.Connection, source_id: str) -> dict[str, Any] | None:
+def get_source(conn: Any, source_id: str) -> dict[str, Any] | None:
     for source in list_sources(conn):
         if source.get("id") == source_id:
             return source
     return None
 
 
-def create_source(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str, Any]:
+def create_source(conn: Any, payload: dict[str, Any]) -> dict[str, Any]:
     # Allow UI to omit id when creating a new source
     source_id = str(payload.get("id") or "").strip()
 
@@ -84,7 +83,7 @@ def create_source(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str
         INSERT INTO sources
             (id, name, enabled, kind, url, interval_minutes, tags_json,
              base_url, default_frequency_minutes, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             source_id,
@@ -122,7 +121,7 @@ def _slugify(value: str) -> str:
     return slug or "source"
 
 
-def _generate_source_id(conn: sqlite3.Connection, name: str) -> str:
+def _generate_source_id(conn: Any, name: str) -> str:
     base = _slugify(name)
     candidate = base
     i = 2
@@ -132,7 +131,7 @@ def _generate_source_id(conn: sqlite3.Connection, name: str) -> str:
     return candidate
 
 
-def update_source(conn: sqlite3.Connection, source_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+def update_source(conn: Any, source_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     current = get_source(conn, source_id)
     if not current:
         raise ValueError("source_not_found")
@@ -148,9 +147,9 @@ def update_source(conn: sqlite3.Connection, source_id: str, payload: dict[str, A
     conn.execute(
         """
         UPDATE sources
-        SET name = ?, enabled = ?, kind = ?, url = ?, interval_minutes = ?,
-            tags_json = ?, base_url = ?, default_frequency_minutes = ?, updated_at = ?
-        WHERE id = ?
+        SET name = %s, enabled = %s, kind = %s, url = %s, interval_minutes = %s,
+            tags_json = %s, base_url = %s, default_frequency_minutes = %s, updated_at = %s
+        WHERE id = %s
         """,
         (
             name,
@@ -170,21 +169,21 @@ def update_source(conn: sqlite3.Connection, source_id: str, payload: dict[str, A
     return get_source(conn, source_id) or {}
 
 
-def delete_source(conn: sqlite3.Connection, source_id: str) -> None:
-    conn.execute("DELETE FROM source_tactics WHERE source_id = ?", (source_id,))
-    conn.execute("DELETE FROM sources WHERE id = ?", (source_id,))
+def delete_source(conn: Any, source_id: str) -> None:
+    conn.execute("DELETE FROM source_tactics WHERE source_id = %s", (source_id,))
+    conn.execute("DELETE FROM sources WHERE id = %s", (source_id,))
     conn.commit()
 
 
 def record_test_result(
-    conn: sqlite3.Connection, source_id: str, ok: bool, error: str | None
+    conn: Any, source_id: str, ok: bool, error: str | None
 ) -> None:
     now = utc_now_iso()
     conn.execute(
         """
         UPDATE sources
-        SET last_checked_at = ?, last_ok_at = ?, last_error = ?, updated_at = ?
-        WHERE id = ?
+        SET last_checked_at = %s, last_ok_at = %s, last_error = %s, updated_at = %s
+        WHERE id = %s
         """,
         (
             now,
@@ -197,7 +196,7 @@ def record_test_result(
     conn.commit()
 
 
-def _ensure_tactic(conn: sqlite3.Connection, source_id: str, kind: str, url: str, enabled: bool) -> None:
+def _ensure_tactic(conn: Any, source_id: str, kind: str, url: str, enabled: bool) -> None:
     tactic_type = "rss" if kind == "rss" else "html_index"
     config: dict[str, Any] = {"feed_url": url}
     tactic = SourceTactic(
@@ -230,34 +229,25 @@ def _parse_tags(tags: Any) -> list[str]:
     return []
 
 
-def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    backend = getattr(conn, "backend", "sqlite")
-    if backend == "postgres":
-        cursor = conn.execute(
-            """
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_schema = 'public' AND table_name = %s
-            """,
-            (table,),
-        )
-        return {row[0] for row in cursor.fetchall()}
-    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-
-
-def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
-    backend = getattr(conn, "backend", "sqlite")
-    if backend == "postgres":
-        cursor = conn.execute("SELECT to_regclass(%s)", (f"public.{table}",))
-        row = cursor.fetchone()
-        return bool(row and row[0])
+def _table_columns(conn: Any, table: str) -> set[str]:
     cursor = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name = ?", (table,)
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = %s
+        """,
+        (table,),
     )
-    return cursor.fetchone() is not None
+    return {row[0] for row in cursor.fetchall()}
 
 
-def _active_acquire_jobs(conn: sqlite3.Connection) -> dict[str, dict[str, str]]:
+def _table_exists(conn: Any, table: str) -> bool:
+    cursor = conn.execute("SELECT to_regclass(%s)", (f"public.{table}",))
+    row = cursor.fetchone()
+    return bool(row and row[0])
+
+
+def _active_acquire_jobs(conn: Any) -> dict[str, dict[str, str]]:
     if not _table_exists(conn, "jobs"):
         return {}
     cursor = conn.execute(

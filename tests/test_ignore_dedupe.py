@@ -8,16 +8,14 @@ from sempervigil.utils import stable_id_from_url
 
 
 def _make_config(tmp_path):
-    db_path = tmp_path / "state.sqlite3"
-    conn = init_db(str(db_path))
+    conn = init_db()
     set_runtime_config(conn, copy.deepcopy(DEFAULT_CONFIG))
     return load_runtime_config(conn)
 
 
 def test_ignore_dedupe_accepts_duplicate(tmp_path):
     config = _make_config(tmp_path)
-    db_path = tmp_path / "state.sqlite3"
-    conn = init_db(str(db_path))
+    conn = init_db()
 
     url = "https://example.com/item"
     article_id = stable_id_from_url(url)
@@ -81,8 +79,7 @@ def test_ignore_dedupe_accepts_duplicate(tmp_path):
 
 def test_ignore_dedupe_counts_preview(tmp_path):
     config = _make_config(tmp_path)
-    db_path = tmp_path / "state.sqlite3"
-    conn = init_db(str(db_path))
+    conn = init_db()
 
     url = "https://example.com/item"
     article_id = stable_id_from_url(url)

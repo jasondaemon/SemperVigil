@@ -7,7 +7,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from .config import ConfigError, get_cve_settings, get_state_db_path, load_runtime_config
+from .config import ConfigError, get_cve_settings, load_runtime_config
 from .cve_sync import CveSyncConfig, isoformat_utc, sync_cves
 from .worker import WORKER_JOB_TYPES
 from .ingest import process_source
@@ -34,7 +34,7 @@ def _setup_logging() -> logging.Logger:
 
 
 def _get_conn_and_config() -> tuple:
-    conn = init_db(get_state_db_path())
+    conn = init_db()
     config = load_runtime_config(conn)
     return conn, config
 
@@ -433,7 +433,7 @@ def _cmd_db_migrate(args: argparse.Namespace, logger: logging.Logger) -> int:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
 
-    log_event(logger, logging.INFO, "db_migrated", path=config.paths.state_db)
+    log_event(logger, logging.INFO, "db_migrated", db_url=os.environ.get("SV_DB_URL"))
     return 0
 
 

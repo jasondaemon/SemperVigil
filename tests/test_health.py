@@ -17,8 +17,7 @@ def _seed_source(conn, source_id: str) -> None:
 
 
 def test_auto_pause_on_error_streak(tmp_path):
-    db_path = tmp_path / "state.sqlite3"
-    conn = init_db(str(db_path))
+    conn = init_db()
     _seed_source(conn, "source-1")
 
     conn.execute(
@@ -76,8 +75,7 @@ def test_auto_pause_on_error_streak(tmp_path):
 
 
 def test_auto_pause_on_zero_streak(tmp_path):
-    db_path = tmp_path / "state.sqlite3"
-    conn = init_db(str(db_path))
+    conn = init_db()
     _seed_source(conn, "source-2")
 
     conn.execute(

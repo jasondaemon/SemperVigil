@@ -55,7 +55,7 @@ def test_json_dumps_handles_supported_types():
 
 
 def test_job_result_serialization_handles_complex_types(tmp_path):
-    conn = init_db(str(tmp_path / "state.sqlite3"))
+    conn = init_db()
     job_id = enqueue_job(conn, "cve_sync", None)
     job = claim_next_job(conn, "worker-1")
     assert job is not None

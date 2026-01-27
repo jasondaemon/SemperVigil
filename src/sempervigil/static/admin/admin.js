@@ -1037,7 +1037,6 @@ function wireRuntimeConfig() {
 
     setValue("paths-data-dir", cfg.paths?.data_dir);
     setValue("paths-output-dir", cfg.paths?.output_dir);
-    setValue("paths-state-db", cfg.paths?.state_db);
     setValue("paths-run-reports-dir", cfg.paths?.run_reports_dir);
 
     setValue("publishing-format", cfg.publishing?.format);
@@ -1091,7 +1090,6 @@ function wireRuntimeConfig() {
 
     nextConfig.paths.data_dir = document.getElementById("paths-data-dir").value.trim();
     nextConfig.paths.output_dir = document.getElementById("paths-output-dir").value.trim();
-    nextConfig.paths.state_db = document.getElementById("paths-state-db").value.trim();
     nextConfig.paths.run_reports_dir = document.getElementById("paths-run-reports-dir").value.trim();
 
     nextConfig.publishing.format = document.getElementById("publishing-format").value.trim();

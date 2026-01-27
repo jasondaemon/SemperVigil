@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sqlite3
+from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -23,7 +23,6 @@ from .config import (
     apply_runtime_config_patch,
     get_cve_settings,
     get_runtime_config,
-    get_state_db_path,
     load_runtime_config,
     set_cve_settings,
     set_runtime_config,
@@ -536,7 +535,7 @@ def ui_logout():
 @app.on_event("startup")
 def _startup() -> None:
     try:
-        conn = init_db(get_state_db_path())
+        conn = init_db()
         config = load_runtime_config(conn)
         bootstrap_cve_settings(conn)
         bootstrap_events_settings(conn)
@@ -1483,13 +1482,13 @@ def source_to_model(source: dict[str, object]):
     )
 
 
-def _get_conn() -> sqlite3.Connection:
-    conn = init_db(get_state_db_path())
+def _get_conn() -> Any:
+    conn = init_db()
     bootstrap_runtime_config(conn)
     return conn
 
 
-def _watchlist_enabled(conn: sqlite3.Connection) -> bool:
+def _watchlist_enabled(conn: Any) -> bool:
     try:
         cfg = get_runtime_config(conn)
     except Exception:  # noqa: BLE001
@@ -1498,12 +1497,12 @@ def _watchlist_enabled(conn: sqlite3.Connection) -> bool:
     return bool(personalization.get("watchlist_enabled"))
 
 
-def _ensure_watchlist_enabled(conn: sqlite3.Connection) -> None:
+def _ensure_watchlist_enabled(conn: Any) -> None:
     if not _watchlist_enabled(conn):
         raise HTTPException(status_code=403, detail="watchlist_disabled")
 
 
-def _recompute_scope(conn: sqlite3.Connection) -> dict[str, int]:
+def _recompute_scope(conn: Any) -> dict[str, int]:
     try:
         cfg = load_runtime_config(conn)
         min_cvss = cfg.scope.min_cvss

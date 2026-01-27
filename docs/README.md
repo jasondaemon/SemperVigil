@@ -107,11 +107,10 @@ cp .env.example .env
 
 Adjust as needed for your environment.
 
-Runtime configuration is stored in the SQLite DB (see System → Runtime Config in the Admin UI).
+Runtime configuration is stored in the Postgres DB (see System → Runtime Config in the Admin UI).
 `config/sources.example.yml` is documentation only. Sources live in the DB.
 
-Optional: use PostgreSQL by setting `SV_DB_URL` in `.env` and starting the `db` service.
-If `SV_DB_URL` is unset, SQLite is used.
+PostgreSQL is required. Set `SV_DB_URL` in `.env` and start the `db` service.
 
 ---
 
@@ -234,15 +233,9 @@ docker compose run --rm worker \
 
 ---
 
-## PostgreSQL migration (optional)
+## PostgreSQL required
 
-If you want to migrate existing SQLite data into Postgres:
-
-```bash
-python scripts/migrate_sqlite_to_postgres.py --sqlite /data/state.sqlite3 --pg-url "$SV_DB_URL"
-```
-
-Rollback is just unsetting `SV_DB_URL` to return to SQLite.
+SQLite is no longer supported. The stack requires a Postgres database and `SV_DB_URL`.
 
 ---
 
@@ -431,8 +424,8 @@ LLMs are never used automatically for scraping.
 
 ## Storage & Scalability
 
-- SQLite is the current system of record
-- WAL mode is enabled
+- Postgres is the current system of record
+- Postgres is required and provides safe concurrent writers
 - Data model is append-heavy and migration-friendly
 
 Expected scale:
@@ -440,7 +433,7 @@ Expected scale:
 - multi-year CVE and event timelines
 - summaries and metadata only (no raw HTML retention)
 
-The schema is designed to migrate cleanly to PostgreSQL if needed,
+The schema is designed for PostgreSQL and is managed via migrations,
 without rewriting business logic.
 
 ---

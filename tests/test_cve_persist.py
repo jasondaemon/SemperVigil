@@ -4,8 +4,7 @@ from sempervigil.storage import get_article_id, init_db, insert_articles, upsert
 
 
 def test_upsert_cve_links_idempotent(tmp_path):
-    db_path = tmp_path / "state.sqlite3"
-    conn = init_db(str(db_path))
+    conn = init_db()
     conn.execute(
         """
         CREATE TABLE article_cves (

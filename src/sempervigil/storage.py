@@ -3,12 +3,11 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sqlite3
 import hashlib
 import struct
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Iterable
+from typing import Iterable, Any
 
 from .db import connect_db
 from .models import Article, Job, Source, SourceTactic
@@ -16,13 +15,13 @@ from .normalize import cpe_to_vendor_product, normalize_name
 from .utils import json_dumps, log_event, utc_now_iso, utc_now_iso_offset
 
 
-def init_db(path: str):
-    return connect_db(path)
+def init_db():
+    return connect_db()
 
 
-def upsert_source(conn: sqlite3.Connection, source_dict: dict[str, object]) -> None:
+def upsert_source(conn: Any, source_dict: dict[str, object]) -> None:
     source = _source_from_dict(source_dict)
-    cursor = conn.execute("SELECT created_at FROM sources WHERE id = ?", (source.id,))
+    cursor = conn.execute("SELECT created_at FROM sources WHERE id = %s", (source.id,))
     row = cursor.fetchone()
     created_at = row[0] if row else utc_now_iso()
     updated_at = utc_now_iso()
@@ -31,7 +30,7 @@ def upsert_source(conn: sqlite3.Connection, source_dict: dict[str, object]) -> N
         INSERT INTO sources
             (id, name, enabled, base_url, topic_key, default_frequency_minutes,
              pause_until, paused_reason, robots_notes, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT(id) DO UPDATE SET
             name=excluded.name,
             enabled=excluded.enabled,
@@ -60,21 +59,21 @@ def upsert_source(conn: sqlite3.Connection, source_dict: dict[str, object]) -> N
     conn.commit()
 
 
-def set_source_enabled(conn: sqlite3.Connection, source_id: str, enabled: bool) -> None:
+def set_source_enabled(conn: Any, source_id: str, enabled: bool) -> None:
     conn.execute(
-        "UPDATE sources SET enabled = ?, updated_at = ? WHERE id = ?",
+        "UPDATE sources SET enabled = %s, updated_at = %s WHERE id = %s",
         (1 if enabled else 0, utc_now_iso(), source_id),
     )
     conn.commit()
 
 
-def get_source(conn: sqlite3.Connection, source_id: str) -> Source | None:
+def get_source(conn: Any, source_id: str) -> Source | None:
     cursor = conn.execute(
         """
         SELECT id, name, enabled, base_url, topic_key, default_frequency_minutes,
                pause_until, paused_reason, robots_notes
         FROM sources
-        WHERE id = ?
+        WHERE id = %s
         """,
         (source_id,),
     )
@@ -84,7 +83,7 @@ def get_source(conn: sqlite3.Connection, source_id: str) -> Source | None:
     return _row_to_source(row)
 
 
-def list_sources(conn: sqlite3.Connection, enabled_only: bool = True) -> list[Source]:
+def list_sources(conn: Any, enabled_only: bool = True) -> list[Source]:
     if enabled_only:
         cursor = conn.execute(
             """
@@ -107,7 +106,7 @@ def list_sources(conn: sqlite3.Connection, enabled_only: bool = True) -> list[So
     return [_row_to_source(row) for row in cursor.fetchall()]
 
 
-def list_due_sources(conn: sqlite3.Connection, now_iso: str) -> list[Source]:
+def list_due_sources(conn: Any, now_iso: str) -> list[Source]:
     sources = list_sources(conn, enabled_only=True)
     due: list[Source] = []
     last_runs = _last_run_map(conn)
@@ -125,13 +124,13 @@ def list_due_sources(conn: sqlite3.Connection, now_iso: str) -> list[Source]:
     return due
 
 
-def list_tactics(conn: sqlite3.Connection, source_id: str) -> list[SourceTactic]:
+def list_tactics(conn: Any, source_id: str) -> list[SourceTactic]:
     cursor = conn.execute(
         """
         SELECT id, source_id, tactic_type, enabled, priority, config_json,
                last_success_at, last_error_at, error_streak
         FROM source_tactics
-        WHERE source_id = ? AND enabled = 1
+        WHERE source_id = %s AND enabled = 1
         ORDER BY priority ASC
         """,
         (source_id,),
@@ -140,7 +139,7 @@ def list_tactics(conn: sqlite3.Connection, source_id: str) -> list[SourceTactic]
     return [_row_to_tactic(row) for row in rows]
 
 
-def upsert_tactic(conn: sqlite3.Connection, tactic: SourceTactic) -> None:
+def upsert_tactic(conn: Any, tactic: SourceTactic) -> None:
     updated_at = utc_now_iso()
     created_at = utc_now_iso()
     conn.execute(
@@ -148,7 +147,7 @@ def upsert_tactic(conn: sqlite3.Connection, tactic: SourceTactic) -> None:
         INSERT INTO source_tactics
             (source_id, tactic_type, enabled, priority, config_json,
              last_success_at, last_error_at, error_streak, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT(source_id, tactic_type, priority) DO UPDATE SET
             enabled=excluded.enabled,
             config_json=excluded.config_json,
@@ -173,19 +172,19 @@ def upsert_tactic(conn: sqlite3.Connection, tactic: SourceTactic) -> None:
     conn.commit()
 
 
-def article_exists(conn: sqlite3.Connection, source_id: str, stable_id: str) -> bool:
+def article_exists(conn: Any, source_id: str, stable_id: str) -> bool:
     cursor = conn.execute(
-        "SELECT 1 FROM articles WHERE source_id = ? AND stable_id = ?",
+        "SELECT 1 FROM articles WHERE source_id = %s AND stable_id = %s",
         (source_id, stable_id),
     )
     return cursor.fetchone() is not None
 
 
-def get_article_id(conn: sqlite3.Connection, source_id: str, stable_id: str) -> int | None:
+def get_article_id(conn: Any, source_id: str, stable_id: str) -> int | None:
     return _get_article_id(conn, source_id, stable_id)
 
 
-def insert_articles(conn: sqlite3.Connection, articles: Iterable[Article]) -> int:
+def insert_articles(conn: Any, articles: Iterable[Article]) -> int:
     rows = [
         (
             article.source_id,
@@ -213,12 +212,13 @@ def insert_articles(conn: sqlite3.Connection, articles: Iterable[Article]) -> in
         return 0
     conn.executemany(
         """
-        INSERT OR IGNORE INTO articles
+        INSERT INTO articles
             (source_id, stable_id, original_url, normalized_url, title, published_at,
              published_at_source, ingested_at, brief_day, is_commercial, content_fingerprint,
              extracted_text_path, extracted_text_hash, raw_html_path, raw_html_hash,
              meta_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT DO NOTHING
         """,
         rows,
     )
@@ -233,13 +233,13 @@ def insert_articles(conn: sqlite3.Connection, articles: Iterable[Article]) -> in
     return len(rows)
 
 
-def list_articles_for_day(conn: sqlite3.Connection, day: str) -> list[dict[str, object]]:
+def list_articles_for_day(conn: Any, day: str) -> list[dict[str, object]]:
     cursor = conn.execute(
         """
         SELECT id, source_id, title, original_url, published_at, ingested_at, summary, brief_day,
                summary_llm, summary_model, summary_generated_at
         FROM articles
-        WHERE brief_day = ?
+        WHERE brief_day = %s
         ORDER BY published_at DESC
         """,
         (day,),
@@ -277,7 +277,7 @@ def list_articles_for_day(conn: sqlite3.Connection, day: str) -> list[dict[str, 
     return rows
 
 
-def list_summaries_for_day(conn: sqlite3.Connection, day: str) -> list[dict[str, object]]:
+def list_summaries_for_day(conn: Any, day: str) -> list[dict[str, object]]:
     articles = list_articles_for_day(conn, day)
     rows: list[dict[str, object]] = []
     for article in articles:
@@ -292,7 +292,7 @@ def list_summaries_for_day(conn: sqlite3.Connection, day: str) -> list[dict[str,
 
 
 def upsert_cve_links(
-    conn: sqlite3.Connection,
+    conn: Any,
     article_id: int,
     cve_ids: list[str],
     evidence: dict[str, object],
@@ -307,7 +307,7 @@ def upsert_cve_links(
                 conn.execute(
                     """
                     INSERT INTO cves (cve_id, created_at, last_seen_at)
-                    VALUES (?, ?, ?)
+                    VALUES (%s, %s, %s)
                     ON CONFLICT(cve_id) DO UPDATE SET last_seen_at = excluded.last_seen_at
                     """,
                     (cve_id, now, now),
@@ -316,14 +316,14 @@ def upsert_cve_links(
                 conn.execute(
                     """
                     INSERT INTO cves (cve_id, updated_at)
-                    VALUES (?, ?)
+                    VALUES (%s, %s)
                     ON CONFLICT(cve_id) DO UPDATE SET updated_at = excluded.updated_at
                     """,
                     (cve_id, now),
                 )
             else:
                 conn.execute(
-                    "INSERT OR IGNORE INTO cves (cve_id) VALUES (?)",
+                    "INSERT INTO cves (cve_id) VALUES (%s) ON CONFLICT DO NOTHING",
                     (cve_id,),
                 )
     if _table_exists(conn, "article_cves"):
@@ -342,11 +342,12 @@ def upsert_cve_links(
             }
             cols = [key for key in payload if key in columns]
             values = [payload[col] for col in cols]
-            placeholders = ", ".join("?" for _ in cols)
+            placeholders = ", ".join("%s" for _ in cols)
             conn.execute(
                 f"""
-                INSERT OR IGNORE INTO article_cves ({", ".join(cols)})
+                INSERT INTO article_cves ({", ".join(cols)})
                 VALUES ({placeholders})
+                ON CONFLICT DO NOTHING
                 """,
                 values,
             )
@@ -356,12 +357,12 @@ def upsert_cve_links(
 
 
 def _append_article_cves_meta(
-    conn: sqlite3.Connection,
+    conn: Any,
     article_id: int,
     cve_ids: list[str],
     evidence: dict[str, object],
 ) -> None:
-    cursor = conn.execute("SELECT meta_json FROM articles WHERE id = ?", (article_id,))
+    cursor = conn.execute("SELECT meta_json FROM articles WHERE id = %s", (article_id,))
     row = cursor.fetchone()
     meta = {}
     if row and row[0]:
@@ -382,14 +383,14 @@ def _append_article_cves_meta(
         }
     meta["cve_links"] = list(links.values())
     conn.execute(
-        "UPDATE articles SET meta_json = ?, updated_at = ? WHERE id = ?",
+        "UPDATE articles SET meta_json = %s, updated_at = %s WHERE id = %s",
         (json_dumps(meta), utc_now_iso(), article_id),
     )
     conn.commit()
 
 
-def get_setting(conn: sqlite3.Connection, key: str, default: object) -> object:
-    cursor = conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
+def get_setting(conn: Any, key: str, default: object) -> object:
+    cursor = conn.execute("SELECT value FROM settings WHERE key = %s", (key,))
     row = cursor.fetchone()
     if not row:
         return default
@@ -399,13 +400,13 @@ def get_setting(conn: sqlite3.Connection, key: str, default: object) -> object:
         return default
 
 
-def set_setting(conn: sqlite3.Connection, key: str, value: object) -> None:
+def set_setting(conn: Any, key: str, value: object) -> None:
     payload = json_dumps(value)
     now = utc_now_iso()
     conn.execute(
         """
         INSERT INTO settings (key, value, updated_at)
-        VALUES (?, ?, ?)
+        VALUES (%s, %s, %s)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
         """,
         (key, payload, now),
@@ -414,7 +415,7 @@ def set_setting(conn: sqlite3.Connection, key: str, value: object) -> None:
 
 
 def upsert_cve(
-    conn: sqlite3.Connection,
+    conn: Any,
     cve_id: str,
     published_at: str | None,
     last_modified_at: str | None,
@@ -454,8 +455,8 @@ def upsert_cve(
              cvss_v40_json, cvss_v31_json, description_text, affected_products_json,
              affected_cpes_json, reference_domains_json, updated_at
              {"," if extra_cols else ""} {", ".join(extra_cols)})
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-             {"," if extra_cols else ""} {", ".join("?" for _ in extra_cols)})
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+             {"," if extra_cols else ""} {", ".join("%s" for _ in extra_cols)})
         ON CONFLICT(cve_id) DO UPDATE SET
             published_at=excluded.published_at,
             last_modified_at=excluded.last_modified_at,
@@ -494,7 +495,7 @@ def upsert_cve(
 
 
 def link_cve_products_from_signals(
-    conn: sqlite3.Connection,
+    conn: Any,
     *,
     cve_id: str,
     products: list[str],
@@ -536,22 +537,23 @@ def link_cve_products_from_signals(
 
 
 def _link_cve_product_version(
-    conn: sqlite3.Connection, cve_id: str, product_id: int, version: str, source: str
+    conn: Any, cve_id: str, product_id: int, version: str, source: str
 ) -> None:
     if not _table_exists(conn, "cve_product_versions"):
         return
     conn.execute(
         """
-        INSERT OR IGNORE INTO cve_product_versions
+        INSERT INTO cve_product_versions
             (cve_id, product_id, version, source, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT DO NOTHING
         """,
         (cve_id, product_id, version, source, utc_now_iso()),
     )
 
 
 def insert_cve_snapshot(
-    conn: sqlite3.Connection,
+    conn: Any,
     cve_id: str,
     observed_at: str,
     nvd_last_modified_at: str | None,
@@ -565,11 +567,12 @@ def insert_cve_snapshot(
 ) -> bool:
     cursor = conn.execute(
         """
-        INSERT OR IGNORE INTO cve_snapshots
+        INSERT INTO cve_snapshots
             (cve_id, observed_at, nvd_last_modified_at, preferred_cvss_version,
              preferred_base_score, preferred_base_severity, preferred_vector,
              cvss_v40_json, cvss_v31_json, snapshot_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT DO NOTHING
         """,
         (
             cve_id,
@@ -588,13 +591,13 @@ def insert_cve_snapshot(
     return cursor.rowcount == 1
 
 
-def get_latest_cve_snapshot(conn: sqlite3.Connection, cve_id: str) -> dict[str, object] | None:
+def get_latest_cve_snapshot(conn: Any, cve_id: str) -> dict[str, object] | None:
     cursor = conn.execute(
         """
         SELECT preferred_cvss_version, preferred_base_score, preferred_base_severity,
                preferred_vector, cvss_v40_json, cvss_v31_json, nvd_last_modified_at
         FROM cve_snapshots
-        WHERE cve_id = ?
+        WHERE cve_id = %s
         ORDER BY observed_at DESC
         LIMIT 1
         """,
@@ -617,7 +620,7 @@ def get_latest_cve_snapshot(conn: sqlite3.Connection, cve_id: str) -> dict[str, 
 
 
 def insert_cve_change(
-    conn: sqlite3.Connection,
+    conn: Any,
     cve_id: str,
     change_at: str,
     cvss_version: str | None,
@@ -636,7 +639,7 @@ def insert_cve_change(
         INSERT INTO cve_changes
             (cve_id, change_at, cvss_version, change_type, from_score, to_score,
              from_severity, to_severity, vector_from, vector_to, metrics_changed_json, note)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             cve_id,
@@ -656,35 +659,26 @@ def insert_cve_change(
     conn.commit()
 
 
-def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
-    backend = getattr(conn, "backend", "sqlite")
-    if backend == "postgres":
-        cursor = conn.execute("SELECT to_regclass(%s)", (f"public.{table}",))
-        row = cursor.fetchone()
-        return bool(row and row[0])
+def _table_exists(conn: Any, table: str) -> bool:
+    cursor = conn.execute("SELECT to_regclass(%s)", (f"public.{table}",))
+    row = cursor.fetchone()
+    return bool(row and row[0])
+
+
+def _table_columns(conn: Any, table: str) -> set[str]:
     cursor = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name = ?", (table,)
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = %s
+        """,
+        (table,),
     )
-    return cursor.fetchone() is not None
-
-
-def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    backend = getattr(conn, "backend", "sqlite")
-    if backend == "postgres":
-        cursor = conn.execute(
-            """
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_schema = 'public' AND table_name = %s
-            """,
-            (table,),
-        )
-        return {row[0] for row in cursor.fetchall()}
-    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    return {row[0] for row in cursor.fetchall()}
 
 
 def record_source_run(
-    conn: sqlite3.Connection,
+    conn: Any,
     source_id: str,
     started_at: str,
     finished_at: str | None,
@@ -704,7 +698,7 @@ def record_source_run(
             (source_id, started_at, finished_at, status, http_status, items_found,
              items_accepted, skipped_duplicates, skipped_filters, skipped_missing_url,
              error, notes_json, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             source_id,
@@ -726,42 +720,42 @@ def record_source_run(
 
 
 def pause_source(
-    conn: sqlite3.Connection, source_id: str, reason: str, pause_minutes: int
+    conn: Any, source_id: str, reason: str, pause_minutes: int
 ) -> None:
     pause_until = utc_now_iso_offset(seconds=pause_minutes * 60)
     conn.execute(
         """
         UPDATE sources
         SET enabled = 0,
-            pause_until = ?,
-            paused_reason = ?,
-            updated_at = ?
-        WHERE id = ?
+            pause_until = %s,
+            paused_reason = %s,
+            updated_at = %s
+        WHERE id = %s
         """,
         (pause_until, reason, utc_now_iso(), source_id),
     )
     conn.commit()
 
 
-def record_health_alert(conn: sqlite3.Connection, source_id: str, alert_type: str, message: str) -> None:
+def record_health_alert(conn: Any, source_id: str, alert_type: str, message: str) -> None:
     conn.execute(
         """
         INSERT INTO health_alerts (source_id, alert_type, message, created_at)
-        VALUES (?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s)
         """,
         (source_id, alert_type, message, utc_now_iso()),
     )
     conn.commit()
 
 
-def get_source_run_streaks(conn: sqlite3.Connection, source_id: str, limit: int = 20) -> dict[str, int]:
+def get_source_run_streaks(conn: Any, source_id: str, limit: int = 20) -> dict[str, int]:
     cursor = conn.execute(
         """
         SELECT status, items_accepted
         FROM source_runs
-        WHERE source_id = ?
+        WHERE source_id = %s
         ORDER BY started_at DESC
-        LIMIT ?
+        LIMIT %s
         """,
         (source_id, limit),
     )
@@ -776,9 +770,9 @@ def get_source_run_streaks(conn: sqlite3.Connection, source_id: str, limit: int 
         """
         SELECT status, items_accepted
         FROM source_runs
-        WHERE source_id = ?
+        WHERE source_id = %s
         ORDER BY started_at DESC
-        LIMIT ?
+        LIMIT %s
         """,
         (source_id, limit),
     )
@@ -791,7 +785,7 @@ def get_source_run_streaks(conn: sqlite3.Connection, source_id: str, limit: int 
 
 
 def enqueue_job(
-    conn: sqlite3.Connection,
+    conn: Any,
     job_type: str,
     payload: dict[str, object] | None,
     debounce: bool = False,
@@ -805,7 +799,7 @@ def enqueue_job(
         INSERT INTO jobs
             (id, job_type, status, payload_json, result_json, requested_at, started_at,
              finished_at, locked_by, locked_at, error)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             job_id,
@@ -825,21 +819,21 @@ def enqueue_job(
     return job_id
 
 
-def list_jobs(conn: sqlite3.Connection, limit: int = 50) -> list[Job]:
+def list_jobs(conn: Any, limit: int = 50) -> list[Job]:
     cursor = conn.execute(
         """
         SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
                finished_at, locked_by, locked_at, error
         FROM jobs
         ORDER BY requested_at DESC
-        LIMIT ?
+        LIMIT %s
         """,
         (limit,),
     )
     return [_row_to_job(row) for row in cursor.fetchall()]
 
 
-def get_schema_version(conn: sqlite3.Connection) -> str | None:
+def get_schema_version(conn: Any) -> str | None:
     if not _table_exists(conn, "schema_migrations"):
         return None
     row = conn.execute(
@@ -848,14 +842,14 @@ def get_schema_version(conn: sqlite3.Connection) -> str | None:
     return row[0] if row else None
 
 
-def count_table(conn: sqlite3.Connection, table: str) -> int:
+def count_table(conn: Any, table: str) -> int:
     if not _table_exists(conn, table):
         return 0
     row = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
     return int(row[0] or 0)
 
 
-def get_dashboard_metrics(conn: sqlite3.Connection) -> dict[str, object]:
+def get_dashboard_metrics(conn: Any) -> dict[str, object]:
     metrics: dict[str, object] = {}
     job_counts: dict[str, dict[str, int]] = {}
     if _table_exists(conn, "jobs"):
@@ -927,7 +921,7 @@ def get_dashboard_metrics(conn: sqlite3.Connection) -> dict[str, object]:
     return metrics
 
 
-def get_last_job_by_type(conn: sqlite3.Connection, job_type: str) -> Job | None:
+def get_last_job_by_type(conn: Any, job_type: str) -> Job | None:
     if not _table_exists(conn, "jobs"):
         return None
     row = conn.execute(
@@ -935,7 +929,7 @@ def get_last_job_by_type(conn: sqlite3.Connection, job_type: str) -> Job | None:
         SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
                finished_at, locked_by, locked_at, error
         FROM jobs
-        WHERE job_type = ?
+        WHERE job_type = %s
         ORDER BY requested_at DESC
         LIMIT 1
         """,
@@ -944,7 +938,7 @@ def get_last_job_by_type(conn: sqlite3.Connection, job_type: str) -> Job | None:
     return _row_to_job(row) if row else None
 
 
-def get_job(conn: sqlite3.Connection, job_id: str) -> Job | None:
+def get_job(conn: Any, job_id: str) -> Job | None:
     if not _table_exists(conn, "jobs"):
         return None
     row = conn.execute(
@@ -952,7 +946,7 @@ def get_job(conn: sqlite3.Connection, job_id: str) -> Job | None:
         SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
                finished_at, locked_by, locked_at, error
         FROM jobs
-        WHERE id = ?
+        WHERE id = %s
         """,
         (job_id,),
     ).fetchone()
@@ -960,17 +954,17 @@ def get_job(conn: sqlite3.Connection, job_id: str) -> Job | None:
 
 
 def list_jobs_by_types_since(
-    conn: sqlite3.Connection, *, types: list[str], since: str
+    conn: Any, *, types: list[str], since: str
 ) -> list[Job]:
     if not _table_exists(conn, "jobs") or not types:
         return []
-    placeholders = ",".join("?" for _ in types)
+    placeholders = ",".join("%s" for _ in types)
     cursor = conn.execute(
         f"""
         SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
                finished_at, locked_by, locked_at, error
         FROM jobs
-        WHERE requested_at >= ? AND job_type IN ({placeholders})
+        WHERE requested_at >= %s AND job_type IN ({placeholders})
         ORDER BY requested_at ASC
         """,
         (since, *types),
@@ -979,7 +973,7 @@ def list_jobs_by_types_since(
 
 
 def insert_llm_run(
-    conn: sqlite3.Connection,
+    conn: Any,
     *,
     job_id: str | None,
     provider_id: str | None,
@@ -997,7 +991,7 @@ def insert_llm_run(
         INSERT INTO llm_runs
             (id, ts, job_id, provider_id, model_id, prompt_name,
              input_chars, output_chars, latency_ms, ok, error)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             run_id,
@@ -1017,7 +1011,7 @@ def insert_llm_run(
     return run_id
 
 
-def list_llm_runs(conn: sqlite3.Connection, limit: int = 10) -> list[dict[str, object]]:
+def list_llm_runs(conn: Any, limit: int = 10) -> list[dict[str, object]]:
     if not _table_exists(conn, "llm_runs"):
         return []
     cursor = conn.execute(
@@ -1026,7 +1020,7 @@ def list_llm_runs(conn: sqlite3.Connection, limit: int = 10) -> list[dict[str, o
                input_chars, output_chars, latency_ms, ok, error
         FROM llm_runs
         ORDER BY ts DESC
-        LIMIT ?
+        LIMIT %s
         """,
         (limit,),
     )
@@ -1063,12 +1057,12 @@ def list_llm_runs(conn: sqlite3.Connection, limit: int = 10) -> list[dict[str, o
     return items
 
 
-def update_job_result(conn: sqlite3.Connection, job_id: str, result: dict[str, object]) -> bool:
+def update_job_result(conn: Any, job_id: str, result: dict[str, object]) -> bool:
     cursor = conn.execute(
         """
         UPDATE jobs
-        SET result_json = ?
-        WHERE id = ? AND status = 'running'
+        SET result_json = %s
+        WHERE id = %s AND status = 'running'
         """,
         (json_dumps(result), job_id),
     )
@@ -1076,17 +1070,17 @@ def update_job_result(conn: sqlite3.Connection, job_id: str, result: dict[str, o
     return cursor.rowcount == 1
 
 
-def cancel_job(conn: sqlite3.Connection, job_id: str, reason: str = "canceled_by_admin") -> bool:
+def cancel_job(conn: Any, job_id: str, reason: str = "canceled_by_admin") -> bool:
     now = utc_now_iso()
     cursor = conn.execute(
         """
         UPDATE jobs
         SET status = 'canceled',
-            finished_at = ?,
-            error = ?,
+            finished_at = %s,
+            error = %s,
             locked_by = NULL,
             locked_at = NULL
-        WHERE id = ? AND status IN ('queued', 'running')
+        WHERE id = %s AND status IN ('queued', 'running')
         """,
         (now, reason, job_id),
     )
@@ -1094,14 +1088,14 @@ def cancel_job(conn: sqlite3.Connection, job_id: str, reason: str = "canceled_by
     return cursor.rowcount == 1
 
 
-def cancel_all_jobs(conn: sqlite3.Connection, reason: str = "canceled_by_admin") -> int:
+def cancel_all_jobs(conn: Any, reason: str = "canceled_by_admin") -> int:
     now = utc_now_iso()
     cursor = conn.execute(
         """
         UPDATE jobs
         SET status = 'canceled',
-            finished_at = ?,
-            error = ?,
+            finished_at = %s,
+            error = %s,
             locked_by = NULL,
             locked_at = NULL
         WHERE status IN ('queued', 'running')
@@ -1113,7 +1107,7 @@ def cancel_all_jobs(conn: sqlite3.Connection, reason: str = "canceled_by_admin")
 
 
 def cancel_jobs_by_type(
-    conn: sqlite3.Connection,
+    conn: Any,
     job_type: str,
     status: str = "queued",
     reason: str = "canceled_by_admin",
@@ -1123,11 +1117,11 @@ def cancel_jobs_by_type(
         """
         UPDATE jobs
         SET status = 'canceled',
-            finished_at = ?,
-            error = ?,
+            finished_at = %s,
+            error = %s,
             locked_by = NULL,
             locked_at = NULL
-        WHERE job_type = ? AND status = ?
+        WHERE job_type = %s AND status = %s
         """,
         (now, reason, job_type, status),
     )
@@ -1135,19 +1129,19 @@ def cancel_jobs_by_type(
     return int(cursor.rowcount or 0)
 
 
-def is_job_canceled(conn: sqlite3.Connection, job_id: str) -> bool:
-    row = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
+def is_job_canceled(conn: Any, job_id: str) -> bool:
+    row = conn.execute("SELECT status FROM jobs WHERE id = %s", (job_id,)).fetchone()
     return bool(row and row[0] == "canceled")
 
 
 def has_pending_job(
-    conn: sqlite3.Connection, job_type: str, exclude_job_id: str | None = None
+    conn: Any, job_type: str, exclude_job_id: str | None = None
 ) -> bool:
     if exclude_job_id:
         cursor = conn.execute(
             """
             SELECT 1 FROM jobs
-            WHERE job_type = ? AND status IN ('queued', 'running') AND id != ?
+            WHERE job_type = %s AND status IN ('queued', 'running') AND id != %s
             LIMIT 1
             """,
             (job_type, exclude_job_id),
@@ -1156,7 +1150,7 @@ def has_pending_job(
         cursor = conn.execute(
             """
             SELECT 1 FROM jobs
-            WHERE job_type = ? AND status IN ('queued', 'running')
+            WHERE job_type = %s AND status IN ('queued', 'running')
             LIMIT 1
             """,
             (job_type,),
@@ -1165,7 +1159,7 @@ def has_pending_job(
 
 
 def has_pending_article_job(
-    conn: sqlite3.Connection, job_type: str, article_id: int
+    conn: Any, job_type: str, article_id: int
 ) -> bool:
     if not _table_exists(conn, "jobs"):
         return False
@@ -1173,7 +1167,7 @@ def has_pending_article_job(
     cursor = conn.execute(
         """
         SELECT 1 FROM jobs
-        WHERE job_type = ? AND status IN ('queued', 'running') AND payload_json LIKE ?
+        WHERE job_type = %s AND status IN ('queued', 'running') AND payload_json LIKE %s
         LIMIT 1
         """,
         (job_type, pattern),
@@ -1182,7 +1176,7 @@ def has_pending_article_job(
 
 
 def count_failed_article_jobs(
-    conn: sqlite3.Connection, job_type: str, article_id: int
+    conn: Any, job_type: str, article_id: int
 ) -> int:
     if not _table_exists(conn, "jobs"):
         return 0
@@ -1190,7 +1184,7 @@ def count_failed_article_jobs(
     cursor = conn.execute(
         """
         SELECT COUNT(*) FROM jobs
-        WHERE job_type = ? AND status = 'failed' AND payload_json LIKE ?
+        WHERE job_type = %s AND status = 'failed' AND payload_json LIKE %s
         """,
         (job_type, pattern),
     )
@@ -1199,7 +1193,7 @@ def count_failed_article_jobs(
 
 
 def get_pending_article_job_id(
-    conn: sqlite3.Connection, job_type: str, article_id: int
+    conn: Any, job_type: str, article_id: int
 ) -> str | None:
     if not _table_exists(conn, "jobs"):
         return None
@@ -1211,7 +1205,7 @@ def get_pending_article_job_id(
         row = conn.execute(
             """
             SELECT id FROM jobs
-            WHERE job_type = ? AND status IN ('queued', 'running') AND payload_json LIKE ?
+            WHERE job_type = %s AND status IN ('queued', 'running') AND payload_json LIKE %s
             ORDER BY requested_at ASC
             LIMIT 1
             """,
@@ -1222,7 +1216,7 @@ def get_pending_article_job_id(
     return None
 
 
-def get_pending_cve_job_id(conn: sqlite3.Connection, cve_id: str) -> str | None:
+def get_pending_cve_job_id(conn: Any, cve_id: str) -> str | None:
     if not _table_exists(conn, "jobs"):
         return None
     patterns = [
@@ -1233,7 +1227,7 @@ def get_pending_cve_job_id(conn: sqlite3.Connection, cve_id: str) -> str | None:
         row = conn.execute(
             """
             SELECT id FROM jobs
-            WHERE job_type = 'cve_sync' AND status IN ('queued', 'running') AND payload_json LIKE ?
+            WHERE job_type = 'cve_sync' AND status IN ('queued', 'running') AND payload_json LIKE %s
             ORDER BY requested_at ASC
             LIMIT 1
             """,
@@ -1244,18 +1238,18 @@ def get_pending_cve_job_id(conn: sqlite3.Connection, cve_id: str) -> str | None:
     return None
 
 
-def get_source_name(conn: sqlite3.Connection, source_id: str) -> str | None:
-    row = conn.execute("SELECT name FROM sources WHERE id = ?", (source_id,)).fetchone()
+def get_source_name(conn: Any, source_id: str) -> str | None:
+    row = conn.execute("SELECT name FROM sources WHERE id = %s", (source_id,)).fetchone()
     return row[0] if row else None
 
 
-def get_batch_job_counts(conn: sqlite3.Connection, batch_id: str) -> dict[str, int]:
+def get_batch_job_counts(conn: Any, batch_id: str) -> dict[str, int]:
     pattern = f'%\"batch_id\":\"{batch_id}\"%'
     cursor = conn.execute(
         """
         SELECT status, COUNT(*)
         FROM jobs
-        WHERE job_type = 'write_article_markdown' AND payload_json LIKE ?
+        WHERE job_type = 'write_article_markdown' AND payload_json LIKE %s
         GROUP BY status
         """,
         (pattern,),
@@ -1267,15 +1261,15 @@ def get_batch_job_counts(conn: sqlite3.Connection, batch_id: str) -> dict[str, i
     return counts
 
 
-def count_articles_total(conn: sqlite3.Connection, source_id: str) -> int:
+def count_articles_total(conn: Any, source_id: str) -> int:
     if not _table_exists(conn, "articles"):
         return 0
-    cursor = conn.execute("SELECT COUNT(*) FROM articles WHERE source_id = ?", (source_id,))
+    cursor = conn.execute("SELECT COUNT(*) FROM articles WHERE source_id = %s", (source_id,))
     return int(cursor.fetchone()[0] or 0)
 
 
 def insert_source_health_event(
-    conn: sqlite3.Connection,
+    conn: Any,
     source_id: str,
     ts: str,
     ok: bool,
@@ -1292,7 +1286,7 @@ def insert_source_health_event(
         INSERT INTO source_health_history
             (id, source_id, ts, ok, found_count, accepted_count, seen_count,
              filtered_count, error_count, last_error, duration_ms)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             str(uuid.uuid4()),
@@ -1312,16 +1306,16 @@ def insert_source_health_event(
 
 
 def list_source_health_events(
-    conn: sqlite3.Connection, source_id: str, limit: int = 50
+    conn: Any, source_id: str, limit: int = 50
 ) -> list[dict[str, object]]:
     cursor = conn.execute(
         """
         SELECT id, source_id, ts, ok, found_count, accepted_count, seen_count,
                filtered_count, error_count, last_error, duration_ms
         FROM source_health_history
-        WHERE source_id = ?
+        WHERE source_id = %s
         ORDER BY ts DESC
-        LIMIT ?
+        LIMIT %s
         """,
         (source_id, limit),
     )
@@ -1358,24 +1352,24 @@ def list_source_health_events(
     return rows
 
 
-def count_articles_since(conn: sqlite3.Connection, source_id: str, since_iso: str) -> int:
+def count_articles_since(conn: Any, source_id: str, since_iso: str) -> int:
     cursor = conn.execute(
         """
         SELECT COUNT(*)
         FROM articles
-        WHERE source_id = ? AND published_at >= ?
+        WHERE source_id = %s AND published_at >= %s
         """,
         (source_id, since_iso),
     )
     return int(cursor.fetchone()[0])
 
 
-def get_last_source_run(conn: sqlite3.Connection, source_id: str) -> dict[str, object] | None:
+def get_last_source_run(conn: Any, source_id: str) -> dict[str, object] | None:
     cursor = conn.execute(
         """
         SELECT started_at, items_accepted, status, error
         FROM source_runs
-        WHERE source_id = ?
+        WHERE source_id = %s
         ORDER BY started_at DESC
         LIMIT 1
         """,
@@ -1392,7 +1386,7 @@ def get_last_source_run(conn: sqlite3.Connection, source_id: str) -> dict[str, o
     }
 
 
-def list_articles_per_day(conn: sqlite3.Connection, since_day: str) -> list[dict[str, object]]:
+def list_articles_per_day(conn: Any, since_day: str) -> list[dict[str, object]]:
     if not _table_exists(conn, "articles"):
         return []
     columns = _table_columns(conn, "articles")
@@ -1407,7 +1401,7 @@ def list_articles_per_day(conn: sqlite3.Connection, since_day: str) -> list[dict
         f"""
         SELECT {date_expr} as day, COUNT(*)
         FROM articles
-        WHERE {date_expr} >= ?
+        WHERE {date_expr} >= %s
         GROUP BY day
         ORDER BY day
         """,
@@ -1417,7 +1411,7 @@ def list_articles_per_day(conn: sqlite3.Connection, since_day: str) -> list[dict
 
 
 def get_source_stats(
-    conn: sqlite3.Connection, days: int, runs: int
+    conn: Any, days: int, runs: int
 ) -> list[dict[str, object]]:
     since_day = (datetime.now(tz=timezone.utc) - timedelta(days=days)).date().isoformat()
     article_columns = _table_columns(conn, "articles") if _table_exists(conn, "articles") else set()
@@ -1431,24 +1425,24 @@ def get_source_stats(
     ).fetchall()
     for source_id, name, enabled, interval_minutes in sources:
         total_articles = conn.execute(
-            "SELECT COUNT(*) FROM articles WHERE source_id = ?",
+            "SELECT COUNT(*) FROM articles WHERE source_id = %s",
             (source_id,),
         ).fetchone()[0]
         if has_full_content_col:
             full_content = conn.execute(
-                "SELECT COUNT(*) FROM articles WHERE source_id = ? AND has_full_content = 1",
+                "SELECT COUNT(*) FROM articles WHERE source_id = %s AND has_full_content = 1",
                 (source_id,),
             ).fetchone()[0]
         elif extracted_text_col:
             full_content = conn.execute(
-                "SELECT COUNT(*) FROM articles WHERE source_id = ? AND extracted_text_path IS NOT NULL",
+                "SELECT COUNT(*) FROM articles WHERE source_id = %s AND extracted_text_path IS NOT NULL",
                 (source_id,),
             ).fetchone()[0]
         else:
             full_content = 0
         summaries = (
             conn.execute(
-                "SELECT COUNT(*) FROM articles WHERE source_id = ? AND summary_llm IS NOT NULL",
+                "SELECT COUNT(*) FROM articles WHERE source_id = %s AND summary_llm IS NOT NULL",
                 (source_id,),
             ).fetchone()[0]
             if has_summary_col
@@ -1456,7 +1450,7 @@ def get_source_stats(
         )
         if brief_day_col:
             recent_articles = conn.execute(
-                "SELECT COUNT(*) FROM articles WHERE source_id = ? AND brief_day >= ?",
+                "SELECT COUNT(*) FROM articles WHERE source_id = %s AND brief_day >= %s",
                 (source_id, since_day),
             ).fetchone()[0]
         else:
@@ -1464,7 +1458,7 @@ def get_source_stats(
                 """
                 SELECT COUNT(*)
                 FROM articles
-                WHERE source_id = ? AND COALESCE(substr(published_at, 1, 10), substr(ingested_at, 1, 10)) >= ?
+                WHERE source_id = %s AND COALESCE(substr(published_at, 1, 10), substr(ingested_at, 1, 10)) >= %s
                 """,
                 (source_id, since_day),
             ).fetchone()[0]
@@ -1475,9 +1469,9 @@ def get_source_stats(
                 FROM (
                     SELECT ok
                     FROM source_health_history
-                    WHERE source_id = ?
+                    WHERE source_id = %s
                     ORDER BY ts DESC
-                    LIMIT ?
+                    LIMIT %s
                 )
                 """,
                 (source_id, runs),
@@ -1490,7 +1484,7 @@ def get_source_stats(
         last_run_row = None
         if _table_exists(conn, "source_runs"):
             last_run_row = conn.execute(
-                "SELECT started_at FROM source_runs WHERE source_id = ? ORDER BY started_at DESC LIMIT 1",
+                "SELECT started_at FROM source_runs WHERE source_id = %s ORDER BY started_at DESC LIMIT 1",
                 (source_id,),
             ).fetchone()
         last_run_at = last_run_row[0] if last_run_row else None
@@ -1502,7 +1496,7 @@ def get_source_stats(
                 """
                 SELECT ts
                 FROM source_health_history
-                WHERE source_id = ? AND ok = 1
+                WHERE source_id = %s AND ok = 1
                 ORDER BY ts DESC
                 LIMIT 1
                 """,
@@ -1512,7 +1506,7 @@ def get_source_stats(
                 """
                 SELECT last_error
                 FROM source_health_history
-                WHERE source_id = ? AND ok = 0 AND last_error IS NOT NULL
+                WHERE source_id = %s AND ok = 0 AND last_error IS NOT NULL
                 ORDER BY ts DESC
                 LIMIT 1
                 """,
@@ -1545,110 +1539,10 @@ def get_source_stats(
 
 
 def claim_next_job(
-    conn: sqlite3.Connection,
+    conn: Any,
     worker_id: str,
     allowed_types: list[str] | None = None,
     lock_timeout_seconds: int | None = None,
-) -> Job | None:
-    backend = getattr(conn, "backend", "sqlite")
-    if backend == "postgres":
-        return _claim_next_job_postgres(conn, worker_id, allowed_types, lock_timeout_seconds)
-    conn.execute("BEGIN IMMEDIATE")
-    if lock_timeout_seconds is not None:
-        cutoff = utc_now_iso_offset(seconds=-lock_timeout_seconds)
-        conn.execute(
-            """
-            UPDATE jobs
-            SET status = 'queued',
-                locked_by = NULL,
-                locked_at = NULL,
-                started_at = NULL,
-                error = 'stale_lock_requeued'
-            WHERE status = 'running' AND locked_at IS NOT NULL AND locked_at < ?
-            """,
-            (cutoff,),
-        )
-    for _ in range(20):
-        if allowed_types:
-            placeholders = ",".join("?" for _ in allowed_types)
-            cursor = conn.execute(
-                f"""
-                SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
-                       finished_at, locked_by, locked_at, error
-                FROM jobs
-                WHERE status = 'queued' AND locked_by IS NULL AND job_type IN ({placeholders})
-                ORDER BY requested_at ASC
-                LIMIT 1
-                """,
-                tuple(allowed_types),
-            )
-        else:
-            cursor = conn.execute(
-                """
-                SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
-                       finished_at, locked_by, locked_at, error
-                FROM jobs
-                WHERE status = 'queued' AND locked_by IS NULL
-                ORDER BY requested_at ASC
-                LIMIT 1
-                """
-            )
-        row = cursor.fetchone()
-        if not row:
-            conn.execute("COMMIT")
-            return None
-        payload_json = row[3]
-        try:
-            payload = json.loads(payload_json) if payload_json else {}
-        except json.JSONDecodeError:
-            payload = {}
-        not_before = payload.get("not_before")
-        if not_before and isinstance(not_before, str) and not_before > utc_now_iso():
-            conn.execute(
-                """
-                UPDATE jobs
-                SET requested_at = ?
-                WHERE id = ?
-                """,
-                (not_before, row[0]),
-            )
-            continue
-        break
-    job_id = row[0]
-    now = utc_now_iso()
-    result = conn.execute(
-        """
-        UPDATE jobs
-        SET status = 'running', started_at = ?, locked_by = ?, locked_at = ?
-        WHERE id = ? AND status = 'queued' AND locked_by IS NULL
-        """,
-        (now, worker_id, now, job_id),
-    )
-    if result.rowcount == 0:
-        conn.execute("COMMIT")
-        return None
-    conn.execute("COMMIT")
-    job = _row_to_job(row)
-    return Job(
-        id=job.id,
-        job_type=job.job_type,
-        status="running",
-        payload=job.payload,
-        result=job.result,
-        requested_at=job.requested_at,
-        started_at=now,
-        finished_at=job.finished_at,
-        locked_by=worker_id,
-        locked_at=now,
-        error=job.error,
-    )
-
-
-def _claim_next_job_postgres(
-    conn: sqlite3.Connection,
-    worker_id: str,
-    allowed_types: list[str] | None,
-    lock_timeout_seconds: int | None,
 ) -> Job | None:
     conn.execute("BEGIN")
     if lock_timeout_seconds is not None:
@@ -1741,48 +1635,22 @@ def _claim_next_job_postgres(
 
 
 def try_acquire_lease(
-    conn: sqlite3.Connection,
+    conn: Any,
     lease_name: str,
     holder: str,
     ttl_seconds: int,
 ) -> bool:
-    backend = getattr(conn, "backend", "sqlite")
-    if backend == "postgres":
-        key = _lease_key(lease_name)
-        cursor = conn.execute("SELECT pg_try_advisory_lock(%s)", (key,))
-        row = cursor.fetchone()
-        return bool(row and row[0])
-    now = utc_now_iso()
-    expires_at = utc_now_iso_offset(seconds=ttl_seconds)
-    cursor = conn.execute(
-        """
-        INSERT INTO llm_leases (lease_name, acquired_at, expires_at, holder)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(lease_name) DO UPDATE SET
-            acquired_at = excluded.acquired_at,
-            expires_at = excluded.expires_at,
-            holder = excluded.holder
-        WHERE llm_leases.expires_at < ?
-        """,
-        (lease_name, now, expires_at, holder, now),
-    )
-    conn.commit()
-    return cursor.rowcount == 1
+    key = _lease_key(lease_name)
+    cursor = conn.execute("SELECT pg_try_advisory_lock(%s)", (key,))
+    row = cursor.fetchone()
+    return bool(row and row[0])
 
 
-def release_lease(conn: sqlite3.Connection, lease_name: str, holder: str) -> bool:
-    backend = getattr(conn, "backend", "sqlite")
-    if backend == "postgres":
-        key = _lease_key(lease_name)
-        cursor = conn.execute("SELECT pg_advisory_unlock(%s)", (key,))
-        row = cursor.fetchone()
-        return bool(row and row[0])
-    cursor = conn.execute(
-        "DELETE FROM llm_leases WHERE lease_name = ? AND holder = ?",
-        (lease_name, holder),
-    )
-    conn.commit()
-    return cursor.rowcount == 1
+def release_lease(conn: Any, lease_name: str, holder: str) -> bool:
+    key = _lease_key(lease_name)
+    cursor = conn.execute("SELECT pg_advisory_unlock(%s)", (key,))
+    row = cursor.fetchone()
+    return bool(row and row[0])
 
 
 def _lease_key(lease_name: str) -> int:
@@ -1792,14 +1660,14 @@ def _lease_key(lease_name: str) -> int:
 
 
 def complete_job(
-    conn: sqlite3.Connection, job_id: str, result: dict[str, object] | None = None
+    conn: Any, job_id: str, result: dict[str, object] | None = None
 ) -> bool:
     now = utc_now_iso()
     cursor = conn.execute(
         """
         UPDATE jobs
-        SET status = 'succeeded', finished_at = ?, error = NULL, result_json = ?
-        WHERE id = ? AND status = 'running'
+        SET status = 'succeeded', finished_at = %s, error = NULL, result_json = %s
+        WHERE id = %s AND status = 'running'
         """,
         (now, json_dumps(result) if result else None, job_id),
     )
@@ -1807,13 +1675,13 @@ def complete_job(
     return cursor.rowcount == 1
 
 
-def fail_job(conn: sqlite3.Connection, job_id: str, error: str) -> bool:
+def fail_job(conn: Any, job_id: str, error: str) -> bool:
     now = utc_now_iso()
     cursor = conn.execute(
         """
         UPDATE jobs
-        SET status = 'failed', finished_at = ?, error = ?
-        WHERE id = ? AND status = 'running'
+        SET status = 'failed', finished_at = %s, error = %s
+        WHERE id = %s AND status = 'running'
         """,
         (now, error, job_id),
     )
@@ -1822,7 +1690,7 @@ def fail_job(conn: sqlite3.Connection, job_id: str, error: str) -> bool:
 
 
 def requeue_job(
-    conn: sqlite3.Connection,
+    conn: Any,
     job_id: str,
     payload: dict[str, object],
     requested_at: str,
@@ -1831,15 +1699,15 @@ def requeue_job(
         """
         UPDATE jobs
         SET status = 'queued',
-            requested_at = ?,
-            payload_json = ?,
+            requested_at = %s,
+            payload_json = %s,
             result_json = NULL,
             started_at = NULL,
             finished_at = NULL,
             locked_by = NULL,
             locked_at = NULL,
             error = NULL
-        WHERE id = ? AND status = 'running'
+        WHERE id = %s AND status = 'running'
         """,
         (requested_at, json_dumps(payload), job_id),
     )
@@ -1938,11 +1806,11 @@ def _row_to_job(row: tuple) -> Job:
     )
 
 
-def _has_pending_job(conn: sqlite3.Connection, job_type: str) -> bool:
+def _has_pending_job(conn: Any, job_type: str) -> bool:
     cursor = conn.execute(
         """
         SELECT 1 FROM jobs
-        WHERE job_type = ? AND status IN ('queued', 'running')
+        WHERE job_type = %s AND status IN ('queued', 'running')
         LIMIT 1
         """,
         (job_type,),
@@ -1950,11 +1818,11 @@ def _has_pending_job(conn: sqlite3.Connection, job_type: str) -> bool:
     return cursor.fetchone() is not None
 
 
-def _get_latest_job_id(conn: sqlite3.Connection, job_type: str) -> str:
+def _get_latest_job_id(conn: Any, job_type: str) -> str:
     cursor = conn.execute(
         """
         SELECT id FROM jobs
-        WHERE job_type = ?
+        WHERE job_type = %s
         ORDER BY requested_at DESC
         LIMIT 1
         """,
@@ -1968,9 +1836,9 @@ def _new_job_id() -> str:
     return f"job_{uuid.uuid4().hex}"
 
 
-def _get_article_id(conn: sqlite3.Connection, source_id: str, stable_id: str) -> int | None:
+def _get_article_id(conn: Any, source_id: str, stable_id: str) -> int | None:
     cursor = conn.execute(
-        "SELECT id FROM articles WHERE source_id = ? AND stable_id = ?",
+        "SELECT id FROM articles WHERE source_id = %s AND stable_id = %s",
         (source_id, stable_id),
     )
     row = cursor.fetchone()
@@ -1986,7 +1854,7 @@ def _brief_day_from(value: str) -> str:
         return utc_now_iso().split("T")[0]
 
 
-def get_article_by_id(conn: sqlite3.Connection, article_id: int) -> dict[str, object] | None:
+def get_article_by_id(conn: Any, article_id: int) -> dict[str, object] | None:
     if not _table_exists(conn, "articles"):
         return None
     columns = _table_columns(conn, "articles")
@@ -2021,7 +1889,7 @@ def get_article_by_id(conn: sqlite3.Connection, article_id: int) -> dict[str, ob
     if "id" not in selected:
         return None
     cursor = conn.execute(
-        f"SELECT {', '.join(selected)} FROM articles WHERE id = ?",
+        f"SELECT {', '.join(selected)} FROM articles WHERE id = %s",
         (article_id,),
     )
     row = cursor.fetchone()
@@ -2064,21 +1932,21 @@ def get_article_by_id(conn: sqlite3.Connection, article_id: int) -> dict[str, ob
     }
 
 
-def get_article_tags(conn: sqlite3.Connection, article_id: int) -> list[str]:
+def get_article_tags(conn: Any, article_id: int) -> list[str]:
     if not _table_exists(conn, "article_tags"):
         return []
     cursor = conn.execute(
-        "SELECT tag FROM article_tags WHERE article_id = ? ORDER BY tag",
+        "SELECT tag FROM article_tags WHERE article_id = %s ORDER BY tag",
         (article_id,),
     )
     return [row[0] for row in cursor.fetchall() if row and row[0]]
 
 
-def list_article_ids_missing_content(conn: sqlite3.Connection, source_id: str) -> list[int]:
+def list_article_ids_missing_content(conn: Any, source_id: str) -> list[int]:
     if not _table_exists(conn, "articles"):
         return []
     columns = _table_columns(conn, "articles")
-    clauses: list[str] = ["source_id = ?"]
+    clauses: list[str] = ["source_id = %s"]
     params: list[object] = [source_id]
     url_parts: list[str] = []
     if "original_url" in columns:
@@ -2101,7 +1969,7 @@ def list_article_ids_missing_content(conn: sqlite3.Connection, source_id: str) -
     return [int(row[0]) for row in cursor.fetchall()]
 
 
-def list_article_ids_missing_summary(conn: sqlite3.Connection, source_id: str) -> list[int]:
+def list_article_ids_missing_summary(conn: Any, source_id: str) -> list[int]:
     if not _table_exists(conn, "articles"):
         return []
     columns = _table_columns(conn, "articles")
@@ -2110,7 +1978,7 @@ def list_article_ids_missing_summary(conn: sqlite3.Connection, source_id: str) -
     cursor = conn.execute(
         """
         SELECT id FROM articles
-        WHERE source_id = ? AND (summary_llm IS NULL OR summary_llm = '')
+        WHERE source_id = %s AND (summary_llm IS NULL OR summary_llm = '')
         ORDER BY ingested_at DESC
         """,
         (source_id,),
@@ -2119,14 +1987,14 @@ def list_article_ids_missing_summary(conn: sqlite3.Connection, source_id: str) -
 
 
 def list_article_ids_for_source_since(
-    conn: sqlite3.Connection, source_id: str, since_iso: str
+    conn: Any, source_id: str, since_iso: str
 ) -> list[int]:
     if not _table_exists(conn, "articles"):
         return []
     cursor = conn.execute(
         """
         SELECT id FROM articles
-        WHERE source_id = ? AND ingested_at >= ?
+        WHERE source_id = %s AND ingested_at >= %s
         ORDER BY ingested_at DESC
         """,
         (source_id, since_iso),
@@ -2143,7 +2011,7 @@ def _load_text_file(path: str, limit: int = 250_000) -> str | None:
         return None
 
 
-def list_article_tags(conn: sqlite3.Connection) -> list[dict[str, object]]:
+def list_article_tags(conn: Any) -> list[dict[str, object]]:
     if not _table_exists(conn, "article_tags") or not _table_exists(conn, "articles"):
         return []
     cursor = conn.execute(
@@ -2158,7 +2026,7 @@ def list_article_tags(conn: sqlite3.Connection) -> list[dict[str, object]]:
     return [{"tag": row[0], "count": row[1]} for row in cursor.fetchall()]
 
 
-def upsert_vendor(conn: sqlite3.Connection, vendor_display: str) -> int:
+def upsert_vendor(conn: Any, vendor_display: str) -> int:
     vendor_norm = normalize_name(vendor_display)
     if not vendor_norm:
         vendor_norm = "unknown"
@@ -2167,13 +2035,13 @@ def upsert_vendor(conn: sqlite3.Connection, vendor_display: str) -> int:
     conn.execute(
         """
         INSERT INTO vendors (name_norm, display_name, created_at)
-        VALUES (?, ?, ?)
+        VALUES (%s, %s, %s)
         ON CONFLICT(name_norm) DO UPDATE SET display_name = excluded.display_name
         """,
         (vendor_norm, display, now),
     )
     row = conn.execute(
-        "SELECT id FROM vendors WHERE name_norm = ?",
+        "SELECT id FROM vendors WHERE name_norm = %s",
         (vendor_norm,),
     ).fetchone()
     conn.commit()
@@ -2181,13 +2049,13 @@ def upsert_vendor(conn: sqlite3.Connection, vendor_display: str) -> int:
 
 
 def upsert_product(
-    conn: sqlite3.Connection, vendor_id: int, product_display: str
+    conn: Any, vendor_id: int, product_display: str
 ) -> tuple[int, str]:
     product_norm = normalize_name(product_display)
     if not product_norm:
         product_norm = "unknown"
     vendor_row = conn.execute(
-        "SELECT name_norm FROM vendors WHERE id = ?",
+        "SELECT name_norm FROM vendors WHERE id = %s",
         (vendor_id,),
     ).fetchone()
     vendor_norm = vendor_row[0] if vendor_row else "unknown"
@@ -2197,13 +2065,13 @@ def upsert_product(
     conn.execute(
         """
         INSERT INTO products (vendor_id, name_norm, display_name, product_key, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
         ON CONFLICT(vendor_id, name_norm) DO UPDATE SET display_name = excluded.display_name
         """,
         (vendor_id, product_norm, display, product_key, now),
     )
     row = conn.execute(
-        "SELECT id, product_key FROM products WHERE vendor_id = ? AND name_norm = ?",
+        "SELECT id, product_key FROM products WHERE vendor_id = %s AND name_norm = %s",
         (vendor_id, product_norm),
     ).fetchone()
     conn.commit()
@@ -2211,7 +2079,7 @@ def upsert_product(
 
 
 def link_cve_product(
-    conn: sqlite3.Connection,
+    conn: Any,
     cve_id: str,
     product_id: int,
     source: str = "nvd",
@@ -2220,8 +2088,9 @@ def link_cve_product(
     now = utc_now_iso()
     conn.execute(
         """
-        INSERT OR IGNORE INTO cve_products (cve_id, product_id, source, evidence_json, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO cve_products (cve_id, product_id, source, evidence_json, created_at)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT DO NOTHING
         """,
         (cve_id, product_id, source, json_dumps(evidence) if evidence else None, now),
     )
@@ -2229,7 +2098,7 @@ def link_cve_product(
 
 
 def backfill_products_from_cves(
-    conn: sqlite3.Connection, limit: int | None = None
+    conn: Any, limit: int | None = None
 ) -> dict[str, object]:
     stats = {
         "cves_processed": 0,
@@ -2241,7 +2110,7 @@ def backfill_products_from_cves(
         return stats
     cursor = conn.execute(
         "SELECT cve_id, affected_products_json, affected_cpes_json FROM cves"
-        + (" LIMIT ?" if limit else ""),
+        + (" LIMIT %s" if limit else ""),
         (limit,) if limit else (),
     )
     for cve_id, products_json, cpes_json in cursor.fetchall():
@@ -2271,7 +2140,7 @@ def backfill_products_from_cves(
 
 
 def query_products(
-    conn: sqlite3.Connection,
+    conn: Any,
     query: str | None,
     vendor: str | None,
     page: int,
@@ -2283,11 +2152,11 @@ def query_products(
     params: list[object] = []
     if query:
         like = f"%{query.lower()}%"
-        where.append("(LOWER(p.display_name) LIKE ? OR LOWER(p.name_norm) LIKE ?)")
+        where.append("(LOWER(p.display_name) LIKE %s OR LOWER(p.name_norm) LIKE %s)")
         params.extend([like, like])
     if vendor:
         like = f"%{vendor.lower()}%"
-        where.append("(LOWER(v.display_name) LIKE ? OR LOWER(v.name_norm) LIKE ?)")
+        where.append("(LOWER(v.display_name) LIKE %s OR LOWER(v.name_norm) LIKE %s)")
         params.extend([like, like])
     where_sql = " AND ".join(where)
     if where_sql:
@@ -2312,7 +2181,7 @@ def query_products(
         JOIN vendors v ON v.id = p.vendor_id
         {where_sql}
         ORDER BY v.display_name, p.display_name
-        LIMIT ? OFFSET ?
+        LIMIT %s OFFSET %s
         """,
         [*params, page_size, offset],
     )
@@ -2328,7 +2197,7 @@ def query_products(
     return items, total
 
 
-def get_product(conn: sqlite3.Connection, product_key: str) -> dict[str, object] | None:
+def get_product(conn: Any, product_key: str) -> dict[str, object] | None:
     if not _table_exists(conn, "products"):
         return None
     row = conn.execute(
@@ -2336,7 +2205,7 @@ def get_product(conn: sqlite3.Connection, product_key: str) -> dict[str, object]
         SELECT p.id, p.product_key, p.display_name, v.display_name, v.name_norm
         FROM products p
         JOIN vendors v ON v.id = p.vendor_id
-        WHERE p.product_key = ?
+        WHERE p.product_key = %s
         """,
         (product_key,),
     ).fetchone()
@@ -2352,7 +2221,7 @@ def get_product(conn: sqlite3.Connection, product_key: str) -> dict[str, object]
 
 
 def get_product_cves(
-    conn: sqlite3.Connection,
+    conn: Any,
     product_id: int,
     severity_min: float | None,
     severities: list[str] | None,
@@ -2361,14 +2230,14 @@ def get_product_cves(
 ) -> tuple[list[dict[str, object]], int]:
     if not _table_exists(conn, "cve_products") or not _table_exists(conn, "cves"):
         return [], 0
-    where: list[str] = ["cp.product_id = ?"]
+    where: list[str] = ["cp.product_id = %s"]
     params: list[object] = [product_id]
     if severity_min is not None:
-        where.append("c.preferred_base_score >= ?")
+        where.append("c.preferred_base_score >= %s")
         params.append(severity_min)
     if severities:
         normalized = [value.upper() for value in severities]
-        placeholders = ",".join("?" for _ in normalized)
+        placeholders = ",".join("%s" for _ in normalized)
         where.append(f"c.preferred_base_severity IN ({placeholders})")
         params.extend(normalized)
     where_sql = " AND ".join(where)
@@ -2391,7 +2260,7 @@ def get_product_cves(
         JOIN cves c ON c.cve_id = cp.cve_id
         WHERE {where_sql}
         ORDER BY c.last_modified_at DESC
-        LIMIT ? OFFSET ?
+        LIMIT %s OFFSET %s
         """,
         [*params, page_size, offset],
     )
@@ -2409,7 +2278,7 @@ def get_product_cves(
     return items, total
 
 
-def get_product_facets(conn: sqlite3.Connection, product_id: int) -> dict[str, int]:
+def get_product_facets(conn: Any, product_id: int) -> dict[str, int]:
     if not _table_exists(conn, "cve_products") or not _table_exists(conn, "cves"):
         return {}
     cursor = conn.execute(
@@ -2417,7 +2286,7 @@ def get_product_facets(conn: sqlite3.Connection, product_id: int) -> dict[str, i
         SELECT COALESCE(c.preferred_base_severity, 'UNKNOWN') as severity, COUNT(*)
         FROM cve_products cp
         JOIN cves c ON c.cve_id = cp.cve_id
-        WHERE cp.product_id = ?
+        WHERE cp.product_id = %s
         GROUP BY severity
         """,
         (product_id,),
@@ -2425,7 +2294,7 @@ def get_product_facets(conn: sqlite3.Connection, product_id: int) -> dict[str, i
     return {row[0]: int(row[1]) for row in cursor.fetchall()}
 
 
-def list_product_keys_for_cve(conn: sqlite3.Connection, cve_id: str) -> list[str]:
+def list_product_keys_for_cve(conn: Any, cve_id: str) -> list[str]:
     if not _table_exists(conn, "cve_products") or not _table_exists(conn, "products"):
         return []
     cursor = conn.execute(
@@ -2433,7 +2302,7 @@ def list_product_keys_for_cve(conn: sqlite3.Connection, cve_id: str) -> list[str
         SELECT p.product_key
         FROM cve_products cp
         JOIN products p ON p.id = cp.product_id
-        WHERE cp.cve_id = ?
+        WHERE cp.cve_id = %s
         ORDER BY p.product_key
         """,
         (cve_id,),
@@ -2441,7 +2310,7 @@ def list_product_keys_for_cve(conn: sqlite3.Connection, cve_id: str) -> list[str
     return [row[0] for row in cursor.fetchall()]
 
 
-def get_product_display_by_key(conn: sqlite3.Connection, product_key: str) -> dict[str, str] | None:
+def get_product_display_by_key(conn: Any, product_key: str) -> dict[str, str] | None:
     if not _table_exists(conn, "products") or not _table_exists(conn, "vendors"):
         return None
     row = conn.execute(
@@ -2449,7 +2318,7 @@ def get_product_display_by_key(conn: sqlite3.Connection, product_key: str) -> di
         SELECT p.display_name, v.display_name
         FROM products p
         JOIN vendors v ON v.id = p.vendor_id
-        WHERE p.product_key = ?
+        WHERE p.product_key = %s
         """,
         (product_key,),
     ).fetchone()
@@ -2459,7 +2328,7 @@ def get_product_display_by_key(conn: sqlite3.Connection, product_key: str) -> di
 
 
 def create_event(
-    conn: sqlite3.Connection,
+    conn: Any,
     kind: str,
     title: str,
     severity: str | None,
@@ -2475,7 +2344,7 @@ def create_event(
         INSERT INTO events
             (id, kind, title, summary, severity, created_at, updated_at,
              first_seen_at, last_seen_at, status, meta_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             event_id,
@@ -2496,26 +2365,27 @@ def create_event(
 
 
 def upsert_event_item(
-    conn: sqlite3.Connection, event_id: str, item_type: str, item_key: str
+    conn: Any, event_id: str, item_type: str, item_key: str
 ) -> None:
     conn.execute(
         """
-        INSERT OR IGNORE INTO event_items (event_id, item_type, item_key, created_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO event_items (event_id, item_type, item_key, created_at)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT DO NOTHING
         """,
         (event_id, item_type, item_key, utc_now_iso()),
     )
     conn.commit()
 
 
-def touch_event(conn: sqlite3.Connection, event_id: str, seen_at: str) -> None:
+def touch_event(conn: Any, event_id: str, seen_at: str) -> None:
     now = utc_now_iso()
     conn.execute(
         """
         UPDATE events
-        SET last_seen_at = CASE WHEN last_seen_at > ? THEN last_seen_at ELSE ? END,
-            updated_at = ?
-        WHERE id = ?
+        SET last_seen_at = CASE WHEN last_seen_at > %s THEN last_seen_at ELSE %s END,
+            updated_at = %s
+        WHERE id = %s
         """,
         (seen_at, seen_at, now, event_id),
     )
@@ -2529,13 +2399,13 @@ def _severity_rank(severity: str | None) -> int:
     return order.get(severity.upper(), 0)
 
 
-def _event_title_for(conn: sqlite3.Connection, event_id: str) -> str | None:
+def _event_title_for(conn: Any, event_id: str) -> str | None:
     cursor = conn.execute(
         """
         SELECT p.product_key
         FROM event_items ei
         JOIN products p ON p.product_key = ei.item_key
-        WHERE ei.event_id = ? AND ei.item_type = 'product'
+        WHERE ei.event_id = %s AND ei.item_type = 'product'
         ORDER BY p.product_key
         LIMIT 1
         """,
@@ -2550,7 +2420,7 @@ def _event_title_for(conn: sqlite3.Connection, event_id: str) -> str | None:
         """
         SELECT item_key
         FROM event_items
-        WHERE event_id = ? AND item_type = 'cve'
+        WHERE event_id = %s AND item_type = 'cve'
         ORDER BY item_key
         LIMIT 1
         """,
@@ -2562,7 +2432,7 @@ def _event_title_for(conn: sqlite3.Connection, event_id: str) -> str | None:
     return None
 
 
-def update_event_rollups(conn: sqlite3.Connection, event_id: str) -> None:
+def update_event_rollups(conn: Any, event_id: str) -> None:
     if not _table_exists(conn, "events"):
         return
     cursor = conn.execute(
@@ -2570,7 +2440,7 @@ def update_event_rollups(conn: sqlite3.Connection, event_id: str) -> None:
         SELECT c.preferred_base_severity
         FROM event_items ei
         JOIN cves c ON c.cve_id = ei.item_key
-        WHERE ei.event_id = ? AND ei.item_type = 'cve'
+        WHERE ei.event_id = %s AND ei.item_type = 'cve'
         """,
         (event_id,),
     )
@@ -2584,7 +2454,7 @@ def update_event_rollups(conn: sqlite3.Connection, event_id: str) -> None:
             best = severity
     title_prefix = _event_title_for(conn, event_id)
     count_cursor = conn.execute(
-        "SELECT COUNT(*) FROM event_items WHERE event_id = ? AND item_type = 'cve'",
+        "SELECT COUNT(*) FROM event_items WHERE event_id = %s AND item_type = 'cve'",
         (event_id,),
     )
     cve_count = int(count_cursor.fetchone()[0])
@@ -2596,22 +2466,22 @@ def update_event_rollups(conn: sqlite3.Connection, event_id: str) -> None:
     conn.execute(
         """
         UPDATE events
-        SET severity = ?, title = ?, updated_at = ?
-        WHERE id = ?
+        SET severity = %s, title = %s, updated_at = %s
+        WHERE id = %s
         """,
         (best or "UNKNOWN", title, now, event_id),
     )
     conn.commit()
 
 
-def _find_event_for_cve(conn: sqlite3.Connection, cve_id: str) -> str | None:
+def _find_event_for_cve(conn: Any, cve_id: str) -> str | None:
     if not _table_exists(conn, "event_items"):
         return None
     row = conn.execute(
         """
         SELECT event_id
         FROM event_items
-        WHERE item_type = 'cve' AND item_key = ?
+        WHERE item_type = 'cve' AND item_key = %s
         LIMIT 1
         """,
         (cve_id,),
@@ -2620,14 +2490,14 @@ def _find_event_for_cve(conn: sqlite3.Connection, cve_id: str) -> str | None:
 
 
 def find_merge_candidate_event(
-    conn: sqlite3.Connection,
+    conn: Any,
     product_keys: list[str],
     window_days: int,
     min_shared_products: int,
 ) -> str | None:
     if not product_keys or not _table_exists(conn, "event_items"):
         return None
-    placeholders = ",".join("?" for _ in product_keys)
+    placeholders = ",".join("%s" for _ in product_keys)
     cutoff = utc_now_iso_offset(seconds=-(window_days * 86400))
     cursor = conn.execute(
         f"""
@@ -2636,11 +2506,11 @@ def find_merge_candidate_event(
         JOIN event_items ei ON ei.event_id = e.id
         WHERE e.status = 'open'
           AND e.kind = 'cve_cluster'
-          AND e.last_seen_at >= ?
+          AND e.last_seen_at >= %s
           AND ei.item_type = 'product'
           AND ei.item_key IN ({placeholders})
         GROUP BY e.id
-        HAVING COUNT(*) >= ?
+        HAVING COUNT(*) >= %s
         ORDER BY matches DESC, e.last_seen_at DESC
         LIMIT 1
         """,
@@ -2651,7 +2521,7 @@ def find_merge_candidate_event(
 
 
 def upsert_event_for_cve(
-    conn: sqlite3.Connection,
+    conn: Any,
     cve_id: str,
     published_at: str | None,
     window_days: int,
@@ -2697,7 +2567,7 @@ def upsert_event_for_cve(
 
 
 def link_article_to_events(
-    conn: sqlite3.Connection,
+    conn: Any,
     article_id: int,
     cve_ids: list[str],
     published_at: str | None,
@@ -2717,7 +2587,7 @@ def link_article_to_events(
 
 
 def list_events(
-    conn: sqlite3.Connection,
+    conn: Any,
     status: str | None,
     kind: str | None,
     severity: str | None,
@@ -2732,23 +2602,23 @@ def list_events(
     where: list[str] = []
     params: list[object] = []
     if status:
-        where.append("status = ?")
+        where.append("status = %s")
         params.append(status)
     if kind:
-        where.append("kind = ?")
+        where.append("kind = %s")
         params.append(kind)
     if severity:
-        where.append("severity = ?")
+        where.append("severity = %s")
         params.append(severity)
     if query:
         like = f"%{query.lower()}%"
-        where.append("(LOWER(title) LIKE ? OR LOWER(summary) LIKE ?)")
+        where.append("(LOWER(title) LIKE %s OR LOWER(summary) LIKE %s)")
         params.extend([like, like])
     if after:
-        where.append("last_seen_at >= ?")
+        where.append("last_seen_at >= %s")
         params.append(after)
     if before:
-        where.append("last_seen_at <= ?")
+        where.append("last_seen_at <= %s")
         params.append(before)
     where_sql = " AND ".join(where)
     if where_sql:
@@ -2766,7 +2636,7 @@ def list_events(
         FROM events
         {where_sql}
         ORDER BY last_seen_at DESC
-        LIMIT ? OFFSET ?
+        LIMIT %s OFFSET %s
         """,
         [*params, page_size, offset],
     )
@@ -2788,7 +2658,7 @@ def list_events(
     return items, total
 
 
-def get_event(conn: sqlite3.Connection, event_id: str) -> dict[str, object] | None:
+def get_event(conn: Any, event_id: str) -> dict[str, object] | None:
     if not _table_exists(conn, "events"):
         return None
     row = conn.execute(
@@ -2796,7 +2666,7 @@ def get_event(conn: sqlite3.Connection, event_id: str) -> dict[str, object] | No
         SELECT id, kind, title, summary, severity, created_at, updated_at,
                first_seen_at, last_seen_at, status, meta_json
         FROM events
-        WHERE id = ?
+        WHERE id = %s
         """,
         (event_id,),
     ).fetchone()
@@ -2822,7 +2692,7 @@ def get_event(conn: sqlite3.Connection, event_id: str) -> dict[str, object] | No
                c.preferred_base_severity, c.description_text
         FROM event_items ei
         JOIN cves c ON c.cve_id = ei.item_key
-        WHERE ei.event_id = ? AND ei.item_type = 'cve'
+        WHERE ei.event_id = %s AND ei.item_type = 'cve'
         ORDER BY c.last_modified_at DESC
         """,
         (event_id,),
@@ -2843,7 +2713,7 @@ def get_event(conn: sqlite3.Connection, event_id: str) -> dict[str, object] | No
         FROM event_items ei
         JOIN products p ON p.product_key = ei.item_key
         JOIN vendors v ON v.id = p.vendor_id
-        WHERE ei.event_id = ? AND ei.item_type = 'product'
+        WHERE ei.event_id = %s AND ei.item_type = 'product'
         ORDER BY v.display_name, p.display_name
         """,
         (event_id,),
@@ -2863,7 +2733,7 @@ def get_event(conn: sqlite3.Connection, event_id: str) -> dict[str, object] | No
             SELECT a.id, a.title, a.published_at, a.original_url
             FROM event_items ei
             JOIN articles a ON a.id = CAST(ei.item_key AS INTEGER)
-            WHERE ei.event_id = ? AND ei.item_type = 'article'
+            WHERE ei.event_id = %s AND ei.item_type = 'article'
             ORDER BY a.published_at DESC
             """,
             (event_id,),
@@ -2882,7 +2752,7 @@ def get_event(conn: sqlite3.Connection, event_id: str) -> dict[str, object] | No
 
 
 def list_events_for_product(
-    conn: sqlite3.Connection,
+    conn: Any,
     product_key: str,
     page: int,
     page_size: int,
@@ -2894,7 +2764,7 @@ def list_events_for_product(
         SELECT COUNT(DISTINCT e.id)
         FROM event_items ei
         JOIN events e ON e.id = ei.event_id
-        WHERE ei.item_type = 'product' AND ei.item_key = ?
+        WHERE ei.item_type = 'product' AND ei.item_key = %s
         """,
         (product_key,),
     )
@@ -2905,9 +2775,9 @@ def list_events_for_product(
         SELECT e.id, e.kind, e.title, e.severity, e.last_seen_at, e.status
         FROM event_items ei
         JOIN events e ON e.id = ei.event_id
-        WHERE ei.item_type = 'product' AND ei.item_key = ?
+        WHERE ei.item_type = 'product' AND ei.item_key = %s
         ORDER BY e.last_seen_at DESC
-        LIMIT ? OFFSET ?
+        LIMIT %s OFFSET %s
         """,
         (product_key, page_size, offset),
     )
@@ -2926,7 +2796,7 @@ def list_events_for_product(
 
 
 def rebuild_events_from_cves(
-    conn: sqlite3.Connection,
+    conn: Any,
     window_days: int,
     min_shared_products: int,
     limit: int | None = None,
@@ -2950,7 +2820,7 @@ def rebuild_events_from_cves(
         return stats
     cursor = conn.execute(
         "SELECT cve_id, published_at FROM cves ORDER BY published_at"
-        + (" LIMIT ?" if limit else ""),
+        + (" LIMIT %s" if limit else ""),
         (limit,) if limit else (),
     )
     for cve_id, published_at in cursor.fetchall():
@@ -3016,7 +2886,7 @@ def rebuild_events_from_cves(
                 SELECT {title_sel}, {summary_sel}, {content_sel}
                 FROM event_items ei
                 JOIN articles a ON a.id = CAST(ei.item_key AS INTEGER)
-                WHERE ei.event_id = ? AND ei.item_type = 'article'
+                WHERE ei.event_id = %s AND ei.item_type = 'article'
                 """,
                 (event_id,),
             ).fetchall()
@@ -3029,10 +2899,10 @@ def rebuild_events_from_cves(
                     break
             if article_count == 0 or (article_count == 1 and not incident_signal):
                 if _table_exists(conn, "event_items"):
-                    conn.execute("DELETE FROM event_items WHERE event_id = ?", (event_id,))
+                    conn.execute("DELETE FROM event_items WHERE event_id = %s", (event_id,))
                 if _table_exists(conn, "event_signals"):
-                    conn.execute("DELETE FROM event_signals WHERE event_id = ?", (event_id,))
-                conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+                    conn.execute("DELETE FROM event_signals WHERE event_id = %s", (event_id,))
+                conn.execute("DELETE FROM events WHERE id = %s", (event_id,))
                 if article_count == 0:
                     pruned_zero += 1
                 else:
@@ -3051,7 +2921,7 @@ def rebuild_events_from_cves(
     return stats
 
 
-def delete_all_articles(conn: sqlite3.Connection, *, delete_files: bool = False) -> dict[str, object]:
+def delete_all_articles(conn: Any, *, delete_files: bool = False) -> dict[str, object]:
     stats: dict[str, object] = {"tables": {}, "files_deleted": 0, "file_errors": []}
     file_paths: list[str] = []
     if delete_files and _table_exists(conn, "articles"):
@@ -3067,62 +2937,59 @@ def delete_all_articles(conn: sqlite3.Connection, *, delete_files: bool = False)
                     if isinstance(value, str) and value:
                         file_paths.append(value)
 
-    conn.execute("BEGIN IMMEDIATE")
-    if _table_exists(conn, "article_tags"):
-        cursor = conn.execute("DELETE FROM article_tags")
-        stats["tables"]["article_tags"] = cursor.rowcount
-    if _table_exists(conn, "article_cves"):
-        cursor = conn.execute("DELETE FROM article_cves")
-        stats["tables"]["article_cves"] = cursor.rowcount
-    if _table_exists(conn, "articles"):
-        cursor = conn.execute("DELETE FROM articles")
-        stats["tables"]["articles"] = cursor.rowcount
-    conn.execute("COMMIT")
+    with conn.transaction():
+        if _table_exists(conn, "article_tags"):
+            cursor = conn.execute("DELETE FROM article_tags")
+            stats["tables"]["article_tags"] = cursor.rowcount
+        if _table_exists(conn, "article_cves"):
+            cursor = conn.execute("DELETE FROM article_cves")
+            stats["tables"]["article_cves"] = cursor.rowcount
+        if _table_exists(conn, "articles"):
+            cursor = conn.execute("DELETE FROM articles")
+            stats["tables"]["articles"] = cursor.rowcount
 
     if delete_files:
         _delete_content_files(conn, file_paths, stats)
     return stats
 
 
-def delete_all_cves(conn: sqlite3.Connection) -> dict[str, object]:
+def delete_all_cves(conn: Any) -> dict[str, object]:
     stats: dict[str, object] = {"tables": {}}
-    conn.execute("BEGIN IMMEDIATE")
-    if _table_exists(conn, "article_cves"):
-        cursor = conn.execute("DELETE FROM article_cves")
-        stats["tables"]["article_cves"] = cursor.rowcount
-    if _table_exists(conn, "cve_products"):
-        cursor = conn.execute("DELETE FROM cve_products")
-        stats["tables"]["cve_products"] = cursor.rowcount
-    if _table_exists(conn, "cve_changes"):
-        cursor = conn.execute("DELETE FROM cve_changes")
-        stats["tables"]["cve_changes"] = cursor.rowcount
-    if _table_exists(conn, "cve_snapshots"):
-        cursor = conn.execute("DELETE FROM cve_snapshots")
-        stats["tables"]["cve_snapshots"] = cursor.rowcount
-    if _table_exists(conn, "cves"):
-        cursor = conn.execute("DELETE FROM cves")
-        stats["tables"]["cves"] = cursor.rowcount
-    conn.execute("COMMIT")
+    with conn.transaction():
+        if _table_exists(conn, "article_cves"):
+            cursor = conn.execute("DELETE FROM article_cves")
+            stats["tables"]["article_cves"] = cursor.rowcount
+        if _table_exists(conn, "cve_products"):
+            cursor = conn.execute("DELETE FROM cve_products")
+            stats["tables"]["cve_products"] = cursor.rowcount
+        if _table_exists(conn, "cve_changes"):
+            cursor = conn.execute("DELETE FROM cve_changes")
+            stats["tables"]["cve_changes"] = cursor.rowcount
+        if _table_exists(conn, "cve_snapshots"):
+            cursor = conn.execute("DELETE FROM cve_snapshots")
+            stats["tables"]["cve_snapshots"] = cursor.rowcount
+        if _table_exists(conn, "cves"):
+            cursor = conn.execute("DELETE FROM cves")
+            stats["tables"]["cves"] = cursor.rowcount
     return stats
 
 
-def delete_all_events(conn: sqlite3.Connection) -> dict[str, object]:
+def delete_all_events(conn: Any) -> dict[str, object]:
     stats: dict[str, object] = {"tables": {}}
-    conn.execute("BEGIN IMMEDIATE")
-    if _table_exists(conn, "event_signals"):
-        cursor = conn.execute("DELETE FROM event_signals")
-        stats["tables"]["event_signals"] = cursor.rowcount
-    if _table_exists(conn, "event_items"):
-        cursor = conn.execute("DELETE FROM event_items")
-        stats["tables"]["event_items"] = cursor.rowcount
-    if _table_exists(conn, "events"):
-        cursor = conn.execute("DELETE FROM events")
-        stats["tables"]["events"] = cursor.rowcount
-    conn.execute("COMMIT")
+    with conn.transaction():
+        if _table_exists(conn, "event_signals"):
+            cursor = conn.execute("DELETE FROM event_signals")
+            stats["tables"]["event_signals"] = cursor.rowcount
+        if _table_exists(conn, "event_items"):
+            cursor = conn.execute("DELETE FROM event_items")
+            stats["tables"]["event_items"] = cursor.rowcount
+        if _table_exists(conn, "events"):
+            cursor = conn.execute("DELETE FROM events")
+            stats["tables"]["events"] = cursor.rowcount
     return stats
 
 
-def delete_all_content(conn: sqlite3.Connection, *, delete_files: bool = False) -> dict[str, object]:
+def delete_all_content(conn: Any, *, delete_files: bool = False) -> dict[str, object]:
     articles = delete_all_articles(conn, delete_files=delete_files)
     cves = delete_all_cves(conn)
     events = delete_all_events(conn)
@@ -3130,7 +2997,7 @@ def delete_all_content(conn: sqlite3.Connection, *, delete_files: bool = False) 
 
 
 def _delete_content_files(
-    conn: sqlite3.Connection, file_paths: list[str], stats: dict[str, object]
+    conn: Any, file_paths: list[str], stats: dict[str, object]
 ) -> None:
     config = get_setting(conn, "config.runtime", {}) or {}
     data_dir = ((config.get("paths") or {}).get("data_dir") or "").strip()
@@ -3155,7 +3022,7 @@ def _delete_content_files(
 
 
 def search_articles(
-    conn: sqlite3.Connection,
+    conn: Any,
     query: str | None,
     source_id: str | None,
     has_summary: bool | None,
@@ -3178,17 +3045,17 @@ def search_articles(
     params: list[object] = []
     if query:
         like = f"%{query}%"
-        parts = ["a.title LIKE ?"]
+        parts = ["a.title LIKE %s"]
         params.append(like)
         if "content_text" in columns:
-            parts.append("a.content_text LIKE ?")
+            parts.append("a.content_text LIKE %s")
             params.append(like)
         if "summary_llm" in columns:
-            parts.append("a.summary_llm LIKE ?")
+            parts.append("a.summary_llm LIKE %s")
             params.append(like)
         where.append("(" + " OR ".join(parts) + ")")
     if source_id:
-        where.append("a.source_id = ?")
+        where.append("a.source_id = %s")
         params.append(source_id)
     content_missing_clause = None
     if "has_full_content" in columns:
@@ -3268,18 +3135,18 @@ def search_articles(
                 return [], 0
     if after:
         if "published_at" in columns:
-            where.append("a.published_at >= ?")
+            where.append("a.published_at >= %s")
             params.append(after)
     if before:
         if "published_at" in columns:
-            where.append("a.published_at <= ?")
+            where.append("a.published_at <= %s")
             params.append(before)
     if tags:
         if not _table_exists(conn, "article_tags"):
             return [], 0
         where.append(
             "EXISTS (SELECT 1 FROM article_tags t WHERE t.article_id = a.id AND t.tag IN ({}))".format(
-                ",".join("?" for _ in tags)
+                ",".join("%s" for _ in tags)
             )
         )
         params.extend(tags)
@@ -3295,7 +3162,7 @@ def search_articles(
             EXISTS (
                 SELECT 1 FROM article_cves ac
                 JOIN cve_scope cs ON cs.cve_id = ac.cve_id
-                WHERE ac.article_id = a.id AND cs.in_scope = ?
+                WHERE ac.article_id = a.id AND cs.in_scope = %s
             )
             """.strip()
         )
@@ -3357,7 +3224,7 @@ def search_articles(
         {where_sql}
         GROUP BY a.id
         ORDER BY {order_col} DESC
-        LIMIT ? OFFSET ?
+        LIMIT %s OFFSET %s
         """,
         [*params, page_size, offset],
     )
@@ -3397,7 +3264,7 @@ def search_articles(
     return items, total
 
 
-def get_cve(conn: sqlite3.Connection, cve_id: str) -> dict[str, object] | None:
+def get_cve(conn: Any, cve_id: str) -> dict[str, object] | None:
     columns = _table_columns(conn, "cves") if _table_exists(conn, "cves") else set()
     selected = [
         "cve_id",
@@ -3424,7 +3291,7 @@ def get_cve(conn: sqlite3.Connection, cve_id: str) -> dict[str, object] | None:
         f"""
         SELECT {", ".join(selected)}
         FROM cves
-        WHERE cve_id = ?
+        WHERE cve_id = %s
         """,
         (cve_id,),
     )
@@ -3445,7 +3312,7 @@ def get_cve(conn: sqlite3.Connection, cve_id: str) -> dict[str, object] | None:
     scope = None
     if _table_exists(conn, "cve_scope"):
         scope = conn.execute(
-            "SELECT in_scope, reasons_json FROM cve_scope WHERE cve_id = ?",
+            "SELECT in_scope, reasons_json FROM cve_scope WHERE cve_id = %s",
             (cve_id,),
         ).fetchone()
     return {
@@ -3472,9 +3339,9 @@ def get_cve(conn: sqlite3.Connection, cve_id: str) -> dict[str, object] | None:
     }
 
 
-def get_cve_last_seen(conn: sqlite3.Connection, cve_id: str) -> str | None:
+def get_cve_last_seen(conn: Any, cve_id: str) -> str | None:
     cursor = conn.execute(
-        "SELECT MAX(observed_at) FROM cve_snapshots WHERE cve_id = ?",
+        "SELECT MAX(observed_at) FROM cve_snapshots WHERE cve_id = %s",
         (cve_id,),
     )
     row = cursor.fetchone()
@@ -3482,7 +3349,7 @@ def get_cve_last_seen(conn: sqlite3.Connection, cve_id: str) -> str | None:
 
 
 def search_cves(
-    conn: sqlite3.Connection,
+    conn: Any,
     query: str | None,
     severities: list[str] | None,
     min_cvss: float | None,
@@ -3503,7 +3370,7 @@ def search_cves(
     if query:
         like = f"%{query}%"
         where.append(
-            "(cve_id LIKE ? OR description_text LIKE ? OR LOWER(affected_products_json) LIKE ? OR LOWER(affected_cpes_json) LIKE ?)"
+            "(cve_id LIKE %s OR description_text LIKE %s OR LOWER(affected_products_json) LIKE %s OR LOWER(affected_cpes_json) LIKE %s)"
         )
         params.extend([like, like, like.lower(), like.lower()])
     if severities:
@@ -3513,7 +3380,7 @@ def search_cves(
         condition_parts = []
         if normalized:
             condition_parts.append(
-                "preferred_base_severity IN ({})".format(",".join("?" for _ in normalized))
+                "preferred_base_severity IN ({})".format(",".join("%s" for _ in normalized))
             )
             params.extend(normalized)
         if include_unknown:
@@ -3521,7 +3388,7 @@ def search_cves(
         if condition_parts:
             where.append("(" + " OR ".join(condition_parts) + ")")
     if min_cvss is not None:
-        where.append("preferred_base_score >= ?")
+        where.append("preferred_base_score >= %s")
         params.append(min_cvss)
     if missing_description:
         if "description_text" in columns:
@@ -3529,23 +3396,23 @@ def search_cves(
         else:
             return [], 0
     if after:
-        where.append("published_at >= ?")
+        where.append("published_at >= %s")
         params.append(after)
     if before:
-        where.append("published_at <= ?")
+        where.append("published_at <= %s")
         params.append(before)
     if vendor_keywords:
         for keyword in vendor_keywords:
             like = f"%{keyword.lower()}%"
             where.append(
-                "(LOWER(description_text) LIKE ? OR LOWER(affected_products_json) LIKE ? OR LOWER(affected_cpes_json) LIKE ? OR LOWER(reference_domains_json) LIKE ?)"
+                "(LOWER(description_text) LIKE %s OR LOWER(affected_products_json) LIKE %s OR LOWER(affected_cpes_json) LIKE %s OR LOWER(reference_domains_json) LIKE %s)"
             )
             params.extend([like, like, like, like])
     if product_keywords:
         for keyword in product_keywords:
             like = f"%{keyword.lower()}%"
             where.append(
-                "(LOWER(description_text) LIKE ? OR LOWER(affected_products_json) LIKE ? OR LOWER(affected_cpes_json) LIKE ? OR LOWER(reference_domains_json) LIKE ?)"
+                "(LOWER(description_text) LIKE %s OR LOWER(affected_products_json) LIKE %s OR LOWER(affected_cpes_json) LIKE %s OR LOWER(reference_domains_json) LIKE %s)"
             )
             params.extend([like, like, like, like])
     if in_scope and has_scope:
@@ -3555,12 +3422,12 @@ def search_cves(
         scope_sevs = filters.get("severities") or []
         if scope_sevs:
             where.append(
-                "preferred_base_severity IN ({})".format(",".join("?" for _ in scope_sevs))
+                "preferred_base_severity IN ({})".format(",".join("%s" for _ in scope_sevs))
             )
             params.extend([severity.upper() for severity in scope_sevs])
         min_score = filters.get("min_cvss")
         if min_score is not None:
-            where.append("preferred_base_score >= ?")
+            where.append("preferred_base_score >= %s")
             params.append(min_score)
         if filters.get("require_known_score"):
             where.append("preferred_base_score IS NOT NULL")
@@ -3571,13 +3438,13 @@ def search_cves(
             keyword_where = []
             for keyword in keyword_filters:
                 like = f"%{keyword.lower()}%"
-                keyword_where.append("LOWER(description_text) LIKE ?")
+                keyword_where.append("LOWER(description_text) LIKE %s")
                 params.append(like)
-                keyword_where.append("LOWER(affected_products_json) LIKE ?")
+                keyword_where.append("LOWER(affected_products_json) LIKE %s")
                 params.append(like)
-                keyword_where.append("LOWER(affected_cpes_json) LIKE ?")
+                keyword_where.append("LOWER(affected_cpes_json) LIKE %s")
                 params.append(like)
-                keyword_where.append("LOWER(reference_domains_json) LIKE ?")
+                keyword_where.append("LOWER(reference_domains_json) LIKE %s")
                 params.append(like)
             where.append("(" + " OR ".join(keyword_where) + ")")
 
@@ -3622,7 +3489,7 @@ def search_cves(
         {"LEFT JOIN cve_scope cs ON cs.cve_id = c.cve_id" if has_scope else ""}
         {where_sql}
         ORDER BY c.last_modified_at DESC
-        LIMIT ? OFFSET ?
+        LIMIT %s OFFSET %s
         """,
         [*params, page_size, offset],
     )
@@ -3655,7 +3522,7 @@ def search_cves(
     return items, total
 
 
-def _list_cve_product_versions(conn: sqlite3.Connection, cve_id: str | None) -> list[str]:
+def _list_cve_product_versions(conn: Any, cve_id: str | None) -> list[str]:
     if not cve_id or not _table_exists(conn, "cve_product_versions"):
         return []
     if not _table_exists(conn, "products") or not _table_exists(conn, "vendors"):
@@ -3666,7 +3533,7 @@ def _list_cve_product_versions(conn: sqlite3.Connection, cve_id: str | None) -> 
         FROM cve_product_versions cpv
         JOIN products p ON p.id = cpv.product_id
         JOIN vendors v ON v.id = p.vendor_id
-        WHERE cpv.cve_id = ?
+        WHERE cpv.cve_id = %s
         ORDER BY v.display_name, p.display_name, cpv.version
         """,
         (cve_id,),
@@ -3678,7 +3545,7 @@ def _list_cve_product_versions(conn: sqlite3.Connection, cve_id: str | None) -> 
     ]
 
 
-def list_watchlist_vendors(conn: sqlite3.Connection) -> list[dict[str, object]]:
+def list_watchlist_vendors(conn: Any) -> list[dict[str, object]]:
     if not _table_exists(conn, "watched_vendors"):
         return []
     cursor = conn.execute(
@@ -3700,7 +3567,7 @@ def list_watchlist_vendors(conn: sqlite3.Connection) -> list[dict[str, object]]:
     ]
 
 
-def list_watchlist_products(conn: sqlite3.Connection) -> list[dict[str, object]]:
+def list_watchlist_products(conn: Any) -> list[dict[str, object]]:
     if not _table_exists(conn, "watched_products"):
         return []
     cursor = conn.execute(
@@ -3724,22 +3591,23 @@ def list_watchlist_products(conn: sqlite3.Connection) -> list[dict[str, object]]
     ]
 
 
-def add_watchlist_vendor(conn: sqlite3.Connection, display_name: str) -> dict[str, object]:
+def add_watchlist_vendor(conn: Any, display_name: str) -> dict[str, object]:
     vendor_norm = normalize_name(display_name)
     record_id = f"wv_{uuid.uuid4().hex}"
     conn.execute(
         """
-        INSERT OR IGNORE INTO watched_vendors
+        INSERT INTO watched_vendors
             (id, vendor_norm, display_name, enabled, created_at)
-        VALUES (?, ?, ?, 1, ?)
+        VALUES (%s, %s, %s, 1, %s)
+        ON CONFLICT DO NOTHING
         """,
         (record_id, vendor_norm, display_name, utc_now_iso()),
     )
     conn.execute(
         """
         UPDATE watched_vendors
-        SET display_name = ?, enabled = 1
-        WHERE vendor_norm = ?
+        SET display_name = %s, enabled = 1
+        WHERE vendor_norm = %s
         """,
         (display_name, vendor_norm),
     )
@@ -3748,7 +3616,7 @@ def add_watchlist_vendor(conn: sqlite3.Connection, display_name: str) -> dict[st
 
 
 def add_watchlist_product(
-    conn: sqlite3.Connection,
+    conn: Any,
     display_name: str,
     vendor_norm: str | None,
     match_mode: str,
@@ -3758,9 +3626,10 @@ def add_watchlist_product(
     record_id = f"wp_{uuid.uuid4().hex}"
     conn.execute(
         """
-        INSERT OR IGNORE INTO watched_products
+        INSERT INTO watched_products
             (id, vendor_norm, product_norm, display_name, match_mode, enabled, created_at)
-        VALUES (?, ?, ?, ?, ?, 1, ?)
+        VALUES (%s, %s, %s, %s, %s, 1, %s)
+        ON CONFLICT DO NOTHING
         """,
         (record_id, vendor_norm_val, product_norm, display_name, match_mode, utc_now_iso()),
     )
@@ -3775,41 +3644,41 @@ def add_watchlist_product(
     }
 
 
-def update_watchlist_vendor(conn: sqlite3.Connection, vendor_id: str, enabled: bool) -> None:
+def update_watchlist_vendor(conn: Any, vendor_id: str, enabled: bool) -> None:
     conn.execute(
-        "UPDATE watched_vendors SET enabled = ? WHERE id = ?",
+        "UPDATE watched_vendors SET enabled = %s WHERE id = %s",
         (1 if enabled else 0, vendor_id),
     )
     conn.commit()
 
 
 def update_watchlist_product(
-    conn: sqlite3.Connection, product_id: str, enabled: bool, match_mode: str | None = None
+    conn: Any, product_id: str, enabled: bool, match_mode: str | None = None
 ) -> None:
     if match_mode:
         conn.execute(
-            "UPDATE watched_products SET enabled = ?, match_mode = ? WHERE id = ?",
+            "UPDATE watched_products SET enabled = %s, match_mode = %s WHERE id = %s",
             (1 if enabled else 0, match_mode, product_id),
         )
     else:
         conn.execute(
-            "UPDATE watched_products SET enabled = ? WHERE id = ?",
+            "UPDATE watched_products SET enabled = %s WHERE id = %s",
             (1 if enabled else 0, product_id),
         )
     conn.commit()
 
 
-def delete_watchlist_vendor(conn: sqlite3.Connection, vendor_id: str) -> None:
-    conn.execute("DELETE FROM watched_vendors WHERE id = ?", (vendor_id,))
+def delete_watchlist_vendor(conn: Any, vendor_id: str) -> None:
+    conn.execute("DELETE FROM watched_vendors WHERE id = %s", (vendor_id,))
     conn.commit()
 
 
-def delete_watchlist_product(conn: sqlite3.Connection, product_id: str) -> None:
-    conn.execute("DELETE FROM watched_products WHERE id = ?", (product_id,))
+def delete_watchlist_product(conn: Any, product_id: str) -> None:
+    conn.execute("DELETE FROM watched_products WHERE id = %s", (product_id,))
     conn.commit()
 
 
-def list_watchlist_suggestions(conn: sqlite3.Connection, limit: int = 20) -> dict[str, list[dict[str, object]]]:
+def list_watchlist_suggestions(conn: Any, limit: int = 20) -> dict[str, list[dict[str, object]]]:
     vendors: list[dict[str, object]] = []
     products: list[dict[str, object]] = []
     if _table_exists(conn, "cve_products") and _table_exists(conn, "products") and _table_exists(conn, "vendors"):
@@ -3821,7 +3690,7 @@ def list_watchlist_suggestions(conn: sqlite3.Connection, limit: int = 20) -> dic
             JOIN vendors v ON v.id = p.vendor_id
             GROUP BY v.id
             ORDER BY cnt DESC
-            LIMIT ?
+            LIMIT %s
             """,
             (limit,),
         )
@@ -3837,7 +3706,7 @@ def list_watchlist_suggestions(conn: sqlite3.Connection, limit: int = 20) -> dic
             JOIN vendors v ON v.id = p.vendor_id
             GROUP BY p.id
             ORDER BY cnt DESC
-            LIMIT ?
+            LIMIT %s
             """,
             (limit,),
         )
@@ -3853,14 +3722,14 @@ def list_watchlist_suggestions(conn: sqlite3.Connection, limit: int = 20) -> dic
     return {"vendors": vendors, "products": products}
 
 
-def list_cve_ids(conn: sqlite3.Connection) -> list[str]:
+def list_cve_ids(conn: Any) -> list[str]:
     if not _table_exists(conn, "cves"):
         return []
     cursor = conn.execute("SELECT cve_id FROM cves")
     return [row[0] for row in cursor.fetchall() if row and row[0]]
 
 
-def _cve_vendor_product_norms(conn: sqlite3.Connection, cve_id: str) -> list[tuple[str, str]]:
+def _cve_vendor_product_norms(conn: Any, cve_id: str) -> list[tuple[str, str]]:
     if not (_table_exists(conn, "cve_products") and _table_exists(conn, "products") and _table_exists(conn, "vendors")):
         return []
     cursor = conn.execute(
@@ -3869,7 +3738,7 @@ def _cve_vendor_product_norms(conn: sqlite3.Connection, cve_id: str) -> list[tup
         FROM cve_products cp
         JOIN products p ON p.id = cp.product_id
         JOIN vendors v ON v.id = p.vendor_id
-        WHERE cp.cve_id = ?
+        WHERE cp.cve_id = %s
         """,
         (cve_id,),
     )
@@ -3877,14 +3746,14 @@ def _cve_vendor_product_norms(conn: sqlite3.Connection, cve_id: str) -> list[tup
 
 
 def evaluate_cve_scope(
-    conn: sqlite3.Connection, cve_id: str, min_cvss: float | None = None
+    conn: Any, cve_id: str, min_cvss: float | None = None
 ) -> dict[str, object]:
     reasons: list[str] = []
     in_scope = False
     if not _table_exists(conn, "cves"):
         return {"in_scope": False, "reasons": []}
     row = conn.execute(
-        "SELECT preferred_base_score FROM cves WHERE cve_id = ?",
+        "SELECT preferred_base_score FROM cves WHERE cve_id = %s",
         (cve_id,),
     ).fetchone()
     preferred_score = row[0] if row else None
@@ -3925,13 +3794,13 @@ def evaluate_cve_scope(
     return {"in_scope": in_scope, "reasons": reasons}
 
 
-def upsert_cve_scope(conn: sqlite3.Connection, cve_id: str, in_scope: bool, reasons: list[str]) -> None:
+def upsert_cve_scope(conn: Any, cve_id: str, in_scope: bool, reasons: list[str]) -> None:
     if not _table_exists(conn, "cve_scope"):
         return
     conn.execute(
         """
         INSERT INTO cve_scope (id, cve_id, in_scope, reasons_json, computed_at)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
         ON CONFLICT(cve_id) DO UPDATE SET
             in_scope=excluded.in_scope,
             reasons_json=excluded.reasons_json,
@@ -3949,7 +3818,7 @@ def upsert_cve_scope(conn: sqlite3.Connection, cve_id: str, in_scope: bool, reas
 
 
 def compute_scope_for_cves(
-    conn: sqlite3.Connection, cve_ids: list[str], min_cvss: float | None = None
+    conn: Any, cve_ids: list[str], min_cvss: float | None = None
 ) -> dict[str, int]:
     updated = 0
     for cve_id in cve_ids:
@@ -3959,7 +3828,7 @@ def compute_scope_for_cves(
     return {"updated": updated}
 
 
-def list_cve_vendor_products(conn: sqlite3.Connection, cve_id: str) -> list[dict[str, object]]:
+def list_cve_vendor_products(conn: Any, cve_id: str) -> list[dict[str, object]]:
     if not (_table_exists(conn, "cve_products") and _table_exists(conn, "products") and _table_exists(conn, "vendors")):
         return []
     cursor = conn.execute(
@@ -3968,7 +3837,7 @@ def list_cve_vendor_products(conn: sqlite3.Connection, cve_id: str) -> list[dict
         FROM cve_products cp
         JOIN products p ON p.id = cp.product_id
         JOIN vendors v ON v.id = p.vendor_id
-        WHERE cp.cve_id = ?
+        WHERE cp.cve_id = %s
         ORDER BY v.display_name, p.display_name
         """,
         (cve_id,),
@@ -3985,18 +3854,18 @@ def list_cve_vendor_products(conn: sqlite3.Connection, cve_id: str) -> list[dict
     ]
 
 
-def _list_article_cve_ids(conn: sqlite3.Connection, article_id: int) -> list[str]:
+def _list_article_cve_ids(conn: Any, article_id: int) -> list[str]:
     if not _table_exists(conn, "article_cves"):
         return []
     cursor = conn.execute(
-        "SELECT cve_id FROM article_cves WHERE article_id = ?",
+        "SELECT cve_id FROM article_cves WHERE article_id = %s",
         (article_id,),
     )
     return [row[0] for row in cursor.fetchall() if row and row[0]]
 
 
 def compute_watchlist_hits(
-    conn: sqlite3.Connection,
+    conn: Any,
     *,
     item_type: str,
     item_key: str | int,
@@ -4022,7 +3891,7 @@ def compute_watchlist_hits(
     return {"hit": False, "reasons": []}
 
 
-def cve_data_completeness(conn: sqlite3.Connection, limit: int = 20) -> dict[str, object]:
+def cve_data_completeness(conn: Any, limit: int = 20) -> dict[str, object]:
     if not _table_exists(conn, "cves"):
         return {"counts": {}, "missing": []}
     columns = _table_columns(conn, "cves")
@@ -4093,7 +3962,7 @@ def cve_data_completeness(conn: sqlite3.Connection, limit: int = 20) -> dict[str
             FROM cves
             WHERE {" OR ".join(where_missing)}
             ORDER BY published_at DESC
-            LIMIT ?
+            LIMIT %s
             """,
             (limit,),
         )
@@ -4136,7 +4005,7 @@ def cve_data_completeness(conn: sqlite3.Connection, limit: int = 20) -> dict[str
 
 
 def update_article_content(
-    conn: sqlite3.Connection,
+    conn: Any,
     article_id: int,
     *,
     content_text: str | None,
@@ -4148,9 +4017,9 @@ def update_article_content(
     conn.execute(
         """
         UPDATE articles
-        SET content_text = ?, content_html = ?, content_fetched_at = ?,
-            content_error = ?, has_full_content = ?
-        WHERE id = ?
+        SET content_text = %s, content_html = %s, content_fetched_at = %s,
+            content_error = %s, has_full_content = %s
+        WHERE id = %s
         """,
         (
             content_text,
@@ -4165,7 +4034,7 @@ def update_article_content(
 
 
 def update_article_summary(
-    conn: sqlite3.Connection,
+    conn: Any,
     article_id: int,
     *,
     summary_llm: str | None,
@@ -4176,9 +4045,9 @@ def update_article_summary(
     conn.execute(
         """
         UPDATE articles
-        SET summary_llm = ?, summary_model = ?, summary_generated_at = ?,
-            summary_error = ?
-        WHERE id = ?
+        SET summary_llm = %s, summary_model = %s, summary_generated_at = %s,
+            summary_error = %s
+        WHERE id = %s
         """,
         (
             summary_llm,
@@ -4191,14 +4060,15 @@ def update_article_summary(
     conn.commit()
 
 
-def _insert_article_tags(conn: sqlite3.Connection, article_id: int, tags: list[str]) -> None:
+def _insert_article_tags(conn: Any, article_id: int, tags: list[str]) -> None:
     if not tags:
         return
     rows = [(article_id, tag, None) for tag in tags]
     conn.executemany(
         """
-        INSERT OR IGNORE INTO article_tags (article_id, tag, tag_type)
-        VALUES (?, ?, ?)
+        INSERT INTO article_tags (article_id, tag, tag_type)
+        VALUES (%s, %s, %s)
+        ON CONFLICT DO NOTHING
         """,
         rows,
     )
@@ -4238,7 +4108,7 @@ def _source_from_dict(source_dict: dict[str, object]) -> Source:
     )
 
 
-def _last_run_map(conn: sqlite3.Connection) -> dict[str, str]:
+def _last_run_map(conn: Any) -> dict[str, str]:
     cursor = conn.execute(
         """
         SELECT source_id, MAX(started_at) AS last_run

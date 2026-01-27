@@ -10,15 +10,14 @@ def _make_config(tmp_path, deny_keywords=None):
     payload = copy.deepcopy(DEFAULT_CONFIG)
     if deny_keywords is not None:
         payload["ingest"]["filters"]["deny_keywords"] = deny_keywords
-    db_path = tmp_path / "state.sqlite3"
-    conn = init_db(str(db_path))
+    conn = init_db()
     set_runtime_config(conn, payload)
     return load_runtime_config(conn)
 
 
 def test_decision_missing_url(tmp_path):
     config = _make_config(tmp_path)
-    conn = init_db(str(tmp_path / "state.sqlite3"))
+    conn = init_db()
     source = Source(
         id="s1",
         name="Source",
@@ -49,7 +48,7 @@ def test_decision_missing_url(tmp_path):
 
 def test_decision_deny_keyword(tmp_path):
     config = _make_config(tmp_path, deny_keywords=["blocked"])
-    conn = init_db(str(tmp_path / "state.sqlite3"))
+    conn = init_db()
     source = Source(
         id="s1",
         name="Source",

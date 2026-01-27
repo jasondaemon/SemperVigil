@@ -15,10 +15,9 @@ from sempervigil.storage import (
 
 def _seed_runtime_config(tmp_path):
     data_dir = tmp_path / "data"
-    conn = init_db(str(data_dir / "state.sqlite3"))
+    conn = init_db()
     config = copy.deepcopy(DEFAULT_CONFIG)
     config["paths"]["data_dir"] = str(data_dir)
-    config["paths"]["state_db"] = str(data_dir / "state.sqlite3")
     config["paths"]["output_dir"] = str(tmp_path / "site" / "content" / "posts")
     config["paths"]["run_reports_dir"] = str(data_dir / "reports")
     config["publishing"]["json_index_path"] = str(

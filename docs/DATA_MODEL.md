@@ -1,13 +1,13 @@
 # DATA_MODEL.md — SemperVigil Database Schema
 
-> SQLite is the system of record. Schema is designed to migrate cleanly to Postgres later.
+> Postgres is the system of record. Schema is designed to migrate cleanly to Postgres later.
 > Prefer additive migrations (new tables/columns), avoid destructive changes.
 
 ## Conventions
 - Timestamps stored as ISO-8601 text in UTC (`YYYY-MM-DDTHH:MM:SSZ`)
 - JSON stored as TEXT containing JSON (validated at app boundary)
 - Most tables should have `created_at`, `updated_at` where useful
-- Use WAL mode; keep write transactions short
+- Keep write transactions short; rely on Postgres row-level locks
 
 ---
 
@@ -39,7 +39,7 @@ Represents a configured content source (site/feed). Sources live in DB, not conf
 Per-source scraping tactics and their configuration. Ordered by preference; can be toggled individually.
 
 **Columns**
-- `id` INTEGER PRIMARY KEY AUTOINCREMENT
+- `id` BIGSERIAL PRIMARY KEY
 - `source_id` TEXT NOT NULL REFERENCES sources(id)
 - `tactic_type` TEXT NOT NULL            -- rss|atom|jsonfeed|html_index|sitemap|article_html
 - `enabled` INTEGER NOT NULL DEFAULT 1
@@ -64,7 +64,7 @@ Per-source scraping tactics and their configuration. Ordered by preference; can 
 One run of a source at a point in time; used for health & metrics.
 
 **Columns**
-- `id` INTEGER PRIMARY KEY AUTOINCREMENT
+- `id` BIGSERIAL PRIMARY KEY
 - `source_id` TEXT NOT NULL REFERENCES sources(id)
 - `started_at` TEXT NOT NULL
 - `finished_at` TEXT NULL
@@ -91,7 +91,7 @@ One run of a source at a point in time; used for health & metrics.
 Metadata-first record of a single accepted or discovered article.
 
 **Columns**
-- `id` INTEGER PRIMARY KEY AUTOINCREMENT
+- `id` BIGSERIAL PRIMARY KEY
 - `source_id` TEXT NOT NULL REFERENCES sources(id)
 - `stable_id` TEXT NOT NULL              -- hash of normalized_url (or stable canonical)
 - `original_url` TEXT NOT NULL
@@ -169,7 +169,7 @@ First-class CVE objects, updated from NVD.
 Append-only snapshots to detect changes. Dedupe via `snapshot_hash`.
 
 **Columns**
-- `id` INTEGER PRIMARY KEY AUTOINCREMENT
+- `id` BIGSERIAL PRIMARY KEY
 - `cve_id` TEXT NOT NULL REFERENCES cves(cve_id)
 - `observed_at` TEXT NOT NULL
 - `nvd_last_modified_at` TEXT NULL
@@ -191,7 +191,7 @@ Append-only snapshots to detect changes. Dedupe via `snapshot_hash`.
 Derived change log for upgrades and diffs.
 
 **Columns**
-- `id` INTEGER PRIMARY KEY AUTOINCREMENT
+- `id` BIGSERIAL PRIMARY KEY
 - `cve_id` TEXT NOT NULL REFERENCES cves(cve_id)
 - `change_at` TEXT NOT NULL
 - `cvss_version` TEXT NULL
@@ -217,7 +217,7 @@ Derived change log for upgrades and diffs.
 Canonical narrative objects.
 
 **Columns**
-- `id` INTEGER PRIMARY KEY AUTOINCREMENT
+- `id` BIGSERIAL PRIMARY KEY
 - `event_key` TEXT NOT NULL UNIQUE       -- CVE-... | INCIDENT-... | META-...
 - `event_type` TEXT NOT NULL             -- CVE|INCIDENT|META
 - `title` TEXT NOT NULL
@@ -241,7 +241,7 @@ Canonical narrative objects.
 Timeline entries for event summaries.
 
 **Columns**
-- `id` INTEGER PRIMARY KEY AUTOINCREMENT
+- `id` BIGSERIAL PRIMARY KEY
 - `event_id` INTEGER NOT NULL REFERENCES events(id)
 - `created_at` TEXT NOT NULL
 - `created_by` TEXT NOT NULL             -- rule|nvd|manual|llm
@@ -259,7 +259,7 @@ Timeline entries for event summaries.
 Links articles to events, with role + inference metadata.
 
 **Columns**
-- `id` INTEGER PRIMARY KEY AUTOINCREMENT
+- `id` BIGSERIAL PRIMARY KEY
 - `event_id` INTEGER NOT NULL REFERENCES events(id)
 - `article_id` INTEGER NOT NULL REFERENCES articles(id)
 - `role` TEXT NOT NULL                   -- primary|supporting
@@ -282,7 +282,7 @@ Links articles to events, with role + inference metadata.
 Directional event-to-event relations (meta-events, exploits, etc.).
 
 **Columns**
-- `id` INTEGER PRIMARY KEY AUTOINCREMENT
+- `id` BIGSERIAL PRIMARY KEY
 - `parent_event_id` INTEGER NOT NULL REFERENCES events(id)
 - `child_event_id` INTEGER NOT NULL REFERENCES events(id)
 - `relation_type` TEXT NOT NULL          -- umbrella|related|exploits|caused_by
@@ -305,7 +305,7 @@ Directional event-to-event relations (meta-events, exploits, etc.).
 Records low-confidence candidates for later review in UI.
 
 **Columns**
-- `id` INTEGER PRIMARY KEY AUTOINCREMENT
+- `id` BIGSERIAL PRIMARY KEY
 - `article_id` INTEGER NOT NULL REFERENCES articles(id)
 - `suggested_event_key` TEXT NOT NULL
 - `suggestion_type` TEXT NOT NULL        -- cve_link|meta_event|incident_link
@@ -350,5 +350,5 @@ Key/value settings for profile + scheduler + inference thresholds.
 
 ## 6) Notes on Scale
 - Multi-year storage is fine if you store **summaries, metadata, and metrics**, not raw HTML.
-- Prefer storing extracted text as blobs with retention; keep only hashes/paths in SQLite.
+- Prefer storing extracted text as blobs with retention; keep only hashes/paths in Postgres.
 - If article count grows large (300k+), add additional indexes on common query paths and consider Postgres migration later.

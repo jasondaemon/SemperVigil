@@ -5,13 +5,13 @@ from sempervigil.storage import init_db
 
 
 def test_cve_settings_bootstrap(tmp_path):
-    conn = init_db(str(tmp_path / "state.sqlite3"))
+    conn = init_db()
     settings = bootstrap_cve_settings(conn)
     assert settings == DEFAULT_CVE_SETTINGS
 
 
 def test_cve_settings_update(tmp_path):
-    conn = init_db(str(tmp_path / "state.sqlite3"))
+    conn = init_db()
     settings = copy.deepcopy(DEFAULT_CVE_SETTINGS)
     settings["enabled"] = False
     set_cve_settings(conn, settings)

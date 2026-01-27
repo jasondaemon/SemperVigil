@@ -7,7 +7,7 @@ import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 
-from .config import ConfigError, get_state_db_path, load_runtime_config
+from .config import ConfigError, load_runtime_config
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .storage import (
     claim_next_job,
@@ -78,7 +78,7 @@ def run_once(builder_id: str) -> int:
     logger = _setup_logging()
     log_event(logger, logging.INFO, "builder_once_start", builder_id=builder_id)
     try:
-        conn = init_db(get_state_db_path())
+        conn = init_db()
         config = load_runtime_config(conn)
     except ConfigError as exc:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))

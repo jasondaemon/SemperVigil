@@ -16,7 +16,6 @@ from .config import (
     bootstrap_events_settings,
     get_cve_settings,
     get_events_settings,
-    get_state_db_path,
     load_runtime_config,
 )
 from .ingest import process_source
@@ -99,7 +98,7 @@ def _setup_logging() -> logging.Logger:
 def run_once(worker_id: str, allowed_types: list[str] | None = None) -> int:
     logger = _setup_logging()
     try:
-        conn = init_db(get_state_db_path())
+        conn = init_db()
         config = load_runtime_config(conn)
         bootstrap_cve_settings(conn)
         bootstrap_events_settings(conn)
@@ -172,7 +171,7 @@ def _process_claimed_job(conn, config, job, logger: logging.Logger) -> int:
 def _process_claimed_job_thread(worker_id: str, job: Job) -> int:
     logger = _setup_logging()
     try:
-        conn = init_db(get_state_db_path())
+        conn = init_db()
         config = load_runtime_config(conn)
         bootstrap_cve_settings(conn)
         bootstrap_events_settings(conn)
@@ -203,7 +202,7 @@ def run_loop(
         while True:
             while len(futures) < max_workers:
                 try:
-                    conn = init_db(get_state_db_path())
+                    conn = init_db()
                     config = load_runtime_config(conn)
                     bootstrap_cve_settings(conn)
                     bootstrap_events_settings(conn)

@@ -11,9 +11,9 @@ ARG SV_GID=1000
 WORKDIR /app
 COPY . /app
 
-# System tools (sqlite3 for inspection, curl for debugging)
+# System tools (curl for debugging)
 RUN apt-get update -o Acquire::Retries=3 \
- && apt-get install -y --no-install-recommends --fix-missing sqlite3 curl \
+ && apt-get install -y --no-install-recommends --fix-missing curl \
  && rm -rf /var/lib/apt/lists/*
 
 # Install SemperVigil + deps (from pyproject.toml)

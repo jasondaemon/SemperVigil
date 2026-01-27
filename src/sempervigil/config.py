@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,7 +21,6 @@ class AppConfig:
 class PathsConfig:
     data_dir: str
     output_dir: str
-    state_db: str
     run_reports_dir: str
 
 
@@ -131,7 +129,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "paths": {
         "data_dir": "/data",
         "output_dir": "/site/content/posts",
-        "state_db": "/data/state.sqlite3",
         "run_reports_dir": "/data/reports",
     },
     "publishing": {
@@ -227,11 +224,6 @@ DEFAULT_EVENTS_SETTINGS: dict[str, Any] = {
     "product_burst_window_hours": 24,
     "product_burst_min_high_critical": 3,
 }
-
-
-def get_state_db_path() -> str:
-    data_dir = os.environ.get("SV_DATA_DIR", DEFAULT_CONFIG["paths"]["data_dir"])
-    return os.path.join(data_dir, "state.sqlite3")
 
 
 def bootstrap_runtime_config(conn) -> dict[str, Any]:
@@ -505,7 +497,6 @@ def _build_config(cfg: dict[str, Any]) -> Config:
     paths = PathsConfig(
         data_dir=str(paths_cfg.get("data_dir")),
         output_dir=str(paths_cfg.get("output_dir")),
-        state_db=str(paths_cfg.get("state_db")),
         run_reports_dir=str(paths_cfg.get("run_reports_dir")),
     )
 

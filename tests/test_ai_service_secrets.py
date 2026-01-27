@@ -18,8 +18,7 @@ def _set_master_env(monkeypatch):
 
 def test_provider_secret_is_encrypted(tmp_path, monkeypatch):
     _set_master_env(monkeypatch)
-    db_path = tmp_path / "state.sqlite3"
-    conn = init_db(str(db_path))
+    conn = init_db()
 
     provider = create_provider(
         conn,

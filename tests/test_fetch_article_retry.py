@@ -12,7 +12,7 @@ from sempervigil.config import load_runtime_config
 def test_fetch_article_missing_url_fails(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     monkeypatch.setenv("SV_DATA_DIR", str(data_dir))
-    conn = init_db(str(data_dir / "state.sqlite3"))
+    conn = init_db()
     config = load_runtime_config(conn)
 
     conn.execute(

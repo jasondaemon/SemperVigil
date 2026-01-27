@@ -139,7 +139,7 @@ Add unit tests:
 4) `test_evidence_json_has_required_fields`
 - confirm keys exist and rule IDs match
 
-Use in-memory sqlite (`:memory:`) or temp db file.
+Use in-memory Postgres (`:memory:`) or temp db file.
 
 ---
 

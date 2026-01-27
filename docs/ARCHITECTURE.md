@@ -240,24 +240,22 @@ Configured via **settings UI**, not code.
 
 ## 11. Storage Architecture
 
-### 11.1 SQLite (Current)
+### 11.1 Postgres (Required)
 
-SQLite is acceptable because:
+Postgres is required because:
 - low write contention
 - mostly append-only
-- WAL mode enabled
+- safe concurrent writers with row-level locking
 
 Expected scale:
 - 100k–300k articles
 - multi-year CVE history
 - summaries only (no raw HTML)
 
-### 11.2 Future Migration Path
+### 11.2 Migration Notes
 
-Schema designed to migrate cleanly to:
-- PostgreSQL
-
-No SQLite-specific logic in business code.
+Postgres is the required runtime database. Use environment-provided credentials
+and ensure migrations are applied before starting workers.
 
 ---
 
