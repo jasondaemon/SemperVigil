@@ -155,6 +155,19 @@ Event derivation + purge:
 - For API use:
   - `POST /admin/api/events/derive`
   - `POST /admin/api/events/purge` (supports `dry_run=true`)
+Legacy events (from old event_items-only records) are hidden by default. Use `include_legacy=1`
+on `/admin/api/events` to debug them; legacy is deprecated and may be dropped.
+
+Verification SQL (Postgres):
+```sql
+SELECT COUNT(*) FROM events WHERE event_key LIKE 'cve:%' OR kind = 'cve_cluster';
+SELECT e.id, e.event_key, COUNT(ea.article_id) AS article_count
+FROM events e
+LEFT JOIN event_articles ea ON ea.event_id = e.id
+WHERE e.event_key LIKE 'cve:%' OR e.kind = 'cve_cluster'
+GROUP BY e.id, e.event_key
+ORDER BY article_count ASC;
+```
 
 Add your first source in the Sources tab (DB-backed).
 Analytics and daily brief tools are available at `/ui/analytics`.

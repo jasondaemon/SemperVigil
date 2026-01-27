@@ -67,6 +67,7 @@ from .storage import (
     list_article_tags,
     list_articles_per_day,
     list_events,
+    list_events_with_counts,
     list_events_for_product,
     list_source_health_events,
     list_llm_runs,
@@ -92,6 +93,7 @@ from .storage import (
     upsert_event_by_key,
     link_event_article,
     update_event_summary_from_articles,
+    normalize_cve_event_keys,
 )
 from .ingest import process_source
 from .services.sources_service import (
@@ -1058,11 +1060,12 @@ def api_events(
     status: str | None = None,
     after: str | None = None,
     before: str | None = None,
+    include_legacy: bool = False,
     page: int = 1,
     page_size: int = 50,
 ) -> dict[str, object]:
     conn = _get_conn()
-    items, total = list_events(
+    items, total = list_events_with_counts(
         conn,
         status=status,
         kind=kind,
@@ -1070,6 +1073,7 @@ def api_events(
         query=query,
         after=after,
         before=before,
+        include_legacy=include_legacy,
         page=page,
         page_size=page_size,
     )
@@ -1216,6 +1220,8 @@ def api_events_purge(payload: EventsPurgeRequest | None = None) -> dict[str, obj
         min_articles=int(data.get("min_articles", 2)),
         min_signal=int(data.get("min_signal", 1)),
         older_than_days=data.get("older_than_days"),
+        include_kinds=data.get("include_kinds") or None,
+        include_prefixes=data.get("include_prefixes") or None,
     )
     log_event(
         logger,
@@ -1225,6 +1231,13 @@ def api_events_purge(payload: EventsPurgeRequest | None = None) -> dict[str, obj
         purged=stats.get("purged", 0),
         kept=stats.get("kept", 0),
     )
+    return {"status": "ok", "stats": stats}
+
+
+@app.post("/admin/api/events/normalize-keys", dependencies=[Depends(_require_admin_token)])
+def api_events_normalize_keys(limit: int = 200) -> dict[str, object]:
+    conn = _get_conn()
+    stats = normalize_cve_event_keys(conn, limit=limit)
     return {"status": "ok", "stats": stats}
 
 

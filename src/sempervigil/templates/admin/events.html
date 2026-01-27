@@ -33,10 +33,23 @@
       <option value="open">Open</option>
       <option value="closed">Closed</option>
     </select>
+    <label class="checkbox"><input type="checkbox" id="events-include-legacy"> Include legacy</label>
     <input type="date" id="events-after">
     <input type="date" id="events-before">
     <button class="btn" type="submit">Apply</button>
   </form>
+  <div class="panel inline">
+    <div class="filters inline">
+      <label class="checkbox"><input type="checkbox" id="events-purge-dry" checked> Dry run</label>
+      <label>Min articles
+        <input type="number" id="events-purge-min-articles" value="2" min="0">
+      </label>
+      <label>Older than days
+        <input type="number" id="events-purge-older" value="30" min="0">
+      </label>
+      <label class="checkbox"><input type="checkbox" id="events-purge-cve-only" checked> CVE clusters only</label>
+    </div>
+  </div>
   <div id="events-error" class="error-banner" style="display:none;"></div>
   <table class="table" id="events-table">
     <thead>
@@ -47,6 +60,8 @@
         <th>Severity</th>
         <th>Status</th>
         <th>Last Seen</th>
+        <th>Articles</th>
+        <th>Source</th>
       </tr>
     </thead>
     <tbody></tbody>

@@ -2698,12 +2698,14 @@ function wireEvents() {
     const status = document.getElementById("events-status").value;
     const after = document.getElementById("events-after").value;
     const before = document.getElementById("events-before").value;
+    const includeLegacy = document.getElementById("events-include-legacy");
     if (query) params.set("query", query);
     if (kind) params.set("kind", kind);
     if (severity) params.set("severity", severity);
     if (status) params.set("status", status);
     if (after) params.set("after", after);
     if (before) params.set("before", before);
+    if (includeLegacy && includeLegacy.checked) params.set("include_legacy", "1");
     params.set("page", String(page));
     params.set("page_size", String(pageSize));
     const data = await apiFetch(`/admin/api/events?${params.toString()}`);
@@ -2716,7 +2718,9 @@ function wireEvents() {
         <td>${event.kind || ""}</td>
         <td>${event.severity || ""}</td>
         <td>${event.status || ""}</td>
-        <td>${esc(formatTimestamp(event.last_seen_at))}</td>
+        <td>${esc(formatTimestamp(event.last_seen_at || event.last_article_at))}</td>
+        <td>${event.article_count ?? 0}</td>
+        <td class="mono">${event.source || "events"}</td>
       `;
       tbody.appendChild(row);
     });
@@ -2772,16 +2776,41 @@ function wireEvents() {
 
   if (purgeBtn) {
     purgeBtn.addEventListener("click", async () => {
-      if (!confirm("Purge weak events? Manual events will be kept.")) {
+      const dryRunBox = document.getElementById("events-purge-dry");
+      const minArticles = document.getElementById("events-purge-min-articles");
+      const olderDays = document.getElementById("events-purge-older");
+      const kindsCve = document.getElementById("events-purge-cve-only");
+      const dryRun = dryRunBox ? dryRunBox.checked : true;
+      const minArticlesValue = minArticles ? parseInt(minArticles.value, 10) : 2;
+      const olderDaysValue = olderDays ? parseInt(olderDays.value, 10) : 30;
+      const includeKinds = kindsCve && kindsCve.checked ? ["cve_cluster"] : null;
+      if (
+        !confirm(
+          dryRun
+            ? "Dry run purge? Manual events will be kept."
+            : "Purge weak events now? Manual events will be kept."
+        )
+      ) {
         return;
       }
       try {
         const payload = await apiFetch("/admin/api/events/purge", {
           method: "POST",
-          body: JSON.stringify({ dry_run: false }),
+          body: JSON.stringify({
+            dry_run: dryRun,
+            min_articles: Number.isNaN(minArticlesValue) ? 2 : minArticlesValue,
+            older_than_days: Number.isNaN(olderDaysValue) ? null : olderDaysValue,
+            include_kinds: includeKinds,
+          }),
         });
         const stats = payload.stats || {};
-        showToast(`Purged ${stats.purged || 0} events (kept ${stats.kept || 0})`);
+        const deleted = stats.deleted ?? 0;
+        const candidates = stats.candidates ?? 0;
+        showToast(
+          dryRun
+            ? `Dry run: ${deleted} would be deleted (candidates ${candidates})`
+            : `Purged ${deleted} events (candidates ${candidates})`
+        );
         load(1).catch((err) => setError(err.message || String(err)));
       } catch (err) {
         setError(err.message || String(err));
