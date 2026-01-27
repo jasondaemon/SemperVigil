@@ -313,7 +313,8 @@ If `./data` or `./site` are NFS mounts with root-squash, ensure they are owned b
 ## Internal Services
 
 - admin: FastAPI API for managing sources and enqueueing jobs (binds to `127.0.0.1:8001` by default)
-- worker: polls the DB job queue and runs ingestion tasks
+- worker_fetch: polls ingestion + fetch + publish jobs and enqueues `ingest_due_sources`
+- worker_llm: polls only LLM summarization jobs (rate-limited via leases)
 - builder: one-shot Hugo build container; run on demand (profile `build`)
 - web: public static site server (nginx serving `site/public`)
 

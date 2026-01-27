@@ -28,14 +28,17 @@ from .pipelines.content_fetch import fetch_article_content
 from .pipelines.daily_brief import write_daily_brief
 from .llm.router import run_profile
 from .services.ai_service import get_active_profile_for_stage
+from .normalize import normalize_name
 from .storage import (
     claim_next_job,
     complete_job,
     enqueue_job,
+    enqueue_build_site_if_needed,
     fail_job,
     get_source,
     list_sources,
     get_setting,
+    set_setting,
     get_article_id,
     get_article_by_id,
     get_article_tags,
@@ -61,6 +64,12 @@ from .storage import (
     rebuild_events_from_cves,
     upsert_cve_links,
     upsert_event_for_cve,
+    upsert_event_by_key,
+    upsert_event_item,
+    list_product_keys_for_cve,
+    list_article_cve_ids,
+    list_event_ids_for_article,
+    link_event_article,
     get_source_run_streaks,
     get_source_name,
     insert_source_health_event,
@@ -73,6 +82,7 @@ from .storage import (
     compute_watchlist_hits,
     try_acquire_lease,
     release_lease,
+    update_event_summary_from_articles,
 )
 from .utils import configure_logging, log_event, utc_now_iso, utc_now_iso_offset
 
@@ -86,6 +96,7 @@ WORKER_JOB_TYPES = [
     "summarize_article_llm",
     "build_daily_brief",
     "write_article_markdown",
+    "derive_events_from_articles",
     "source_acquire",
     "smoke_test",
 ]
@@ -108,6 +119,8 @@ def run_once(worker_id: str, allowed_types: list[str] | None = None) -> int:
 
     set_umask_from_env()
     ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir))
+    if _should_tick_ingest_due(allowed_types):
+        _maybe_enqueue_ingest_due_sources(conn, logger)
     _maybe_enqueue_cve_sync(conn, logger)
     job = claim_next_job(
         conn,
@@ -211,6 +224,8 @@ def run_loop(
                     break
                 set_umask_from_env()
                 ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir))
+                if _should_tick_ingest_due(allowed_types):
+                    _maybe_enqueue_ingest_due_sources(conn, logger)
                 _maybe_enqueue_cve_sync(conn, logger)
                 job = claim_next_job(
                     conn,
@@ -403,6 +418,7 @@ def _handle_ingest_source(
                 if hit.get("hit"):
                     extra_by_stable[article.stable_id] = {"watchlist_hit": True}
         write_json_index(result.articles, config.publishing.json_index_path, extra_by_stable)
+        enqueue_build_site_if_needed(conn, reason="json_index_written")
     _maybe_pause_source(conn, source.id, logger)
     return {
         "source_id": source.id,
@@ -543,6 +559,16 @@ def _handle_write_article_markdown(
         article_url=article.original_url,
         progress=progress,
     )
+    article_id = payload.get("article_id")
+    if article_id is not None:
+        try:
+            article_id_int = int(article_id)
+        except (TypeError, ValueError):
+            article_id_int = None
+        if article_id_int is not None and not has_pending_article_job(
+            conn, "derive_events_from_articles", article_id_int
+        ):
+            enqueue_job(conn, "derive_events_from_articles", {"article_id": article_id_int})
     if batch_id and batch_total:
         counts = get_batch_job_counts(conn, batch_id)
         remaining = counts["queued"] + counts["running"] - 1
@@ -808,6 +834,7 @@ def _handle_build_daily_brief(
         markdown_path=result["markdown_path"],
         json_path=result["json_path"],
     )
+    enqueue_build_site_if_needed(conn, reason="build_daily_brief")
     return {"day": day, "count": len(items), **result}
 
 
@@ -925,6 +952,80 @@ def _handle_smoke_test(conn, config, job, logger: logging.Logger) -> dict[str, o
             result["build_exit_code"] = (build_job.result or {}).get("exit_code")
             update_job_result(conn, job.id, result)
     return result
+
+
+def _extract_event_entity(title: str) -> str:
+    if not title:
+        return ""
+    for sep in (":", " - ", " – ", " — "):
+        if sep in title:
+            return title.split(sep, 1)[0].strip()
+    return title.strip().split(" ")[0]
+
+
+def _derive_event_kind(text: str) -> str:
+    lowered = text.lower()
+    if any(word in lowered for word in ("ransomware", "extortion")):
+        return "ransomware"
+    if any(word in lowered for word in ("breach", "data leak", "leak")):
+        return "breach"
+    if any(word in lowered for word in ("compromise", "intrusion")):
+        return "compromise"
+    if any(word in lowered for word in ("exploit", "exploited", "zero-day", "0day")):
+        return "exploit"
+    if any(word in lowered for word in ("campaign", "operation")):
+        return "campaign"
+    if any(word in lowered for word in ("outage", "service disruption")):
+        return "outage"
+    if any(word in lowered for word in ("patch", "update", "advisory")):
+        return "advisory"
+    return "other"
+
+
+def _handle_derive_events_from_articles(
+    conn, config, payload: dict[str, object], logger: logging.Logger
+) -> dict[str, object]:
+    article_id = payload.get("article_id")
+    if not isinstance(article_id, int):
+        return {"status": "skipped", "reason": "missing_article_id"}
+    if list_event_ids_for_article(conn, article_id):
+        return {"status": "skipped", "reason": "already_linked"}
+    article = get_article_by_id(conn, article_id)
+    if not article:
+        return {"status": "skipped", "reason": "article_missing"}
+    title = str(article.get("title") or "")
+    summary = str(article.get("summary") or "")
+    content = str(article.get("content_text") or "")
+    combined = " ".join(part for part in (title, summary, content) if part).strip()
+    if not combined:
+        return {"status": "skipped", "reason": "no_content"}
+    kind = _derive_event_kind(combined)
+    entity = _extract_event_entity(title) or article.get("source_id") or "unknown"
+    bucket = (article.get("published_at") or article.get("ingested_at") or "")[:10]
+    event_key = f"evt:{kind}:{normalize_name(str(entity))}:{bucket or 'unknown'}"
+    event_id, _ = upsert_event_by_key(
+        conn,
+        event_key=event_key,
+        kind=kind,
+        title=title or f"Event: {entity}",
+        severity="UNKNOWN",
+        first_seen_at=article.get("published_at") or article.get("ingested_at") or utc_now_iso(),
+        last_seen_at=utc_now_iso(),
+        status="open",
+        meta={"seed_article_id": article_id},
+    )
+    link_event_article(conn, event_id, article_id, "auto")
+    cve_ids = list_article_cve_ids(conn, article_id)
+    for cve_id in cve_ids:
+        upsert_event_item(conn, event_id, "cve", cve_id)
+        for product_key in list_product_keys_for_cve(conn, cve_id):
+            upsert_event_item(conn, event_id, "product", product_key)
+    update_event_summary_from_articles(conn, event_id)
+    return {
+        "status": "linked",
+        "event_id": event_id,
+        "cves": len(cve_ids),
+    }
 
 
 def _handle_source_acquire(conn, config, job, logger: logging.Logger) -> dict[str, object]:
@@ -1183,6 +1284,7 @@ def _handle_events_rebuild(conn, config, payload: dict[str, object], logger: log
         limit=limit,
     )
     _publish_events(conn, config, logger)
+    enqueue_build_site_if_needed(conn, reason="events_rebuild")
     return stats
 
 
@@ -1240,6 +1342,35 @@ def _maybe_enqueue_cve_sync(conn, logger: logging.Logger) -> None:
     due = last_dt + timedelta(minutes=int(settings.get("schedule_minutes", 60))) <= now
     if due:
         enqueue_job(conn, "cve_sync", None, debounce=True)
+
+
+def _should_tick_ingest_due(allowed_types: list[str] | None) -> bool:
+    if not allowed_types:
+        return True
+    if "ingest_due_sources" in allowed_types:
+        return True
+    return any(
+        job_type in allowed_types
+        for job_type in ("ingest_source", "html_index", "rss_index")
+    )
+
+
+def _maybe_enqueue_ingest_due_sources(conn, logger: logging.Logger) -> None:
+    if has_pending_job(conn, "ingest_due_sources"):
+        return
+    debounce_seconds = int(os.environ.get("SV_INGEST_DUE_DEBOUNCE_SECONDS", "60"))
+    last_enqueued = get_setting(conn, "ingest_due.last_enqueued_at", None)
+    now = utc_now_iso()
+    if isinstance(last_enqueued, str):
+        last_dt = _parse_iso(last_enqueued)
+        if last_dt + timedelta(seconds=debounce_seconds) > _parse_iso(now):
+            return
+    due = list_due_sources(conn, now)
+    if not due:
+        return
+    enqueue_job(conn, "ingest_due_sources", None, debounce=True)
+    set_setting(conn, "ingest_due.last_enqueued_at", now)
+    log_event(logger, logging.INFO, "ingest_due_sources_enqueued", due_count=len(due))
 
 
 def _maybe_pause_source(conn, source_id: str, logger: logging.Logger | None) -> None:
@@ -1339,8 +1470,10 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
     if job.job_type == "write_article_markdown":
         result = _handle_write_article_markdown(conn, config, job.payload, logger)
         if not has_pending_job(conn, "write_article_markdown", exclude_job_id=job.id):
-            enqueue_job(conn, "build_site", None, debounce=True)
+            enqueue_build_site_if_needed(conn, reason="write_article_markdown")
         return result
+    if job.job_type == "derive_events_from_articles":
+        return _handle_derive_events_from_articles(conn, config, job.payload or {}, logger)
     if job.job_type == "smoke_test":
         return _handle_smoke_test(conn, config, job, logger)
     raise ValueError(f"unsupported job type {job.job_type}")

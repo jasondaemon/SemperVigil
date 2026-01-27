@@ -27,11 +27,8 @@ def log_event(logger: logging.Logger, level: int, event: str, **fields: Any) -> 
 
 def configure_logging(logger_name: str, default_level: str = "INFO") -> logging.Logger:
     level_name = os.environ.get("SV_LOG_LEVEL", default_level).upper()
-    if not logging.getLogger().handlers:
-        logging.basicConfig(
-            level=getattr(logging, level_name, logging.INFO),
-            format="%(asctime)s %(levelname)s %(message)s",
-        )
+    root = logging.getLogger()
+    root.setLevel(getattr(logging, level_name, logging.INFO))
     _ensure_stdout_handler(level_name)
     _maybe_add_file_handler(level_name)
     _apply_log_overrides()
@@ -67,9 +64,11 @@ def _maybe_add_file_handler(level_name: str) -> None:
 
 def _ensure_stdout_handler(level_name: str) -> None:
     root = logging.getLogger()
-    for handler in root.handlers:
-        if isinstance(handler, logging.StreamHandler) and handler.stream is sys.stdout:
-            return
+    for handler in list(root.handlers):
+        if isinstance(handler, logging.StreamHandler):
+            if handler.stream is sys.stdout:
+                return
+            root.removeHandler(handler)
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(getattr(logging, level_name, logging.INFO))
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))

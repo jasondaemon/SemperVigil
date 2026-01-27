@@ -3,11 +3,14 @@ set -e
 
 sh /tools/ensure-dirs.sh
 
-hugo -s /site -d /site/public --minify --gc --cleanDestinationDir --logLevel info
+SOURCE_DIR="${SV_HUGO_SOURCE_DIR:-/repo/site}"
+OUTPUT_DIR="${SV_HUGO_OUTPUT_DIR:-/site}"
+
+hugo -s "$SOURCE_DIR" -d "$OUTPUT_DIR" --baseURL "${SV_HUGO_BASEURL:-/}" --minify --gc --cleanDestinationDir --logLevel info
 
 echo "Hugo output:"
-ls -la /site/public || true
+ls -la "$OUTPUT_DIR/public" || true
 
-if [ ! -f /site/public/index.html ]; then
-  echo "warning: /site/public/index.html not found"
+if [ ! -f "$OUTPUT_DIR/public/index.html" ]; then
+  echo "warning: ${OUTPUT_DIR}/public/index.html not found"
 fi

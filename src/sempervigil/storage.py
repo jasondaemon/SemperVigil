@@ -1158,6 +1158,24 @@ def has_pending_job(
     return cursor.fetchone() is not None
 
 
+def enqueue_build_site_if_needed(
+    conn: Any, reason: str | None = None, debounce_seconds: int = 30
+) -> str | None:
+    if has_pending_job(conn, "build_site"):
+        return None
+    now = utc_now_iso()
+    last_enqueued = get_setting(conn, "build_site.last_enqueued_at", None)
+    if isinstance(last_enqueued, str):
+        if _parse_iso(last_enqueued) + timedelta(seconds=debounce_seconds) > _parse_iso(
+            now
+        ):
+            return None
+    payload = {"reason": reason} if reason else None
+    job_id = enqueue_job(conn, "build_site", payload, debounce=True)
+    set_setting(conn, "build_site.last_enqueued_at", now)
+    return job_id
+
+
 def has_pending_article_job(
     conn: Any, job_type: str, article_id: int
 ) -> bool:
@@ -2331,6 +2349,10 @@ def create_event(
     last_seen_at: str,
     summary: str | None = None,
     meta: dict[str, object] | None = None,
+    event_key: str | None = None,
+    status: str = "open",
+    occurred_at: str | None = None,
+    confidence: float | None = None,
 ) -> str:
     event_id = f"evt_{uuid.uuid4().hex[:12]}"
     now = utc_now_iso()
@@ -2338,8 +2360,9 @@ def create_event(
         """
         INSERT INTO events
             (id, kind, title, summary, severity, created_at, updated_at,
-             first_seen_at, last_seen_at, status, meta_json)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             first_seen_at, last_seen_at, status, meta_json, event_key,
+             occurred_at, summary_updated_at, confidence)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             event_id,
@@ -2351,12 +2374,85 @@ def create_event(
             now,
             first_seen_at,
             last_seen_at,
-            "open",
+            status,
             json_dumps(meta) if meta else None,
+            event_key,
+            occurred_at,
+            now if summary else None,
+            confidence,
         ),
     )
     conn.commit()
     return event_id
+
+
+def upsert_event_by_key(
+    conn: Any,
+    event_key: str,
+    kind: str,
+    title: str,
+    severity: str | None,
+    first_seen_at: str,
+    last_seen_at: str,
+    summary: str | None = None,
+    meta: dict[str, object] | None = None,
+    status: str = "open",
+    occurred_at: str | None = None,
+    confidence: float | None = None,
+) -> tuple[str, bool]:
+    row = conn.execute(
+        "SELECT id FROM events WHERE event_key = %s",
+        (event_key,),
+    ).fetchone()
+    if row:
+        event_id = row[0]
+        conn.execute(
+            """
+            UPDATE events
+            SET title = %s,
+                kind = %s,
+                severity = %s,
+                updated_at = %s,
+                last_seen_at = %s,
+                summary = COALESCE(%s, summary),
+                summary_updated_at = CASE WHEN %s IS NOT NULL THEN %s ELSE summary_updated_at END,
+                occurred_at = COALESCE(%s, occurred_at),
+                confidence = COALESCE(%s, confidence),
+                status = %s
+            WHERE id = %s
+            """,
+            (
+                title,
+                kind,
+                severity,
+                utc_now_iso(),
+                last_seen_at,
+                summary,
+                summary,
+                utc_now_iso(),
+                occurred_at,
+                confidence,
+                status,
+                event_id,
+            ),
+        )
+        conn.commit()
+        return event_id, False
+    event_id = create_event(
+        conn,
+        kind=kind,
+        title=title,
+        severity=severity,
+        first_seen_at=first_seen_at,
+        last_seen_at=last_seen_at,
+        summary=summary,
+        meta=meta,
+        event_key=event_key,
+        status=status,
+        occurred_at=occurred_at,
+        confidence=confidence,
+    )
+    return event_id, True
 
 
 def upsert_event_item(
@@ -2371,6 +2467,123 @@ def upsert_event_item(
         (event_id, item_type, item_key, utc_now_iso()),
     )
     conn.commit()
+
+
+def link_event_article(conn: Any, event_id: str, article_id: int, added_by: str) -> None:
+    now = utc_now_iso()
+    if _table_exists(conn, "event_articles"):
+        conn.execute(
+            """
+            INSERT INTO event_articles (event_id, article_id, added_by, created_at)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT DO NOTHING
+            """,
+            (event_id, article_id, added_by, now),
+        )
+    else:
+        upsert_event_item(conn, event_id, "article", str(article_id))
+    conn.execute(
+        """
+        UPDATE events
+        SET updated_at = %s,
+            last_seen_at = %s
+        WHERE id = %s
+        """,
+        (now, now, event_id),
+    )
+    conn.commit()
+
+
+def list_event_articles(conn: Any, event_id: str) -> list[dict[str, object]]:
+    if _table_exists(conn, "event_articles"):
+        cursor = conn.execute(
+            """
+            SELECT a.id, a.title, a.original_url, a.published_at, a.source_id, s.name
+            FROM event_articles ea
+            JOIN articles a ON a.id = ea.article_id
+            LEFT JOIN sources s ON s.id = a.source_id
+            WHERE ea.event_id = %s
+            ORDER BY a.published_at DESC NULLS LAST
+            """,
+            (event_id,),
+        )
+    elif _table_exists(conn, "event_items"):
+        cursor = conn.execute(
+            """
+            SELECT a.id, a.title, a.original_url, a.published_at, a.source_id, s.name
+            FROM event_items ei
+            JOIN articles a ON a.id = CAST(ei.item_key AS INTEGER)
+            LEFT JOIN sources s ON s.id = a.source_id
+            WHERE ei.event_id = %s AND ei.item_type = 'article'
+            ORDER BY a.published_at DESC NULLS LAST
+            """,
+            (event_id,),
+        )
+    else:
+        return []
+    rows = []
+    for row in cursor.fetchall():
+        rows.append(
+            {
+                "article_id": row[0],
+                "title": row[1],
+                "url": row[2],
+                "published_at": row[3],
+                "source_id": row[4],
+                "source_name": row[5],
+            }
+        )
+    return rows
+
+
+def update_event_summary_from_articles(conn: Any, event_id: str) -> str | None:
+    if _table_exists(conn, "event_articles"):
+        cursor = conn.execute(
+            """
+            SELECT a.title, a.summary_llm, a.summary, a.content_text
+            FROM event_articles ea
+            JOIN articles a ON a.id = ea.article_id
+            WHERE ea.event_id = %s
+            ORDER BY a.published_at DESC NULLS LAST
+            LIMIT 20
+            """,
+            (event_id,),
+        )
+    else:
+        cursor = conn.execute(
+            """
+            SELECT a.title, a.summary_llm, a.summary, a.content_text
+            FROM event_items ei
+            JOIN articles a ON a.id = CAST(ei.item_key AS INTEGER)
+            WHERE ei.event_id = %s AND ei.item_type = 'article'
+            ORDER BY a.published_at DESC NULLS LAST
+            LIMIT 20
+            """,
+            (event_id,),
+        )
+    parts: list[str] = []
+    for title, summary_llm, summary, content_text in cursor.fetchall():
+        body = summary_llm or summary or content_text or ""
+        body = str(body).strip()
+        if not body:
+            continue
+        parts.append(f"{title}: {body}")
+    if not parts:
+        return None
+    summary_text = "\n".join(parts[:10])
+    now = utc_now_iso()
+    conn.execute(
+        """
+        UPDATE events
+        SET summary = %s,
+            summary_updated_at = %s,
+            updated_at = %s
+        WHERE id = %s
+        """,
+        (summary_text, now, now, event_id),
+    )
+    conn.commit()
+    return summary_text
 
 
 def touch_event(conn: Any, event_id: str, seen_at: str) -> None:
@@ -2470,6 +2683,15 @@ def update_event_rollups(conn: Any, event_id: str) -> None:
 
 
 def _find_event_for_cve(conn: Any, cve_id: str) -> str | None:
+    if _table_exists(conn, "events"):
+        columns = _table_columns(conn, "events")
+        if "event_key" in columns:
+            row = conn.execute(
+                "SELECT id FROM events WHERE event_key = %s LIMIT 1",
+                (f"cve:{cve_id}",),
+            ).fetchone()
+            if row:
+                return row[0]
     if not _table_exists(conn, "event_items"):
         return None
     row = conn.execute(
@@ -2482,6 +2704,16 @@ def _find_event_for_cve(conn: Any, cve_id: str) -> str | None:
         (cve_id,),
     ).fetchone()
     return row[0] if row else None
+
+
+def _cve_has_article(conn: Any, cve_id: str) -> bool:
+    if not _table_exists(conn, "article_cves"):
+        return False
+    row = conn.execute(
+        "SELECT 1 FROM article_cves WHERE cve_id = %s LIMIT 1",
+        (cve_id,),
+    ).fetchone()
+    return row is not None
 
 
 def find_merge_candidate_event(
@@ -2521,12 +2753,15 @@ def upsert_event_for_cve(
     published_at: str | None,
     window_days: int,
     min_shared_products: int,
-) -> tuple[str, str]:
+) -> tuple[str | None, str]:
     if not _table_exists(conn, "events") or not _table_exists(conn, "event_items"):
         raise ValueError("events tables not initialized")
     event_id = _find_event_for_cve(conn, cve_id)
+    if not event_id and not _cve_has_article(conn, cve_id):
+        return None, "skipped_no_articles"
     product_keys = list_product_keys_for_cve(conn, cve_id)
     now = utc_now_iso()
+    event_key = f"cve:{cve_id}"
     if event_id:
         upsert_event_item(conn, event_id, "cve", cve_id)
         for product_key in product_keys:
@@ -2553,6 +2788,7 @@ def upsert_event_for_cve(
         first_seen_at=first_seen,
         last_seen_at=now,
         meta={"seed_cve": cve_id},
+        event_key=event_key,
     )
     upsert_event_item(conn, event_id, "cve", cve_id)
     for product_key in product_keys:
@@ -2575,7 +2811,7 @@ def link_article_to_events(
         event_id = _find_event_for_cve(conn, cve_id)
         if not event_id:
             continue
-        upsert_event_item(conn, event_id, "article", str(article_id))
+        link_event_article(conn, event_id, article_id, "auto")
         touch_event(conn, event_id, published_at or now)
         attached += 1
     return attached
@@ -2627,7 +2863,7 @@ def list_events(
     cursor = conn.execute(
         f"""
         SELECT id, kind, title, summary, severity, created_at, updated_at,
-               first_seen_at, last_seen_at, status
+               first_seen_at, last_seen_at, status, event_key, occurred_at, summary_updated_at, confidence
         FROM events
         {where_sql}
         ORDER BY last_seen_at DESC
@@ -2647,6 +2883,10 @@ def list_events(
             "first_seen_at": row[7],
             "last_seen_at": row[8],
             "status": row[9],
+            "event_key": row[10],
+            "occurred_at": row[11],
+            "summary_updated_at": row[12],
+            "confidence": row[13],
         }
         for row in cursor.fetchall()
     ]
@@ -2659,7 +2899,8 @@ def get_event(conn: Any, event_id: str) -> dict[str, object] | None:
     row = conn.execute(
         """
         SELECT id, kind, title, summary, severity, created_at, updated_at,
-               first_seen_at, last_seen_at, status, meta_json
+               first_seen_at, last_seen_at, status, meta_json,
+               event_key, occurred_at, summary_updated_at, confidence
         FROM events
         WHERE id = %s
         """,
@@ -2680,6 +2921,10 @@ def get_event(conn: Any, event_id: str) -> dict[str, object] | None:
         "last_seen_at": row[8],
         "status": row[9],
         "meta": meta,
+        "event_key": row[11],
+        "occurred_at": row[12],
+        "summary_updated_at": row[13],
+        "confidence": row[14],
     }
     cves_cursor = conn.execute(
         """
@@ -2723,16 +2968,28 @@ def get_event(conn: Any, event_id: str) -> dict[str, object] | None:
     ]
     articles = []
     if _table_exists(conn, "articles"):
-        article_cursor = conn.execute(
-            """
-            SELECT a.id, a.title, a.published_at, a.original_url
-            FROM event_items ei
-            JOIN articles a ON a.id = CAST(ei.item_key AS INTEGER)
-            WHERE ei.event_id = %s AND ei.item_type = 'article'
-            ORDER BY a.published_at DESC
-            """,
-            (event_id,),
-        )
+        if _table_exists(conn, "event_articles"):
+            article_cursor = conn.execute(
+                """
+                SELECT a.id, a.title, a.published_at, a.original_url
+                FROM event_articles ea
+                JOIN articles a ON a.id = ea.article_id
+                WHERE ea.event_id = %s
+                ORDER BY a.published_at DESC
+                """,
+                (event_id,),
+            )
+        else:
+            article_cursor = conn.execute(
+                """
+                SELECT a.id, a.title, a.published_at, a.original_url
+                FROM event_items ei
+                JOIN articles a ON a.id = CAST(ei.item_key AS INTEGER)
+                WHERE ei.event_id = %s AND ei.item_type = 'article'
+                ORDER BY a.published_at DESC
+                """,
+                (event_id,),
+            )
         articles = [
             {
                 "article_id": row[0],
@@ -2804,13 +3061,36 @@ def rebuild_events_from_cves(
         "cves_processed": 0,
         "articles_linked": 0,
     }
-    if _table_exists(conn, "event_items"):
-        conn.execute("DELETE FROM event_items")
-    if _table_exists(conn, "event_signals"):
-        conn.execute("DELETE FROM event_signals")
     if _table_exists(conn, "events"):
-        conn.execute("DELETE FROM events")
-    conn.commit()
+        cursor = conn.execute(
+            """
+            SELECT id FROM events
+            WHERE kind = 'cve_cluster' OR event_key LIKE 'cve:%'
+            """
+        )
+        event_ids = [row[0] for row in cursor.fetchall()]
+        if event_ids:
+            placeholders = ",".join("%s" for _ in event_ids)
+            if _table_exists(conn, "event_items"):
+                conn.execute(
+                    f"DELETE FROM event_items WHERE event_id IN ({placeholders})",
+                    event_ids,
+                )
+            if _table_exists(conn, "event_articles"):
+                conn.execute(
+                    f"DELETE FROM event_articles WHERE event_id IN ({placeholders})",
+                    event_ids,
+                )
+            if _table_exists(conn, "event_signals"):
+                conn.execute(
+                    f"DELETE FROM event_signals WHERE event_id IN ({placeholders})",
+                    event_ids,
+                )
+            conn.execute(
+                f"DELETE FROM events WHERE id IN ({placeholders})",
+                event_ids,
+            )
+            conn.commit()
     if not _table_exists(conn, "cves"):
         return stats
     cursor = conn.execute(
@@ -2849,7 +3129,9 @@ def rebuild_events_from_cves(
                 published_at or ingested_at,
             )
             stats["articles_linked"] += linked
-    if _table_exists(conn, "events") and _table_exists(conn, "event_items"):
+    if _table_exists(conn, "events") and (
+        _table_exists(conn, "event_items") or _table_exists(conn, "event_articles")
+    ):
         logger = logging.getLogger("sempervigil.events")
         keywords = [
             "exploited in the wild",
@@ -2874,17 +3156,33 @@ def rebuild_events_from_cves(
         content_sel = "a.content_text" if "content_text" in article_columns else "''"
         pruned_zero = 0
         pruned_weak = 0
-        event_ids = [row[0] for row in conn.execute("SELECT id FROM events").fetchall()]
-        for event_id in event_ids:
-            rows = conn.execute(
-                f"""
-                SELECT {title_sel}, {summary_sel}, {content_sel}
-                FROM event_items ei
-                JOIN articles a ON a.id = CAST(ei.item_key AS INTEGER)
-                WHERE ei.event_id = %s AND ei.item_type = 'article'
-                """,
-                (event_id,),
+        event_ids = [
+            row[0]
+            for row in conn.execute(
+                "SELECT id FROM events WHERE kind = 'cve_cluster' OR event_key LIKE 'cve:%'"
             ).fetchall()
+        ]
+        for event_id in event_ids:
+            if _table_exists(conn, "event_articles"):
+                rows = conn.execute(
+                    f"""
+                    SELECT {title_sel}, {summary_sel}, {content_sel}
+                    FROM event_articles ea
+                    JOIN articles a ON a.id = ea.article_id
+                    WHERE ea.event_id = %s
+                    """,
+                    (event_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    f"""
+                    SELECT {title_sel}, {summary_sel}, {content_sel}
+                    FROM event_items ei
+                    JOIN articles a ON a.id = CAST(ei.item_key AS INTEGER)
+                    WHERE ei.event_id = %s AND ei.item_type = 'article'
+                    """,
+                    (event_id,),
+                ).fetchall()
             article_count = len(rows)
             incident_signal = False
             for title, summary, content in rows:
@@ -2895,6 +3193,8 @@ def rebuild_events_from_cves(
             if article_count == 0 or (article_count == 1 and not incident_signal):
                 if _table_exists(conn, "event_items"):
                     conn.execute("DELETE FROM event_items WHERE event_id = %s", (event_id,))
+                if _table_exists(conn, "event_articles"):
+                    conn.execute("DELETE FROM event_articles WHERE event_id = %s", (event_id,))
                 if _table_exists(conn, "event_signals"):
                     conn.execute("DELETE FROM event_signals WHERE event_id = %s", (event_id,))
                 conn.execute("DELETE FROM events WHERE id = %s", (event_id,))
@@ -2975,6 +3275,9 @@ def delete_all_events(conn: Any) -> dict[str, object]:
         if _table_exists(conn, "event_signals"):
             cursor = conn.execute("DELETE FROM event_signals")
             stats["tables"]["event_signals"] = cursor.rowcount
+        if _table_exists(conn, "event_articles"):
+            cursor = conn.execute("DELETE FROM event_articles")
+            stats["tables"]["event_articles"] = cursor.rowcount
         if _table_exists(conn, "event_items"):
             cursor = conn.execute("DELETE FROM event_items")
             stats["tables"]["event_items"] = cursor.rowcount
@@ -3205,9 +3508,14 @@ def search_articles(
     )
     cursor = conn.execute(
         f"""
-        SELECT a.id, a.title, a.original_url, a.published_at, a.ingested_at,
-               { 'a.summary_llm' if 'summary_llm' in columns else 'NULL' } as summary_llm,
-               MAX(a.source_id) as source_id, MAX(s.name) as source_name,
+        SELECT a.id,
+               MAX(a.title) as title,
+               MAX(a.original_url) as original_url,
+               MAX(a.published_at) as published_at,
+               MAX(a.ingested_at) as ingested_at,
+               { 'MAX(a.summary_llm)' if 'summary_llm' in columns else 'NULL' } as summary_llm,
+               MAX(a.source_id) as source_id,
+               MAX(s.name) as source_name,
                string_agg(t.tag, ',') as tags,
                {watchlist_select},
                {has_content_select},
@@ -3857,6 +4165,30 @@ def _list_article_cve_ids(conn: Any, article_id: int) -> list[str]:
         (article_id,),
     )
     return [row[0] for row in cursor.fetchall() if row and row[0]]
+
+
+def list_article_cve_ids(conn: Any, article_id: int) -> list[str]:
+    return _list_article_cve_ids(conn, article_id)
+
+
+def list_event_ids_for_article(conn: Any, article_id: int) -> list[str]:
+    if _table_exists(conn, "event_articles"):
+        cursor = conn.execute(
+            "SELECT event_id FROM event_articles WHERE article_id = %s",
+            (article_id,),
+        )
+        return [row[0] for row in cursor.fetchall() if row and row[0]]
+    if _table_exists(conn, "event_items"):
+        cursor = conn.execute(
+            """
+            SELECT event_id
+            FROM event_items
+            WHERE item_type = 'article' AND item_key = %s
+            """,
+            (str(article_id),),
+        )
+        return [row[0] for row in cursor.fetchall() if row and row[0]]
+    return []
 
 
 def compute_watchlist_hits(

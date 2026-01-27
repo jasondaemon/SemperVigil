@@ -21,7 +21,25 @@ def apply_migrations_pg(conn) -> None:
         for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
     }
     if "pg_bootstrap_001" in applied:
-        conn.commit()
+        if "pg_events_002" not in applied:
+            _migrate_events_v2(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_events_002", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_events_002")
+            applied.add("pg_events_002")
+        if "pg_events_003" not in applied:
+            _migrate_events_articles(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_events_003", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_events_003")
+        else:
+            conn.commit()
         return
     _bootstrap_schema(conn)
     conn.execute(
@@ -30,6 +48,24 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_bootstrap_001")
+
+    conn.execute("BEGIN")
+    _migrate_events_v2(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_events_002", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_events_002")
+
+    conn.execute("BEGIN")
+    _migrate_events_articles(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_events_003", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_events_003")
 
 
 def _bootstrap_schema(conn) -> None:
@@ -398,7 +434,11 @@ def _bootstrap_schema(conn) -> None:
             first_seen_at TEXT NOT NULL,
             last_seen_at TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'open',
-            meta_json TEXT NULL
+            meta_json TEXT NULL,
+            event_key TEXT NULL,
+            occurred_at TEXT NULL,
+            summary_updated_at TEXT NULL,
+            confidence REAL NULL
         )
         """
     )
@@ -410,6 +450,17 @@ def _bootstrap_schema(conn) -> None:
             item_key TEXT NOT NULL,
             created_at TEXT NOT NULL,
             PRIMARY KEY (event_id, item_type, item_key)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS event_articles (
+            event_id TEXT NOT NULL REFERENCES events(id),
+            article_id BIGINT NOT NULL REFERENCES articles(id),
+            added_by TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (event_id, article_id)
         )
         """
     )
@@ -521,8 +572,32 @@ def _bootstrap_schema(conn) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_severity ON events(severity)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_event_items_type_key ON event_items(item_type, item_key)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_event_items_event ON event_items(event_id)")
+
+
+def _migrate_events_v2(conn) -> None:
+    conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS event_key TEXT")
+    conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS occurred_at TEXT")
+    conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS summary_updated_at TEXT")
+    conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS confidence REAL")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_event_key ON events(event_key)"
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cve_product_versions_product ON cve_product_versions(product_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cve_product_versions_cve ON cve_product_versions(cve_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_watched_vendors_norm ON watched_vendors(vendor_norm)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_watched_products_norm ON watched_products(product_norm)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cve_scope_cve ON cve_scope(cve_id)")
+
+
+def _migrate_events_articles(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS event_articles (
+            event_id TEXT NOT NULL REFERENCES events(id),
+            article_id BIGINT NOT NULL REFERENCES articles(id),
+            added_by TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (event_id, article_id)
+        )
+        """
+    )

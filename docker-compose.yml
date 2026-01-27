@@ -68,7 +68,7 @@ services:
       SV_LOG_FILE: /data/logs/worker.log
       SV_UMASK: ${SV_UMASK:-002}
       SV_DB_URL: ${SV_DB_URL:-}
-      SV_WORKER_ONLY_TYPES: "ingest_source,html_index,rss_index,fetch_article_content,write_article_markdown,cve_sync"
+      SV_WORKER_ONLY_TYPES: "ingest_due_sources,ingest_source,html_index,rss_index,fetch_article_content,write_article_markdown,cve_sync,derive_events_from_articles"
     command:
       - sh
       - -lc
@@ -140,6 +140,8 @@ services:
       SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-http://localhost:${SV_WEB_PORT:-8080}/}
       HUGO_CACHEDIR: /tmp/hugo_cache
       SV_DB_URL: ${SV_DB_URL:-}
+      SV_HUGO_SOURCE_DIR: /repo/site
+      SV_HUGO_OUTPUT_DIR: /site
     working_dir: /repo
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:

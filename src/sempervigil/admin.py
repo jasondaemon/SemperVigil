@@ -87,6 +87,10 @@ from .storage import (
     list_cve_vendor_products,
     search_articles,
     search_cves,
+    create_event,
+    upsert_event_by_key,
+    link_event_article,
+    update_event_summary_from_articles,
 )
 from .ingest import process_source
 from .services.sources_service import (
@@ -98,6 +102,7 @@ from .services.sources_service import (
     update_source,
 )
 from .services.ai_service import get_active_profile_for_stage, list_stage_statuses
+from .normalize import normalize_name
 from .services.ai_service import (
     clear_provider_secret,
     create_model,
@@ -1092,6 +1097,91 @@ def api_events_rebuild(payload: EventsRebuildRequest | None = None) -> dict[str,
         "events_rebuild",
         {"limit": limit} if limit is not None else None,
         debounce=True,
+    )
+    return {"status": "queued", "job_id": job_id}
+
+
+class EventCreateRequest(BaseModel):
+    title: str
+    kind: str = "other"
+    status: str = "open"
+    occurred_at: str | None = None
+    summary: str | None = None
+    event_key: str | None = None
+    confidence: float | None = None
+
+
+@app.post("/admin/api/events", dependencies=[Depends(_require_admin_token)])
+def api_event_create(payload: EventCreateRequest) -> dict[str, object]:
+    conn = _get_conn()
+    now = utc_now_iso()
+    event_key = payload.event_key
+    if not event_key:
+        bucket = (payload.occurred_at or now)[:10]
+        event_key = f"evt:{normalize_name(payload.title)}:{bucket}"
+    event_id, _ = upsert_event_by_key(
+        conn,
+        event_key=event_key,
+        kind=payload.kind,
+        title=payload.title,
+        severity="UNKNOWN",
+        first_seen_at=payload.occurred_at or now,
+        last_seen_at=now,
+        status=payload.status,
+        summary=payload.summary,
+        confidence=payload.confidence,
+    )
+    event = get_event(conn, event_id)
+    return event or {"id": event_id}
+
+
+class EventAttachArticleRequest(BaseModel):
+    article_id: int
+    added_by: str | None = None
+
+
+@app.post(
+    "/admin/api/events/{event_id}/articles",
+    dependencies=[Depends(_require_admin_token)],
+)
+def api_event_attach_article(
+    event_id: str, payload: EventAttachArticleRequest
+) -> dict[str, object]:
+    conn = _get_conn()
+    article = get_article_by_id(conn, payload.article_id)
+    if not article:
+        raise HTTPException(status_code=404, detail="article_not_found")
+    link_event_article(conn, event_id, payload.article_id, payload.added_by or "manual")
+    event = get_event(conn, event_id)
+    return event or {"id": event_id}
+
+
+@app.post(
+    "/admin/api/events/{event_id}/summary",
+    dependencies=[Depends(_require_admin_token)],
+)
+def api_event_summary_rebuild(event_id: str) -> dict[str, object]:
+    conn = _get_conn()
+    summary = update_event_summary_from_articles(conn, event_id)
+    return {"event_id": event_id, "summary": summary}
+
+
+class EventsDeriveRequest(BaseModel):
+    article_id: int | None = None
+
+
+@app.post(
+    "/admin/api/events/derive",
+    dependencies=[Depends(_require_admin_token)],
+)
+def api_events_derive(payload: EventsDeriveRequest | None = None) -> dict[str, object]:
+    conn = _get_conn()
+    data = payload.model_dump() if payload else {}
+    job_id = enqueue_job(
+        conn,
+        "derive_events_from_articles",
+        data if data else None,
+        debounce=False,
     )
     return {"status": "queued", "job_id": job_id}
 
