@@ -1018,12 +1018,26 @@ def insert_llm_run(
 def list_llm_runs(conn: Any, limit: int = 10) -> list[dict[str, object]]:
     if not _table_exists(conn, "llm_runs"):
         return []
+    provider_join = ""
+    model_join = ""
+    provider_select = "NULL"
+    model_select = "NULL"
+    if _table_exists(conn, "llm_providers"):
+        provider_join = "LEFT JOIN llm_providers p ON p.id = r.provider_id"
+        provider_select = "p.name"
+    if _table_exists(conn, "llm_models"):
+        model_join = "LEFT JOIN llm_models m ON m.id = r.model_id"
+        model_select = "m.model_name"
     cursor = conn.execute(
-        """
-        SELECT id, ts, job_id, provider_id, model_id, prompt_name,
-               input_chars, output_chars, latency_ms, ok, error
-        FROM llm_runs
-        ORDER BY ts DESC
+        f"""
+        SELECT r.id, r.ts, r.job_id, r.provider_id, r.model_id, r.prompt_name,
+               r.input_chars, r.output_chars, r.latency_ms, r.ok, r.error,
+               {provider_select} AS provider_name,
+               {model_select} AS model_name
+        FROM llm_runs r
+        {provider_join}
+        {model_join}
+        ORDER BY r.ts DESC
         LIMIT %s
         """,
         (limit,),
@@ -1042,6 +1056,8 @@ def list_llm_runs(conn: Any, limit: int = 10) -> list[dict[str, object]]:
             latency_ms,
             ok,
             error,
+            provider_name,
+            model_name,
         ) = row
         items.append(
             {
@@ -1049,7 +1065,9 @@ def list_llm_runs(conn: Any, limit: int = 10) -> list[dict[str, object]]:
                 "ts": ts,
                 "job_id": job_id,
                 "provider_id": provider_id,
+                "provider_name": provider_name,
                 "model_id": model_id,
+                "model_name": model_name,
                 "prompt_name": prompt_name,
                 "input_chars": input_chars,
                 "output_chars": output_chars,
@@ -2456,8 +2474,8 @@ def upsert_event_by_key(
                 occurred_at,
                 confidence,
                 status,
-                1 if manual else 0,
-                1 if manual else 0,
+                bool(manual),
+                bool(manual),
                 visibility,
                 confidence_tier,
                 json_dumps(reasons) if reasons is not None else None,

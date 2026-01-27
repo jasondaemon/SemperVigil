@@ -3277,12 +3277,14 @@ function wireDebug() {
     }
     llmBody.innerHTML = "";
     rows.forEach((run) => {
+      const providerLabel = run.provider_name || run.provider_id || "";
+      const modelLabel = run.model_name || run.model_id || "";
       const row = document.createElement("tr");
       row.innerHTML = `
-        <td>${run.ts || ""}</td>
-        <td>${run.provider_id || ""}</td>
-        <td>${run.model_id || ""}</td>
-        <td>${run.prompt_name || ""}</td>
+        <td>${esc(formatTimestamp(run.ts))}</td>
+        <td>${esc(providerLabel)}</td>
+        <td>${esc(modelLabel)}</td>
+        <td>${esc(run.prompt_name || "")}</td>
         <td>${run.latency_ms || ""}</td>
         <td>${run.ok ? "ok" : "error"}</td>
         <td class="truncate" title="${run.error || ""}">${run.error || ""}</td>
@@ -3480,12 +3482,14 @@ function wireAiTest() {
     const data = await apiFetch("/admin/api/ai/runs?limit=10");
     runsBody.innerHTML = "";
     (data.items || []).forEach((run) => {
+      const providerLabel = run.provider_name || run.provider_id || "";
+      const modelLabel = run.model_name || run.model_id || "";
       const row = document.createElement("tr");
       row.innerHTML = `
-        <td>${run.ts || ""}</td>
-        <td>${run.provider_id || ""}</td>
-        <td>${run.model_id || ""}</td>
-        <td>${run.prompt_name || ""}</td>
+        <td>${esc(formatTimestamp(run.ts))}</td>
+        <td>${esc(providerLabel)}</td>
+        <td>${esc(modelLabel)}</td>
+        <td>${esc(run.prompt_name || "")}</td>
         <td>${run.latency_ms || ""}</td>
         <td>${run.ok ? "ok" : "error"}</td>
         <td class="truncate" title="${run.error || ""}">${run.error || ""}</td>
