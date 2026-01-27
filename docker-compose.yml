@@ -127,6 +127,8 @@ services:
 
   # 3) Builder (on-demand Hugo build)
   builder:
+    profiles:
+      - build
     build:
       context: .
       dockerfile: docker/builder/Dockerfile
@@ -151,10 +153,9 @@ services:
       # If your theme uses Hugo Modules, this prevents module cache pain too
       - sv_hugo_modules:/tmp/hugo_modules
       - ./tools:/tools:ro
-    command: ["sempervigil-builder"]
+    command: ["sempervigil-builder", "--once"]
     networks:
       - svnet
-    restart: unless-stopped
 
   # 4) Static site server (public)
   web:
@@ -170,6 +171,8 @@ services:
 
   # 5) Test runner (image-only, no NFS)
   test:
+    profiles:
+      - test
     build:
       context: .
       dockerfile: docker/ingest/Dockerfile

@@ -6,7 +6,9 @@ export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-sempervigil}"
 
 # --- helpers ---
 SERVICES="$(docker compose config --services)"
+SERVICES_BUILD="$(docker compose --profile build config --services)"
 has() { echo "$SERVICES" | grep -qx "$1"; }
+has_build() { echo "$SERVICES_BUILD" | grep -qx "$1"; }
 
 DB_USER="${SV_DB_USER:-sempervigil}"
 ADMIN_PORT="${SV_ADMIN_PORT:-8001}"
@@ -76,7 +78,7 @@ if [[ -n "$LLM_SVC" ]]; then
 fi
 
 # --- build site once (do NOT run builder as a service) ---
-if has "builder"; then
+if has_build "builder"; then
   echo "🧽 Ensuring builder service isn't running..."
   docker compose stop builder >/dev/null 2>&1 || true
   docker compose rm -f builder >/dev/null 2>&1 || true
@@ -84,10 +86,10 @@ if has "builder"; then
   echo "📝 Running Hugo site build (one-shot)..."
   # Use timeout to prevent hangs if --once is missing or builder blocks
   if command -v timeout >/dev/null 2>&1; then
-    timeout 10m docker compose run --rm --no-deps builder sempervigil-builder --once
+    timeout 10m docker compose --profile build run --rm --no-deps builder
   else
     # Fallback if timeout isn't installed
-    docker compose run --rm --no-deps builder sempervigil-builder --once
+    docker compose --profile build run --rm --no-deps builder
   fi
 else
   echo "⚠️  No builder service found; skipping site build..."

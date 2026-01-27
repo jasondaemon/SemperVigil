@@ -133,7 +133,7 @@ Sources are stored in the database, not in static config files.
 ### 3) Start internal services (admin, worker, web)
 
 ```bash
-docker compose up -d --build admin worker web
+docker compose up -d --build db admin worker_fetch worker_llm web
 ```
 
 Admin health check:
@@ -221,7 +221,7 @@ docker compose run --rm worker \
 The ingest run enqueues a `build_site` job automatically when new articles are accepted.
 
 ```bash
-docker compose run --rm builder
+docker compose --profile build run --rm builder
 ```
 
 If no build job is queued, you can enqueue one manually:
@@ -289,7 +289,7 @@ Set `NVD_API_KEY` in your environment for higher rate limits.
 ### Build the Site (One-Shot)
 
 ```bash
-docker compose run --rm builder
+docker compose --profile build run --rm builder
 ```
 
 After build, verify: `site/public/index.html`
@@ -314,7 +314,7 @@ If `./data` or `./site` are NFS mounts with root-squash, ensure they are owned b
 
 - admin: FastAPI API for managing sources and enqueueing jobs (binds to `127.0.0.1:8001` by default)
 - worker: polls the DB job queue and runs ingestion tasks
-- builder: polls the DB job queue and runs `hugo build` for site output
+- builder: one-shot Hugo build container; run on demand (profile `build`)
 - web: public static site server (nginx serving `site/public`)
 
 All orchestration is DB-driven; containers do not shell out to Docker.
