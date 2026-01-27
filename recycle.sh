@@ -95,11 +95,17 @@ fi
 
 # --- build site once (profile-gated one-shot) ---
 if has_build "builder"; then
-  echo "📝 Running Hugo site build (one-shot via profile 'build')..."
+  echo "📝 Running Hugo site build (ONE-SHOT)…"
+
+  # IMPORTANT:
+  # The default builder command runs run_loop() forever.
+  # So we override the entrypoint/command and call run_once() directly.
+  ONE_SHOT_CMD='set -e; /venv/bin/python -c "from sempervigil.builder import run_once; run_once(\"manual\")"'
+
   if [[ -n "$TIMEOUT_BIN" ]]; then
-    "$TIMEOUT_BIN" 10m docker compose --profile build run --rm --no-deps builder
+    "$TIMEOUT_BIN" 10m docker compose --profile build run --rm --no-deps --entrypoint sh builder -lc "$ONE_SHOT_CMD"
   else
-    docker compose --profile build run --rm --no-deps builder
+    docker compose --profile build run --rm --no-deps --entrypoint sh builder -lc "$ONE_SHOT_CMD"
   fi
 else
   echo "⚠️  No builder in '--profile build' services; skipping site build..."
