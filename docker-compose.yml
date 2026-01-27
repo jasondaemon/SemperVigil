@@ -155,6 +155,7 @@ services:
     command: ["sempervigil-builder", "--once"]
     networks:
       - svnet
+    restart: "no"
 
   # 4) Static site server (public)
   web:
