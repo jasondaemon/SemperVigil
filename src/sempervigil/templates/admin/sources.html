@@ -69,7 +69,7 @@
           <td>{{ source.articles_24h }}</td>
           <td>{{ source.total_articles }}</td>
           <td class="source-tags">{{ source.tags | join(", ") }}</td>
-          <td>{{ source.last_ok_at or "" }}</td>
+          <td><span data-ts="{{ source.last_ok_at or '' }}"></span></td>
           <td class="truncate">{{ source.last_error or "" }}</td>
           <td class="table-actions">
             <label class="checkbox small inline"><input type="checkbox" class="acquire-build"> Build</label>

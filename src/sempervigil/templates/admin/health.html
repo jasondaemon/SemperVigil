@@ -27,7 +27,7 @@
           <td>{{ row.name }}</td>
           <td>{{ "yes" if row.enabled else "no" }}</td>
           <td>{{ row.last_status or "" }}</td>
-          <td>{{ row.last_run_at or "" }}</td>
+          <td><span data-ts="{{ row.last_run_at or '' }}"></span></td>
           <td>{{ row.last_items_accepted or "" }}</td>
           <td class="truncate">{{ row.last_error or row.paused_reason or "" }}</td>
           <td>{{ row.consecutive_errors }}</td>

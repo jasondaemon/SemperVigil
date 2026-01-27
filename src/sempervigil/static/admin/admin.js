@@ -31,6 +31,48 @@ function esc(value) {
     .replaceAll("'", "&#39;");
 }
 
+function formatTimestamp(value) {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+  const pad = (num) => String(num).padStart(2, "0");
+  const tz = document.body?.dataset?.timezone || "";
+  if (tz) {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+    const parts = Object.fromEntries(
+      formatter.formatToParts(date).map((part) => [part.type, part.value])
+    );
+    return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+  }
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  const seconds = pad(date.getSeconds());
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
+function applyTimestampFormatting(root = document) {
+  root.querySelectorAll("[data-ts]").forEach((el) => {
+    const raw = el.getAttribute("data-ts");
+    el.textContent = formatTimestamp(raw);
+  });
+}
+
 function wireDashboard() {
   const backlog = document.getElementById("dashboard-backlog");
   const jobsPanel = document.getElementById("dashboard-job-counts");
@@ -842,24 +884,6 @@ function wireJobs() {
   const tbody = document.getElementById("jobs-table-body");
   if (!refresh || !table || !tbody) {
     return;
-  }
-
-  function formatTimestamp(value) {
-    if (!value) {
-      return "";
-    }
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      return String(value);
-    }
-    return date.toLocaleString(undefined, {
-      year: "numeric",
-      month: "short",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
   }
 
   function formatResult(job) {
@@ -1895,8 +1919,8 @@ function wireCveSearch() {
         item.in_scope === null || item.in_scope === undefined ? "n/a" : item.in_scope ? "yes" : "no";
       row.innerHTML = `
         <td><a href="/ui/cves/${item.cve_id}">${item.cve_id}</a></td>
-        <td>${item.published_at || ""}</td>
-        <td>${item.last_modified_at || ""}</td>
+        <td>${esc(formatTimestamp(item.published_at))}</td>
+        <td>${esc(formatTimestamp(item.last_modified_at))}</td>
         <td>${item.preferred_base_severity || ""}</td>
         <td>${item.preferred_base_score || ""}</td>
         <td class="truncate" title="${item.summary || ""}">${item.summary || ""}</td>
@@ -1970,9 +1994,9 @@ function wireCveDetail() {
       container.innerHTML = `
         <div class="kv">
           <div><strong>${item.cve_id}</strong></div>
-          <div>Published: ${item.published_at || ""}</div>
-          <div>Modified: ${item.last_modified_at || ""}</div>
-          <div>Last seen: ${item.last_seen_at || ""}</div>
+          <div>Published: ${esc(formatTimestamp(item.published_at))}</div>
+          <div>Modified: ${esc(formatTimestamp(item.last_modified_at))}</div>
+          <div>Last seen: ${esc(formatTimestamp(item.last_seen_at))}</div>
           <div>Preferred CVSS (${preferredVersion}): ${item.preferred_base_score || ""} ${
         item.preferred_base_severity ? `(${item.preferred_base_severity})` : ""
       }</div>
@@ -2097,7 +2121,7 @@ function wireCveSettings() {
     ).join(", ");
     document.getElementById("cve-retention").value = settings.retention_days ?? 365;
     if (note) {
-      note.textContent = `Last run: ${settings.last_run_at || "unknown"}`;
+      note.textContent = `Last run: ${formatTimestamp(settings.last_run_at) || "unknown"}`;
     }
   }
 
@@ -2486,7 +2510,7 @@ function wireContentSearch() {
       row.innerHTML = `
         <td>${item.type}</td>
         <td>${link ? `<a href="${link}">${item.type === "cve" ? item.cve_id : item.id}</a>` : ""}</td>
-        <td>${date}</td>
+        <td>${esc(formatTimestamp(date))}</td>
         <td class="truncate" title="${title}">${title}</td>
         <td>${item.source_name || ""}</td>
         ${watchlistCell}
@@ -2611,8 +2635,8 @@ function wireContentArticle() {
         <div class="kv">
           <div><strong>${esc(item.title || "")}</strong></div>
           <div>Source: ${esc(item.source_id || "")}</div>
-          <div>Published: ${esc(item.published_at || "")}</div>
-          <div>Ingested: ${esc(item.ingested_at || "")}</div>
+          <div>Published: ${esc(formatTimestamp(item.published_at))}</div>
+          <div>Ingested: ${esc(formatTimestamp(item.ingested_at))}</div>
           <div><a href="${esc(item.original_url || "")}" target="_blank" rel="noopener">Open URL</a></div>
         </div>
         <h3>Summary</h3>
@@ -2681,7 +2705,7 @@ function wireEvents() {
         <td>${event.kind || ""}</td>
         <td>${event.severity || ""}</td>
         <td>${event.status || ""}</td>
-        <td>${event.last_seen_at || ""}</td>
+        <td>${esc(formatTimestamp(event.last_seen_at))}</td>
       `;
       tbody.appendChild(row);
     });
@@ -2739,7 +2763,7 @@ function wireEventDetail() {
           <div><strong>Status:</strong> ${event.status}</div>
           <div><strong>Severity:</strong> ${event.severity || "UNKNOWN"}</div>
           <div><strong>First seen:</strong> ${event.first_seen_at || ""}</div>
-          <div><strong>Last seen:</strong> ${event.last_seen_at || ""}</div>
+          <div><strong>Last seen:</strong> ${esc(formatTimestamp(event.last_seen_at))}</div>
         </div>
         ${event.summary ? `<p class="summary">${event.summary}</p>` : ""}
       `;
@@ -2754,7 +2778,7 @@ function wireEventDetail() {
             <td><a href="/ui/cves/${cve.cve_id}">${cve.cve_id}</a></td>
             <td>${cve.preferred_base_severity || ""}</td>
             <td>${cve.preferred_base_score ?? ""}</td>
-            <td>${cve.published_at || ""}</td>
+            <td>${esc(formatTimestamp(cve.published_at))}</td>
             <td class="truncate" title="${cve.summary || ""}">${cve.summary || ""}</td>
           `;
           body.appendChild(row);
@@ -2785,7 +2809,7 @@ function wireEventDetail() {
             : "";
           row.innerHTML = `
             <td>${link ? `<a href="${link}">${article.title || ""}</a>` : (article.title || "")}</td>
-            <td>${article.published_at || ""}</td>
+            <td>${esc(formatTimestamp(article.published_at))}</td>
             <td>${article.url ? `<a href="${article.url}" target="_blank" rel="noopener">Source</a>` : ""}</td>
           `;
           body.appendChild(row);
@@ -2948,7 +2972,7 @@ function wireProductDetail() {
           <td><a href="/ui/cves/${cve.cve_id}">${cve.cve_id}</a></td>
           <td>${cve.preferred_base_severity || ""}</td>
           <td>${cve.preferred_base_score ?? ""}</td>
-          <td>${cve.published_at || ""}</td>
+          <td>${esc(formatTimestamp(cve.published_at))}</td>
           <td class="truncate" title="${cve.summary || ""}">${cve.summary || ""}</td>
         `;
         body.appendChild(row);
@@ -2974,7 +2998,7 @@ function wireProductDetail() {
           <td>${event.kind || ""}</td>
           <td>${event.severity || ""}</td>
           <td>${event.status || ""}</td>
-          <td>${event.last_seen_at || ""}</td>
+          <td>${esc(formatTimestamp(event.last_seen_at))}</td>
         `;
         body.appendChild(row);
       });
@@ -3099,9 +3123,9 @@ function wireDebug() {
         <td class="mono">${job.id}</td>
         <td>${job.job_type}</td>
         <td>${job.status}</td>
-        <td>${job.requested_at || ""}</td>
-        <td>${job.started_at || ""}</td>
-        <td>${job.finished_at || ""}</td>
+        <td>${esc(formatTimestamp(job.requested_at))}</td>
+        <td>${esc(formatTimestamp(job.started_at))}</td>
+        <td>${esc(formatTimestamp(job.finished_at))}</td>
         <td class="truncate" title="${job.error || ""}">${job.error || ""}</td>
       `;
       jobsBody.appendChild(row);
@@ -3390,4 +3414,5 @@ document.addEventListener("DOMContentLoaded", () => {
   wireDebug();
   wireLogs();
   wireWatchlist();
+  applyTimestampFormatting();
 });

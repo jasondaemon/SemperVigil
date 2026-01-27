@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="/ui/static/admin/admin.css">
   </head>
-  <body>
+  <body data-timezone="{{ timezone or '' }}">
     {% if show_nav|default(true) %}
       {% include "admin/_nav.html" %}
     {% endif %}

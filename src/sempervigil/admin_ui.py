@@ -50,6 +50,7 @@ def _base_context(request: Request) -> dict[str, object]:
     conn = _get_conn()
     cfg = get_runtime_config(conn)
     publishing = cfg.get("publishing") or {}
+    app_cfg = cfg.get("app") or {}
     personalization = cfg.get("personalization") or {}
     site_url = str(publishing.get("public_base_url") or "").strip()
     return {
@@ -57,6 +58,7 @@ def _base_context(request: Request) -> dict[str, object]:
         "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
         "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
         "site_url": site_url or None,
+        "timezone": str(app_cfg.get("timezone") or "").strip() or None,
         "watchlist_enabled": bool(personalization.get("watchlist_enabled")),
         "watchlist_exposure_mode": personalization.get("watchlist_exposure_mode") or "private_only",
     }

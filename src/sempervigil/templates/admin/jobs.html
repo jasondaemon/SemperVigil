@@ -31,9 +31,9 @@
           <td class="mono">{{ job.id }}</td>
           <td>{{ job.job_type }}</td>
           <td>{{ job.status }}</td>
-          <td>{{ job.requested_at }}</td>
-          <td>{{ job.started_at or "" }}</td>
-          <td>{{ job.finished_at or "" }}</td>
+          <td><span data-ts="{{ job.requested_at }}"></span></td>
+          <td><span data-ts="{{ job.started_at or '' }}"></span></td>
+          <td><span data-ts="{{ job.finished_at or '' }}"></span></td>
           <td class="truncate">{{ job.error or job.result or "" }}</td>
           <td>
             {% if job.status in ["queued", "running"] %}
