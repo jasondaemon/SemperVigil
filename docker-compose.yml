@@ -170,7 +170,7 @@ services:
         set -e
         umask ${SV_UMASK:-002}
         sh /tools/ensure-dirs.sh
-        python -m sempervigil.builder --once
+        PYTHONPATH=/app/src /venv/bin/python -m sempervigil.builder --once
     networks:
       - svnet
     restart: "no"
