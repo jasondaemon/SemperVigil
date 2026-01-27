@@ -658,7 +658,7 @@ function wireSources() {
         <td>${source.articles_24h || 0}</td>
         <td>${source.total_articles || 0}</td>
         <td class="source-tags">${(source.tags || []).join(", ")}</td>
-        <td>${source.last_ok_at || ""}</td>
+        <td>${esc(formatTimestamp(source.last_ok_at))}</td>
         <td class="truncate" title="${source.last_error || ""}">${source.last_error || ""}</td>
         <td class="table-actions">
           <label class="checkbox small inline"><input type="checkbox" class="acquire-build"> Build</label>
@@ -818,7 +818,7 @@ function wireSources() {
             .map(
               (item) =>
                 `<tr>
-                  <td>${item.ts}</td>
+                  <td>${esc(formatTimestamp(item.ts))}</td>
                   <td>${item.ok ? "ok" : "err"}</td>
                   <td>${item.found_count}</td>
                   <td>${item.accepted_count}</td>
@@ -2762,7 +2762,7 @@ function wireEventDetail() {
           <div><strong>Kind:</strong> ${event.kind}</div>
           <div><strong>Status:</strong> ${event.status}</div>
           <div><strong>Severity:</strong> ${event.severity || "UNKNOWN"}</div>
-          <div><strong>First seen:</strong> ${event.first_seen_at || ""}</div>
+          <div><strong>First seen:</strong> ${esc(formatTimestamp(event.first_seen_at))}</div>
           <div><strong>Last seen:</strong> ${esc(formatTimestamp(event.last_seen_at))}</div>
         </div>
         ${event.summary ? `<p class="summary">${event.summary}</p>` : ""}
@@ -3278,7 +3278,7 @@ async function wireAnalytics() {
             `<tr>
               <td>${row.source_name}</td>
               <td>${row.articles_per_day_avg}</td>
-              <td>${row.last_ok_at || ""}</td>
+              <td>${esc(formatTimestamp(row.last_ok_at))}</td>
               <td class="truncate" title="${row.last_error || ""}">${row.last_error || ""}</td>
               <td>${row.ok_rate}%</td>
               <td>${row.total_articles}</td>
