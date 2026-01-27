@@ -3207,7 +3207,7 @@ def search_articles(
         f"""
         SELECT a.id, a.title, a.original_url, a.published_at, a.ingested_at,
                { 'a.summary_llm' if 'summary_llm' in columns else 'NULL' } as summary_llm,
-               a.source_id, s.name,
+               MAX(a.source_id) as source_id, MAX(s.name) as source_name,
                string_agg(t.tag, ',') as tags,
                {watchlist_select},
                {has_content_select},
