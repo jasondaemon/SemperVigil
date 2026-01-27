@@ -132,7 +132,6 @@ services:
     build:
       context: .
       dockerfile: docker/builder/Dockerfile
-    container_name: sempervigil-builder
     env_file:
       - .env
     environment:
