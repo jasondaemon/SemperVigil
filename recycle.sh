@@ -14,6 +14,14 @@ DB_USER="${SV_DB_USER:-sempervigil}"
 ADMIN_PORT="${SV_ADMIN_PORT:-8001}"
 WEB_PORT="${SV_WEB_PORT:-8080}"
 
+# Prefer GNU timeout; fall back to gtimeout (macOS coreutils) if available
+TIMEOUT_BIN=""
+if command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="gtimeout"
+fi
+
 # --- stop ---
 echo "🛑 Stopping running containers..."
 docker compose down --remove-orphans
@@ -28,7 +36,8 @@ if has "db"; then
   docker compose up -d db
 
   echo "⏳ Waiting for Postgres to be ready..."
-  until docker exec "$(docker compose ps -q db)" pg_isready -U "$DB_USER" >/dev/null 2>&1; do
+  DB_CID="$(docker compose ps -q db)"
+  until docker exec "$DB_CID" pg_isready -U "$DB_USER" >/dev/null 2>&1; do
     sleep 1
   done
   echo "✅ Database is ready."
@@ -77,22 +86,23 @@ if [[ -n "$LLM_SVC" ]]; then
   docker compose up -d --scale worker_llm=1 worker_llm
 fi
 
-# --- build site once (do NOT run builder as a service) ---
-if has_build "builder"; then
+# --- ensure builder service container isn't running (prevents "extra builder") ---
+if has "builder"; then
   echo "🧽 Ensuring builder service isn't running..."
   docker compose stop builder >/dev/null 2>&1 || true
   docker compose rm -f builder >/dev/null 2>&1 || true
+fi
 
-  echo "📝 Running Hugo site build (one-shot)..."
-  # Use timeout to prevent hangs if --once is missing or builder blocks
-  if command -v timeout >/dev/null 2>&1; then
-    timeout 10m docker compose --profile build run --rm --no-deps builder
+# --- build site once (profile-gated one-shot) ---
+if has_build "builder"; then
+  echo "📝 Running Hugo site build (one-shot via profile 'build')..."
+  if [[ -n "$TIMEOUT_BIN" ]]; then
+    "$TIMEOUT_BIN" 10m docker compose --profile build run --rm --no-deps builder
   else
-    # Fallback if timeout isn't installed
     docker compose --profile build run --rm --no-deps builder
   fi
 else
-  echo "⚠️  No builder service found; skipping site build..."
+  echo "⚠️  No builder in '--profile build' services; skipping site build..."
 fi
 
 # --- start web ---
