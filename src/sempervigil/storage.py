@@ -15,12 +15,28 @@ from .db import connect_db
 from .models import Article, Job, Source, SourceTactic
 from .normalize import cpe_to_vendor_product, normalize_name
 from .utils import json_dumps, log_event, utc_now_iso, utc_now_iso_offset
+from psycopg import errors as pg_errors
 
 _CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
 
 
 def init_db():
     return connect_db()
+
+
+def _reset_serial_sequence(conn: Any, table: str, column: str) -> None:
+    row = conn.execute(
+        "SELECT pg_get_serial_sequence(%s, %s)",
+        (table, column),
+    ).fetchone()
+    if not row or not row[0]:
+        return
+    seq = row[0]
+    conn.execute(
+        f"SELECT setval(%s::regclass, COALESCE((SELECT MAX({column}) FROM {table}), 0), true)",
+        (seq,),
+    )
+    conn.commit()
 
 
 def upsert_source(conn: Any, source_dict: dict[str, object]) -> None:
@@ -2067,14 +2083,26 @@ def upsert_vendor(conn: Any, vendor_display: str) -> int:
         vendor_norm = "unknown"
     display = vendor_display.strip() or vendor_norm.replace("_", " ").title()
     now = utc_now_iso()
-    conn.execute(
-        """
-        INSERT INTO vendors (name_norm, display_name, created_at)
-        VALUES (%s, %s, %s)
-        ON CONFLICT(name_norm) DO UPDATE SET display_name = excluded.display_name
-        """,
-        (vendor_norm, display, now),
-    )
+    try:
+        conn.execute(
+            """
+            INSERT INTO vendors (name_norm, display_name, created_at)
+            VALUES (%s, %s, %s)
+            ON CONFLICT(name_norm) DO UPDATE SET display_name = excluded.display_name
+            """,
+            (vendor_norm, display, now),
+        )
+    except pg_errors.UniqueViolation:
+        conn.rollback()
+        _reset_serial_sequence(conn, "vendors", "id")
+        conn.execute(
+            """
+            INSERT INTO vendors (name_norm, display_name, created_at)
+            VALUES (%s, %s, %s)
+            ON CONFLICT(name_norm) DO UPDATE SET display_name = excluded.display_name
+            """,
+            (vendor_norm, display, now),
+        )
     row = conn.execute(
         "SELECT id FROM vendors WHERE name_norm = %s",
         (vendor_norm,),
@@ -2097,14 +2125,26 @@ def upsert_product(
     product_key = f"{vendor_norm}:{product_norm}"
     display = product_display.strip() or product_norm.replace("_", " ").title()
     now = utc_now_iso()
-    conn.execute(
-        """
-        INSERT INTO products (vendor_id, name_norm, display_name, product_key, created_at)
-        VALUES (%s, %s, %s, %s, %s)
-        ON CONFLICT(vendor_id, name_norm) DO UPDATE SET display_name = excluded.display_name
-        """,
-        (vendor_id, product_norm, display, product_key, now),
-    )
+    try:
+        conn.execute(
+            """
+            INSERT INTO products (vendor_id, name_norm, display_name, product_key, created_at)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT(vendor_id, name_norm) DO UPDATE SET display_name = excluded.display_name
+            """,
+            (vendor_id, product_norm, display, product_key, now),
+        )
+    except pg_errors.UniqueViolation:
+        conn.rollback()
+        _reset_serial_sequence(conn, "products", "id")
+        conn.execute(
+            """
+            INSERT INTO products (vendor_id, name_norm, display_name, product_key, created_at)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT(vendor_id, name_norm) DO UPDATE SET display_name = excluded.display_name
+            """,
+            (vendor_id, product_norm, display, product_key, now),
+        )
     row = conn.execute(
         "SELECT id, product_key FROM products WHERE vendor_id = %s AND name_norm = %s",
         (vendor_id, product_norm),
