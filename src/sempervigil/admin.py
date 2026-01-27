@@ -93,7 +93,7 @@ from .storage import (
     upsert_event_by_key,
     link_event_article,
     update_event_summary_from_articles,
-    normalize_cve_event_keys,
+    normalize_cve_cluster_event_keys,
 )
 from .ingest import process_source
 from .services.sources_service import (
@@ -1234,10 +1234,10 @@ def api_events_purge(payload: EventsPurgeRequest | None = None) -> dict[str, obj
     return {"status": "ok", "stats": stats}
 
 
-@app.post("/admin/api/events/normalize-keys", dependencies=[Depends(_require_admin_token)])
-def api_events_normalize_keys(limit: int = 200) -> dict[str, object]:
+@app.post("/admin/api/events/normalize_cve_keys", dependencies=[Depends(_require_admin_token)])
+def api_events_normalize_cve_keys(limit: int = 200) -> dict[str, object]:
     conn = _get_conn()
-    stats = normalize_cve_event_keys(conn, limit=limit)
+    stats = normalize_cve_cluster_event_keys(conn, limit=limit)
     return {"status": "ok", "stats": stats}
 
 

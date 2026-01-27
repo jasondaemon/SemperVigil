@@ -150,6 +150,7 @@ open http://<host>:8001/ui
 
 Event derivation + purge:
 - Use the Events page buttons for **Derive Events** and **Purge Weak Events**.
+- Use **Normalize CVE Keys** to backfill missing `event_key` values on CVE clusters.
 - Manual events are never purged.
 - Purge defaults: keep events with at least 2 linked articles or strong signal kinds.
 - For API use:

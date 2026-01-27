@@ -3516,7 +3516,13 @@ def purge_weak_events(
         "kept": 0,
         "by_reason": {},
         "sample_deleted": [],
+        "updated_keys": 0,
+        "sample_updated": [],
     }
+    if not dry_run:
+        normalized = normalize_cve_cluster_event_keys(conn)
+        stats["updated_keys"] = int(normalized.get("updated", 0) or 0)
+        stats["sample_updated"] = list(normalized.get("sample") or [])
 
     def note(reason: str) -> None:
         stats["by_reason"][reason] = stats["by_reason"].get(reason, 0) + 1
@@ -3590,6 +3596,10 @@ def purge_weak_events(
             stats["kept"] += 1
             note("manual")
             continue
+        if exclude_manual and event_key and str(event_key).startswith("manual:"):
+            stats["kept"] += 1
+            note("manual_key")
+            continue
         article_count = _article_count(event_id)
         has_product = _has_product(event_id)
         tags = _article_tags(event_id)
@@ -3610,7 +3620,11 @@ def purge_weak_events(
         if event_key:
             is_cve = any(str(event_key).startswith(prefix) for prefix in include_prefixes)
         if kind and kind in include_kinds:
-            is_cve = True if include_kinds else is_cve
+            is_cve = True
+        if include_kinds and not is_cve:
+            stats["kept"] += 1
+            note("not_included_kind")
+            continue
         if exclude_manual and kind == "manual":
             stats["kept"] += 1
             note("manual_kind")
@@ -3631,12 +3645,8 @@ def purge_weak_events(
                     continue
         if article_count == 0 and not strong_signal:
             reason = "cve_orphan" if is_cve else "orphan"
-            if too_old or older_than_days is None:
-                purge_ids.append(event_id)
-                note(reason)
-            else:
-                stats["kept"] += 1
-                note("not_old_enough")
+            purge_ids.append(event_id)
+            note(reason)
             continue
         if article_count < min_articles and not strong_signal:
             reason = "cve_weak" if is_cve else "weak"
@@ -3679,7 +3689,7 @@ def purge_weak_events(
     return stats
 
 
-def normalize_cve_event_keys(conn: Any, limit: int = 200) -> dict[str, object]:
+def normalize_cve_cluster_event_keys(conn: Any, limit: int = 200) -> dict[str, object]:
     if not _table_exists(conn, "events"):
         return {"updated": 0}
     cursor = conn.execute(
@@ -3694,6 +3704,7 @@ def normalize_cve_event_keys(conn: Any, limit: int = 200) -> dict[str, object]:
         (limit,),
     )
     updated = 0
+    sample = []
     for event_id, title in cursor.fetchall():
         if not title:
             continue
@@ -3706,9 +3717,15 @@ def normalize_cve_event_keys(conn: Any, limit: int = 200) -> dict[str, object]:
             (event_key, event_id),
         )
         updated += 1
+        if len(sample) < 25:
+            sample.append({"event_id": event_id, "event_key": event_key})
     if updated:
         conn.commit()
-    return {"updated": updated}
+    return {"updated": updated, "sample": sample}
+
+
+def normalize_cve_event_keys(conn: Any, limit: int = 200) -> dict[str, object]:
+    return normalize_cve_cluster_event_keys(conn, limit=limit)
 
 
 def delete_all_content(conn: Any, *, delete_files: bool = False) -> dict[str, object]:

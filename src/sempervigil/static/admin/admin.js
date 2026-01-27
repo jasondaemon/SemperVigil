@@ -2672,6 +2672,7 @@ function wireEvents() {
   const error = document.getElementById("events-error");
   const form = document.getElementById("events-filters");
   const deriveBtn = document.getElementById("events-derive");
+  const normalizeBtn = document.getElementById("events-normalize");
   const rebuildBtn = document.getElementById("events-rebuild");
   const purgeBtn = document.getElementById("events-purge");
   let pageSize = 50;
@@ -2749,6 +2750,21 @@ function wireEvents() {
         } else {
           showToast("Events rebuild queued");
         }
+        load(1).catch((err) => setError(err.message || String(err)));
+      } catch (err) {
+        setError(err.message || String(err));
+      }
+    });
+  }
+
+  if (normalizeBtn) {
+    normalizeBtn.addEventListener("click", async () => {
+      try {
+        const payload = await apiFetch("/admin/api/events/normalize_cve_keys", {
+          method: "POST",
+        });
+        const stats = payload.stats || {};
+        showToast(`Updated ${stats.updated || 0} CVE keys`);
         load(1).catch((err) => setError(err.message || String(err)));
       } catch (err) {
         setError(err.message || String(err));
