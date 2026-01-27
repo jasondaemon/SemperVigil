@@ -20,7 +20,10 @@ from uuid import UUID
 
 def log_event(logger: logging.Logger, level: int, event: str, **fields: Any) -> None:
     parts = [f"event={event}"]
+    hide_source_id = bool(fields.get("source_name"))
     for key, value in fields.items():
+        if hide_source_id and key == "source_id":
+            continue
         parts.append(f"{key}={value}")
     logger.log(level, " ".join(parts))
 

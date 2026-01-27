@@ -165,13 +165,21 @@ function wireLogs() {
   const serviceSelect = document.getElementById("logs-service");
   const linesSelect = document.getElementById("logs-lines");
   const autoToggle = document.getElementById("logs-auto");
+  const pinToggle = document.getElementById("logs-pin");
   const refreshBtn = document.getElementById("logs-refresh");
 
   async function loadLogs() {
     const service = serviceSelect.value;
     const lines = linesSelect.value;
     const data = await apiFetch(`/admin/api/logs/tail?service=${service}&lines=${lines}`);
+    const shouldPin = pinToggle ? pinToggle.checked : true;
+    const wasPinned =
+      output.scrollHeight <= output.clientHeight ||
+      output.scrollTop + output.clientHeight >= output.scrollHeight - 4;
     output.textContent = data.text || "";
+    if (shouldPin || wasPinned) {
+      output.scrollTop = output.scrollHeight;
+    }
   }
 
   if (refreshBtn) {
@@ -836,6 +844,24 @@ function wireJobs() {
     return;
   }
 
+  function formatTimestamp(value) {
+    if (!value) {
+      return "";
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return String(value);
+    }
+    return date.toLocaleString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  }
+
   function formatResult(job) {
     if (job.job_type === "build_site" && job.result) {
       const exitCode = job.result.exit_code ?? "";
@@ -873,9 +899,9 @@ function wireJobs() {
         <td class="mono">${job.id}</td>
         <td>${job.job_type}</td>
         <td>${job.status}</td>
-        <td>${job.requested_at || ""}</td>
-        <td>${job.started_at || ""}</td>
-        <td>${job.finished_at || ""}</td>
+        <td>${formatTimestamp(job.requested_at)}</td>
+        <td>${formatTimestamp(job.started_at)}</td>
+        <td>${formatTimestamp(job.finished_at)}</td>
         <td>${resultHtml}</td>
         <td>
           ${
@@ -886,6 +912,11 @@ function wireJobs() {
         </td>
       `;
       tbody.appendChild(row);
+    });
+    requestAnimationFrame(() => {
+      tbody.querySelectorAll(".job-logs pre").forEach((node) => {
+        node.scrollTop = node.scrollHeight;
+      });
     });
   }
 

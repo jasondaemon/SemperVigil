@@ -309,6 +309,7 @@ def _handle_ingest_source(
         logging.INFO,
         "ingest_counts",
         source_id=source.id,
+        source_name=source.name,
         found_count=result.found_count,
         accepted_count=result.accepted_count,
         seen_count=seen_count,
