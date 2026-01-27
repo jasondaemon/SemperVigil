@@ -1544,93 +1544,88 @@ def claim_next_job(
     allowed_types: list[str] | None = None,
     lock_timeout_seconds: int | None = None,
 ) -> Job | None:
-    conn.execute("BEGIN")
-    if lock_timeout_seconds is not None:
-        cutoff = utc_now_iso_offset(seconds=-lock_timeout_seconds)
-        conn.execute(
-            """
-            UPDATE jobs
-            SET status = 'queued',
-                locked_by = NULL,
-                locked_at = NULL,
-                started_at = NULL,
-                error = 'stale_lock_requeued'
-            WHERE status = 'running' AND locked_at IS NOT NULL AND locked_at < %s
-            """,
-            (cutoff,),
-        )
     for _ in range(20):
-        params: list[object] = []
-        type_clause = ""
-        if allowed_types:
-            placeholders = ",".join(["%s"] * len(allowed_types))
-            type_clause = f" AND job_type IN ({placeholders})"
-            params.extend(allowed_types)
-        cursor = conn.execute(
-            f"""
-            SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
-                   finished_at, locked_by, locked_at, error
-            FROM jobs
-            WHERE status = 'queued' AND locked_by IS NULL {type_clause}
-            ORDER BY requested_at ASC
-            FOR UPDATE SKIP LOCKED
-            LIMIT 1
-            """,
-            tuple(params),
-        )
-        row = cursor.fetchone()
-        if not row:
-            conn.execute("COMMIT")
-            return None
-        payload_json = row[3]
-        try:
-            payload = json.loads(payload_json) if payload_json else {}
-        except json.JSONDecodeError:
-            payload = {}
-        not_before = payload.get("not_before")
-        if not_before and isinstance(not_before, str) and not_before > utc_now_iso():
-            conn.execute(
+        with conn.transaction():
+            if lock_timeout_seconds is not None:
+                cutoff = utc_now_iso_offset(seconds=-lock_timeout_seconds)
+                conn.execute(
+                    """
+                    UPDATE jobs
+                    SET status = 'queued',
+                        locked_by = NULL,
+                        locked_at = NULL,
+                        started_at = NULL,
+                        error = 'stale_lock_requeued'
+                    WHERE status = 'running' AND locked_at IS NOT NULL AND locked_at < %s
+                    """,
+                    (cutoff,),
+                )
+            params: list[object] = []
+            type_clause = ""
+            if allowed_types:
+                placeholders = ",".join(["%s"] * len(allowed_types))
+                type_clause = f" AND job_type IN ({placeholders})"
+                params.extend(allowed_types)
+            cursor = conn.execute(
+                f"""
+                SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
+                       finished_at, locked_by, locked_at, error
+                FROM jobs
+                WHERE status = 'queued' AND locked_by IS NULL {type_clause}
+                ORDER BY requested_at ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+                """,
+                tuple(params),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            payload_json = row[3]
+            try:
+                payload = json.loads(payload_json) if payload_json else {}
+            except json.JSONDecodeError:
+                payload = {}
+            not_before = payload.get("not_before")
+            if not_before and isinstance(not_before, str) and not_before > utc_now_iso():
+                conn.execute(
+                    """
+                    UPDATE jobs
+                    SET requested_at = %s
+                    WHERE id = %s
+                    """,
+                    (not_before, row[0]),
+                )
+                continue
+            job_id = row[0]
+            now = utc_now_iso()
+            cursor = conn.execute(
                 """
                 UPDATE jobs
-                SET requested_at = %s
-                WHERE id = %s
+                SET status = 'running', started_at = %s, locked_by = %s, locked_at = %s
+                WHERE id = %s AND status = 'queued' AND locked_by IS NULL
+                RETURNING id, job_type, status, payload_json, result_json, requested_at, started_at,
+                          finished_at, locked_by, locked_at, error
                 """,
-                (not_before, row[0]),
+                (now, worker_id, now, job_id),
             )
-            conn.execute("COMMIT")
-            conn.execute("BEGIN")
-            continue
-        job_id = row[0]
-        now = utc_now_iso()
-        cursor = conn.execute(
-            """
-            UPDATE jobs
-            SET status = 'running', started_at = %s, locked_by = %s, locked_at = %s
-            WHERE id = %s AND status = 'queued' AND locked_by IS NULL
-            RETURNING id, job_type, status, payload_json, result_json, requested_at, started_at,
-                      finished_at, locked_by, locked_at, error
-            """,
-            (now, worker_id, now, job_id),
-        )
-        updated = cursor.fetchone()
-        conn.execute("COMMIT")
-        if not updated:
-            return None
-        job = _row_to_job(updated)
-        return Job(
-            id=job.id,
-            job_type=job.job_type,
-            status="running",
-            payload=job.payload,
-            result=job.result,
-            requested_at=job.requested_at,
-            started_at=now,
-            finished_at=job.finished_at,
-            locked_by=worker_id,
-            locked_at=now,
-            error=job.error,
-        )
-    conn.execute("COMMIT")
+            updated = cursor.fetchone()
+            if not updated:
+                return None
+            job = _row_to_job(updated)
+            return Job(
+                id=job.id,
+                job_type=job.job_type,
+                status="running",
+                payload=job.payload,
+                result=job.result,
+                requested_at=job.requested_at,
+                started_at=now,
+                finished_at=job.finished_at,
+                locked_by=worker_id,
+                locked_at=now,
+                error=job.error,
+            )
     return None
 
 
@@ -3213,7 +3208,7 @@ def search_articles(
         SELECT a.id, a.title, a.original_url, a.published_at, a.ingested_at,
                { 'a.summary_llm' if 'summary_llm' in columns else 'NULL' } as summary_llm,
                a.source_id, s.name,
-               GROUP_CONCAT(t.tag) as tags,
+               string_agg(t.tag, ',') as tags,
                {watchlist_select},
                {has_content_select},
                {content_error_select},
