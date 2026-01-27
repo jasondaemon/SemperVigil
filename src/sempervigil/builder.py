@@ -47,7 +47,7 @@ def _last_successful_build_at(conn) -> datetime | None:
         return None
 
 
-def _run_hugo_until_done(conn, job_id: str) -> tuple[int, str, str, bool]:
+def _run_hugo_until_done(conn, job_id: str) -> tuple[int, str, str, bool, list[str]]:
     cmd = ["/bin/sh", "/tools/hugo-build.sh"]
     proc = subprocess.Popen(
         cmd,
@@ -71,7 +71,7 @@ def _run_hugo_until_done(conn, job_id: str) -> tuple[int, str, str, bool]:
     stdout, stderr = proc.communicate()
     stdout = (stdout or "").strip()
     stderr = (stderr or "").strip()
-    return proc.returncode or 0, stdout, stderr, canceled
+    return proc.returncode or 0, stdout, stderr, canceled, cmd
 
 
 def run_once(builder_id: str) -> int:
@@ -124,7 +124,7 @@ def run_once(builder_id: str) -> int:
     log_event(logger, logging.INFO, "build_claimed", job_id=job.id)
     start = time.time()
     try:
-        returncode, stdout, stderr, canceled = _run_hugo_until_done(conn, job.id)
+        returncode, stdout, stderr, canceled, cmd = _run_hugo_until_done(conn, job.id)
     except Exception as exc:  # noqa: BLE001
         fail_job(conn, job.id, str(exc))
         log_event(logger, logging.ERROR, "build_failed", job_id=job.id, error=str(exc))
@@ -138,8 +138,18 @@ def run_once(builder_id: str) -> int:
 
     if returncode != 0:
         tail = _tail(stderr or stdout)
-        fail_job(conn, job.id, tail or f"hugo exited with {returncode}")
-        log_event(logger, logging.ERROR, "build_failed", job_id=job.id, output=tail)
+        error_detail = (
+            f"cmd={' '.join(cmd)}\nstdout:\n{stdout}\nstderr:\n{stderr}".strip()
+        )
+        fail_job(conn, job.id, error_detail or f"hugo exited with {returncode}")
+        log_event(
+            logger,
+            logging.ERROR,
+            "build_failed",
+            job_id=job.id,
+            output=tail,
+            cmd=" ".join(cmd),
+        )
         log_event(logger, logging.INFO, "builder_once_done", builder_id=builder_id)
         return 1
 
@@ -149,7 +159,7 @@ def run_once(builder_id: str) -> int:
         "stdout_tail": _tail(stdout),
         "stderr_tail": _tail(stderr),
         "duration_s": duration,
-        "output_path": "/site/public",
+        "output_path": os.environ.get("SV_HUGO_OUTPUT_DIR", "/site"),
     }
     if complete_job(conn, job.id, result=result_payload):
         log_event(logger, logging.INFO, "build_succeeded", job_id=job.id)

@@ -205,8 +205,8 @@ LLM summarization (LiteLLM OpenAI-compatible):
   - `SV_STORE_ARTICLE_HTML=0` (default off)
 
 Permissions / first-boot:
-- If `/site/static/sempervigil/index.json` is not writable, run:
-  - `docker compose run --rm worker sh /tools/ensure-dirs.sh`
+- If `${SV_SITE_SRC_DIR}` or `${SV_SITE_PUBLIC_DIR}` are not writable, run:
+  - `docker compose run --rm worker_fetch sh /tools/ensure-dirs.sh`
 
 Smoke tests:
 ```bash
@@ -215,16 +215,17 @@ curl -v http://<host>:8001/ui/
 ```
 
 Outputs are written to:
-- Articles (Markdown): `site/content/posts/`
-- JSON index (if enabled): `site/static/sempervigil/index.json`
-- Site output: `site/public/`
+- Hugo source (NFS): `${SV_SITE_SRC_DIR}` (content, layouts, themes, static)
+- Articles (Markdown): `${SV_SITE_SRC_DIR}/content/posts/`
+- JSON index (if enabled): `${SV_SITE_SRC_DIR}/static/sempervigil/index.json`
+- Site output: `${SV_SITE_PUBLIC_DIR}` (nginx serves this)
 
 ---
 
 ### 4) Enqueue ingest jobs
 
 ```bash
-docker compose run --rm worker \
+docker compose run --rm worker_fetch \
   sempervigil jobs enqueue ingest_due_sources
 ```
 
@@ -232,7 +233,7 @@ The worker service claims and runs queued jobs continuously. To process a single
 job for debugging, you can run the worker once:
 
 ```bash
-docker compose run --rm worker \
+docker compose run --rm worker_fetch \
   sempervigil-worker --once
 ```
 
@@ -243,13 +244,13 @@ docker compose run --rm worker \
 The ingest run enqueues a `build_site` job automatically when new articles are accepted.
 
 ```bash
-docker compose --profile build run --rm builder
+docker compose --profile build run --rm --no-deps builder --once
 ```
 
 If no build job is queued, you can enqueue one manually:
 
 ```bash
-docker compose run --rm worker \
+docker compose run --rm worker_fetch \
   sempervigil jobs enqueue build_site
 ```
 
@@ -314,7 +315,7 @@ Set `NVD_API_KEY` in your environment for higher rate limits.
 docker compose --profile build run --rm builder
 ```
 
-After build, verify: `site/public/index.html`
+After build, verify: `${SV_SITE_PUBLIC_DIR}/index.html`
 
 ---
 
@@ -328,7 +329,13 @@ curl -i http://127.0.0.1:8080/ | head
 
 ### NFS Notes
 
-If `./data` or `./site` are NFS mounts with root-squash, ensure they are owned by `SV_UID:SV_GID`. SemperVigil will create needed directories without attempting `chown`.
+SemperVigil expects a durable NFS layout:
+
+- `${SV_SITE_SRC_DIR}` (Hugo source)
+- `${SV_SITE_PUBLIC_DIR}` (Hugo output)
+- `${SV_DATA_DIR}` (logs, state)
+
+SemperVigil will create needed directories without attempting `chown` unless running as root.
 
 ---
 

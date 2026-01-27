@@ -24,6 +24,8 @@ services:
     environment:
       SV_ENV: ${SV_ENV:-dev}
       SV_DATA_DIR: /data
+      SV_HUGO_SOURCE_DIR: /site-src
+      SV_HUGO_OUTPUT_DIR: /site
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
       SV_LOG_FILE: /data/logs/admin.log
       SV_UMASK: ${SV_UMASK:-002}
@@ -41,7 +43,7 @@ services:
       - "0.0.0.0:${SV_ADMIN_PORT:-8001}:8000"
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
-      - sv_data:/data
+      - ${SV_DATA_DIR:-/nfs/sempervigil/data}:/data
       - ./tools:/tools:ro
     networks:
       - svnet
@@ -64,6 +66,8 @@ services:
     environment:
       SV_ENV: ${SV_ENV:-dev}
       SV_DATA_DIR: /data
+      SV_HUGO_SOURCE_DIR: /site-src
+      SV_HUGO_OUTPUT_DIR: /site
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
       SV_LOG_FILE: /data/logs/worker.log
       SV_UMASK: ${SV_UMASK:-002}
@@ -79,8 +83,8 @@ services:
         sempervigil-worker
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
-      - sv_data:/data
-      - sv_site:/site
+      - ${SV_DATA_DIR:-/nfs/sempervigil/data}:/data
+      - ${SV_SITE_SRC_DIR:-/nfs/sempervigil/site-src}:/site-src
       - ./tools:/tools:ro
     networks:
       - svnet
@@ -101,6 +105,8 @@ services:
     environment:
       SV_ENV: ${SV_ENV:-dev}
       SV_DATA_DIR: /data
+      SV_HUGO_SOURCE_DIR: /site-src
+      SV_HUGO_OUTPUT_DIR: /site
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
       SV_LOG_FILE: /data/logs/worker.log
       SV_UMASK: ${SV_UMASK:-002}
@@ -118,8 +124,8 @@ services:
         sempervigil-worker
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
-      - sv_data:/data
-      - sv_site:/site
+      - ${SV_DATA_DIR:-/nfs/sempervigil/data}:/data
+      - ${SV_SITE_SRC_DIR:-/nfs/sempervigil/site-src}:/site-src
       - ./tools:/tools:ro
     networks:
       - svnet
@@ -140,33 +146,22 @@ services:
       SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-http://localhost:${SV_WEB_PORT:-8080}/}
       HUGO_CACHEDIR: /tmp/hugo_cache
       SV_DB_URL: ${SV_DB_URL:-}
-
-      # IMPORTANT: build from a writable copy, not the read-only bind mount
-      SV_HUGO_SOURCE_DIR: /tmp/site-src
+      SV_HUGO_SOURCE_DIR: /site-src
       SV_HUGO_OUTPUT_DIR: /site
-
-      # (Optional but helpful if your builder code supports it)
-      SV_HUGO_TMP_SOURCE_DIR: /tmp/site-src
     working_dir: /repo
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - .:/repo:ro
-      - sv_data:/data
-      - sv_site:/site
+      - ${SV_DATA_DIR:-/nfs/sempervigil/data}:/data
+      - ${SV_SITE_SRC_DIR:-/nfs/sempervigil/site-src}:/site-src
+      - ${SV_SITE_PUBLIC_DIR:-/nfs/sempervigil/site-public}:/site
 
       # caches (safe to write)
       - sv_hugo_cache:/tmp/hugo_cache
       - sv_hugo_modules:/tmp/hugo_modules
 
-      # If your theme uses Hugo image pipeline and expects persistence, keep this.
-      # Otherwise, you can REMOVE this line entirely (recommended for portability),
-      # because /tmp/site-src will have its own writable resources/ each run.
-      # - sv_hugo_resources:/tmp/site-src/resources
-
       - ./tools:/tools:ro
 
-    # Copy Hugo source into a writable temp dir, then run the builder once.
-    # (Doesn't require any code changes in the python builder.)
     command:
       - sh
       - -lc
@@ -174,15 +169,6 @@ services:
         set -e
         umask ${SV_UMASK:-002}
         sh /tools/ensure-dirs.sh
-
-        rm -rf /tmp/site-src
-        mkdir -p /tmp/site-src
-        cp -a /repo/site/. /tmp/site-src/
-
-        # If your site expects a "resources" dir, ensure it exists
-        mkdir -p /tmp/site-src/resources
-
-        # Run the builder once (it will run Hugo using SV_HUGO_SOURCE_DIR/SV_HUGO_OUTPUT_DIR)
         sempervigil-builder --once
     networks:
       - svnet
@@ -195,7 +181,7 @@ services:
     ports:
       - "${SV_WEB_PORT:-8080}:8080"
     volumes:
-      - sv_site:/usr/share/nginx/html:ro
+      - ${SV_SITE_PUBLIC_DIR:-/nfs/sempervigil/site-public}:/usr/share/nginx/html:ro
     networks:
       - svnet
     restart: unless-stopped
@@ -213,18 +199,15 @@ services:
       - .env
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
-      - sv_data:/data
-      - sv_site:/site
+      - ${SV_DATA_DIR:-/nfs/sempervigil/data}:/data
+      - ${SV_SITE_SRC_DIR:-/nfs/sempervigil/site-src}:/site-src
     working_dir: /app
     command: ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
     environment:
       SV_DB_URL: ${SV_DB_URL:-}
 
 volumes:
-  sv_data:
-  sv_site:
   sv_hugo_cache:
-  sv_hugo_resources:
   sv_hugo_modules:
   sempervigil_pgdata:
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -398,7 +399,39 @@ def validate_events_settings(cfg: dict[str, Any]) -> list[str]:
 
 def load_runtime_config(conn) -> Config:
     cfg = get_runtime_config(conn)
-    return _build_config(cfg)
+    config = _build_config(cfg)
+    return _apply_hugo_path_overrides(config)
+
+
+def _apply_hugo_path_overrides(config: Config) -> Config:
+    source_dir = os.environ.get("SV_HUGO_SOURCE_DIR")
+    if not source_dir:
+        return config
+    output_dir = os.path.join(source_dir, "content", "posts")
+    json_index_path = os.path.join(source_dir, "static", "sempervigil", "index.json")
+    paths = PathsConfig(
+        data_dir=config.paths.data_dir,
+        output_dir=output_dir,
+        run_reports_dir=config.paths.run_reports_dir,
+    )
+    publishing = PublishingConfig(
+        format=config.publishing.format,
+        hugo_section=config.publishing.hugo_section,
+        write_json_index=config.publishing.write_json_index,
+        json_index_path=json_index_path,
+        public_base_url=config.publishing.public_base_url,
+    )
+    return Config(
+        app=config.app,
+        paths=paths,
+        publishing=publishing,
+        ingest=config.ingest,
+        jobs=config.jobs,
+        cve=config.cve,
+        scope=config.scope,
+        personalization=config.personalization,
+        llm=config.llm,
+    )
 
 
 def validate_runtime_config(cfg: dict[str, Any]) -> list[str]:
