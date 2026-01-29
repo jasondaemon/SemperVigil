@@ -3,14 +3,10 @@
 {% set nav_subactive = "content" %}
 {% block content %}
   <section class="panel">
-    <h2>Content Browser</h2>
+    <h2>Articles</h2>
     <form id="content-search-form" class="filters" data-watchlist-enabled="{{ 'true' if watchlist_enabled else 'false' }}">
       <input type="text" id="content-query" placeholder="Search title or summary">
-      <select id="content-type">
-        <option value="all">All</option>
-        <option value="article">Articles</option>
-        <option value="cve">CVEs</option>
-      </select>
+      <input type="hidden" id="content-type" value="article">
       <select id="content-source">
         <option value="">All sources</option>
         {% for source in sources %}
@@ -26,7 +22,6 @@
         <option value="">Missing field</option>
         <option value="content">Missing content</option>
         <option value="summary">Missing summary</option>
-        <option value="description">Missing description (CVEs)</option>
       </select>
       <input type="date" id="content-after">
       <input type="date" id="content-before">
@@ -87,7 +82,6 @@
     <table id="content-table" class="table-compact">
       <thead>
         <tr>
-          <th>Type</th>
           <th>ID</th>
           <th>Date</th>
           <th>Title / Summary</th>

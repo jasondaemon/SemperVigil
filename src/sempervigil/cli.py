@@ -7,10 +7,11 @@ import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from .config import ConfigError, get_cve_settings, load_runtime_config
+from .config import ConfigError, get_cve_settings, is_article_markdown_enabled, load_runtime_config
 from .cve_sync import CveSyncConfig, isoformat_utc, sync_cves
 from .worker import WORKER_JOB_TYPES
 from .ingest import process_source
+from .searxng import searxng_search
 from .models import SourceTactic
 from .publish import write_hugo_markdown, write_json_index, write_tag_indexes
 from .storage import (
@@ -444,6 +445,16 @@ def _cmd_jobs_enqueue(args: argparse.Namespace, logger: logging.Logger) -> int:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
         return 1
 
+    if args.job_type == "write_article_markdown" and not is_article_markdown_enabled():
+        log_event(
+            logger,
+            logging.ERROR,
+            "job_enqueue_blocked",
+            job_type=args.job_type,
+            reason="article_markdown_disabled",
+        )
+        return 1
+
     payload = {}
     if args.source_id:
         payload["source_id"] = args.source_id
@@ -473,6 +484,29 @@ def _cmd_jobs_list(args: argparse.Namespace, logger: logging.Logger) -> int:
             error=job.error,
             result=job.result,
         )
+    return 0
+
+
+def _cmd_searxng_test(args: argparse.Namespace, logger: logging.Logger) -> int:
+    url = os.getenv("SV_SEARXNG_URL", "").strip()
+    if not url:
+        logger.error("SV_SEARXNG_URL is required")
+        return 1
+    query = args.query or "cybersecurity incident"
+    timeout_s = int(os.getenv("SV_SEARXNG_TIMEOUT_S", "10"))
+    engines = os.getenv("SV_SEARXNG_ENGINES")
+    categories = os.getenv("SV_SEARXNG_CATEGORIES")
+    results = searxng_search(
+        query,
+        url=url,
+        timeout_s=timeout_s,
+        engines=engines,
+        categories=categories,
+        max_results=args.max_results,
+    )
+    logger.info("searxng_results count=%s query=%s", len(results), query)
+    for item in results[:3]:
+        logger.info("result url=%s title=%s", item.get("url"), item.get("title"))
     return 0
 
 
@@ -626,6 +660,7 @@ def build_parser() -> argparse.ArgumentParser:
             "enrich_event_from_web",
             "promote_event_web_source_to_article",
             "enrich_event_summary_llm",
+            "cve_enrich_llm",
         ],
         help="Job type to enqueue",
     )
@@ -646,6 +681,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     cve_sync = cve_subparsers.add_parser("sync", help="Run CVE sync now")
     cve_sync.set_defaults(func=_cmd_cve_sync)
+
+    searxng_parser = subparsers.add_parser("searxng", help="SearXNG utilities")
+    searxng_subparsers = searxng_parser.add_subparsers(dest="searxng_command", required=True)
+    searxng_test = searxng_subparsers.add_parser("test", help="Test SearXNG connectivity")
+    searxng_test.add_argument("--query", help="Search query")
+    searxng_test.add_argument("--max-results", type=int, default=10)
+    searxng_test.set_defaults(func=_cmd_searxng_test)
 
     return parser
 

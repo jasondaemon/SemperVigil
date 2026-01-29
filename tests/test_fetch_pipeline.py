@@ -82,6 +82,7 @@ def test_fetch_enqueues_summarize_when_llm_configured(tmp_path, monkeypatch):
     monkeypatch.setenv("SV_DATA_DIR", str(data_dir))
     monkeypatch.setenv("SV_LLM_BASE_URL", "http://llm")
     monkeypatch.setenv("SV_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("SV_ENABLE_ARTICLE_MARKDOWN", "1")
     conn = init_db()
     config = load_runtime_config(conn)
     _seed_summarize_profile(conn)
@@ -103,9 +104,34 @@ def test_fetch_enqueues_summarize_when_llm_configured(tmp_path, monkeypatch):
     assert "write_article_markdown" not in types
 
 
-def test_fetch_enqueues_publish_when_llm_disabled(tmp_path, monkeypatch):
+def test_fetch_does_not_enqueue_publish_when_markdown_disabled(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     monkeypatch.setenv("SV_DATA_DIR", str(data_dir))
+    conn = init_db()
+    config = load_runtime_config(conn)
+
+    article_id = _insert_article(conn, "https://example.com/b")
+    enqueue_job(conn, "fetch_article_content", {"article_id": article_id, "source_id": "source-1"})
+    job = claim_next_job(conn, "worker-1", allowed_types=["fetch_article_content"])
+
+    def _fake_fetch(*_args, **_kwargs):
+        return {"content_text": "content", "content_html": "<p>content</p>"}
+
+    monkeypatch.setattr(worker, "fetch_article_content", _fake_fetch)
+    logger = logging.getLogger("test")
+    worker._handle_fetch_article_content(conn, config, job, job.payload, logger=logger)
+
+    rows = conn.execute("SELECT job_type FROM jobs").fetchall()
+    types = [row[0] for row in rows]
+    assert "write_article_markdown" not in types
+
+
+
+
+def test_fetch_enqueues_publish_when_markdown_enabled(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("SV_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("SV_ENABLE_ARTICLE_MARKDOWN", "1")
     conn = init_db()
     config = load_runtime_config(conn)
 
@@ -125,7 +151,7 @@ def test_fetch_enqueues_publish_when_llm_disabled(tmp_path, monkeypatch):
     assert "write_article_markdown" in types
 
 
-def test_summarize_enqueues_publish(tmp_path, monkeypatch):
+def test_summarize_enqueues_publish_when_markdown_enabled(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     monkeypatch.setenv("SV_DATA_DIR", str(data_dir))
     monkeypatch.setenv("SV_LLM_BASE_URL", "http://llm")

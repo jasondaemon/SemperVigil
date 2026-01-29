@@ -26,6 +26,8 @@ def build_default_paths(data_dir: str, output_dir: str) -> list[str]:
         site_public_dir,
         os.path.join(site_src_dir, "static", "sempervigil"),
         os.path.join(site_src_dir, "static", "sempervigil", "briefs"),
+        os.path.join(site_src_dir, "data", "articles"),
+        os.path.join(site_src_dir, "data", "daily"),
     ]
     output_path = Path(output_dir)
     content_root = output_path.parent if output_path.name == "posts" else output_path
@@ -36,6 +38,7 @@ def build_default_paths(data_dir: str, output_dir: str) -> list[str]:
             str(content_root / "events"),
             str(content_root / "cves"),
             str(content_root / "briefs"),
+            str(content_root / "daily"),
         ]
     )
     return paths

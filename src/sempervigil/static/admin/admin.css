@@ -302,6 +302,10 @@ th, td {
   background: #fee2e2;
   color: #991b1b;
 }
+.status-warn {
+  background: #fef3c7;
+  color: #92400e;
+}
 
 .status-muted {
   background: #e5e7eb;
@@ -421,6 +425,16 @@ th, td {
   cursor: not-allowed;
 }
 
+.snippet-expand {
+  margin-top: 4px;
+}
+
+.snippet-expand summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: #4b5563;
+}
+
 .btn {
   padding: 8px 10px;
   border: none;
@@ -441,6 +455,10 @@ th, td {
 .btn.small {
   padding: 6px 8px;
   font-size: 12px;
+}
+.btn.tiny {
+  padding: 4px 6px;
+  font-size: 11px;
 }
 
 .test-summary {
@@ -730,4 +748,123 @@ th, td {
   padding: 12px;
   border-radius: 8px;
   white-space: pre-wrap;
+}
+.log-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin: 12px 0 8px;
+}
+.log-filter-group {
+  border: 1px solid #e3e7ef;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fbfcff;
+}
+.log-filter-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.log-filter-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.log-filter-list {
+  display: grid;
+  gap: 6px;
+  max-height: 160px;
+  overflow: auto;
+}
+.checkbox.compact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.ui-build {
+  font-size: 12px;
+  color: #6b7280;
+  margin: -6px 0 10px;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.modal-content {
+  background: #fff;
+  border-radius: 8px;
+  padding: 16px;
+  width: min(720px, 95vw);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.status-pill.source-resume{border:0;background:none;cursor:pointer;padding:2px 8px;}
+.status-pill.source-resume:hover{filter:brightness(0.95);}
+
+.panel .actions + .filters {
+  margin-top: 10px;
+}
+
+
+/* Sources compact layout */
+.source-row td {
+  vertical-align: top;
+}
+.source-cell {
+  min-width: 140px;
+}
+.source-line {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.source-subline {
+  font-size: 12px;
+  color: #5b6472;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.source-meta {
+  font-weight: 600;
+  color: #6b7280;
+}
+.counts-line {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.count-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #1e3a8a;
+  font-size: 12px;
+}
+.actions-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.actions-grid .btn {
+  width: 100%;
 }

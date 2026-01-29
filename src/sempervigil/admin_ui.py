@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -53,6 +54,11 @@ def _base_context(request: Request) -> dict[str, object]:
     app_cfg = cfg.get("app") or {}
     personalization = cfg.get("personalization") or {}
     site_url = str(publishing.get("public_base_url") or "").strip()
+    admin_js = BASE_DIR / "static" / "admin" / "admin.js"
+    ui_build = os.environ.get("SV_UI_BUILD")
+    if not ui_build and admin_js.exists():
+        ts = datetime.utcfromtimestamp(admin_js.stat().st_mtime)
+        ui_build = ts.strftime("%Y-%m-%d %H:%M:%S UTC")
     return {
         "request": request,
         "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
@@ -61,6 +67,7 @@ def _base_context(request: Request) -> dict[str, object]:
         "timezone": str(app_cfg.get("timezone") or "").strip() or None,
         "watchlist_enabled": bool(personalization.get("watchlist_enabled")),
         "watchlist_exposure_mode": personalization.get("watchlist_exposure_mode") or "private_only",
+        "ui_build": ui_build,
     }
 
 
@@ -133,17 +140,6 @@ def ui_router(token_guard) -> APIRouter:
             {
                 **_base_context(request),
                 "jobs": items,
-            },
-        )
-
-    @router.get("/logs", response_class=HTMLResponse)
-    def logs(request: Request):
-        return TEMPLATES.TemplateResponse(
-            "admin/logs.html",
-            {
-                **_base_context(request),
-                "nav_active": "system",
-                "nav_subactive": "logs",
             },
         )
 

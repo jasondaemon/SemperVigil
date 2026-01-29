@@ -13,6 +13,19 @@ services:
       - svnet
     restart: unless-stopped
 
+  # 0a) SearXNG (optional, internal)
+  searxng:
+    profiles:
+      - search
+    image: searxng/searxng:latest
+    environment:
+      BASE_URL: http://searxng:8080/
+    volumes:
+      - ${SV_SEARXNG_DATA_DIR:-/nfs/sempervigil/searxng}:/etc/searxng
+    networks:
+      - svnet
+    restart: unless-stopped
+
   # 1) Admin API (internal)
   admin:
     build:
@@ -49,7 +62,7 @@ services:
       - svnet
     restart: unless-stopped
 
-  # 2) Workers (internal)
+    # 2) Worker (internal)
   # Recommended scaling: worker_fetch=2, worker_llm=1
   worker_fetch:
     build:
@@ -72,7 +85,7 @@ services:
       SV_LOG_FILE: /data/logs/worker.log
       SV_UMASK: ${SV_UMASK:-002}
       SV_DB_URL: ${SV_DB_URL:-}
-      SV_WORKER_ONLY_TYPES: "ingest_due_sources,ingest_source,html_index,rss_index,fetch_article_content,cve_sync,derive_events_from_articles,enrich_event_from_web,promote_event_web_source_to_article"
+      SV_WORKER_ONLY_TYPES: "ingest_due_sources,ingest_source,html_index,rss_index,fetch_article_content,write_article_markdown,cve_sync,derive_events_from_articles,enrich_event_from_web,promote_event_web_source_to_article"
     command:
       - sh
       - -lc
@@ -111,7 +124,7 @@ services:
       SV_LOG_FILE: /data/logs/worker.log
       SV_UMASK: ${SV_UMASK:-002}
       SV_DB_URL: ${SV_DB_URL:-}
-      SV_WORKER_ONLY_TYPES: "summarize_article_llm,enrich_event_summary_llm,cve_enrich_llm"
+      SV_WORKER_ONLY_TYPES: "summarize_article_llm,enrich_event_summary_llm"
       SV_LLM_MAX_INFLIGHT: "1"
       SV_WORKER_CONCURRENCY: "1"
     command:
@@ -131,7 +144,7 @@ services:
       - svnet
     restart: unless-stopped
 
-  # 3) Builder (on-demand Hugo build)
+    # 3) Builder (on-demand Hugo build)
   builder:
     profiles:
       - build
@@ -157,7 +170,9 @@ services:
       - ${SV_DATA_DIR:-/nfs/sempervigil/data}:/data
       - ${SV_SITE_SRC_DIR:-/nfs/sempervigil/site-src}:/site-src
       - ${SV_SITE_PUBLIC_DIR:-/nfs/sempervigil/site-public}:/site
+
       - ./tools:/tools:ro
+
     command:
       - sh
       - -lc
@@ -218,19 +233,6 @@ services:
       - ${SV_SITE_PUBLIC_DIR:-/nfs/sempervigil/site-public}:/usr/share/nginx/html:ro
     networks:
       - svnet
-    restart: unless-stopped
-
-  # 4) SearXNG (internal web search for enrichment; optional)
-
-  searxng:
-    image: searxng/searxng:latest
-    profiles: [search]
-    environment:
-      BASE_URL: ${SEARXNG_BASE_URL:-http://searxng:8080/}
-    volumes:
-      - ${SV_SEARXNG_DATA_DIR:-/nfs/sempervigil/searxng}/settings.yml:/etc/searxng/settings.yml:ro
-      - ${SV_SEARXNG_DATA_DIR:-/nfs/sempervigil/searxng}/limiter.toml:/etc/searxng/limiter.toml:ro
-    networks: [svnet]
     restart: unless-stopped
 
   # 5) Test runner (image-only, no NFS)

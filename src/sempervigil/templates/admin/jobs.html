@@ -9,6 +9,35 @@
       <button class="btn danger" id="jobs-cancel-all">Cancel All Jobs</button>
       <button class="btn secondary" id="jobs-refresh">Refresh</button>
     </div>
+    <div class="filters compact">
+      <label>
+        Status
+        <select id="jobs-filter-status">
+          <option value="">All</option>
+          <option value="queued">Queued</option>
+          <option value="running">Running</option>
+          <option value="succeeded">Succeeded</option>
+          <option value="failed">Failed</option>
+          <option value="canceled">Canceled</option>
+        </select>
+      </label>
+      <label>
+        Type
+        <select id="jobs-filter-type">
+          <option value="">All</option>
+        </select>
+      </label>
+      <label>
+        Page size
+        <select id="jobs-page-size">
+          <option value="20">20</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+      </label>
+      <button class="btn secondary" id="jobs-apply">Apply</button>
+      <button class="btn ghost" id="jobs-clear">Clear</button>
+    </div>
   </section>
   <section class="panel">
     <h2>Jobs</h2>
@@ -47,5 +76,6 @@
         {% endfor %}
       </tbody>
     </table>
+    <div id="jobs-pager" class="pager"></div>
   </section>
 {% endblock %}

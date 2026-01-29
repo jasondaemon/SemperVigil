@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>SemperVigil Admin</title>
+    <title>{% if nav_active %}SV {{ nav_active|capitalize }}{% if nav_subactive %} — {{ nav_subactive|replace('_', ' ')|title }}{% endif %}{% else %}SemperVigil Admin{% endif %}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="/ui/static/admin/admin.css">
   </head>

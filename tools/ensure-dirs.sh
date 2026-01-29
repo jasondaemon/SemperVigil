@@ -34,9 +34,13 @@ ensure_if_mounted_or_writable "${SITE_SRC_DIR}/content/posts"
 ensure_if_mounted_or_writable "${SITE_SRC_DIR}/content/events"
 ensure_if_mounted_or_writable "${SITE_SRC_DIR}/content/cves"
 ensure_if_mounted_or_writable "${SITE_SRC_DIR}/content/briefs"
+ensure_if_mounted_or_writable "${SITE_SRC_DIR}/content/daily"
 ensure_if_mounted_or_writable "${SITE_SRC_DIR}/static/sempervigil"
 ensure_if_mounted_or_writable "${SITE_SRC_DIR}/static/sempervigil/briefs"
 ensure_if_mounted_or_writable "${SITE_SRC_DIR}/resources"
+ensure_if_mounted_or_writable "${SITE_SRC_DIR}/data"
+ensure_if_mounted_or_writable "${SITE_SRC_DIR}/data/articles"
+ensure_if_mounted_or_writable "${SITE_SRC_DIR}/data/daily"
 ensure_if_mounted_or_writable "${SITE_PUBLIC_DIR}"
 
 if [ "$(id -u)" = "0" ]; then

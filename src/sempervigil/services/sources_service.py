@@ -6,13 +6,14 @@ from dataclasses import asdict
 from typing import Any
 
 from ..models import SourceTactic
-from ..storage import upsert_tactic
+from ..storage import get_article_state_counts_by_source, upsert_tactic
 from ..utils import json_dumps, utc_now_iso
 
 
 def list_sources(conn: Any) -> list[dict[str, Any]]:
     columns = _table_columns(conn, "sources")
     acquire_map = _active_acquire_jobs(conn)
+    state_counts = get_article_state_counts_by_source(conn)
     select_cols = [
         "id",
         "name",
@@ -46,6 +47,10 @@ def list_sources(conn: Any) -> list[dict[str, Any]]:
         if data.get("id") in acquire_map:
             data["acquire_status"] = acquire_map[data["id"]]["status"]
             data["acquire_job_id"] = acquire_map[data["id"]]["job_id"]
+        counts = state_counts.get(data.get("id") or "", {})
+        data["new_count"] = counts.get("new_count", 0)
+        data["gathered_count"] = counts.get("gathered_count", 0)
+        data["summarized_count"] = counts.get("summarized_count", 0)
         rows.append(data)
     return rows
 

@@ -194,8 +194,14 @@ Event web enrichment (SearXNG):
 - Web results are stored first; nothing is promoted to Articles unless you click **Promote**.
 - Set these env vars in `.env` (see `.env.example`):
   - `SV_SEARXNG_URL`, `SV_SEARXNG_ENGINES`, `SV_SEARXNG_CATEGORIES`
+  - `SV_SEARXNG_TIMEOUT_S` (optional)
   - `SV_ENRICH_MIN_SCORE`, `SV_ENRICH_DOMAIN_ALLOWLIST`, `SV_ENRICH_DOMAIN_BLOCKLIST`
   - `SV_ENRICH_ENABLE_LLM=0` (LLM summary enrichment is optional and off by default)
+- Quick connectivity test:
+  - `curl -s "$SV_SEARXNG_URL/search?q=incident&format=json" | head`
+  - `python -m sempervigil.searxng_smoke --query "incident"`
+  - Enqueue an enrichment job:
+    `curl -X POST -H "X-Admin-Token: $SV_ADMIN_TOKEN" http://<host>:8001/admin/api/events/<event_id>/enrich/web`
 
 Optional SearXNG service (not enabled by default):
 ```yaml
@@ -207,6 +213,10 @@ searxng:
     - "8085:8080"
   volumes:
     - ./searxng:/etc/searxng
+```
+Enable it with:
+```bash
+docker compose --profile search up -d searxng
 ```
 - API keys entered in the UI are encrypted at rest using AES-GCM
 - Use the “Test” buttons in the UI to verify providers and profiles
@@ -224,6 +234,9 @@ LLM summarization (LiteLLM OpenAI-compatible):
   - `SV_FETCH_FULL_CONTENT=1`
   - `SV_STORE_ARTICLE_HTML=0` (default off)
 
+- Article Markdown generation is disabled by default:
+  - `SV_ENABLE_ARTICLE_MARKDOWN=0` (set to 1 to enable legacy per-article Markdown)
+
 Permissions / first-boot:
 - If `${SV_SITE_SRC_DIR}` or `${SV_SITE_PUBLIC_DIR}` are not writable, run:
   - `docker compose run --rm worker_fetch sh /tools/ensure-dirs.sh`
@@ -236,7 +249,7 @@ curl -v http://<host>:8001/ui/
 
 Outputs are written to:
 - Hugo source (NFS): `${SV_SITE_SRC_DIR}` (content, layouts, themes, static)
-- Articles (Markdown): `${SV_SITE_SRC_DIR}/content/posts/`
+- Article lists (JSON): `${SV_SITE_SRC_DIR}/data/articles/`
 - JSON index (if enabled): `${SV_SITE_SRC_DIR}/static/sempervigil/index.json`
 - Site output: `${SV_SITE_PUBLIC_DIR}` (nginx serves this)
 
@@ -515,3 +528,11 @@ Any distributed derivative works must also be licensed under GPL-3.0.
 ---
 
 **SemperVigil is about sustained understanding — not just scraping.**
+
+
+---
+
+## Developer Notes
+
+- Postgres transactions are aborted after any SQL error. If a worker catches an exception and then runs more SQL, it must call `conn.rollback()` first to clear the failed transaction.
+- SQL aliases must be valid identifiers (no dots). Use `AS published_at`, never `AS c.published_at`.

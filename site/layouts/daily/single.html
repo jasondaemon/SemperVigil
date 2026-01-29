@@ -1,0 +1,46 @@
+{{ $day := .Date.Format "2006-01-02" }}
+{{ $data := index site.Data.daily $day }}
+<main class="daily-brief">
+  <h1>{{ .Title }}</h1>
+  {{ if $data }}
+    <section class="daily-summary">
+      {{ with $data.headline }}<p>{{ . }}</p>{{ end }}
+    </section>
+    {{ with $data.key_themes }}
+      <section>
+        <h2>Key Themes</h2>
+        <ul>{{ range . }}<li>{{ . }}</li>{{ end }}</ul>
+      </section>
+    {{ end }}
+    {{ with $data.notable_vulnerabilities }}
+      <section>
+        <h2>Notable Vulnerabilities</h2>
+        <ul>{{ range . }}<li>{{ . }}</li>{{ end }}</ul>
+      </section>
+    {{ end }}
+    {{ with $data.breaches_incidents }}
+      <section>
+        <h2>Breaches & Incidents</h2>
+        <ul>{{ range . }}<li>{{ . }}</li>{{ end }}</ul>
+      </section>
+    {{ end }}
+    {{ with $data.policy_geopolitical }}
+      <section>
+        <h2>Policy & Geopolitics</h2>
+        <ul>{{ range . }}<li>{{ . }}</li>{{ end }}</ul>
+      </section>
+    {{ end }}
+    {{ with $data.articles }}
+      <section>
+        <h2>Articles</h2>
+        <ul>
+          {{ range . }}
+            <li><a href="{{ .url }}" target="_blank" rel="noopener">{{ .title }}</a> — {{ .source }}{{ with .tags }} ({{ delimit . ", " }}){{ end }}</li>
+          {{ end }}
+        </ul>
+      </section>
+    {{ end }}
+  {{ else }}
+    <p>No summary data found for {{ $day }}.</p>
+  {{ end }}
+</main>

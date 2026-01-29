@@ -87,7 +87,7 @@ def test_ingest_does_not_enqueue_publish_when_fetch_enabled(tmp_path, monkeypatc
     assert "write_article_markdown" not in types
 
 
-def test_ingest_enqueues_publish_when_fetch_disabled(tmp_path, monkeypatch):
+def test_ingest_does_not_enqueue_publish_when_markdown_disabled(tmp_path, monkeypatch):
     conn = _seed_runtime_config(tmp_path, monkeypatch)
     _seed_source(conn)
     config = load_runtime_config(conn)
@@ -115,4 +115,37 @@ def test_ingest_enqueues_publish_when_fetch_disabled(tmp_path, monkeypatch):
 
     rows = conn.execute("SELECT job_type FROM jobs").fetchall()
     types = [row[0] for row in rows]
+    assert "write_article_markdown" not in types
+
+
+def test_ingest_enqueues_publish_when_markdown_enabled(tmp_path, monkeypatch):
+    conn = _seed_runtime_config(tmp_path, monkeypatch)
+    _seed_source(conn)
+    config = load_runtime_config(conn)
+    monkeypatch.setenv("SV_FETCH_FULL_CONTENT", "0")
+    monkeypatch.setenv("SV_ENABLE_ARTICLE_MARKDOWN", "1")
+    article = Article(
+        id=None,
+        stable_id="abc125",
+        original_url="https://example.com/c",
+        normalized_url="https://example.com/c",
+        title="Test3",
+        source_id="source-1",
+        published_at=None,
+        published_at_source=None,
+        ingested_at="2025-01-01T00:00:00Z",
+        summary="stub",
+        tags=["test"],
+    )
+
+    def _fake_process_source(*_args, **_kwargs):
+        return _stub_result(article)
+
+    monkeypatch.setattr(worker, "process_source", _fake_process_source)
+    logger = logging.getLogger("test")
+    worker._handle_ingest_source(conn, config, {"source_id": "source-1"}, logger)
+
+    rows = conn.execute("SELECT job_type FROM jobs").fetchall()
+    types = [row[0] for row in rows]
     assert "write_article_markdown" in types
+

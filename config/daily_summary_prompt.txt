@@ -1,0 +1,7 @@
+You are creating a daily cybersecurity brief. Use the provided article list to produce:
+- A headline summary paragraph
+- Key themes (bulleted)
+- Notable vulnerabilities (bulleted)
+- Breaches / incidents (bulleted)
+- Policy / geopolitical items (bulleted, if any)
+Keep it concise, factual, and structured.

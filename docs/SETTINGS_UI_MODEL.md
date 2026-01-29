@@ -262,6 +262,7 @@ Recommended `settings.key` values (value stored as JSON):
 - `alerts.email.recipients` : `[]`
 - `alerts.pause_on_failure.enabled` : `true`
 - `alerts.pause_on_failure.error_streak` : `5`
+- `alerts.pause_on_failure.zero_days` : `5`
 - `alerts.pause_on_failure.pause_minutes` : `1440`
 
 ---

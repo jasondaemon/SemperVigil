@@ -5,6 +5,22 @@ import logging
 from .utils import utc_now_iso
 
 
+def _has_column(conn, table: str, column: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = %s AND column_name = %s
+        """,
+        (table, column),
+    ).fetchone()
+    return row is not None
+
+
+def _events_visibility_ready(conn) -> bool:
+    return _has_column(conn, "events", "candidate") and _has_column(conn, "events", "evidence")
+
+
 def apply_migrations_pg(conn) -> None:
     logger = logging.getLogger("sempervigil.migrations")
     conn.execute("BEGIN")
@@ -21,6 +37,10 @@ def apply_migrations_pg(conn) -> None:
         for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
     }
     if "pg_bootstrap_001" in applied:
+        if "pg_events_005" in applied and not _events_visibility_ready(conn):
+            _migrate_events_visibility(conn)
+            logger.info("migration_reapplied version=pg_events_005")
+
         if "pg_events_002" not in applied:
             _migrate_events_v2(conn)
             conn.execute(
@@ -671,6 +691,10 @@ def _migrate_events_visibility(conn) -> None:
     conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS is_manual INTEGER NOT NULL DEFAULT 0")
     conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'active'")
     conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS confidence_tier TEXT NOT NULL DEFAULT 'watch'")
+    conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS candidate BOOLEAN NOT NULL DEFAULT false")
+    conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS entity TEXT")
+    conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS incident_date TEXT")
+    conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS evidence JSONB NOT NULL DEFAULT '[]'::jsonb")
     conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS reasons JSONB NOT NULL DEFAULT '[]'::jsonb")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_visibility ON events(visibility)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_kind_visibility ON events(kind, visibility)")

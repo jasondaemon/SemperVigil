@@ -40,6 +40,12 @@ class DBConn:
     def commit(self) -> None:
         self._conn.commit()
 
+    def rollback(self) -> None:
+        try:
+            self._conn.rollback()
+        except Exception:
+            pass
+
     def close(self) -> None:
         self._conn.close()
 

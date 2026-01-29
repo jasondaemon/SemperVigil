@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import logging
 import os
 import time
 import uuid
+from pathlib import Path
 from dataclasses import replace
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from urllib.parse import urlparse
 
@@ -17,6 +20,7 @@ from .config import (
     bootstrap_events_settings,
     get_cve_settings,
     get_events_settings,
+    is_article_markdown_enabled,
     load_runtime_config,
 )
 from .ingest import process_source
@@ -75,6 +79,7 @@ from .storage import (
     list_article_ids_without_event,
     link_event_article,
     get_source_run_streaks,
+    get_source_zero_days,
     get_source_name,
     insert_source_health_event,
     update_article_content,
@@ -88,9 +93,14 @@ from .storage import (
     release_lease,
     update_event_summary_from_articles,
     list_event_web_sources,
+    list_recent_articles,
+    list_event_keys_for_articles,
+    list_article_cve_tags,
+    get_cve,
     upsert_event_web_source,
     mark_event_web_source_status,
     promote_event_web_source_to_article,
+    link_cve_products_from_items,
 )
 from .utils import configure_logging, log_event, utc_now_iso, utc_now_iso_offset
 
@@ -99,10 +109,12 @@ WORKER_JOB_TYPES = [
     "ingest_due_sources",
     "test_source",
     "cve_sync",
+    "cve_enrich_llm",
     "events_rebuild",
     "fetch_article_content",
     "summarize_article_llm",
     "build_daily_brief",
+    "build_daily_summary",
     "write_article_markdown",
     "derive_events_from_articles",
     "enrich_event_from_web",
@@ -115,6 +127,227 @@ WORKER_JOB_TYPES = [
 
 def _setup_logging() -> logging.Logger:
     return configure_logging("sempervigil.worker")
+
+
+def _site_root_from_output_dir(output_dir: str) -> str:
+    output_path = Path(output_dir)
+    if output_path.name == "posts":
+        return str(output_path.parent.parent)
+    if output_path.name == "content":
+        return str(output_path.parent)
+    return str(output_path.parent)
+
+
+def _format_human_ts(value: str | None, tz_name: str) -> str:
+    if not value:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return str(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = timezone.utc
+    local = parsed.astimezone(tz)
+    return local.strftime("%b %d, %Y · %H:%M")
+
+
+def _write_article_data_files(conn, config, logger: logging.Logger) -> dict[str, object]:
+    site_root = _site_root_from_output_dir(config.paths.output_dir)
+    data_dir = Path(site_root) / "data" / "articles"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    recent_rows = list_recent_articles(conn, limit=200)
+    if not recent_rows:
+        (data_dir / "today.json").write_text("[]", encoding="utf-8")
+        (data_dir / "recent.json").write_text("[]", encoding="utf-8")
+        return {"today": 0, "recent": 0}
+    article_ids = [row["id"] for row in recent_rows if row.get("id") is not None]
+    event_keys_map = list_event_keys_for_articles(conn, article_ids)
+    cve_tags_map = list_article_cve_tags(conn, article_ids)
+    tz_name = config.app.timezone or "UTC"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = timezone.utc
+    now_local = datetime.now(tz)
+    today_date = now_local.date()
+
+    def _parse_ts(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
+    items = []
+    for row in recent_rows:
+        published_at = row.get("published_at") or row.get("ingested_at")
+        parsed = _parse_ts(published_at)
+        local = parsed.astimezone(tz) if parsed else None
+        items.append(
+            {
+                "id": row.get("id"),
+                "title": row.get("title") or "",
+                "source": row.get("source_name") or "",
+                "published_at_iso": published_at or "",
+                "published_at_human": _format_human_ts(published_at, tz_name),
+                "url": row.get("original_url") or "",
+                "tags": sorted({t for t in (row.get("tags") or "").split(",") if t} | set(cve_tags_map.get(row.get("id"), []))),
+                "event_keys": event_keys_map.get(row.get("id"), []),
+                "_sort": local or parsed or datetime.min.replace(tzinfo=timezone.utc),
+            }
+        )
+    items.sort(key=lambda item: item["_sort"], reverse=True)
+    for item in items:
+        item.pop("_sort", None)
+
+    today_items = []
+    for item in items:
+        if not item["published_at_iso"]:
+            continue
+        parsed = _parse_ts(item["published_at_iso"])
+        if not parsed:
+            continue
+        local = parsed.astimezone(tz)
+        if local.date() == today_date:
+            today_items.append(item)
+
+    recent_items = items[: max(15, len(today_items))]
+
+    (data_dir / "today.json").write_text(json.dumps(today_items, indent=2), encoding="utf-8")
+    (data_dir / "recent.json").write_text(json.dumps(recent_items, indent=2), encoding="utf-8")
+    log_event(
+        logger,
+        logging.INFO,
+        "article_data_written",
+        today=len(today_items),
+        recent=len(recent_items),
+        path=str(data_dir),
+    )
+    return {"today": len(today_items), "recent": len(recent_items)}
+
+
+def _load_daily_summary_prompt() -> str:
+    env_value = os.environ.get("SV_DAILY_SUMMARY_PROMPT")
+    if env_value and env_value.strip():
+        return env_value.strip()
+    default_path = Path(__file__).resolve().parents[3] / "config" / "daily_summary_prompt.txt"
+    if default_path.exists():
+        return default_path.read_text(encoding="utf-8").strip()
+    return ""
+
+
+def _write_daily_summary_files(config, day: str, payload: dict[str, object]) -> dict[str, str]:
+    site_root = _site_root_from_output_dir(config.paths.output_dir)
+    data_dir = Path(site_root) / "data" / "daily"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    data_path = data_dir / f"{day}.json"
+    data_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    content_dir = Path(site_root) / "content" / "daily"
+    content_dir.mkdir(parents=True, exist_ok=True)
+    md_path = content_dir / f"{day}.md"
+    if not md_path.exists():
+        md_path.write_text(
+            "\n".join(
+                [
+                    "---",
+                    f'title: "Daily Cyber Brief – {day}"',
+                    f"date: {day}",
+                    "type: daily",
+                    "---",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+    return {"data_path": str(data_path), "content_path": str(md_path)}
+
+
+def _handle_build_daily_summary(
+    conn, config, payload: dict[str, object], logger: logging.Logger
+) -> dict[str, object]:
+    tz_name = config.app.timezone or "UTC"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = timezone.utc
+    day = str(payload.get("date") or "")
+    if not day:
+        day = datetime.now(tz).strftime("%Y-%m-%d")
+    articles = list_articles_for_day(conn, day)
+    if not articles:
+        return {"status": "no_articles", "day": day}
+    article_ids = [int(article.get("id")) for article in articles if article.get("id") is not None]
+    cve_tags_map = list_article_cve_tags(conn, article_ids)
+    prompt = _load_daily_summary_prompt()
+    lines = [prompt, "", "Articles:"] if prompt else ["Articles:"]
+    for article in articles:
+        title = article.get("title") or ""
+        source_id = article.get("source_id") or ""
+        url = article.get("original_url") or ""
+        summary = article.get("summary_llm") or article.get("summary") or ""
+        lines.append(f"- {title} ({source_id}) {url}")
+        if summary:
+            lines.append(f"  Summary: {summary}")
+    input_text = "\n".join(lines)
+
+    summary_payload: dict[str, object] = {
+        "day": day,
+        "summary_generated_at": utc_now_iso(),
+        "headline": "",
+        "key_themes": [],
+        "notable_vulnerabilities": [],
+        "breaches_incidents": [],
+        "policy_geopolitical": [],
+        "articles": [
+            {
+                "id": article.get("id"),
+                "title": article.get("title"),
+                "source": article.get("source_id"),
+                "url": article.get("original_url"),
+                "published_at_iso": article.get("published_at") or article.get("ingested_at"),
+                "tags": cve_tags_map.get(article.get("id"), []),
+            }
+            for article in articles
+        ],
+    }
+
+    profile, reason = get_active_profile_for_stage(conn, "exec_brief")
+    if profile:
+        try:
+            result = run_profile(conn, profile["id"], input_text, logger)
+            parsed = result.get("parsed") if isinstance(result, dict) else None
+            if isinstance(parsed, dict):
+                summary_payload.update(parsed)
+            else:
+                summary_payload["headline"] = str(result.get("raw") or "").strip()
+        except Exception as exc:  # noqa: BLE001
+            summary_payload["error"] = str(exc)
+    else:
+        summary_payload["headline"] = "Daily summary (no LLM profile routed)."
+        summary_payload["key_themes"] = [a.get("title") for a in articles[:5]]
+        summary_payload["note"] = reason or "no_profile_routed"
+
+    paths = _write_daily_summary_files(config, day, summary_payload)
+    set_setting(conn, f"daily_summary.generated.{day}", utc_now_iso())
+    log_event(
+        logger,
+        logging.INFO,
+        "daily_summary_written",
+        day=day,
+        data_path=paths["data_path"],
+    )
+    return {"day": day, **paths}
+
+
 
 
 def run_once(worker_id: str, allowed_types: list[str] | None = None) -> int:
@@ -133,10 +366,15 @@ def run_once(worker_id: str, allowed_types: list[str] | None = None) -> int:
     if _should_tick_ingest_due(allowed_types):
         _maybe_enqueue_ingest_due_sources(conn, logger)
     _maybe_enqueue_cve_sync(conn, logger)
+    _maybe_enqueue_daily_summary(conn, config, logger)
+    claim_types = allowed_types or WORKER_JOB_TYPES
+    if not is_article_markdown_enabled() and allowed_types:
+        if "write_article_markdown" not in claim_types:
+            claim_types = claim_types + ["write_article_markdown"]
     job = claim_next_job(
         conn,
         worker_id,
-        allowed_types=allowed_types or WORKER_JOB_TYPES,
+        allowed_types=claim_types,
         lock_timeout_seconds=config.jobs.lock_timeout_seconds,
     )
     if not job:
@@ -152,6 +390,7 @@ def _process_claimed_job(conn, config, job, logger: logging.Logger) -> int:
     try:
         result = run_claimed_job(conn, config, job, logger)
     except Exception as exc:  # noqa: BLE001
+        conn.rollback()
         if is_job_canceled(conn, job.id):
             log_event(logger, logging.INFO, "job_canceled", job_id=job.id)
             return 0
@@ -421,6 +660,8 @@ def _handle_ingest_source(
                     extra_by_stable[article.stable_id] = {"watchlist_hit": True}
         write_json_index(result.articles, config.publishing.json_index_path, extra_by_stable)
         enqueue_build_site_if_needed(conn, reason="json_index_written")
+    _write_article_data_files(conn, config, logger)
+    enqueue_build_site_if_needed(conn, reason="article_data_written")
     _maybe_pause_source(conn, source.id, logger)
     return {
         "source_id": source.id,
@@ -512,6 +753,14 @@ def _handle_write_article_markdown(
 ) -> dict[str, object]:
     if not payload:
         raise ValueError("write_article_markdown requires payload")
+    if not is_article_markdown_enabled():
+        log_event(
+            logger,
+            logging.INFO,
+            "article_markdown_skipped",
+            reason="article_markdown_disabled",
+        )
+        return {"status": "skipped", "reason": "article_markdown_disabled"}
     source_id = str(payload.get("source_id"))
     source_name = get_source_name(conn, source_id) or ""
     batch_id = str(payload.get("batch_id") or "")
@@ -561,6 +810,7 @@ def _handle_write_article_markdown(
         article_url=article.original_url,
         progress=progress,
     )
+    _write_article_data_files(conn, config, logger)
     article_id = payload.get("article_id")
     if article_id is not None:
         try:
@@ -894,16 +1144,19 @@ def _handle_smoke_test(conn, config, job, logger: logging.Logger) -> dict[str, o
             )
             update_step("ingest_sources", "completed", article_count_ingested=article_count)
 
+            post_types = ["fetch_article_content", "summarize_article_llm"]
+            if is_article_markdown_enabled():
+                post_types.append("write_article_markdown")
             _run_jobs_inline(
                 conn,
                 config,
                 logger,
-                allowed_types=["fetch_article_content", "summarize_article_llm", "write_article_markdown"],
+                allowed_types=post_types,
                 timeout_seconds=timeout_seconds,
             )
             jobs = list_jobs_by_types_since(
                 conn,
-                types=["fetch_article_content", "summarize_article_llm", "write_article_markdown"],
+                types=post_types,
                 since=start_marker,
             )
             result["article_count_ingested"] = article_count
@@ -962,7 +1215,62 @@ def _extract_event_entity(title: str) -> str:
     for sep in (":", " - ", " – ", " — "):
         if sep in title:
             return title.split(sep, 1)[0].strip()
+    match = re.search(r"([A-Z][A-Za-z0-9&.\-]*(?:\s+[A-Z][A-Za-z0-9&.\-]*){0,3})", title)
+    if match:
+        return match.group(1).strip()
     return title.strip().split(" ")[0]
+
+
+def _normalize_entity(value: str) -> str:
+    if not value:
+        return ""
+    lowered = value.strip().lower()
+    generic = {
+        "security", "cybersecurity", "research", "report", "analysis", "study",
+        "survey", "update", "advisory", "guidance", "warning", "alert", "newsletter",
+        "roundup", "weekly", "monthly", "daily", "podcast", "webinar", "trend",
+    }
+    if lowered in generic:
+        return ""
+    return value.strip()
+
+
+def _non_event_reason(text: str) -> str | None:
+    lowered = text.lower()
+    non_event = [
+        "survey", "report", "research", "study", "analysis", "trends", "insights",
+        "guide", "how to", "best practices", "prevention", "tips", "webinar",
+        "podcast", "weekly", "monthly", "roundup", "forecast", "prediction",
+        "statistics", "benchmark", "whitepaper",
+    ]
+    for cue in non_event:
+        if cue in lowered:
+            return cue
+    return None
+
+
+def _has_event_qualifier(text: str, entity: str) -> tuple[bool, list[str]]:
+    lowered = text.lower()
+    reasons = []
+    incident_cues = [
+        "breach", "data leak", "data exposure", "exposed", "stolen", "exfiltrated",
+        "ransomware", "extortion", "compromise", "intrusion", "incident",
+        "attackers", "victim", "victims", "outage", "disruption",
+    ]
+    exploit_cues = ["exploited in the wild", "actively exploited", "in the wild", "weaponized"]
+    law_cues = ["arrested", "charged", "indicted", "law enforcement", "seized", "takedown"]
+    for cue in incident_cues:
+        if cue in lowered:
+            reasons.append(f"incident:{cue}")
+    for cue in exploit_cues:
+        if cue in lowered:
+            reasons.append(f"exploit:{cue}")
+    for cue in law_cues:
+        if cue in lowered:
+            reasons.append(f"law:{cue}")
+    if entity:
+        reasons.append("entity:present")
+    return bool(reasons), reasons
 
 
 def _derive_event_kind(text: str) -> str:
@@ -973,14 +1281,16 @@ def _derive_event_kind(text: str) -> str:
         return "breach"
     if any(word in lowered for word in ("compromise", "intrusion")):
         return "compromise"
-    if any(word in lowered for word in ("exploit", "exploited", "zero-day", "0day")):
-        return "exploit"
-    if any(word in lowered for word in ("campaign", "operation")):
+    if any(word in lowered for word in ("campaign", "operation", "apt", "espionage")):
         return "campaign"
-    if any(word in lowered for word in ("outage", "service disruption")):
-        return "outage"
-    if any(word in lowered for word in ("patch", "update", "advisory")):
+    if any(word in lowered for word in ("exploited in the wild", "actively exploited", "in the wild")):
+        return "exploit_in_the_wild"
+    if any(word in lowered for word in ("exploit", "exploited", "zero-day", "0day", "poc")):
+        return "exploit"
+    if any(word in lowered for word in ("advisory", "security update", "patch")):
         return "advisory"
+    if any(word in lowered for word in ("vulnerability disclosure", "disclosure")):
+        return "vuln_disclosure"
     return "other"
 
 
@@ -994,18 +1304,56 @@ def _derive_confidence_tier(text: str) -> str:
         return "likely"
     return "watch"
 
+def _slugify(value: str) -> str:
+    return normalize_name(value).replace("_", "-")
+
+
+def _extract_incident_date(text: str) -> str | None:
+    if not text:
+        return None
+    for match in re.finditer(r"\b(20\d{2}-\d{2}-\d{2})\b", text):
+        return match.group(1)
+    return None
+
+
+def _derive_confidence(text: str) -> tuple[float, bool, list[str]]:
+    lowered = text.lower()
+    confirmed_cues = [
+        "breach confirmed", "data stolen", "ransomware attack", "filing", "disclosed",
+        "victims", "ioc", "attributed", "took responsibility", "compromised", "intrusion"
+    ]
+    speculative_cues = [
+        "may have", "potential", "alleged", "reportedly", "possible", "suspected"
+    ]
+    evidence = []
+    score = 0.5
+    for cue in confirmed_cues:
+        if cue in lowered:
+            score += 0.1
+            evidence.append(f"confirmed:{cue}")
+    for cue in speculative_cues:
+        if cue in lowered:
+            score -= 0.1
+            evidence.append(f"speculative:{cue}")
+    score = max(0.0, min(1.0, score))
+    candidate = score < 0.7
+    return score, candidate, evidence
+
+
 
 def _event_kind_label(kind: str) -> str:
     labels = {
-        "breach": "Breach",
+        "breach": "Breach disclosed",
         "compromise": "Compromise",
-        "ransomware": "Ransomware",
+        "ransomware": "Ransomware attack",
         "intrusion": "Intrusion",
         "malware_campaign": "Campaign",
         "campaign": "Campaign",
+        "exploit_in_the_wild": "Exploit in the wild",
         "exploit": "Exploit",
-        "outage": "Outage",
         "advisory": "Advisory",
+        "vuln_disclosure": "Vulnerability disclosure",
+        "outage": "Outage",
     }
     return labels.get(kind, kind.title() if kind else "Event")
 
@@ -1040,23 +1388,34 @@ def _handle_derive_events_from_articles(
     if not combined:
         return {"status": "skipped", "reason": "no_content"}
     kind = _derive_event_kind(combined)
+    confidence, candidate, evidence = _derive_confidence(combined)
+    incident_date = _extract_incident_date(combined) or (article.get("published_at") or "")[:10] or None
     cve_ids = list_article_cve_ids(conn, article_id)
-    entity = _extract_event_entity(title)
-    if not entity and kind in {"exploit", "advisory"}:
+    entity = _normalize_entity(_extract_event_entity(title))
+    if not entity and kind in {"exploit", "advisory", "vuln_disclosure"}:
         for cve_id in cve_ids:
             product_keys = list_product_keys_for_cve(conn, cve_id)
             if product_keys:
                 display = get_product_display_by_key(conn, product_keys[0])
                 if display:
-                    entity = f"{display['vendor']} {display['product']}".strip()
+                    entity = _normalize_entity(f"{display['vendor']} {display['product']}")
                     break
+    non_event = _non_event_reason(combined)
+    has_qualifier, qualifier_reasons = _has_event_qualifier(combined, entity)
+    if non_event and not has_qualifier:
+        return {"status": "skipped", "reason": "non_incident", "detail": non_event}
+    if not has_qualifier:
+        return {"status": "skipped", "reason": "no_incident_signal"}
     if not entity:
         return {"status": "skipped", "reason": "entity_missing"}
-    bucket = (article.get("published_at") or article.get("ingested_at") or "")[:10]
+    if kind in {"advisory", "vuln_disclosure"} and (confidence or 0) < 0.6:
+        if cve_ids and not any(word in combined.lower() for word in ("breach", "ransomware", "compromise", "intrusion", "campaign", "exploited in the wild")):
+            return {"status": "skipped", "reason": "cve_only_suppressed"}
+    bucket = incident_date or (article.get("published_at") or article.get("ingested_at") or "")[:10]
     bucket = bucket or utc_now_iso()[:10]
     kind_label = _event_kind_label(kind)
     event_title = f"{entity} — {kind_label} — {bucket}"
-    event_key = f"evt:{kind}:{normalize_name(str(entity))}:{bucket}"
+    event_key = f"event:{kind}:{_slugify(str(entity))}:{bucket}"
     confidence_tier = _derive_confidence_tier(combined)
     event_id, _ = upsert_event_by_key(
         conn,
@@ -1070,8 +1429,25 @@ def _handle_derive_events_from_articles(
         meta={"seed_article_id": article_id},
         manual=False,
         visibility="active",
+        confidence=confidence,
         confidence_tier=confidence_tier,
-        reasons=["derived:article"],
+        candidate=candidate,
+        entity=entity,
+        incident_date=bucket,
+        evidence=evidence + qualifier_reasons,
+        reasons=["derived:article"] + qualifier_reasons,
+    )
+    log_event(
+        logger,
+        logging.INFO,
+        "event_created_from_article",
+        event_id=event_id,
+        article_id=article_id,
+        kind=kind,
+        candidate=candidate,
+        confidence=confidence,
+        entity=entity,
+        reasons=evidence + qualifier_reasons,
     )
     link_event_article(conn, event_id, article_id, "auto")
     for cve_id in cve_ids:
@@ -1098,22 +1474,32 @@ def _handle_enrich_event_from_web(
         raise ValueError("event_not_found")
     query = str(payload.get("query") or "").strip() or build_event_enrich_query(event)
     searx_url = os.getenv("SV_SEARXNG_URL", "").strip()
-    timeout_s = int(os.getenv("SV_SEARXNG_TIMEOUT_S", "10"))
+    timeout_s = int(os.getenv("SV_SEARXNG_TIMEOUT_S", "20"))
     max_results = int(payload.get("max_results") or os.getenv("SV_SEARXNG_MAX_RESULTS", "10"))
     categories = os.getenv("SV_SEARXNG_CATEGORIES")
     engines = os.getenv("SV_SEARXNG_ENGINES")
     keep_low = bool(payload.get("keep_low", False))
     promote_on_enrich = bool(payload.get("promote_on_enrich", False))
     min_score = int(os.getenv("SV_ENRICH_MIN_SCORE", "10"))
-    results = searxng_search(
-        query,
-        url=searx_url,
-        timeout_s=timeout_s,
-        categories=categories,
-        engines=engines,
-        language=None,
-        max_results=max_results,
-    )
+    try:
+        results = searxng_search(
+            query,
+            url=searx_url,
+            timeout_s=timeout_s,
+            categories=categories,
+            engines=engines,
+            language=None,
+            max_results=max_results,
+        )
+    except Exception as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "event_enrich_failed",
+            event_id=event_id,
+            error=str(exc),
+        )
+        raise
     saved = 0
     promoted = 0
     scored_results: list[tuple[int, dict[str, object], dict[str, int]]] = []
@@ -1383,6 +1769,8 @@ def _handle_cve_sync(
     cve_id = None
     if payload and payload.get("cve_id"):
         cve_id = str(payload.get("cve_id"))
+    if cve_id:
+        log_event(logger, logging.INFO, "cve_enrich_start", cve_id=cve_id)
     result = sync_cves(
         conn,
         CveSyncConfig(
@@ -1405,12 +1793,91 @@ def _handle_cve_sync(
     result["end"] = end_iso
     if cve_id:
         result["cve_id"] = cve_id
+        log_event(
+            logger,
+            logging.INFO,
+            "cve_enrich_done",
+            cve_id=cve_id,
+            processed=result.get("processed"),
+            changes=result.get("changes"),
+            errors=result.get("errors"),
+        )
     events_settings = get_events_settings(conn)
     if events_settings.get("enabled", True):
         _publish_events(conn, config, logger)
     return result
 
 
+
+
+def _handle_cve_enrich_llm(
+    conn, config, job, logger: logging.Logger
+) -> dict[str, object]:
+    payload = job.payload or {}
+    cve_id = str(payload.get("cve_id") or "").strip()
+    if not cve_id:
+        raise ValueError("cve_id is required")
+    cve = get_cve(conn, cve_id)
+    if not cve:
+        return {"status": "skipped", "reason": "cve_not_found"}
+    existing_products = cve.get("affected_products") or []
+    existing_versions = cve.get("product_versions") or []
+    if existing_products and existing_versions:
+        return {"status": "skipped", "reason": "already_enriched"}
+    profile, reason = get_active_profile_for_stage(conn, "cve_enrich_products")
+    if not profile:
+        return {"status": "skipped", "reason": f"no_profile_routed:{reason}"}
+    description = cve.get("description_text") or ""
+    references = cve.get("reference_domains") or []
+    prompt_lines = [
+        f"CVE: {cve_id}",
+        "Description:",
+        description,
+        "",
+    ]
+    if references:
+        prompt_lines.append("Reference domains:")
+        prompt_lines.extend([f"- {ref}" for ref in references])
+    input_text = "
+".join(prompt_lines).strip()
+    if not input_text:
+        return {"status": "skipped", "reason": "no_input"}
+    result = run_profile(conn, profile["id"], input_text, logger)
+    parsed = result.get("parsed") if isinstance(result, dict) else None
+    items: list[dict[str, object]] = []
+    if isinstance(parsed, dict):
+        if isinstance(parsed.get("items"), list):
+            items = [item for item in parsed.get("items") if isinstance(item, dict)]
+        elif parsed.get("vendor") or parsed.get("product"):
+            items = [parsed]
+    if not items:
+        return {"status": "skipped", "reason": "no_items"}
+    cleaned: list[dict[str, object]] = []
+    for item in items:
+        vendor = str(item.get("vendor") or "").strip()
+        product = str(item.get("product") or "").strip()
+        versions = item.get("versions") or item.get("version") or []
+        if isinstance(versions, str):
+            versions = [versions]
+        if not product:
+            continue
+        cleaned.append({
+            "vendor": vendor or "unknown",
+            "product": product,
+            "versions": [v for v in versions if v],
+        })
+    if not cleaned:
+        return {"status": "skipped", "reason": "no_valid_items"}
+    stats = link_cve_products_from_items(conn, cve_id=cve_id, items=cleaned, source="llm")
+    log_event(
+        logger,
+        logging.INFO,
+        "cve_enrich_products",
+        cve_id=cve_id,
+        items=len(cleaned),
+        links=stats.get("links"),
+    )
+    return {"status": "ok", "cve_id": cve_id, "items": len(cleaned), **stats}
 def _handle_events_rebuild(conn, config, payload: dict[str, object], logger: logging.Logger) -> dict[str, object]:
     settings = get_events_settings(conn)
     limit = None
@@ -1482,6 +1949,24 @@ def _maybe_enqueue_cve_sync(conn, logger: logging.Logger) -> None:
     if due:
         enqueue_job(conn, "cve_sync", None, debounce=True)
 
+def _maybe_enqueue_daily_summary(conn, config, logger: logging.Logger) -> None:
+    tz_name = config.app.timezone or "UTC"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = timezone.utc
+    now = datetime.now(tz)
+    if (now.hour, now.minute) < (23, 50):
+        return
+    day = now.strftime("%Y-%m-%d")
+    if get_setting(conn, f"daily_summary.generated.{day}"):
+        return
+    if has_pending_job(conn, "build_daily_summary"):
+        return
+    job_id = enqueue_job(conn, "build_daily_summary", {"date": day}, debounce=True)
+    log_event(logger, logging.INFO, "daily_summary_enqueued", day=day, job_id=job_id)
+
+
 
 def _should_tick_ingest_due(allowed_types: list[str] | None) -> bool:
     if not allowed_types:
@@ -1518,9 +2003,11 @@ def _maybe_pause_source(conn, source_id: str, logger: logging.Logger | None) -> 
         return
     error_threshold = int(get_setting(conn, "alerts.pause_on_failure.error_streak", 5))
     pause_minutes = int(get_setting(conn, "alerts.pause_on_failure.pause_minutes", 1440))
-    zero_threshold = int(
-        get_setting(conn, "alerts.pause_on_failure.zero_streak", error_threshold)
-    )
+    zero_threshold = get_setting(conn, "alerts.pause_on_failure.zero_days", None)
+    if zero_threshold is None:
+        zero_threshold = get_setting(conn, "alerts.pause_on_failure.zero_streak", 5)
+        set_setting(conn, "alerts.pause_on_failure.zero_days", zero_threshold)
+    zero_threshold = int(zero_threshold)
     streaks = get_source_run_streaks(conn, source_id)
     if streaks["consecutive_errors"] >= error_threshold:
         reason = f"auto_pause:error_streak:{streaks['consecutive_errors']}"
@@ -1534,10 +2021,15 @@ def _maybe_pause_source(conn, source_id: str, logger: logging.Logger | None) -> 
                 source_id=source_id,
                 reason=reason,
             )
-    elif streaks["consecutive_zero"] >= zero_threshold:
-        reason = f"auto_pause:zero_streak:{streaks['consecutive_zero']}"
+    else:
+        zero_days = get_source_zero_days(conn, source_id)
+        if zero_days is None:
+            return
+        if zero_days < zero_threshold:
+            return
+        reason = f"auto_pause:zero_days:{zero_days}"
         pause_source(conn, source_id, reason, pause_minutes)
-        record_health_alert(conn, source_id, "zero_streak", reason)
+        record_health_alert(conn, source_id, "zero_days", reason)
         if logger:
             log_event(
                 logger,
@@ -1596,6 +2088,8 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         return _handle_test_source(conn, config, job.payload, logger)
     if job.job_type == "cve_sync":
         return _handle_cve_sync(conn, config, logger, job.payload)
+    if job.job_type == "cve_enrich_llm":
+        return _handle_cve_enrich_llm(conn, config, job, logger)
     if job.job_type == "events_rebuild":
         return _handle_events_rebuild(conn, config, job.payload or {}, logger)
     if job.job_type == "source_acquire":
@@ -1604,11 +2098,17 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         return _handle_fetch_article_content(conn, config, job, job.payload, logger)
     if job.job_type == "summarize_article_llm":
         return _handle_summarize_article_llm(conn, config, job, logger)
+    if job.job_type == "build_daily_summary":
+        result = _handle_build_daily_summary(conn, config, job.payload or {}, logger)
+        enqueue_build_site_if_needed(conn, reason="build_daily_summary")
+        return result
     if job.job_type == "build_daily_brief":
         return _handle_build_daily_brief(conn, config, job.payload, logger)
     if job.job_type == "write_article_markdown":
         result = _handle_write_article_markdown(conn, config, job.payload, logger)
-        if not has_pending_job(conn, "write_article_markdown", exclude_job_id=job.id):
+        if result.get("status") != "skipped" and not has_pending_job(
+            conn, "write_article_markdown", exclude_job_id=job.id
+        ):
             enqueue_build_site_if_needed(conn, reason="write_article_markdown")
         return result
     if job.job_type == "derive_events_from_articles":
@@ -1625,12 +2125,13 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
 
 
 def _log_job_claimed(conn, job, logger: logging.Logger) -> None:
-    fields = {"job_id": job.id, "job_type": job.job_type}
+    fields = {"job_id": job.id}
     fields.update(_job_context_fields(conn, job))
     log_event(logger, logging.INFO, "job_claimed", **fields)
 
 
 def _job_context_fields(conn, job) -> dict[str, object]:
+    base = {"job_type": job.job_type}
     if job.job_type in {"write_article_markdown", "fetch_article_content", "summarize_article_llm"}:
         payload = job.payload or {}
         source_id = str(payload.get("source_id") or "")
@@ -1642,6 +2143,7 @@ def _job_context_fields(conn, job) -> dict[str, object]:
             if article:
                 article_url = article.get("original_url") or article.get("normalized_url")
         return {
+            **base,
             "source_id": source_id,
             "source_name": source_name,
             "article_id": article_id,
@@ -1651,11 +2153,11 @@ def _job_context_fields(conn, job) -> dict[str, object]:
         payload = job.payload or {}
         source_id = str(payload.get("source_id") or "")
         source_name = get_source_name(conn, source_id) or ""
-        return {"source_id": source_id, "source_name": source_name}
+        return {**base, "source_id": source_id, "source_name": source_name}
     payload = job.payload or {}
     source_id = str(payload.get("source_id") or "")
     source_name = get_source_name(conn, source_id) or ""
-    return {"source_id": source_id, "source_name": source_name}
+    return {**base, "source_id": source_id, "source_name": source_name}
 
 
 def _maybe_enqueue_fetch(
@@ -1729,6 +2231,8 @@ def _maybe_enqueue_summarize(
 
 
 def _enqueue_write_from_article(conn, config, article_id: int, source_id: str) -> None:
+    if not is_article_markdown_enabled():
+        return
     article = get_article_by_id(conn, article_id)
     if not article:
         return

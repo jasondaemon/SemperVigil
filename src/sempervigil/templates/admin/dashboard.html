@@ -13,6 +13,11 @@
         <button class="btn" data-enqueue="ingest_due_sources">Enqueue Ingest Due Sources</button>
         <button class="btn" data-enqueue="build_site">Enqueue Build Site</button>
         <button class="btn secondary brief-today">Build Today's Brief</button>
+        <div class="daily-summary-inline">
+          <label class="inline-label">Daily Summary</label>
+          <input type="date" id="daily-summary-date">
+          <button class="btn secondary" id="daily-summary-build">Build Daily Summary</button>
+        </div>
       </div>
       {% if sources_count == 0 %}
         <a class="btn secondary" href="/ui/sources">Add your first source</a>
@@ -35,31 +40,45 @@
   </section>
 
   <section class="panel">
-    <h2>Recent Jobs</h2>
-    <table class="table-compact">
-      <thead>
-        <tr>
-          <th>Job ID</th>
-          <th>Type</th>
-          <th>Status</th>
-          <th>When</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for job in jobs %}
-        <tr>
-          <td>
-            <span class="id-wrap" data-full="{{ job.id }}">
-              <a class="id-short" href="/ui/jobs/{{ job.id }}" title="{{ job.id }}">{{ job.id }}</a>
-              <button class="id-copy" type="button" data-copy="{{ job.id }}" title="Copy ID">⧉</button>
-            </span>
-          </td>
-          <td>{{ job.job_type }}</td>
-          <td><span class="badge">{{ job.status }}</span></td>
-          <td><span data-ts="{{ job.finished_at or job.started_at or '' }}"></span></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <h2>Log Tail</h2>
+    <div class="filters inline">
+      <label>Service
+        <select id="logs-service">
+          <option value="admin">admin</option>
+          <option value="worker" selected>worker</option>
+          <option value="builder">builder</option>
+        </select>
+      </label>
+      <label>Lines
+        <select id="logs-lines">
+          <option value="50">50</option>
+          <option value="100">100</option>
+          <option value="200" selected>200</option>
+          <option value="500">500</option>
+        </select>
+      </label>
+      <label class="checkbox"><input type="checkbox" id="logs-auto" checked> Auto-refresh</label>
+      <label class="checkbox"><input type="checkbox" id="logs-pin" checked> Pin to bottom</label>
+      <button class="btn secondary" type="button" id="logs-refresh">Refresh</button>
+    </div>
+    <div class="log-filters">
+      <div class="log-filter-group">
+        <div class="log-filter-title">Event</div>
+        <div class="log-filter-actions">
+          <button type="button" class="btn tiny" id="logs-event-all">All</button>
+          <button type="button" class="btn tiny secondary" id="logs-event-none">None</button>
+        </div>
+        <div class="log-filter-list" id="logs-event-list"></div>
+      </div>
+      <div class="log-filter-group">
+        <div class="log-filter-title">Job type</div>
+        <div class="log-filter-actions">
+          <button type="button" class="btn tiny" id="logs-job-all">All</button>
+          <button type="button" class="btn tiny secondary" id="logs-job-none">None</button>
+        </div>
+        <div class="log-filter-list" id="logs-job-list"></div>
+      </div>
+    </div>
+    <pre class="mono log-tail" id="logs-output"></pre>
   </section>
 {% endblock %}

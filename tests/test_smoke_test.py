@@ -22,6 +22,7 @@ def _seed_runtime_config(tmp_path, monkeypatch):
 
 
 def test_smoke_test_uses_jobs_not_direct_writer(tmp_path, monkeypatch):
+    monkeypatch.setenv("SV_ENABLE_ARTICLE_MARKDOWN", "0")
     conn = _seed_runtime_config(tmp_path, monkeypatch)
     upsert_source(
         conn,
@@ -57,7 +58,7 @@ def test_smoke_test_uses_jobs_not_direct_writer(tmp_path, monkeypatch):
         if calls["inline"] == 1:
             assert "ingest_source" in allowed
         if calls["inline"] == 2:
-            assert "write_article_markdown" in allowed
+            assert "write_article_markdown" not in allowed
 
     def _writer_called(*args, **kwargs):
         raise AssertionError("write_article_markdown should be called via jobs, not directly")

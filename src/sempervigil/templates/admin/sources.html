@@ -30,59 +30,80 @@
   <section class="panel">
     <a id="test-sources"></a>
     <h2>Sources</h2>
-    <table id="sources-table">
+    <div class="ui-build">UI build: {{ ui_build or "unknown" }}</div>
+    <table id="sources-table" class="table-compact">
       <thead>
         <tr>
           <th>Enabled</th>
-          <th>Name</th>
-          <th>Kind</th>
-          <th>URL</th>
-          <th>Interval</th>
-          <th>Status</th>
-          <th>Articles 24h</th>
-          <th>Total Articles</th>
-          <th>Tags</th>
-          <th>Last OK</th>
-          <th>Last Error</th>
+          <th>Source</th>
+          <th>Pause</th>
+          <th>Counts</th>
+          <th>Tags / Health</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
         {% for source in sources %}
-        <tr data-source-id="{{ source.id }}">
+        <tr data-source-id="{{ source.id }}" data-source-url="{{ source.url }}" class="source-row">
           <td>
             <input type="checkbox" class="toggle-enabled" {% if source.enabled %}checked{% endif %}>
           </td>
-          <td class="source-name">{{ source.name }}</td>
-          <td class="source-kind">{{ source.kind or "" }}</td>
-          <td class="source-url mono wrap">{{ source.url }}</td>
-          <td class="source-interval">{{ source.interval_minutes }}</td>
-          <td>
-            {% if source.last_error %}
-              <span class="status-pill status-error">Error</span>
-            {% elif source.last_ok_at %}
-              <span class="status-pill status-ok">OK</span>
-            {% else %}
-              <span class="status-pill">Unknown</span>
-            {% endif %}
+          <td class="source-cell">
+            <div class="source-line">
+              <span class="source-name">{{ source.name }}</span>
+            </div>
+            <div class="source-subline">
+              <span class="source-kind">{{ source.kind or "" }}</span>
+              <span class="source-interval">{{ source.interval_minutes }} min</span>
+              {% if source.last_error %}
+                <span class="status-pill status-error">Error</span>
+              {% elif source.pause_until %}
+                <button class="status-pill status-warn source-resume" type="button" title="Click to resume">Paused</button>
+              {% elif source.last_ok_at %}
+                <span class="status-pill status-ok">OK</span>
+              {% else %}
+                <span class="status-pill">Unknown</span>
+              {% endif %}
+            </div>
           </td>
-          <td>{{ source.articles_24h }}</td>
-          <td>{{ source.total_articles }}</td>
-          <td class="source-tags">{{ source.tags | join(", ") }}</td>
-          <td><span data-ts="{{ source.last_ok_at or '' }}"></span></td>
-          <td class="truncate">{{ source.last_error or "" }}</td>
+          <td class="source-cell">
+            <div class="source-line"><span data-ts="{{ source.pause_until or '' }}"></span></div>
+            <div class="source-subline truncate" title="{{ source.paused_reason or '' }}">{{ source.paused_reason or "" }}</div>
+          </td>
+          <td class="source-cell">
+            <div class="counts-line">
+              <span class="count-pill">New {{ source.new_count or 0 }}</span>
+              <span class="count-pill">Gathered {{ source.gathered_count or 0 }}</span>
+              <span class="count-pill">Summarized {{ source.summarized_count or 0 }}</span>
+            </div>
+            <div class="counts-line">
+              <span class="count-pill">24h {{ source.articles_24h }}</span>
+              <span class="count-pill">Total {{ source.total_articles }}</span>
+            </div>
+          </td>
+          <td class="source-cell">
+            <div class="source-line source-tags">{{ source.tags | join(", ") }}</div>
+            <div class="source-subline">
+              <span class="source-meta">Last OK:</span>
+              <span data-ts="{{ source.last_ok_at or '' }}"></span>
+              <span class="source-meta">Last Error:</span>
+              <span class="truncate" title="{{ source.last_error or '' }}">{{ source.last_error or "" }}</span>
+            </div>
+          </td>
           <td class="table-actions">
-            <label class="checkbox small inline"><input type="checkbox" class="acquire-build"> Build</label>
-            <label class="checkbox small inline"><input type="checkbox" class="acquire-events"> Events</label>
-            <button class="btn small secondary acquire-source" type="button">Acquire</button>
-            <button class="btn small test-source" type="button">Test</button>
-            <button class="btn small secondary history-source" type="button">History</button>
-            <button class="btn small secondary edit-source" type="button">Edit</button>
-            <button class="btn small danger delete-source" type="button">Delete</button>
+            <div class="actions-grid">
+              <button class="btn small secondary acquire-source" type="button">Acquire</button>
+              <button class="btn small fetch-missing" type="button" {% if not source.new_count %}disabled{% endif %}>Fetch</button>
+              <button class="btn small summarize-missing" type="button" {% if not source.gathered_count %}disabled{% endif %}>Summarize</button>
+              <button class="btn small test-source" type="button">Test</button>
+              <button class="btn small secondary history-source" type="button">History</button>
+              <button class="btn small secondary edit-source" type="button">Edit</button>
+              <button class="btn small danger delete-source" type="button">Delete</button>
+            </div>
           </td>
         </tr>
         <tr class="test-result" data-source-id="{{ source.id }}" style="display:none;">
-          <td colspan="12">
+          <td colspan="6">
             <div class="test-summary"></div>
             <details class="test-details">
               <summary>Details</summary>
@@ -91,7 +112,7 @@
           </td>
         </tr>
         <tr class="history-result" data-source-id="{{ source.id }}" style="display:none;">
-          <td colspan="12">
+          <td colspan="6">
             <div class="history-table"></div>
           </td>
         </tr>

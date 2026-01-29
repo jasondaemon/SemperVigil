@@ -261,8 +261,8 @@ def list_articles_for_day(conn: Any, day: str) -> list[dict[str, object]]:
         SELECT id, source_id, title, original_url, published_at, ingested_at, summary, brief_day,
                summary_llm, summary_model, summary_generated_at
         FROM articles
-        WHERE brief_day = %s
-        ORDER BY published_at DESC
+        WHERE COALESCE(brief_day, SUBSTR(published_at, 1, 10), SUBSTR(ingested_at, 1, 10)) = %s
+        ORDER BY COALESCE(published_at, ingested_at) DESC
         """,
         (day,),
     )
@@ -313,6 +313,67 @@ def list_summaries_for_day(conn: Any, day: str) -> list[dict[str, object]]:
     return rows
 
 
+def list_recent_articles(conn: Any, limit: int = 200) -> list[dict[str, object]]:
+    if not _table_exists(conn, "articles"):
+        return []
+    tag_join = ""
+    tag_select = "'' AS tags"
+    if _table_exists(conn, "article_tags"):
+        tag_join = "LEFT JOIN article_tags t ON t.article_id = a.id"
+        tag_select = "COALESCE(string_agg(t.tag, ',' ORDER BY t.tag), '') AS tags"
+    cursor = conn.execute(
+        f"""
+        SELECT a.id, a.title, a.original_url, a.published_at, a.ingested_at,
+               a.source_id, s.name AS source_name,
+               {tag_select}
+        FROM articles a
+        LEFT JOIN sources s ON s.id = a.source_id
+        {tag_join}
+        GROUP BY a.id, s.name
+        ORDER BY COALESCE(a.published_at, a.ingested_at) DESC
+        LIMIT %s
+        """,
+        (limit,),
+    )
+    rows = []
+    for row in cursor.fetchall():
+        rows.append(
+            {
+                "id": row[0],
+                "title": row[1],
+                "original_url": row[2],
+                "published_at": row[3],
+                "ingested_at": row[4],
+                "source_id": row[5],
+                "source_name": row[6] or "",
+                "tags": row[7] or "",
+            }
+        )
+    return rows
+
+
+def list_event_keys_for_articles(conn: Any, article_ids: list[int]) -> dict[int, list[str]]:
+    if not article_ids or not _table_exists(conn, "event_articles") or not _table_exists(conn, "events"):
+        return {}
+    cursor = conn.execute(
+        """
+        SELECT ea.article_id, string_agg(e.event_key, ',' ORDER BY e.event_key) AS event_keys
+        FROM event_articles ea
+        JOIN events e ON e.id = ea.event_id
+        WHERE ea.article_id = ANY(%s) AND e.event_key IS NOT NULL AND e.event_key != ''
+        GROUP BY ea.article_id
+        """,
+        (article_ids,),
+    )
+    mapping: dict[int, list[str]] = {}
+    for row in cursor.fetchall():
+        article_id = int(row[0])
+        keys = row[1].split(",") if row[1] else []
+        mapping[article_id] = keys
+    return mapping
+
+
+
 def upsert_cve_links(
     conn: Any,
     article_id: int,
@@ -322,6 +383,9 @@ def upsert_cve_links(
     if not cve_ids:
         return
     now = utc_now_iso()
+    event_columns = _table_columns(conn, "events")
+    event_columns = _table_columns(conn, "events")
+    event_columns = _table_columns(conn, "events")
     if _table_exists(conn, "cves"):
         cve_columns = _table_columns(conn, "cves")
         for cve_id in cve_ids:
@@ -555,6 +619,38 @@ def link_cve_products_from_signals(
             vendor_id = upsert_vendor(conn, vendor_display)
             product_id, _ = upsert_product(conn, vendor_id, product_display)
             _link_cve_product_version(conn, cve_id, product_id, version, source)
+    return {"links": created}
+
+
+def link_cve_products_from_items(
+    conn: Any,
+    *,
+    cve_id: str,
+    items: list[dict[str, object]],
+    source: str = "llm",
+) -> dict[str, int]:
+    created = 0
+    for item in items:
+        vendor_display = str(item.get("vendor") or "unknown").strip()
+        product_display = str(item.get("product") or "").strip()
+        versions = item.get("versions") or []
+        if not product_display:
+            continue
+        vendor_id = upsert_vendor(conn, vendor_display)
+        product_id, _ = upsert_product(conn, vendor_id, product_display)
+        link_cve_product(
+            conn,
+            cve_id,
+            product_id,
+            source=source,
+            evidence={"vendor": vendor_display, "product": product_display},
+        )
+        created += 1
+        if versions:
+            for version in versions:
+                if not version:
+                    continue
+                _link_cve_product_version(conn, cve_id, product_id, str(version), source)
     return {"links": created}
 
 
@@ -806,6 +902,35 @@ def get_source_run_streaks(conn: Any, source_id: str, limit: int = 20) -> dict[s
     return {"consecutive_errors": consecutive_errors, "consecutive_zero": consecutive_zero}
 
 
+def get_source_zero_days(conn: Any, source_id: str) -> int | None:
+    cursor = conn.execute(
+        """
+        SELECT started_at
+        FROM source_runs
+        WHERE source_id = %s AND status = 'ok' AND items_accepted > 0
+        ORDER BY started_at DESC
+        LIMIT 1
+        """,
+        (source_id,),
+    )
+    row = cursor.fetchone()
+    now = _parse_iso(utc_now_iso())
+    if row and row[0]:
+        return int((now - _parse_iso(str(row[0]))).days)
+    cursor = conn.execute(
+        """
+        SELECT MIN(started_at)
+        FROM source_runs
+        WHERE source_id = %s
+        """,
+        (source_id,),
+    )
+    row = cursor.fetchone()
+    if row and row[0]:
+        return int((now - _parse_iso(str(row[0]))).days)
+    return None
+
+
 def enqueue_job(
     conn: Any,
     job_type: str,
@@ -839,6 +964,43 @@ def enqueue_job(
     )
     conn.commit()
     return job_id
+
+
+def list_jobs_filtered(
+    conn: Any,
+    status: str | None = None,
+    job_type: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> tuple[list[Job], int]:
+    where: list[str] = []
+    params: list[object] = []
+    if status:
+        where.append("status = %s")
+        params.append(status)
+    if job_type:
+        where.append("job_type = %s")
+        params.append(job_type)
+    where_sql = " AND ".join(where)
+    if where_sql:
+        where_sql = "WHERE " + where_sql
+    total = conn.execute(
+        f"SELECT COUNT(*) FROM jobs {where_sql}",
+        params,
+    ).fetchone()[0]
+    offset = max(page - 1, 0) * page_size
+    cursor = conn.execute(
+        f"""
+        SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
+               finished_at, locked_by, locked_at, error
+        FROM jobs
+        {where_sql}
+        ORDER BY requested_at DESC
+        LIMIT %s OFFSET %s
+        """,
+        [*params, page_size, offset],
+    )
+    return [_row_to_job(row) for row in cursor.fetchall()], int(total or 0)
 
 
 def list_jobs(conn: Any, limit: int = 50) -> list[Job]:
@@ -899,6 +1061,10 @@ def get_dashboard_metrics(conn: Any) -> dict[str, object]:
     )
 
     article_columns = _table_columns(conn, "articles") if _table_exists(conn, "articles") else set()
+    state_counts = get_article_state_counts_by_source(conn)
+    total_new = sum(v.get("new_count", 0) for v in state_counts.values())
+    total_gathered = sum(v.get("gathered_count", 0) for v in state_counts.values())
+    total_summarized = sum(v.get("summarized_count", 0) for v in state_counts.values())
     missing_content_count = 0
     content_error_count = 0
     missing_summary_count = 0
@@ -933,14 +1099,32 @@ def get_dashboard_metrics(conn: Any) -> dict[str, object]:
     metrics["articles_with_content_error_count"] = content_error_count
     metrics["articles_missing_summary_count"] = missing_summary_count
 
-    cve_missing_desc = 0
-    if _table_exists(conn, "cves") and "description_text" in _table_columns(conn, "cves"):
-        row = conn.execute(
-            "SELECT COUNT(*) FROM cves WHERE description_text IS NULL OR description_text = ''"
-        ).fetchone()
-        cve_missing_desc = int(row[0] or 0)
-    metrics["cves_missing_description_count"] = cve_missing_desc
-    return metrics
+
+cve_missing_desc = 0
+if _table_exists(conn, "cves") and "description_text" in _table_columns(conn, "cves"):
+    row = conn.execute(
+        "SELECT COUNT(*) FROM cves c WHERE c.description_text IS NULL OR c.description_text = ''"
+    ).fetchone()
+    cve_missing_desc = int(row[0] or 0)
+metrics["cves_missing_description_count"] = cve_missing_desc
+
+cve_missing_products = 0
+if _table_exists(conn, "cves") and _table_exists(conn, "cve_products"):
+    row = conn.execute(
+        """
+        SELECT COUNT(*) FROM (
+            SELECT c.cve_id
+            FROM cves c
+            LEFT JOIN cve_products cp ON cp.cve_id = c.cve_id
+            LEFT JOIN cve_product_versions cpv ON cpv.cve_id = c.cve_id
+            GROUP BY c.cve_id
+            HAVING COUNT(cp.cve_id) = 0 OR COUNT(cpv.cve_id) = 0
+        ) t
+        """
+    ).fetchone()
+    cve_missing_products = int(row[0] or 0)
+metrics["cves_missing_products_count"] = cve_missing_products
+return metrics
 
 
 def get_last_job_by_type(conn: Any, job_type: str) -> Job | None:
@@ -1300,6 +1484,28 @@ def get_source_name(conn: Any, source_id: str) -> str | None:
     row = conn.execute("SELECT name FROM sources WHERE id = %s", (source_id,)).fetchone()
     return row[0] if row else None
 
+def get_pending_job_id_for_cve(conn: Any, job_type: str, cve_id: str) -> str | None:
+    if not _table_exists(conn, "jobs"):
+        return None
+    patterns = [
+        f'%"cve_id":"{cve_id}"%',
+        f'%"cve_id":{json.dumps(cve_id)}%',
+    ]
+    for pattern in patterns:
+        row = conn.execute(
+            """
+            SELECT id FROM jobs
+            WHERE job_type = %s AND status IN ('queued', 'running') AND payload_json LIKE %s
+            ORDER BY requested_at ASC
+            LIMIT 1
+            """,
+            (job_type, pattern),
+        ).fetchone()
+        if row:
+            return row[0]
+    return None
+
+
 
 def get_batch_job_counts(conn: Any, batch_id: str) -> dict[str, int]:
     pattern = f'%\"batch_id\":\"{batch_id}\"%'
@@ -1324,6 +1530,51 @@ def count_articles_total(conn: Any, source_id: str) -> int:
         return 0
     cursor = conn.execute("SELECT COUNT(*) FROM articles WHERE source_id = %s", (source_id,))
     return int(cursor.fetchone()[0] or 0)
+
+
+def get_article_state_counts_by_source(conn: Any) -> dict[str, dict[str, int]]:
+    if not _table_exists(conn, "articles"):
+        return {}
+    columns = _table_columns(conn, "articles")
+    if "source_id" not in columns:
+        return {}
+    if "has_full_content" in columns:
+        has_content_expr = "a.has_full_content = 1"
+    elif "content_text" in columns:
+        has_content_expr = "(a.content_text IS NOT NULL AND a.content_text != '')"
+    elif "extracted_text_path" in columns:
+        has_content_expr = "(a.extracted_text_path IS NOT NULL AND a.extracted_text_path != '')"
+    else:
+        has_content_expr = "FALSE"
+    has_summary = "summary_llm" in columns
+    summary_missing_expr = (
+        "(a.summary_llm IS NULL OR a.summary_llm = '')" if has_summary else "FALSE"
+    )
+    summary_present_expr = (
+        "(a.summary_llm IS NOT NULL AND a.summary_llm != '')" if has_summary else "FALSE"
+    )
+    if has_summary:
+        new_expr = f"(NOT ({has_content_expr})) AND {summary_missing_expr}"
+    else:
+        new_expr = f"(NOT ({has_content_expr}))"
+    cursor = conn.execute(
+        f"""
+        SELECT a.source_id,
+               SUM(CASE WHEN {new_expr} THEN 1 ELSE 0 END) AS new_count,
+               SUM(CASE WHEN ({has_content_expr}) AND {summary_missing_expr} THEN 1 ELSE 0 END) AS gathered_count,
+               SUM(CASE WHEN {summary_present_expr} THEN 1 ELSE 0 END) AS summarized_count
+        FROM articles a
+        GROUP BY a.source_id
+        """
+    )
+    results: dict[str, dict[str, int]] = {}
+    for source_id, new_count, gathered_count, summarized_count in cursor.fetchall():
+        results[str(source_id)] = {
+            "new_count": int(new_count or 0),
+            "gathered_count": int(gathered_count or 0),
+            "summarized_count": int(summarized_count or 0),
+        }
+    return results
 
 
 def insert_source_health_event(
@@ -2022,6 +2273,73 @@ def list_article_ids_missing_content(conn: Any, source_id: str) -> list[int]:
     return [int(row[0]) for row in cursor.fetchall()]
 
 
+def list_article_ids_missing_content_all(conn: Any) -> list[int]:
+    if not _table_exists(conn, "articles"):
+        return []
+    columns = _table_columns(conn, "articles")
+    clauses: list[str] = []
+    params: list[object] = []
+    url_parts: list[str] = []
+    if "original_url" in columns:
+        url_parts.append("(original_url IS NOT NULL AND original_url != '')")
+    if "normalized_url" in columns:
+        url_parts.append("(normalized_url IS NOT NULL AND normalized_url != '')")
+    if url_parts:
+        clauses.append("(" + " OR ".join(url_parts) + ")")
+    if "has_full_content" in columns:
+        clauses.append("has_full_content = 0")
+    elif "content_text" in columns:
+        clauses.append("(content_text IS NULL OR content_text = '')")
+    elif "extracted_text_path" in columns:
+        clauses.append("(extracted_text_path IS NULL OR extracted_text_path = '')")
+    where_sql = " AND ".join(clauses) if clauses else "1=1"
+    cursor = conn.execute(
+        f"SELECT id FROM articles WHERE {where_sql} ORDER BY ingested_at DESC",
+        params,
+    )
+    return [int(row[0]) for row in cursor.fetchall()]
+
+
+def list_article_ids_ready_for_summary_all(conn: Any) -> list[int]:
+    if not _table_exists(conn, "articles"):
+        return []
+    columns = _table_columns(conn, "articles")
+    if "summary_llm" not in columns:
+        return []
+    clauses: list[str] = ["(summary_llm IS NULL OR summary_llm = '')"]
+    if "has_full_content" in columns:
+        clauses.append("has_full_content = 1")
+    elif "content_text" in columns:
+        clauses.append("(content_text IS NOT NULL AND content_text != '')")
+    elif "extracted_text_path" in columns:
+        clauses.append("(extracted_text_path IS NOT NULL AND extracted_text_path != '')")
+    where_sql = " AND ".join(clauses)
+    cursor = conn.execute(
+        f"SELECT id FROM articles WHERE {where_sql} ORDER BY ingested_at DESC"
+    )
+    return [int(row[0]) for row in cursor.fetchall()]
+
+
+def list_article_ids_with_content_error_all(conn: Any) -> list[int]:
+    if not _table_exists(conn, "articles"):
+        return []
+    columns = _table_columns(conn, "articles")
+    if "content_error" not in columns:
+        return []
+    url_parts: list[str] = []
+    if "original_url" in columns:
+        url_parts.append("(original_url IS NOT NULL AND original_url != '')")
+    if "normalized_url" in columns:
+        url_parts.append("(normalized_url IS NOT NULL AND normalized_url != '')")
+    where_sql = "(content_error IS NOT NULL AND content_error != '')"
+    if url_parts:
+        where_sql = where_sql + " AND (" + " OR ".join(url_parts) + ")"
+    cursor = conn.execute(
+        f"SELECT id FROM articles WHERE {where_sql} ORDER BY ingested_at DESC"
+    )
+    return [int(row[0]) for row in cursor.fetchall()]
+
+
 def list_article_ids_missing_summary(conn: Any, source_id: str) -> list[int]:
     if not _table_exists(conn, "articles"):
         return []
@@ -2032,6 +2350,56 @@ def list_article_ids_missing_summary(conn: Any, source_id: str) -> list[int]:
         """
         SELECT id FROM articles
         WHERE source_id = %s AND (summary_llm IS NULL OR summary_llm = '')
+        ORDER BY ingested_at DESC
+        """,
+        (source_id,),
+    )
+    return [int(row[0]) for row in cursor.fetchall()]
+
+
+def list_article_ids_ready_for_summary(conn: Any, source_id: str) -> list[int]:
+    if not _table_exists(conn, "articles"):
+        return []
+    columns = _table_columns(conn, "articles")
+    if "summary_llm" not in columns:
+        return []
+    clauses: list[str] = ["source_id = %s", "(summary_llm IS NULL OR summary_llm = '')"]
+    if "has_full_content" in columns:
+        clauses.append("has_full_content = 1")
+    elif "content_text" in columns:
+        clauses.append("(content_text IS NOT NULL AND content_text != '')")
+    elif "extracted_text_path" in columns:
+        clauses.append("(extracted_text_path IS NOT NULL AND extracted_text_path != '')")
+    where_sql = " AND ".join(clauses)
+    cursor = conn.execute(
+        f"""
+        SELECT id FROM articles
+        WHERE {where_sql}
+        ORDER BY ingested_at DESC
+        """,
+        (source_id,),
+    )
+    return [int(row[0]) for row in cursor.fetchall()]
+
+
+def list_article_ids_ready_for_summary(conn: Any, source_id: str) -> list[int]:
+    if not _table_exists(conn, "articles"):
+        return []
+    columns = _table_columns(conn, "articles")
+    if "summary_llm" not in columns:
+        return []
+    clauses: list[str] = ["source_id = %s", "(summary_llm IS NULL OR summary_llm = '')"]
+    if "has_full_content" in columns:
+        clauses.append("has_full_content = 1")
+    elif "content_text" in columns:
+        clauses.append("(content_text IS NOT NULL AND content_text != '')")
+    elif "extracted_text_path" in columns:
+        clauses.append("(extracted_text_path IS NOT NULL AND extracted_text_path != '')")
+    where_sql = " AND ".join(clauses)
+    cursor = conn.execute(
+        f"""
+        SELECT id FROM articles
+        WHERE {where_sql}
         ORDER BY ingested_at DESC
         """,
         (source_id,),
@@ -2111,6 +2479,64 @@ def upsert_vendor(conn: Any, vendor_display: str) -> int:
     ).fetchone()
     conn.commit()
     return int(row[0])
+
+def list_cve_tags(conn: Any, cve_id: str) -> list[str]:
+    if not _table_exists(conn, "cve_products") or not _table_exists(conn, "products"):
+        return []
+    cursor = conn.execute(
+        """
+        SELECT v.display_name, p.display_name
+        FROM cve_products cp
+        JOIN products p ON p.id = cp.product_id
+        JOIN vendors v ON v.id = p.vendor_id
+        WHERE cp.cve_id = %s
+        ORDER BY v.display_name, p.display_name
+        """,
+        (cve_id,),
+    )
+    tags: list[str] = []
+    seen = set()
+    for vendor, product in cursor.fetchall():
+        if vendor and f"vendor:{vendor}" not in seen:
+            tags.append(f"vendor:{vendor}")
+            seen.add(f"vendor:{vendor}")
+        if product and f"product:{product}" not in seen:
+            tags.append(f"product:{product}")
+            seen.add(f"product:{product}")
+    return tags
+
+
+def list_article_cve_tags(conn: Any, article_ids: list[int]) -> dict[int, list[str]]:
+    if not article_ids:
+        return {}
+    if not (_table_exists(conn, "article_cves") and _table_exists(conn, "cve_products")):
+        return {}
+    placeholders = ",".join("%s" for _ in article_ids)
+    cursor = conn.execute(
+        f"""
+        SELECT ac.article_id, v.display_name, p.display_name
+        FROM article_cves ac
+        JOIN cve_products cp ON cp.cve_id = ac.cve_id
+        JOIN products p ON p.id = cp.product_id
+        JOIN vendors v ON v.id = p.vendor_id
+        WHERE ac.article_id IN ({placeholders})
+        """,
+        article_ids,
+    )
+    mapping: dict[int, list[str]] = {}
+    seen: dict[int, set[str]] = {}
+    for article_id, vendor, product in cursor.fetchall():
+        if article_id not in mapping:
+            mapping[article_id] = []
+            seen[article_id] = set()
+        if vendor and f"vendor:{vendor}" not in seen[article_id]:
+            mapping[article_id].append(f"vendor:{vendor}")
+            seen[article_id].add(f"vendor:{vendor}")
+        if product and f"product:{product}" not in seen[article_id]:
+            mapping[article_id].append(f"product:{product}")
+            seen[article_id].add(f"product:{product}")
+    return mapping
+
 
 
 def upsert_product(
@@ -2331,7 +2757,7 @@ def get_product_cves(
     offset = max(page - 1, 0) * page_size
     cursor = conn.execute(
         f"""
-        SELECT c.cve_id, c.published_at, c.last_modified_at, c.preferred_base_score,
+        SELECT c.cve_id, c.published_at, c.last_modified_at, preferred_base_score,
                c.preferred_base_severity, c.description_text
         FROM cve_products cp
         JOIN cves c ON c.cve_id = cp.cve_id
@@ -2421,40 +2847,74 @@ def create_event(
     visibility: str = "active",
     confidence_tier: str = "watch",
     reasons: list[str] | None = None,
+    candidate: bool = False,
+    entity: str | None = None,
+    incident_date: str | None = None,
+    evidence: list[str] | None = None,
 ) -> str:
     event_id = f"evt_{uuid.uuid4().hex[:12]}"
     now = utc_now_iso()
+    event_columns = _table_columns(conn, "events")
+    cols = [
+        "id",
+        "kind",
+        "title",
+        "summary",
+        "severity",
+        "created_at",
+        "updated_at",
+        "first_seen_at",
+        "last_seen_at",
+        "status",
+        "meta_json",
+        "event_key",
+        "occurred_at",
+        "summary_updated_at",
+        "confidence",
+        "manual",
+        "is_manual",
+        "visibility",
+        "confidence_tier",
+        "reasons",
+    ]
+    vals = [
+        event_id,
+        kind,
+        title,
+        summary,
+        severity,
+        now,
+        now,
+        first_seen_at,
+        last_seen_at,
+        status,
+        json_dumps(meta) if meta else None,
+        event_key,
+        occurred_at,
+        now if summary else None,
+        confidence,
+        1 if manual else 0,
+        1 if manual else 0,
+        visibility,
+        confidence_tier,
+        json_dumps(reasons or []),
+    ]
+    if "candidate" in event_columns:
+        cols.append("candidate")
+        vals.append(bool(candidate))
+    if "entity" in event_columns:
+        cols.append("entity")
+        vals.append(entity)
+    if "incident_date" in event_columns:
+        cols.append("incident_date")
+        vals.append(incident_date)
+    if "evidence" in event_columns:
+        cols.append("evidence")
+        vals.append(json_dumps(evidence or []))
+    placeholders = ", ".join(["%s"] * len(cols))
     conn.execute(
-        """
-        INSERT INTO events
-            (id, kind, title, summary, severity, created_at, updated_at,
-             first_seen_at, last_seen_at, status, meta_json, event_key,
-             occurred_at, summary_updated_at, confidence, manual, is_manual,
-             visibility, confidence_tier, reasons)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """,
-        (
-            event_id,
-            kind,
-            title,
-            summary,
-            severity,
-            now,
-            now,
-            first_seen_at,
-            last_seen_at,
-            status,
-            json_dumps(meta) if meta else None,
-            event_key,
-            occurred_at,
-            now if summary else None,
-            confidence,
-            1 if manual else 0,
-            1 if manual else 0,
-            visibility,
-            confidence_tier,
-            json_dumps(reasons or []),
-        ),
+        f"INSERT INTO events ({', '.join(cols)}) VALUES ({placeholders})",
+        tuple(vals),
     )
     conn.commit()
     return event_id
@@ -2477,6 +2937,10 @@ def upsert_event_by_key(
     visibility: str = "active",
     confidence_tier: str = "watch",
     reasons: list[str] | None = None,
+    candidate: bool = False,
+    entity: str | None = None,
+    incident_date: str | None = None,
+    evidence: list[str] | None = None,
 ) -> tuple[str, bool]:
     row = conn.execute(
         "SELECT id FROM events WHERE event_key = %s",
@@ -2524,6 +2988,14 @@ def upsert_event_by_key(
                 event_id,
             ),
         )
+        if candidate is not None and "candidate" in _table_columns(conn, "events"):
+            conn.execute("UPDATE events SET candidate = COALESCE(%s, candidate) WHERE id = %s", (bool(candidate), event_id))
+        if entity is not None and "entity" in _table_columns(conn, "events"):
+            conn.execute("UPDATE events SET entity = COALESCE(%s, entity) WHERE id = %s", (entity, event_id))
+        if incident_date is not None and "incident_date" in _table_columns(conn, "events"):
+            conn.execute("UPDATE events SET incident_date = COALESCE(%s, incident_date) WHERE id = %s", (incident_date, event_id))
+        if evidence is not None and "evidence" in _table_columns(conn, "events"):
+            conn.execute("UPDATE events SET evidence = COALESCE(%s, evidence) WHERE id = %s", (json_dumps(evidence), event_id))
         conn.commit()
         return event_id, False
     event_id = create_event(
@@ -2543,8 +3015,117 @@ def upsert_event_by_key(
         visibility=visibility,
         confidence_tier=confidence_tier,
         reasons=reasons,
+        candidate=candidate,
+        entity=entity,
+        incident_date=incident_date,
+        evidence=evidence,
     )
     return event_id, True
+
+
+def update_event(
+    conn: Any,
+    event_id: str,
+    *,
+    title: str | None = None,
+    summary: str | None = None,
+    severity: str | None = None,
+    status: str | None = None,
+    kind: str | None = None,
+    visibility: str | None = None,
+    confidence: float | None = None,
+    confidence_tier: str | None = None,
+    candidate: bool | None = None,
+    entity: str | None = None,
+    incident_date: str | None = None,
+    reasons: list[str] | None = None,
+    tags: list[str] | None = None,
+    is_event: bool | None = None,
+) -> bool:
+    event_columns = _table_columns(conn, "events")
+    updates: list[str] = []
+    params: list[object] = []
+    now = utc_now_iso()
+    updates.append("updated_at = %s")
+    params.append(now)
+    if title is not None:
+        updates.append("title = %s")
+        params.append(title)
+    if summary is not None:
+        updates.append("summary = %s")
+        params.append(summary)
+        updates.append("summary_updated_at = %s")
+        params.append(now)
+    if severity is not None:
+        updates.append("severity = %s")
+        params.append(severity)
+    if status is not None:
+        updates.append("status = %s")
+        params.append(status)
+    if kind is not None:
+        updates.append("kind = %s")
+        params.append(kind)
+    if visibility is not None and "visibility" in event_columns:
+        updates.append("visibility = %s")
+        params.append(visibility)
+    if confidence is not None and "confidence" in event_columns:
+        updates.append("confidence = %s")
+        params.append(confidence)
+    if confidence_tier is not None and "confidence_tier" in event_columns:
+        updates.append("confidence_tier = %s")
+        params.append(confidence_tier)
+    if candidate is not None and "candidate" in event_columns:
+        updates.append("candidate = %s")
+        params.append(bool(candidate))
+    if entity is not None and "entity" in event_columns:
+        updates.append("entity = %s")
+        params.append(entity)
+    if incident_date is not None and "incident_date" in event_columns:
+        updates.append("incident_date = %s")
+        params.append(incident_date)
+    if reasons is not None and "reasons" in event_columns:
+        updates.append("reasons = %s")
+        params.append(json_dumps(reasons))
+
+    if tags is not None or is_event is not None:
+        existing = conn.execute(
+            "SELECT meta_json FROM events WHERE id = %s",
+            (event_id,),
+        ).fetchone()
+        meta = {}
+        if existing and existing[0]:
+            try:
+                meta = json.loads(existing[0])
+            except Exception:
+                meta = {}
+        if tags is not None:
+            meta["tags"] = tags
+        if is_event is not None:
+            meta["is_event"] = bool(is_event)
+        updates.append("meta_json = %s")
+        params.append(json_dumps(meta))
+
+    if not updates:
+        return False
+    params.append(event_id)
+    cursor = conn.execute(
+        f"UPDATE events SET {', '.join(updates)} WHERE id = %s",
+        tuple(params),
+    )
+    conn.commit()
+    return cursor.rowcount == 1
+
+
+def delete_event(conn: Any, event_id: str) -> bool:
+    if _table_exists(conn, "event_articles"):
+        conn.execute("DELETE FROM event_articles WHERE event_id = %s", (event_id,))
+    if _table_exists(conn, "event_items"):
+        conn.execute("DELETE FROM event_items WHERE event_id = %s", (event_id,))
+    if _table_exists(conn, "event_web_sources"):
+        conn.execute("DELETE FROM event_web_sources WHERE event_id = %s", (event_id,))
+    cursor = conn.execute("DELETE FROM events WHERE id = %s", (event_id,))
+    conn.commit()
+    return cursor.rowcount == 1
 
 
 def upsert_event_item(
@@ -2575,6 +3156,18 @@ def link_event_article(conn: Any, event_id: str, article_id: int, added_by: str)
     else:
         upsert_event_item(conn, event_id, "article", str(article_id))
     columns = _table_columns(conn, "events")
+    candidate_select = "candidate" if "candidate" in columns else "NULL AS candidate"
+    entity_select = "entity" if "entity" in columns else "NULL AS entity"
+    incident_select = "incident_date" if "incident_date" in columns else "NULL AS incident_date"
+    evidence_select = "evidence" if "evidence" in columns else "NULL AS evidence"
+    candidate_select = "e.candidate" if "candidate" in columns else "NULL AS candidate"
+    entity_select = "e.entity" if "entity" in columns else "NULL AS entity"
+    incident_select = "e.incident_date" if "incident_date" in columns else "NULL AS incident_date"
+    evidence_select = "e.evidence" if "evidence" in columns else "NULL AS evidence"
+    candidate_select = "e.candidate" if "candidate" in columns else "NULL AS candidate"
+    entity_select = "e.entity" if "entity" in columns else "NULL AS entity"
+    incident_select = "e.incident_date" if "incident_date" in columns else "NULL AS incident_date"
+    evidence_select = "e.evidence" if "evidence" in columns else "NULL AS evidence"
     if "visibility" in columns:
         conn.execute(
             """
@@ -2994,7 +3587,7 @@ def list_events(
         f"""
         SELECT id, kind, title, summary, severity, created_at, updated_at,
                first_seen_at, last_seen_at, status, event_key, occurred_at, summary_updated_at, confidence, manual,
-               visibility, confidence_tier, reasons, is_manual
+               visibility, confidence_tier, reasons, is_manual, {candidate_select}, {entity_select}, {incident_select}, {evidence_select}
         FROM events
         {where_sql}
         ORDER BY last_seen_at DESC
@@ -3023,6 +3616,10 @@ def list_events(
             "confidence_tier": row[16],
             "reasons": _ensure_json_list(row[17]),
             "is_manual": bool(row[18]),
+            "candidate": bool(row[19]) if row[19] is not None else False,
+            "entity": row[20],
+            "incident_date": row[21],
+            "evidence": _ensure_json_list(row[22]),
         }
         for row in cursor.fetchall()
     ]
@@ -3047,6 +3644,10 @@ def list_events_with_counts(
     where: list[str] = []
     params: list[object] = []
     columns = _table_columns(conn, "events")
+    candidate_select = "e.candidate" if "candidate" in columns else "NULL AS candidate"
+    entity_select = "e.entity" if "entity" in columns else "NULL AS entity"
+    incident_select = "e.incident_date" if "incident_date" in columns else "NULL AS incident_date"
+    evidence_select = "e.evidence" if "evidence" in columns else "NULL AS evidence"
     if not include_suppressed and "visibility" in columns:
         where.append("e.visibility = 'active'")
     if status:
@@ -3130,6 +3731,7 @@ def list_events_with_counts(
         SELECT e.id, e.kind, e.title, e.summary, e.severity, e.created_at, e.updated_at,
                e.first_seen_at, e.last_seen_at, e.status, e.event_key, e.occurred_at,
                e.summary_updated_at, e.confidence, e.manual, e.visibility, e.confidence_tier, e.reasons, e.is_manual,
+               {candidate_select}, {entity_select}, {incident_select}, {evidence_select},
                COALESCE(ac.article_count, 0) AS article_count,
                ac.last_article_at,
                ec.cve_ids,
@@ -3167,10 +3769,14 @@ def list_events_with_counts(
                 "confidence_tier": row[16],
                 "reasons": _ensure_json_list(row[17]),
                 "is_manual": bool(row[18]),
-                "article_count": int(row[19] or 0),
-                "last_article_at": row[20],
-                "cve_ids": row[21].split(",") if row[21] else [],
-                "product_keys": row[22].split(",") if row[22] else [],
+                "candidate": bool(row[19]) if row[19] is not None else False,
+                "entity": row[20],
+                "incident_date": row[21],
+                "evidence": _ensure_json_list(row[22]),
+                "article_count": int(row[23] or 0),
+                "last_article_at": row[24],
+                "cve_ids": row[25].split(",") if row[25] else [],
+                "product_keys": row[26].split(",") if row[26] else [],
                 "source": "events",
             }
         )
@@ -3219,12 +3825,18 @@ def list_events_with_counts(
 def get_event(conn: Any, event_id: str) -> dict[str, object] | None:
     if not _table_exists(conn, "events"):
         return None
+    columns = _table_columns(conn, "events")
+    candidate_select = "candidate" if "candidate" in columns else "NULL AS candidate"
+    entity_select = "entity" if "entity" in columns else "NULL AS entity"
+    incident_select = "incident_date" if "incident_date" in columns else "NULL AS incident_date"
+    evidence_select = "evidence" if "evidence" in columns else "NULL AS evidence"
     row = conn.execute(
-        """
+        f"""
         SELECT id, kind, title, summary, severity, created_at, updated_at,
                first_seen_at, last_seen_at, status, meta_json,
                event_key, occurred_at, summary_updated_at, confidence, manual,
-               visibility, confidence_tier, reasons, is_manual
+               visibility, confidence_tier, reasons, is_manual,
+               {candidate_select}, {entity_select}, {incident_select}, {evidence_select}
         FROM events
         WHERE id = %s
         """,
@@ -3254,10 +3866,14 @@ def get_event(conn: Any, event_id: str) -> dict[str, object] | None:
         "confidence_tier": row[17],
         "reasons": _ensure_json_list(row[18]),
         "is_manual": bool(row[19]),
+        "candidate": bool(row[20]) if row[20] is not None else False,
+        "entity": row[21],
+        "incident_date": row[22],
+        "evidence": _ensure_json_list(row[23]),
     }
     cves_cursor = conn.execute(
         """
-        SELECT c.cve_id, c.published_at, c.preferred_base_score,
+        SELECT c.cve_id, c.published_at, preferred_base_score,
                c.preferred_base_severity, c.description_text
         FROM event_items ei
         JOIN cves c ON c.cve_id = ei.item_key
@@ -3686,24 +4302,30 @@ def delete_all_events(conn: Any) -> dict[str, object]:
 def purge_weak_events(
     conn: Any,
     *,
-    dry_run: bool = False,
+    dry_run: bool = True,
     mode: str = "suppress",
-    min_articles: int = 1,
     older_than_days: int | None = None,
     kinds: list[str] | None = None,
-    only_empty_cve_clusters: bool = True,
+    require_no_victims: bool = False,
+    require_no_cves: bool = False,
+    require_no_sources: bool = False,
+    require_research: bool = False,
+    confidence_below: float | None = None,
+    only_empty_cve_clusters: bool = False,
     exclude_manual: bool = True,
 ) -> dict[str, object]:
     if not _table_exists(conn, "events"):
         return {"candidates": 0, "deleted": 0, "kept": 0, "by_reason": {}}
     columns = _table_columns(conn, "events")
     manual_expr = "COALESCE(is_manual, manual)" if "is_manual" in columns else "manual"
+    candidate_expr = "candidate" if "candidate" in columns else "false"
     visibility_supported = "visibility" in columns
-    kinds = kinds or ["cve_cluster"]
+    kinds = kinds or []
     stats = {
         "dry_run": dry_run,
         "mode": mode,
         "candidates": 0,
+        "matched": 0,
         "deleted": 0,
         "kept": 0,
         "by_reason": {},
@@ -3712,8 +4334,8 @@ def purge_weak_events(
     now = datetime.now(tz=timezone.utc)
     rows = conn.execute(
         f"""
-        SELECT id, kind, event_key, created_at, updated_at, last_seen_at, summary,
-               confidence, {manual_expr} AS manual
+        SELECT id, kind, event_key, title, summary, created_at, updated_at, last_seen_at,
+               confidence, entity, evidence, {manual_expr} AS manual, {candidate_expr} AS candidate
         FROM events
         """
     ).fetchall()
@@ -3736,27 +4358,44 @@ def purge_weak_events(
             return 0
         return int(cursor.fetchone()[0])
 
-    def _has_product(event_id: str) -> bool:
+    def _cve_count(event_id: str) -> int:
         if not _table_exists(conn, "event_items"):
-            return False
+            return 0
         cursor = conn.execute(
-            "SELECT 1 FROM event_items WHERE event_id = %s AND item_type = 'product' LIMIT 1",
+            "SELECT COUNT(*) FROM event_items WHERE event_id = %s AND item_type = 'cve'",
             (event_id,),
         )
-        return cursor.fetchone() is not None
+        return int(cursor.fetchone()[0])
 
-    strong_kinds = {
-        "breach",
-        "compromise",
-        "ransomware",
-        "intrusion",
-        "malware_campaign",
-        "data_leak",
-        "outage_security",
-    }
+    research_cues = (
+        "survey",
+        "report",
+        "analysis",
+        "research",
+        "study",
+        "trend",
+        "outlook",
+        "forecast",
+        "guidance",
+        "whitepaper",
+    )
 
     purge_ids: list[str] = []
-    for event_id, kind, event_key, created_at, updated_at, last_seen_at, summary, confidence, manual in rows:
+    for (
+        event_id,
+        kind,
+        event_key,
+        title,
+        summary,
+        created_at,
+        updated_at,
+        last_seen_at,
+        confidence,
+        entity,
+        evidence,
+        manual,
+        candidate,
+    ) in rows:
         stats["candidates"] += 1
         if exclude_manual and manual:
             stats["kept"] += 1
@@ -3770,27 +4409,46 @@ def purge_weak_events(
             stats["kept"] += 1
             note("manual_key")
             continue
-        article_count = _article_count(event_id)
-        has_product = _has_product(event_id)
-        strong_signal = bool(summary) or (kind in strong_kinds)
-        if has_product and article_count >= 1:
-            strong_signal = True
-        if only_empty_cve_clusters and kind == "cve_cluster" and article_count == 0:
-            purge_ids.append(event_id)
-            note("cve_cluster_empty")
-            continue
-        if kind not in kinds:
+        if kinds and kind not in kinds:
             stats["kept"] += 1
             note("kind_skipped")
             continue
-        if article_count >= min_articles:
+
+        article_count = _article_count(event_id)
+        cve_count = _cve_count(event_id)
+        has_victim = bool(entity)
+        conf_value = float(confidence or 0)
+        combined = " ".join(str(value or "") for value in (title, summary))
+        if evidence:
+            combined = combined + " " + " ".join(evidence if isinstance(evidence, list) else [str(evidence)])
+        combined = combined.lower()
+        is_research = any(cue in combined for cue in research_cues)
+
+        matches = True
+        if require_no_victims and has_victim:
+            matches = False
+            note("has_victim")
+        if require_no_cves and cve_count > 0:
+            matches = False
+            note("has_cves")
+        if require_no_sources and article_count > 0:
+            matches = False
+            note("has_sources")
+        if require_research and not is_research:
+            matches = False
+            note("not_research")
+        if confidence_below is not None and conf_value >= float(confidence_below):
+            matches = False
+            note("confidence_high")
+
+        if only_empty_cve_clusters and kind == "cve_cluster" and article_count == 0:
+            matches = True
+            note("cve_cluster_empty")
+
+        if not matches:
             stats["kept"] += 1
-            note("has_articles")
             continue
-        if strong_signal and article_count >= 1:
-            stats["kept"] += 1
-            note("strong_signal")
-            continue
+
         if older_than_days is not None:
             too_old = False
             for raw_dt in (last_seen_at, updated_at, created_at):
@@ -3809,8 +4467,10 @@ def purge_weak_events(
                 stats["kept"] += 1
                 note("not_old_enough")
                 continue
+
+        stats["matched"] += 1
         purge_ids.append(event_id)
-        note("purged")
+        note("matched")
 
     if not purge_ids or dry_run:
         stats["deleted"] = 0
@@ -3840,6 +4500,11 @@ def purge_weak_events(
             if _table_exists(conn, "event_signals"):
                 conn.execute(
                     f"DELETE FROM event_signals WHERE event_id IN ({placeholders})",
+                    purge_ids,
+                )
+            if _table_exists(conn, "event_web_sources"):
+                conn.execute(
+                    f"DELETE FROM event_web_sources WHERE event_id IN ({placeholders})",
                     purge_ids,
                 )
             conn.execute(f"DELETE FROM events WHERE id IN ({placeholders})", purge_ids)
@@ -4237,6 +4902,7 @@ def get_cve(conn: Any, cve_id: str) -> dict[str, object] | None:
         "affected_cpes": json.loads(data.get("affected_cpes_json") or "[]"),
         "reference_domains": json.loads(data.get("reference_domains_json") or "[]"),
         "product_versions": product_versions,
+        "tags": list_cve_tags(conn, cve_id),
         "vendor_products": vendor_products,
         "in_scope": bool(scope[0]) if scope else None,
         "scope_reasons": json.loads(scope[1] or "[]") if scope else [],
@@ -4275,7 +4941,7 @@ def search_cves(
     if query:
         like = f"%{query}%"
         where.append(
-            "(cve_id LIKE %s OR description_text LIKE %s OR LOWER(affected_products_json) LIKE %s OR LOWER(affected_cpes_json) LIKE %s)"
+            "(c.cve_id LIKE %s OR c.description_text LIKE %s OR LOWER(c.affected_products_json) LIKE %s OR LOWER(c.affected_cpes_json) LIKE %s)"
         )
         params.extend([like, like, like.lower(), like.lower()])
     if severities:
@@ -4285,39 +4951,39 @@ def search_cves(
         condition_parts = []
         if normalized:
             condition_parts.append(
-                "preferred_base_severity IN ({})".format(",".join("%s" for _ in normalized))
+                "c.preferred_base_severity IN ({})".format(",".join("%s" for _ in normalized))
             )
             params.extend(normalized)
         if include_unknown:
-            condition_parts.append("preferred_base_severity IS NULL")
+            condition_parts.append("c.preferred_base_severity IS NULL")
         if condition_parts:
             where.append("(" + " OR ".join(condition_parts) + ")")
     if min_cvss is not None:
-        where.append("preferred_base_score >= %s")
+        where.append("c.preferred_base_score >= %s")
         params.append(min_cvss)
     if missing_description:
         if "description_text" in columns:
-            where.append("(description_text IS NULL OR description_text = '')")
+            where.append("(c.description_text IS NULL OR c.description_text = '')")
         else:
             return [], 0
     if after:
-        where.append("published_at >= %s")
+        where.append("c.published_at >= %s")
         params.append(after)
     if before:
-        where.append("published_at <= %s")
+        where.append("c.published_at <= %s")
         params.append(before)
     if vendor_keywords:
         for keyword in vendor_keywords:
             like = f"%{keyword.lower()}%"
             where.append(
-                "(LOWER(description_text) LIKE %s OR LOWER(affected_products_json) LIKE %s OR LOWER(affected_cpes_json) LIKE %s OR LOWER(reference_domains_json) LIKE %s)"
+                "(LOWER(c.description_text) LIKE %s OR LOWER(c.affected_products_json) LIKE %s OR LOWER(c.affected_cpes_json) LIKE %s OR LOWER(c.reference_domains_json) LIKE %s)"
             )
             params.extend([like, like, like, like])
     if product_keywords:
         for keyword in product_keywords:
             like = f"%{keyword.lower()}%"
             where.append(
-                "(LOWER(description_text) LIKE %s OR LOWER(affected_products_json) LIKE %s OR LOWER(affected_cpes_json) LIKE %s OR LOWER(reference_domains_json) LIKE %s)"
+                "(LOWER(c.description_text) LIKE %s OR LOWER(c.affected_products_json) LIKE %s OR LOWER(c.affected_cpes_json) LIKE %s OR LOWER(c.reference_domains_json) LIKE %s)"
             )
             params.extend([like, like, like, like])
     if in_scope and has_scope:
@@ -4327,15 +4993,15 @@ def search_cves(
         scope_sevs = filters.get("severities") or []
         if scope_sevs:
             where.append(
-                "preferred_base_severity IN ({})".format(",".join("%s" for _ in scope_sevs))
+                "c.preferred_base_severity IN ({})".format(",".join("%s" for _ in scope_sevs))
             )
             params.extend([severity.upper() for severity in scope_sevs])
         min_score = filters.get("min_cvss")
         if min_score is not None:
-            where.append("preferred_base_score >= %s")
+            where.append("c.preferred_base_score >= %s")
             params.append(min_score)
         if filters.get("require_known_score"):
-            where.append("preferred_base_score IS NOT NULL")
+            where.append("c.preferred_base_score IS NOT NULL")
         keyword_filters = (filters.get("vendor_keywords") or []) + (
             filters.get("product_keywords") or []
         )
@@ -4343,13 +5009,13 @@ def search_cves(
             keyword_where = []
             for keyword in keyword_filters:
                 like = f"%{keyword.lower()}%"
-                keyword_where.append("LOWER(description_text) LIKE %s")
+                keyword_where.append("LOWER(c.description_text) LIKE %s")
                 params.append(like)
-                keyword_where.append("LOWER(affected_products_json) LIKE %s")
+                keyword_where.append("LOWER(c.affected_products_json) LIKE %s")
                 params.append(like)
-                keyword_where.append("LOWER(affected_cpes_json) LIKE %s")
+                keyword_where.append("LOWER(c.affected_cpes_json) LIKE %s")
                 params.append(like)
-                keyword_where.append("LOWER(reference_domains_json) LIKE %s")
+                keyword_where.append("LOWER(c.reference_domains_json) LIKE %s")
                 params.append(like)
             where.append("(" + " OR ".join(keyword_where) + ")")
 
@@ -4363,23 +5029,23 @@ def search_cves(
             params,
         )
     else:
-        count_cursor = conn.execute(f"SELECT COUNT(1) FROM cves {where_sql}", params)
+        count_cursor = conn.execute(f"SELECT COUNT(1) FROM cves c {where_sql}", params)
     total = count_cursor.fetchone()[0]
 
     offset = max(page - 1, 0) * page_size
     selected = [
         "c.cve_id",
-        "c.published_at",
-        "c.last_modified_at",
+        "published_at",
+        "last_modified_at",
         "c.preferred_cvss_version",
-        "c.preferred_base_score",
-        "c.preferred_base_severity",
+        "preferred_base_score",
+        "preferred_base_severity",
         "c.preferred_vector",
-        "c.description_text",
-        "c.updated_at",
-        "c.affected_products_json",
-        "c.affected_cpes_json",
-        "c.reference_domains_json",
+        "description_text",
+        "updated_at",
+        "affected_products_json",
+        "affected_cpes_json",
+        "reference_domains_json",
         "c.cvss_v31_list_json",
         "c.cvss_v40_list_json",
     ]
@@ -4634,6 +5300,18 @@ def list_cve_ids(conn: Any) -> list[str]:
     return [row[0] for row in cursor.fetchall() if row and row[0]]
 
 
+def list_cve_ids_missing_description(conn: Any, limit: int | None = None) -> list[str]:
+    if not _table_exists(conn, "cves"):
+        return []
+    sql = "SELECT cve_id FROM cves WHERE description_text IS NULL OR description_text = '' ORDER BY published_at DESC"
+    params: list[object] = []
+    if limit:
+        sql += " LIMIT %s"
+        params.append(limit)
+    cursor = conn.execute(sql, tuple(params))
+    return [row[0] for row in cursor.fetchall() if row and row[0]]
+
+
 def _cve_vendor_product_norms(conn: Any, cve_id: str) -> list[tuple[str, str]]:
     if not (_table_exists(conn, "cve_products") and _table_exists(conn, "products") and _table_exists(conn, "vendors")):
         return []
@@ -4648,6 +5326,26 @@ def _cve_vendor_product_norms(conn: Any, cve_id: str) -> list[tuple[str, str]]:
         (cve_id,),
     )
     return [(row[0], row[1]) for row in cursor.fetchall()]
+
+def list_cve_ids_missing_products(conn: Any, limit: int | None = None) -> list[str]:
+    if not _table_exists(conn, "cves"):
+        return []
+    sql = """
+    SELECT c.cve_id
+    FROM cves c
+    LEFT JOIN cve_products cp ON cp.cve_id = c.cve_id
+    LEFT JOIN cve_product_versions cpv ON cpv.cve_id = c.cve_id
+    GROUP BY c.cve_id
+    HAVING COUNT(cp.cve_id) = 0 OR COUNT(cpv.cve_id) = 0
+    ORDER BY MAX(c.published_at) DESC
+    """
+    params: list[object] = []
+    if limit:
+        sql += " LIMIT %s"
+        params.append(limit)
+    cursor = conn.execute(sql, tuple(params))
+    return [row[0] for row in cursor.fetchall() if row and row[0]]
+
 
 
 def evaluate_cve_scope(
@@ -4866,17 +5564,17 @@ def cve_data_completeness(conn: Any, limit: int = 20) -> dict[str, object]:
     columns = _table_columns(conn, "cves")
     total = count_table(conn, "cves")
     def _count_where(clause: str) -> int:
-        row = conn.execute(f"SELECT COUNT(*) FROM cves WHERE {clause}").fetchone()
+        row = conn.execute(f"SELECT COUNT(*) FROM cves c WHERE {clause}").fetchone()
         return int(row[0] or 0)
 
     counts = {"total": total}
     if "description_text" in columns:
-        counts["with_description"] = _count_where("description_text IS NOT NULL AND description_text != ''")
-        counts["good_description"] = _count_where("length(description_text) >= 80")
+        counts["with_description"] = _count_where("c.description_text IS NOT NULL AND c.description_text != ''")
+        counts["good_description"] = _count_where("length(c.description_text) >= 80")
     if "reference_domains_json" in columns:
-        counts["with_domains"] = _count_where("reference_domains_json IS NOT NULL AND reference_domains_json != '[]'")
+        counts["with_domains"] = _count_where("c.reference_domains_json IS NOT NULL AND c.reference_domains_json != '[]'")
     if "affected_products_json" in columns:
-        counts["with_products"] = _count_where("affected_products_json IS NOT NULL AND affected_products_json != '[]'")
+        counts["with_products"] = _count_where("c.affected_products_json IS NOT NULL AND c.affected_products_json != '[]'")
     cvss_any = []
     if "cvss_v31_json" in columns:
         cvss_any.append("cvss_v31_json IS NOT NULL")
@@ -4891,16 +5589,16 @@ def cve_data_completeness(conn: Any, limit: int = 20) -> dict[str, object]:
         cvss_any.append("cvss_v40_list_json IS NOT NULL")
         counts["has_v40_list"] = _count_where("cvss_v40_list_json IS NOT NULL")
     if "preferred_base_score" in columns:
-        cvss_any.append("preferred_base_score IS NOT NULL")
+        cvss_any.append("c.preferred_base_score IS NOT NULL")
     counts["has_any_cvss"] = _count_where(" OR ".join(cvss_any)) if cvss_any else 0
 
     where_missing = []
     if "description_text" in columns:
-        where_missing.append("(description_text IS NULL OR description_text = '')")
+        where_missing.append("(c.description_text IS NULL OR c.description_text = '')")
     if "reference_domains_json" in columns:
-        where_missing.append("(reference_domains_json IS NULL OR reference_domains_json = '[]')")
+        where_missing.append("(c.reference_domains_json IS NULL OR c.reference_domains_json = '[]')")
     if "affected_products_json" in columns:
-        where_missing.append("(affected_products_json IS NULL OR affected_products_json = '[]')")
+        where_missing.append("(c.affected_products_json IS NULL OR c.affected_products_json = '[]')")
     if cvss_any:
         parts = []
         if "cvss_v31_json" in columns:
@@ -4912,7 +5610,7 @@ def cve_data_completeness(conn: Any, limit: int = 20) -> dict[str, object]:
         if "cvss_v40_list_json" in columns:
             parts.append("cvss_v40_list_json IS NULL")
         if "preferred_base_score" in columns:
-            parts.append("preferred_base_score IS NULL")
+            parts.append("c.preferred_base_score IS NULL")
         where_missing.append("(" + " AND ".join(parts) + ")")
 
     missing: list[dict[str, object]] = []
@@ -4925,12 +5623,12 @@ def cve_data_completeness(conn: Any, limit: int = 20) -> dict[str, object]:
     if where_missing:
         cursor = conn.execute(
             f"""
-            SELECT cve_id, description_text, affected_products_json, reference_domains_json,
-                   cvss_v31_json, cvss_v40_json, cvss_v31_list_json, cvss_v40_list_json,
-                   preferred_base_score
-            FROM cves
+            SELECT c.cve_id, c.description_text, c.affected_products_json, c.reference_domains_json,
+                   c.cvss_v31_json, c.cvss_v40_json, c.cvss_v31_list_json, c.cvss_v40_list_json,
+                   c.preferred_base_score
+            FROM cves c
             WHERE {" OR ".join(where_missing)}
-            ORDER BY published_at DESC
+            ORDER BY c.published_at DESC
             LIMIT %s
             """,
             (limit,),

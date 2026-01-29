@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import json
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
+import time
+import requests
 
 
 class SearxngError(RuntimeError):
@@ -14,7 +12,7 @@ def searxng_search(
     query: str,
     *,
     url: str,
-    timeout_s: int = 10,
+    timeout_s: int = 20,
     categories: str | None = None,
     engines: str | None = None,
     language: str | None = None,
@@ -34,19 +32,41 @@ def searxng_search(
         params["engines"] = engines
     if language:
         params["language"] = language
-    req_url = url.rstrip("/") + "/search?" + urlencode(params)
-    request = Request(req_url, headers={"User-Agent": "SemperVigil/1.0"})
-    try:
-        with urlopen(request, timeout=timeout_s) as response:
-            body = response.read().decode("utf-8", errors="replace")
-    except HTTPError as exc:
-        raise SearxngError(f"Searxng HTTP error {exc.code}") from exc
-    except URLError as exc:
-        raise SearxngError(f"Searxng connection error: {exc}") from exc
-    try:
-        data = json.loads(body)
-    except json.JSONDecodeError as exc:
-        raise SearxngError("Searxng returned invalid JSON") from exc
+    req_url = url.rstrip("/") + "/search"
+    attempts = 0
+    last_error = None
+    while attempts < 2:
+        attempts += 1
+        try:
+            response = requests.get(
+                req_url,
+                params=params,
+                timeout=timeout_s,
+                headers={"User-Agent": "SemperVigil/1.0"},
+            )
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempts < 2:
+                time.sleep(1)
+                continue
+            raise SearxngError(f"Searxng connection error: {exc}") from exc
+        if response.status_code >= 400:
+            last_error = SearxngError(f"Searxng HTTP error {response.status_code}")
+            if attempts < 2:
+                time.sleep(1)
+                continue
+            raise last_error
+        try:
+            data = response.json()
+        except ValueError as exc:
+            last_error = exc
+            if attempts < 2:
+                time.sleep(1)
+                continue
+            raise SearxngError("Searxng returned invalid JSON") from exc
+        break
+    else:
+        raise SearxngError(f"Searxng error: {last_error}")
     results = []
     for item in data.get("results", [])[: max_results or 10]:
         results.append(

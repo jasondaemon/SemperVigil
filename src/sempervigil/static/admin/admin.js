@@ -1,8 +1,8 @@
 async function apiFetch(url, options = {}) {
-  const headers = Object.assign(
-    { "Content-Type": "application/json" },
-    options.headers || {}
-  );
+  const headers = Object.assign({}, options.headers || {});
+  if (options.body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
   const response = await fetch(
     url,
     Object.assign({}, options, { headers, credentials: "same-origin" })
@@ -221,6 +221,9 @@ function wireDashboard() {
     "cve_sync",
     "events_rebuild",
     "build_site",
+    "derive_events_from_articles",
+    "enrich_event_from_web",
+    "promote_event_web_source_to_article",
   ];
 
   function renderBacklog(data) {
@@ -230,6 +233,7 @@ function wireDashboard() {
         label: "Articles missing content",
         value: data.articles_missing_content_count || 0,
         link: "/ui/content?type=article&missing=content",
+        action: "missing_content",
       },
       {
         label: "Articles pending fetch",
@@ -240,6 +244,7 @@ function wireDashboard() {
         label: "Articles with content error",
         value: data.articles_with_content_error_count || 0,
         link: "/ui/content?type=article&content_error=1",
+        action: "content_error",
       },
       {
         label: "Articles pending summarize",
@@ -250,6 +255,7 @@ function wireDashboard() {
         label: "Articles missing summary",
         value: data.articles_missing_summary_count || 0,
         link: "/ui/content?type=article&missing=summary",
+        action: "missing_summary",
       },
       {
         label: "Articles pending publish",
@@ -259,7 +265,14 @@ function wireDashboard() {
       {
         label: "CVEs missing description",
         value: data.cves_missing_description_count || 0,
-        link: "/ui/content?type=cve&missing=description",
+        link: "/ui/cves",
+        action: "cve_description",
+      },
+      {
+        label: "CVEs missing product/vendor/version",
+        value: data.cves_missing_products_count || 0,
+        link: "/ui/cves",
+        action: "cve_products",
       },
       {
         label: "LLM configured",
@@ -278,6 +291,7 @@ function wireDashboard() {
       card.innerHTML = `
         <div class="card-title">${item.label}</div>
         <div class="card-value"><a href="${item.link}">${item.value}</a></div>
+        ${item.action ? `<button class="btn small secondary dashboard-queue" data-kind="${item.action}">Queue missing</button>` : ""}
       `;
       backlog.appendChild(card);
     });
@@ -319,6 +333,33 @@ function wireDashboard() {
     renderJobCounts(data.job_counts_by_type_status || {});
   }
 
+
+  backlog.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    if (target.classList.contains("dashboard-queue")) {
+      const kind = target.dataset.kind || "";
+      try {
+        const payload = await apiFetch("/admin/api/dashboard/queue_missing", {
+          method: "POST",
+          body: JSON.stringify({ kind }),
+        });
+        if (payload.status === "disabled") {
+          showToast(payload.message || "Summarization disabled");
+        } else if (payload.job_id) {
+          showToast(`Queued: ${payload.job_id}`);
+        } else {
+          showToast(`Queued ${payload.queued || 0} (skipped ${payload.skipped || 0})`);
+        }
+        await loadMetrics();
+      } catch (err) {
+        showToast(err.message || String(err));
+      }
+    }
+  });
+
   if (checkBtn) {
     checkBtn.addEventListener("click", () => {
       loadMetrics().catch((err) => showToast(err.message || String(err)));
@@ -341,19 +382,113 @@ function wireLogs() {
   const autoToggle = document.getElementById("logs-auto");
   const pinToggle = document.getElementById("logs-pin");
   const refreshBtn = document.getElementById("logs-refresh");
+  const eventList = document.getElementById("logs-event-list");
+  const jobList = document.getElementById("logs-job-list");
+  const eventAllBtn = document.getElementById("logs-event-all");
+  const eventNoneBtn = document.getElementById("logs-event-none");
+  const jobAllBtn = document.getElementById("logs-job-all");
+  const jobNoneBtn = document.getElementById("logs-job-none");
+  let rawLines = [];
+  let selectedEvents = null;
+  let selectedJobs = null;
+
+  function parseLine(line) {
+    const eventMatch = line.match(/\bevent=([^\s]+)/);
+    const jobMatch = line.match(/\bjob_type=([^\s]+)/);
+    return {
+      event: eventMatch ? eventMatch[1] : "",
+      jobType: jobMatch ? jobMatch[1] : "",
+    };
+  }
+
+  function buildFilterList(container, items, prefix, selected) {
+    container.innerHTML = "";
+    items.forEach((item) => {
+      const id = `${prefix}-${item.value}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const label = document.createElement("label");
+      label.className = "checkbox compact";
+      const checked = !selected || selected.has(item.value);
+      label.innerHTML = `
+        <input type="checkbox" data-value="${item.value}" ${checked ? "checked" : ""} id="${id}">
+        <span>${item.value || "—"} <span class="muted">(${item.count})</span></span>
+      `;
+      container.appendChild(label);
+    });
+  }
+
+  function collectValues(lines) {
+    const eventCounts = new Map();
+    const jobCounts = new Map();
+    lines.forEach((line) => {
+      const parsed = parseLine(line);
+      if (parsed.event) {
+        eventCounts.set(parsed.event, (eventCounts.get(parsed.event) || 0) + 1);
+      }
+      if (parsed.jobType) {
+        jobCounts.set(parsed.jobType, (jobCounts.get(parsed.jobType) || 0) + 1);
+      }
+    });
+    const events = [...eventCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([value, count]) => ({ value, count }));
+    const jobs = [...jobCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([value, count]) => ({ value, count }));
+    return { events, jobs };
+  }
+
+  function getCheckedValues(container) {
+    if (!container) return null;
+    const checked = new Set();
+    container.querySelectorAll("input[type='checkbox']").forEach((input) => {
+      if (input.checked) {
+        checked.add(input.dataset.value || "");
+      }
+    });
+    return checked;
+  }
+
+  function setAll(container, checked) {
+    if (!container) return;
+    container.querySelectorAll("input[type='checkbox']").forEach((input) => {
+      input.checked = checked;
+    });
+  }
+
+  function renderFiltered() {
+    selectedEvents = getCheckedValues(eventList);
+    selectedJobs = getCheckedValues(jobList);
+    const allowedEvents = selectedEvents;
+    const allowedJobs = selectedJobs;
+    const filtered = rawLines.filter((line) => {
+      const parsed = parseLine(line);
+      const eventOk = !allowedEvents || allowedEvents.size === 0 || !parsed.event || allowedEvents.has(parsed.event);
+      const jobOk = !allowedJobs || allowedJobs.size === 0 || !parsed.jobType || allowedJobs.has(parsed.jobType);
+      return eventOk && jobOk;
+    });
+    const shouldPin = pinToggle ? pinToggle.checked : true;
+    const wasPinned =
+      output.scrollHeight <= output.clientHeight ||
+      output.scrollTop + output.clientHeight >= output.scrollHeight - 4;
+    output.textContent = filtered.join("\n");
+    if (shouldPin || wasPinned) {
+      output.scrollTop = output.scrollHeight;
+    }
+  }
 
   async function loadLogs() {
     const service = serviceSelect.value;
     const lines = linesSelect.value;
     const data = await apiFetch(`/admin/api/logs/tail?service=${service}&lines=${lines}`);
-    const shouldPin = pinToggle ? pinToggle.checked : true;
-    const wasPinned =
-      output.scrollHeight <= output.clientHeight ||
-      output.scrollTop + output.clientHeight >= output.scrollHeight - 4;
-    output.textContent = data.text || "";
-    if (shouldPin || wasPinned) {
-      output.scrollTop = output.scrollHeight;
+    rawLines = (data.text || "").split("\n").filter((line) => line.trim() !== "");
+    const { events, jobs } = collectValues(rawLines);
+    if (eventList && events.length) {
+      buildFilterList(eventList, events, "logs-event", selectedEvents);
     }
+    if (jobList && jobs.length) {
+      buildFilterList(jobList, jobs, "logs-job", selectedJobs);
+    }
+    renderFiltered();
   }
 
   if (refreshBtn) {
@@ -365,10 +500,43 @@ function wireLogs() {
   [serviceSelect, linesSelect].forEach((el) => {
     if (el) {
       el.addEventListener("change", () => {
+        selectedEvents = null;
+        selectedJobs = null;
         loadLogs().catch((err) => showToast(err.message || String(err)));
       });
     }
   });
+
+  if (eventList) {
+    eventList.addEventListener("change", () => renderFiltered());
+  }
+  if (jobList) {
+    jobList.addEventListener("change", () => renderFiltered());
+  }
+  if (eventAllBtn) {
+    eventAllBtn.addEventListener("click", () => {
+      setAll(eventList, true);
+      renderFiltered();
+    });
+  }
+  if (eventNoneBtn) {
+    eventNoneBtn.addEventListener("click", () => {
+      setAll(eventList, false);
+      renderFiltered();
+    });
+  }
+  if (jobAllBtn) {
+    jobAllBtn.addEventListener("click", () => {
+      setAll(jobList, true);
+      renderFiltered();
+    });
+  }
+  if (jobNoneBtn) {
+    jobNoneBtn.addEventListener("click", () => {
+      setAll(jobList, false);
+      renderFiltered();
+    });
+  }
 
   setInterval(() => {
     if (autoToggle && autoToggle.checked) {
@@ -738,6 +906,24 @@ function wireEnqueueButtons() {
       }
     });
   });
+  const dailyBtn = document.getElementById("daily-summary-build");
+  if (dailyBtn) {
+    dailyBtn.addEventListener("click", async () => {
+      const dateInput = document.getElementById("daily-summary-date");
+      const dateValue = dateInput ? dateInput.value : "";
+      const payload = dateValue ? { date: dateValue } : {};
+      try {
+        const result = await apiFetch("/admin/api/daily_summary/build", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        showToast(`Daily summary queued: ${result.job_id}`);
+      } catch (err) {
+        alert(err);
+      }
+    });
+  }
+
 }
 
 function wireSources() {
@@ -776,26 +962,34 @@ function wireSources() {
     sources.forEach((source) => {
       const row = document.createElement("tr");
       row.dataset.sourceId = source.id;
+      row.dataset.sourceUrl = source.url || "";
       const acquiring = source.acquire_status === "queued" || source.acquire_status === "running";
       const acquireLabel = acquiring ? `Acquire (${source.acquire_status})` : "Acquire";
+      const newCount = source.new_count || 0;
+      const gatheredCount = source.gathered_count || 0;
+      const summarizedCount = source.summarized_count || 0;
       row.innerHTML = `
         <td><input type="checkbox" class="toggle-enabled" ${source.enabled ? "checked" : ""}></td>
         <td class="source-name">${source.name}</td>
         <td class="source-kind">${source.kind || ""}</td>
-        <td class="source-url mono wrap">${source.url || ""}</td>
         <td class="source-interval">${source.interval_minutes}</td>
         <td>
-          ${source.last_error ? '<span class="status-pill status-error">Error</span>' : source.last_ok_at ? '<span class="status-pill status-ok">OK</span>' : '<span class="status-pill">Unknown</span>'}
+          ${source.last_error ? '<span class="status-pill status-error">Error</span>' : source.pause_until ? '<button class="status-pill status-warn source-resume" type="button" title="Click to resume">Paused</button>' : source.last_ok_at ? '<span class="status-pill status-ok">OK</span>' : '<span class="status-pill">Unknown</span>'}
         </td>
+        <td>${esc(formatTimestamp(source.pause_until))}</td>
+        <td class="truncate" title="${source.paused_reason || ""}">${source.paused_reason || ""}</td>
+        <td>${newCount}</td>
+        <td>${gatheredCount}</td>
+        <td>${summarizedCount}</td>
         <td>${source.articles_24h || 0}</td>
         <td>${source.total_articles || 0}</td>
         <td class="source-tags">${(source.tags || []).join(", ")}</td>
         <td>${esc(formatTimestamp(source.last_ok_at))}</td>
         <td class="truncate" title="${source.last_error || ""}">${source.last_error || ""}</td>
         <td class="table-actions">
-          <label class="checkbox small inline"><input type="checkbox" class="acquire-build"> Build</label>
-          <label class="checkbox small inline"><input type="checkbox" class="acquire-events"> Events</label>
           <button class="btn small secondary acquire-source" type="button" ${acquiring ? "disabled" : ""}>${acquireLabel}</button>
+          <button class="btn small fetch-missing" type="button" ${newCount > 0 ? "" : "disabled"}>Fetch</button>
+          <button class="btn small summarize-missing" type="button" ${gatheredCount > 0 ? "" : "disabled"}>Summarize</button>
           <button class="btn small test-source" type="button">Test</button>
           <button class="btn small secondary history-source" type="button">History</button>
           <button class="btn small secondary edit-source" type="button">Edit</button>
@@ -807,7 +1001,7 @@ function wireSources() {
       testRow.dataset.sourceId = source.id;
       testRow.style.display = "none";
       testRow.innerHTML = `
-        <td colspan="12">
+        <td colspan="16">
           <div class="test-summary"></div>
           <details class="test-details">
             <summary>Details</summary>
@@ -819,7 +1013,7 @@ function wireSources() {
       historyRow.className = "history-result";
       historyRow.dataset.sourceId = source.id;
       historyRow.style.display = "none";
-      historyRow.innerHTML = `<td colspan="12"><div class="history-table"></div></td>`;
+      historyRow.innerHTML = `<td colspan="16"><div class="history-table"></div></td>`;
       tbody.appendChild(row);
       tbody.appendChild(testRow);
       tbody.appendChild(historyRow);
@@ -880,10 +1074,24 @@ function wireSources() {
         idField.value = sourceId;
         nameField.value = row.querySelector(".source-name").textContent.trim();
         kindField.value = row.querySelector(".source-kind").textContent.trim() || "rss";
-        urlField.value = row.querySelector(".source-url").textContent.trim();
+        urlField.value = row.dataset.sourceUrl || "";
         intervalField.value = row.querySelector(".source-interval").textContent.trim() || "60";
         tagsField.value = row.querySelector(".source-tags").textContent.trim();
         enabledField.checked = row.querySelector(".toggle-enabled").checked;
+        return;
+      }
+
+      if (target.classList.contains("source-resume")) {
+        if (!confirm("Resume this source?")) {
+          return;
+        }
+        try {
+          await apiFetch(`/admin/api/sources/${sourceId}/resume`, { method: "POST" });
+          showToast("Source resumed");
+          await refreshSources();
+        } catch (err) {
+          alert(err);
+        }
         return;
       }
 
@@ -902,19 +1110,41 @@ function wireSources() {
       }
 
       if (target.classList.contains("acquire-source")) {
-        const buildBox = row.querySelector(".acquire-build");
-        const eventsBox = row.querySelector(".acquire-events");
-        const payload = {
-          also_build: buildBox ? buildBox.checked : false,
-          also_events_rebuild: eventsBox ? eventsBox.checked : false,
-        };
         try {
           const result = await apiFetch(`/admin/api/sources/${sourceId}/acquire`, {
             method: "POST",
-            body: JSON.stringify(payload),
+            body: JSON.stringify({}),
           });
           showToast(`Acquire enqueued: ${result.job_id}`);
           await refreshSources();
+        } catch (err) {
+          alert(err);
+        }
+        return;
+      }
+
+      if (target.classList.contains("fetch-missing")) {
+        try {
+          const result = await apiFetch(`/admin/api/sources/${sourceId}/fetch_missing`, {
+            method: "POST",
+          });
+          showToast(`Fetch queued: ${result.queued || 0}`);
+        } catch (err) {
+          alert(err);
+        }
+        return;
+      }
+
+      if (target.classList.contains("summarize-missing")) {
+        try {
+          const result = await apiFetch(`/admin/api/sources/${sourceId}/summarize_missing`, {
+            method: "POST",
+          });
+          if (result.status === "disabled") {
+            showToast(result.message || "Summarization disabled");
+            return;
+          }
+          showToast(`Summarize queued: ${result.queued || 0}`);
         } catch (err) {
           alert(err);
         }
@@ -944,6 +1174,10 @@ function wireSources() {
         const outputRow = document.querySelector(
           `tr.history-result[data-source-id="${sourceId}"]`
         );
+        if (outputRow.style.display === "table-row") {
+          outputRow.style.display = "none";
+          return;
+        }
         try {
           const result = await apiFetch(`/sources/${sourceId}/health?limit=20`);
           const rows = result
@@ -1014,8 +1248,44 @@ function wireJobs() {
   const cancelAll = document.getElementById("jobs-cancel-all");
   const table = document.getElementById("jobs-table");
   const tbody = document.getElementById("jobs-table-body");
+  const statusFilter = document.getElementById("jobs-filter-status");
+  const typeFilter = document.getElementById("jobs-filter-type");
+  const sizeSelect = document.getElementById("jobs-page-size");
+  const applyBtn = document.getElementById("jobs-apply");
+  const clearBtn = document.getElementById("jobs-clear");
+  const pager = document.getElementById("jobs-pager");
   if (!refresh || !table || !tbody) {
     return;
+  }
+
+  const knownJobTypes = [
+    "ingest_due_sources",
+    "ingest_source",
+    "fetch_article_content",
+    "summarize_article_llm",
+    "write_article_markdown",
+    "build_site",
+    "cve_sync",
+    "events_rebuild",
+    "derive_events_from_articles",
+    "enrich_event_from_web",
+    "promote_event_web_source_to_article",
+    "enrich_event_summary_llm",
+    "build_daily_summary",
+    "source_acquire",
+    "smoke_test",
+  ];
+
+  let page = 1;
+  let pageSize = sizeSelect ? parseInt(sizeSelect.value, 10) || 20 : 20;
+
+  if (typeFilter && typeFilter.tagName === "SELECT" && typeFilter.options.length <= 1) {
+    knownJobTypes.forEach((jobType) => {
+      const opt = document.createElement("option");
+      opt.value = jobType;
+      opt.textContent = jobType;
+      typeFilter.appendChild(opt);
+    });
   }
 
   function formatResult(job) {
@@ -1050,8 +1320,20 @@ function wireJobs() {
             ${stderr ? `<div class="mono">stderr:</div><pre class="mono">${stderr}</pre>` : ""}
           </details>
         `;
-      } else if (job.error) {
-        resultHtml = `<span class="error-indicator" title="${esc(job.error)}">⚠</span>`;
+      } else if (job.error || job.result) {
+        const errorText = job.error ? `error: ${job.error}` : "";
+        const resultText = job.result
+          ? (typeof job.result === "string" ? job.result : JSON.stringify(job.result, null, 2))
+          : "";
+        const summary = job.error ? "View error" : "View output";
+        resultHtml = `
+          ${job.error ? `<span class="error-indicator" title="${esc(job.error)}">⚠</span>` : ""}
+          <details class="job-logs">
+            <summary>${summary}</summary>
+            ${errorText ? `<div class="mono">${esc(errorText)}</div>` : ""}
+            ${resultText ? `<pre class="mono">${esc(resultText)}</pre>` : ""}
+          </details>
+        `;
       } else {
         const text = formatResult(job);
         resultHtml = text
@@ -1069,7 +1351,9 @@ function wireJobs() {
           ${
             canCancel
               ? `<button class="btn small danger job-cancel" type="button" data-job-id="${job.id}">Cancel</button>`
-              : `<span class="muted">—</span>`
+              : job.status === "failed" || job.status === "canceled"
+                ? `<button class="btn small secondary job-rerun" type="button" data-job-id="${job.id}">Rerun</button>`
+                : `<span class="muted">—</span>`
           }
         </td>
       `;
@@ -1083,15 +1367,62 @@ function wireJobs() {
     });
   }
 
+  function buildParams() {
+    const params = new URLSearchParams();
+    params.set("page", String(page));
+    params.set("page_size", String(pageSize));
+    if (statusFilter && statusFilter.value) {
+      params.set("status", statusFilter.value);
+    }
+    if (typeFilter && typeFilter.value.trim()) {
+      params.set("job_type", typeFilter.value.trim());
+    }
+    return params;
+  }
+
   async function refreshJobs() {
-    const jobs = await apiFetch("/jobs");
+    const params = buildParams();
+    const payload = await apiFetch(`/jobs?${params.toString()}`);
+    const jobs = Array.isArray(payload) ? payload : payload.items || [];
     renderRows(jobs);
+    if (!Array.isArray(payload)) {
+      renderPager(pager, payload.total || 0, payload.page || page, payload.page_size || pageSize, (nextPage) => {
+        page = nextPage;
+        refreshJobs().catch((err) => alert(err));
+      });
+    }
     return jobs;
   }
 
   refresh.addEventListener("click", () => {
     refreshJobs().catch((err) => alert(err));
   });
+
+  if (applyBtn) {
+    applyBtn.addEventListener("click", () => {
+      page = 1;
+      pageSize = sizeSelect ? parseInt(sizeSelect.value, 10) || pageSize : pageSize;
+      refreshJobs().catch((err) => alert(err));
+    });
+  }
+
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      if (statusFilter) statusFilter.value = "";
+      if (typeFilter) typeFilter.value = "";
+      page = 1;
+      pageSize = sizeSelect ? parseInt(sizeSelect.value, 10) || pageSize : pageSize;
+      refreshJobs().catch((err) => alert(err));
+    });
+  }
+
+  if (sizeSelect) {
+    sizeSelect.addEventListener("change", () => {
+      pageSize = parseInt(sizeSelect.value, 10) || pageSize;
+      page = 1;
+      refreshJobs().catch((err) => alert(err));
+    });
+  }
 
   if (cancelAll) {
     cancelAll.addEventListener("click", async () => {
@@ -1113,6 +1444,25 @@ function wireJobs() {
     if (!(target instanceof HTMLElement)) {
       return;
     }
+    if (target.classList.contains("job-rerun")) {
+      const jobId = target.dataset.jobId;
+      if (!jobId) {
+        return;
+      }
+      try {
+        const payload = await apiFetch(`/jobs/${jobId}/rerun`, { method: "POST" });
+        if (payload.status === "already_running") {
+          showToast(`Already running: ${payload.job_id}`);
+        } else {
+          showToast(`Queued: ${payload.job_id}`);
+        }
+        refreshJobs().catch((err) => alert(err));
+      } catch (err) {
+        alert(err.message || String(err));
+      }
+      return;
+    }
+
     if (!target.classList.contains("job-cancel")) {
       return;
     }
@@ -2067,10 +2417,7 @@ function wireCveSearch() {
       `;
       tbody.appendChild(row);
     });
-    pager.textContent = `Page ${data.page} of ${Math.max(
-      1,
-      Math.ceil(data.total / data.page_size)
-    )}`;
+    renderPager(pager, data.total, data.page, data.page_size, load);
   }
 
   form.addEventListener("submit", (event) => {
@@ -2119,6 +2466,7 @@ function wireCveDetail() {
       const cpes = item.affected_cpes || [];
       const domains = item.reference_domains || [];
       const productVersions = item.product_versions || [];
+      const cveTags = item.tags || [];
       const otherScores = [...v31List, ...v40List]
         .map((entry) => {
           const version = entry.version || "unknown";
@@ -2171,7 +2519,9 @@ function wireCveDetail() {
         ` : ""}
         <h3>Product Versions</h3>
         <pre class="mono">${productVersions.length ? productVersions.join("\\n") : "None found"}</pre>
-        <h3>Affected CPEs</h3>
+                <h3>Tags</h3>
+        <pre class="mono">${cveTags.length ? cveTags.join("\n") : "None"}</pre>
+<h3>Affected CPEs</h3>
         <pre class="mono">${cpes.length ? cpes.join("\\n") : "None found"}</pre>
         <h3>Reference Domains</h3>
         <pre class="mono">${domains.length ? domains.join("\\n") : "None found"}</pre>
@@ -2578,7 +2928,8 @@ function wireContentSearch() {
     setError("");
     const params = new URLSearchParams();
     const query = document.getElementById("content-query").value.trim();
-    const type = document.getElementById("content-type").value;
+    const typeField = document.getElementById("content-type");
+    const type = typeField ? typeField.value : "article";
     const source = document.getElementById("content-source").value;
     const hasSummary = document.getElementById("content-has-summary").value;
     const tags = document.getElementById("content-tags").value.trim();
@@ -2613,15 +2964,10 @@ function wireContentSearch() {
     tbody.innerHTML = "";
     data.items.forEach((item) => {
       const row = document.createElement("tr");
-      const date = item.published_at || item.last_modified_at || item.ingested_at || "";
+      const date = item.published_at || item.ingested_at || "";
       const title = item.title || item.summary || "";
-      let link = "";
-      if (item.type === "article") {
-        link = `/ui/content/articles/${item.id}`;
-      } else if (item.type === "cve") {
-        link = `/ui/cves/${item.cve_id}`;
-      }
-      const idValue = item.type === "cve" ? item.cve_id : item.id;
+      const link = `/ui/content/articles/${item.id}`;
+      const idValue = item.id;
       const watchlistCell = watchlistEnabled
         ? `<td>${
             item.watchlist_hit || item.in_scope
@@ -2652,20 +2998,8 @@ function wireContentSearch() {
             </div>
           </div>
         `;
-      } else if (item.type === "cve") {
-        actions = `
-          <div class="table-actions">
-            <div class="action-menu">
-              <button class="action-menu-button" type="button" aria-label="More actions">⋮</button>
-              <div class="action-menu-list">
-                <button type="button" class="action-refresh-cve" data-cve-id="${item.cve_id}">Refresh CVE</button>
-              </div>
-            </div>
-          </div>
-        `;
       }
       row.innerHTML = `
-        <td>${esc(item.type)}</td>
         <td>${link ? renderShortId(idValue, link) : renderShortId(idValue)}</td>
         <td><span data-ts="${esc(date)}"></span></td>
         <td class="line-clamp-2" title="${esc(title)}">${esc(title)}</td>
@@ -2820,6 +3154,34 @@ function wireContentArticle() {
 }
 
 function wireEvents() {
+  const createBtn = document.getElementById("events-create");
+  const createModal = document.getElementById("event-create-modal");
+  const createClose = document.getElementById("event-create-close");
+  const createSave = document.getElementById("event-create-save");
+  const createTitle = document.getElementById("event-create-title");
+  const createKind = document.getElementById("event-create-kind");
+  const createDate = document.getElementById("event-create-date");
+  const createEntity = document.getElementById("event-create-entity");
+  const createTier = document.getElementById("event-create-tier");
+  const createConfidence = document.getElementById("event-create-confidence");
+  const createSummary = document.getElementById("event-create-summary");
+  const editModal = document.getElementById("event-edit-modal");
+  const editClose = document.getElementById("event-edit-close");
+  const editSave = document.getElementById("event-edit-save");
+  const editDelete = document.getElementById("event-edit-delete");
+  const editId = document.getElementById("event-edit-id");
+  const editTitle = document.getElementById("event-edit-title");
+  const editKind = document.getElementById("event-edit-kind");
+  const editStatus = document.getElementById("event-edit-status");
+  const editSeverity = document.getElementById("event-edit-severity");
+  const editDate = document.getElementById("event-edit-date");
+  const editEntity = document.getElementById("event-edit-entity");
+  const editTier = document.getElementById("event-edit-tier");
+  const editConfidence = document.getElementById("event-edit-confidence");
+  const editCandidate = document.getElementById("event-edit-candidate");
+  const editSummary = document.getElementById("event-edit-summary");
+  const editTags = document.getElementById("event-edit-tags");
+  const editIsEvent = document.getElementById("event-edit-is-event");
   const table = document.getElementById("events-table");
   if (!table) {
     return;
@@ -2832,7 +3194,9 @@ function wireEvents() {
   const normalizeBtn = document.getElementById("events-normalize");
   const rebuildBtn = document.getElementById("events-rebuild");
   const purgeBtn = document.getElementById("events-purge");
+  const purgePreviewBtn = document.getElementById("events-purge-preview");
   let pageSize = 50;
+  let eventsById = {};
 
   function setError(message) {
     if (!error) {
@@ -2868,7 +3232,9 @@ function wireEvents() {
     params.set("page_size", String(pageSize));
     const data = await apiFetch(`/admin/api/events?${params.toString()}`);
     tbody.innerHTML = "";
+    eventsById = {};
     data.items.forEach((event) => {
+      eventsById[event.id] = event;
       const row = document.createElement("tr");
       const when = event.last_seen_at || event.last_article_at || event.created_at || "";
       row.innerHTML = `
@@ -2877,13 +3243,180 @@ function wireEvents() {
         <td><span class="badge muted">${esc(event.kind || "")}</span></td>
         <td><span class="badge muted">${esc(event.severity || "UNKNOWN")}</span></td>
         <td>${statusBadge(event.status || "")}</td>
+        <td>${event.candidate ? '<span class="badge warn">candidate</span>' : '<span class="badge success">confirmed</span>'}</td>
+        <td>${event.confidence ? event.confidence.toFixed(2) : ""}</td>
+        <td class="truncate" title="${esc(event.entity || "")}">${esc(event.entity || "")}</td>
+        <td><span data-ts="${esc(event.incident_date || "")}"></span></td>
         <td><span data-ts="${esc(when)}"></span></td>
         <td><span class="badge muted">📰 ${event.article_count ?? 0}</span></td>
+        <td class="table-actions">
+          <button class="btn small secondary event-edit" data-event-id="${event.id}">Edit</button>
+          <button class="btn small danger event-delete" data-event-id="${event.id}">Delete</button>
+        </td>
       `;
       tbody.appendChild(row);
     });
     applyTimestampFormatting(tbody);
     renderPager(pager, data.total, data.page, data.page_size, load);
+  }
+
+  if (createBtn && createModal) {
+    createBtn.addEventListener("click", () => {
+      createModal.style.display = "block";
+    });
+  }
+  if (createClose && createModal) {
+    createClose.addEventListener("click", () => {
+      createModal.style.display = "none";
+    });
+  }
+  if (createSave) {
+    createSave.addEventListener("click", async () => {
+      const payload = {
+        title: createTitle?.value || "",
+        kind: createKind?.value || "other",
+        occurred_at: createDate?.value || null,
+        entity: createEntity?.value || null,
+        confidence_tier: createTier?.value || "watch",
+        confidence: createConfidence?.value ? parseFloat(createConfidence.value) : null,
+        summary: createSummary?.value || null,
+        manual: true,
+        candidate: false,
+      };
+      if (!payload.title.trim()) {
+        showToast("Title is required");
+        return;
+      }
+      try {
+        const event = await apiFetch("/admin/api/events", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        showToast("Event created");
+        if (createModal) createModal.style.display = "none";
+        load(1).catch(() => undefined);
+      } catch (err) {
+        showToast(err.message || String(err));
+      }
+    });
+  }
+
+
+  function openEditModal(event) {
+    if (!editModal) {
+      return;
+    }
+    editId.value = event.id || "";
+    editTitle.value = event.title || "";
+    editKind.value = event.kind || "other";
+    editStatus.value = event.status || "open";
+    editSeverity.value = event.severity || "UNKNOWN";
+    editDate.value = event.incident_date || "";
+    editEntity.value = event.entity || "";
+    editTier.value = event.confidence_tier || "watch";
+    editConfidence.value = event.confidence ?? "";
+    editCandidate.value = event.candidate === true ? "true" : event.candidate === false ? "false" : "";
+    editSummary.value = event.summary || "";
+    editTags.value = ((event.meta && event.meta.tags) || event.tags || []).join(",");
+    if (editIsEvent) {
+      editIsEvent.checked = event.meta && typeof event.meta.is_event === "boolean" ? event.meta.is_event : true;
+    }
+    editModal.style.display = "block";
+  }
+
+  if (tbody) {
+    tbody.addEventListener("click", async (event) => {
+      const target = event.target.closest("button");
+      if (!target) {
+        return;
+      }
+      const eventId = target.dataset.eventId;
+      if (!eventId) {
+        return;
+      }
+      if (target.classList.contains("event-edit")) {
+        try {
+          const detail = await apiFetch(`/admin/api/events/${eventId}`);
+          openEditModal(detail);
+        } catch (err) {
+          setError(err.message || String(err));
+        }
+      }
+      if (target.classList.contains("event-delete")) {
+        if (!confirm("Delete this event? This cannot be undone.")) {
+          return;
+        }
+        try {
+          await apiFetch(`/admin/api/events/${eventId}`, { method: "DELETE" });
+          showToast("Event deleted");
+          load(1).catch((err) => setError(err.message || String(err)));
+        } catch (err) {
+          setError(err.message || String(err));
+        }
+      }
+    });
+  }
+
+  if (editClose && editModal) {
+    editClose.addEventListener("click", () => {
+      editModal.style.display = "none";
+    });
+  }
+
+  if (editSave) {
+    editSave.addEventListener("click", async () => {
+      const eventId = editId.value;
+      if (!eventId) {
+        showToast("Missing event id");
+        return;
+      }
+      const candidateValue = editCandidate.value;
+      const payload = {
+        title: editTitle.value || undefined,
+        kind: editKind.value || undefined,
+        status: editStatus.value || undefined,
+        severity: editSeverity.value || undefined,
+        incident_date: editDate.value || undefined,
+        entity: editEntity.value || undefined,
+        confidence_tier: editTier.value || undefined,
+        confidence: editConfidence.value ? parseFloat(editConfidence.value) : undefined,
+        candidate: candidateValue === "" ? undefined : candidateValue === "true",
+        summary: editSummary.value || undefined,
+        tags: editTags.value ? editTags.value.split(",").map((t) => t.trim()).filter(Boolean) : undefined,
+        is_event: editIsEvent ? editIsEvent.checked : undefined,
+      };
+      try {
+        await apiFetch(`/admin/api/events/${eventId}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+        showToast("Event updated");
+        if (editModal) editModal.style.display = "none";
+        load(1).catch((err) => setError(err.message || String(err)));
+      } catch (err) {
+        setError(err.message || String(err));
+      }
+    });
+  }
+
+  if (editDelete) {
+    editDelete.addEventListener("click", async () => {
+      const eventId = editId.value;
+      if (!eventId) {
+        return;
+      }
+      if (!confirm("Delete this event? This cannot be undone.")) {
+        return;
+      }
+      try {
+        await apiFetch(`/admin/api/events/${eventId}`, { method: "DELETE" });
+        showToast("Event deleted");
+        if (editModal) editModal.style.display = "none";
+        load(1).catch((err) => setError(err.message || String(err)));
+      } catch (err) {
+        setError(err.message || String(err));
+      }
+    });
   }
 
   if (form) {
@@ -2948,53 +3481,66 @@ function wireEvents() {
     });
   }
 
+  async function runPurge(dryRunOverride) {
+    const dryRunBox = document.getElementById("events-purge-dry");
+    const modeSelect = document.getElementById("events-purge-mode");
+    const olderDays = document.getElementById("events-purge-older");
+    const kindsCve = document.getElementById("events-purge-cve-only");
+    const emptyOnly = document.getElementById("events-purge-empty-only");
+    const noVictims = document.getElementById("events-purge-no-victims");
+    const noCves = document.getElementById("events-purge-no-cves");
+    const noSources = document.getElementById("events-purge-no-sources");
+    const research = document.getElementById("events-purge-research");
+    const confidence = document.getElementById("events-purge-confidence");
+    const dryRun = dryRunOverride !== undefined ? dryRunOverride : dryRunBox ? dryRunBox.checked : true;
+    const mode = modeSelect ? modeSelect.value : "suppress";
+    const olderDaysValue = olderDays ? parseInt(olderDays.value, 10) : null;
+    const includeKinds = kindsCve && kindsCve.checked ? ["cve_cluster"] : null;
+    const onlyEmpty = emptyOnly ? emptyOnly.checked : false;
+    const confidenceValue = confidence && confidence.value ? parseFloat(confidence.value) : null;
+    if (!dryRun && !confirm("Purge events now? Manual events will be kept.")) {
+      return;
+    }
+    try {
+      const payload = await apiFetch("/admin/api/events/purge", {
+        method: "POST",
+        body: JSON.stringify({
+          dry_run: dryRun,
+          mode: mode,
+          older_than_days: Number.isNaN(olderDaysValue) ? null : olderDaysValue,
+          kinds: includeKinds,
+          require_no_victims: noVictims ? noVictims.checked : false,
+          require_no_cves: noCves ? noCves.checked : false,
+          require_no_sources: noSources ? noSources.checked : false,
+          require_research: research ? research.checked : false,
+          confidence_below: confidenceValue,
+          only_empty_cve_clusters: onlyEmpty,
+        }),
+      });
+      const stats = payload.stats || {};
+      const deleted = stats.deleted ?? 0;
+      const candidates = stats.candidates ?? 0;
+      const matched = stats.matched ?? 0;
+      showToast(
+        dryRun
+          ? `Preview: ${matched} match (candidates ${candidates})`
+          : `${mode === "suppress" ? "Suppressed" : "Deleted"} ${deleted} events (matched ${matched})`
+      );
+      load(1).catch((err) => setError(err.message || String(err)));
+    } catch (err) {
+      setError(err.message || String(err));
+    }
+  }
+
   if (purgeBtn) {
     purgeBtn.addEventListener("click", async () => {
-      const dryRunBox = document.getElementById("events-purge-dry");
-      const modeSelect = document.getElementById("events-purge-mode");
-      const minArticles = document.getElementById("events-purge-min-articles");
-      const olderDays = document.getElementById("events-purge-older");
-      const kindsCve = document.getElementById("events-purge-cve-only");
-      const emptyOnly = document.getElementById("events-purge-empty-only");
-      const dryRun = dryRunBox ? dryRunBox.checked : true;
-      const mode = modeSelect ? modeSelect.value : "suppress";
-      const minArticlesValue = minArticles ? parseInt(minArticles.value, 10) : 2;
-      const olderDaysValue = olderDays ? parseInt(olderDays.value, 10) : 30;
-      const includeKinds = kindsCve && kindsCve.checked ? ["cve_cluster"] : null;
-      const onlyEmpty = emptyOnly ? emptyOnly.checked : true;
-      if (
-        !confirm(
-          dryRun
-            ? "Dry run purge? Manual events will be kept."
-            : "Purge weak events now? Manual events will be kept."
-        )
-      ) {
-        return;
-      }
-      try {
-        const payload = await apiFetch("/admin/api/events/purge", {
-          method: "POST",
-          body: JSON.stringify({
-            dry_run: dryRun,
-            mode: mode,
-            min_articles: Number.isNaN(minArticlesValue) ? 1 : minArticlesValue,
-            older_than_days: Number.isNaN(olderDaysValue) ? null : olderDaysValue,
-            kinds: includeKinds,
-            only_empty_cve_clusters: onlyEmpty,
-          }),
-        });
-        const stats = payload.stats || {};
-        const deleted = stats.deleted ?? 0;
-        const candidates = stats.candidates ?? 0;
-        showToast(
-          dryRun
-            ? `Dry run: ${deleted} would be deleted (candidates ${candidates})`
-            : `${mode === "suppress" ? "Suppressed" : "Deleted"} ${deleted} events (candidates ${candidates})`
-        );
-        load(1).catch((err) => setError(err.message || String(err)));
-      } catch (err) {
-        setError(err.message || String(err));
-      }
+      runPurge();
+    });
+  }
+
+  if (purgePreviewBtn) {
+    purgePreviewBtn.addEventListener("click", async () => {
+      runPurge(true);
     });
   }
 
@@ -3013,6 +3559,7 @@ function wireEventDetail() {
   const webTable = document.getElementById("event-web-sources-table");
   const webError = document.getElementById("event-web-error");
   const webSearchBtn = document.getElementById("event-web-search");
+  const webRefreshBtn = document.getElementById("event-web-refresh");
   const webQueryInput = document.getElementById("event-web-query");
   const webKeepLow = document.getElementById("event-web-keep-low");
   const webPromote = document.getElementById("event-web-promote");
@@ -3052,17 +3599,21 @@ function wireEventDetail() {
       const published = item.published_at || "";
       const status = item.status || "new";
       const title = item.title || item.url || "";
+      const snippet = item.snippet || "";
       row.innerHTML = `
         <td><span class="badge muted">${item.score ?? 0}</span></td>
         <td class="truncate" title="${esc(item.domain || "")}">${esc(item.domain || "")}</td>
         <td><span data-ts="${esc(published)}"></span></td>
         <td class="line-clamp-2" title="${esc(title)}"><a href="${esc(item.url)}" target="_blank" rel="noopener">${esc(title)}</a></td>
-        <td class="line-clamp-2" title="${esc(item.snippet || "")}">${esc(item.snippet || "")}</td>
+        <td>
+          <div class="line-clamp-2" title="${esc(snippet)}">${esc(snippet)}</div>
+          ${snippet ? `<details class="snippet-expand"><summary>Expand</summary><div class="mono wrap-pre">${esc(snippet)}</div></details>` : ""}
+        </td>
         <td>${statusBadge(status)}</td>
         <td class="table-actions">
           <button class="btn small secondary web-promote" data-source-id="${item.id}" ${
             status === "promoted" ? "disabled" : ""
-          }>Promote</button>
+          }>Fetch</button>
           <button class="btn small secondary web-discard" data-source-id="${item.id}" ${
             status === "discarded" ? "disabled" : ""
           }>Discard</button>
@@ -3076,6 +3627,7 @@ function wireEventDetail() {
   apiFetch(`/admin/api/events/${eventId}`)
     .then((event) => {
       const summaryBtn = document.getElementById("event-summary-refresh");
+      const rederiveBtn = document.getElementById("event-rederive");
       const attachBtn = document.getElementById("event-attach-article");
       const attachInput = document.getElementById("event-attach-article-id");
       const meta = `
@@ -3087,10 +3639,14 @@ function wireEventDetail() {
           <div><strong>Kind:</strong> ${event.kind}</div>
           <div><strong>Status:</strong> ${event.status}</div>
           <div><strong>Severity:</strong> ${event.severity || "UNKNOWN"}</div>
-          <div><strong>Confidence:</strong> ${event.confidence_tier || "watch"}</div>
+          <div><strong>Confidence:</strong> ${event.confidence_tier || "watch"} ${event.confidence ? `(${event.confidence.toFixed(2)})` : ""}</div>
+          <div><strong>Candidate:</strong> ${event.candidate ? "yes" : "no"}</div>
+          <div><strong>Entity:</strong> ${esc(event.entity || "")}</div>
+          <div><strong>Incident date:</strong> ${esc(event.incident_date || "")}</div>
           <div><strong>First seen:</strong> ${esc(formatTimestamp(event.first_seen_at))}</div>
           <div><strong>Last seen:</strong> ${esc(formatTimestamp(event.last_seen_at))}</div>
         </div>
+        ${event.evidence && event.evidence.length ? `<div class="muted">Why: ${event.evidence.slice(0,5).map(esc).join(", ")}</div>` : ""}
         ${event.summary ? `<p class="summary">${event.summary}</p>` : ""}
       `;
       container.innerHTML = meta;
@@ -3101,6 +3657,19 @@ function wireEventDetail() {
               method: "POST",
             });
             showToast(payload.summary ? "Summary rebuilt" : "No summary generated");
+            wireEventDetail();
+          } catch (err) {
+            showToast(err.message || String(err));
+          }
+        });
+      }
+      if (rederiveBtn) {
+        rederiveBtn.addEventListener("click", async () => {
+          try {
+            const payload = await apiFetch(`/admin/api/events/${eventId}/rederive`, {
+              method: "POST",
+            });
+            showToast(`Re-derive queued (${payload.queued || 0})`);
             wireEventDetail();
           } catch (err) {
             showToast(err.message || String(err));
@@ -3184,6 +3753,28 @@ function wireEventDetail() {
           loadWebSources().catch((err) => setWebError(err.message || String(err)));
         });
       }
+
+      if (articlesTable) {
+        articlesTable.addEventListener("click", async (evt) => {
+          const target = evt.target;
+          if (!(target instanceof HTMLElement)) return;
+          if (target.classList.contains("event-detach-article")) {
+            const articleId = parseInt(target.dataset.articleId || "", 10);
+            if (!articleId) return;
+            try {
+              await apiFetch(`/admin/api/events/${eventId}/articles/detach`, {
+                method: "POST",
+                body: JSON.stringify({ article_id: articleId }),
+              });
+              showToast("Article detached");
+              wireEventDetail();
+            } catch (err) {
+              showToast(err.message || String(err));
+            }
+          }
+        });
+      }
+
       if (webSearchBtn) {
         webSearchBtn.addEventListener("click", async () => {
           try {
@@ -3196,10 +3787,17 @@ function wireEventDetail() {
               method: "POST",
               body: JSON.stringify(payload),
             });
-            showToast(`Enrichment queued (${result.job_id || ""})`.trim());
+            const jobLabel = result.job_id ? shortId(result.job_id) : "";
+            showToast(`Enrichment queued ${jobLabel ? `(${jobLabel})` : ""}`.trim());
           } catch (err) {
+            showToast(err.message || String(err));
             setWebError(err.message || String(err));
           }
+        });
+      }
+      if (webRefreshBtn) {
+        webRefreshBtn.addEventListener("click", () => {
+          loadWebSources().catch((err) => setWebError(err.message || String(err)));
         });
       }
       if (webTable) {
@@ -3215,7 +3813,8 @@ function wireEventDetail() {
                 `/admin/api/events/${eventId}/web_sources/${sourceId}/promote`,
                 { method: "POST" }
               );
-              showToast(`Promote queued (${result.job_id || ""})`.trim());
+              const jobLabel = result.job_id ? shortId(result.job_id) : "";
+              showToast(`Fetch queued ${jobLabel ? `(${jobLabel})` : ""}`.trim());
               loadWebSources().catch((err) => setWebError(err.message || String(err)));
             } catch (err) {
               setWebError(err.message || String(err));
@@ -3289,6 +3888,124 @@ function wireProducts() {
       tbody.appendChild(row);
     });
     renderPager(pager, data.total, data.page, data.page_size, load);
+  }
+
+
+  function openEditModal(event) {
+    if (!editModal) {
+      return;
+    }
+    editId.value = event.id || "";
+    editTitle.value = event.title || "";
+    editKind.value = event.kind || "other";
+    editStatus.value = event.status || "open";
+    editSeverity.value = event.severity || "UNKNOWN";
+    editDate.value = event.incident_date || "";
+    editEntity.value = event.entity || "";
+    editTier.value = event.confidence_tier || "watch";
+    editConfidence.value = event.confidence ?? "";
+    editCandidate.value = event.candidate === true ? "true" : event.candidate === false ? "false" : "";
+    editSummary.value = event.summary || "";
+    editTags.value = ((event.meta && event.meta.tags) || event.tags || []).join(",");
+    if (editIsEvent) {
+      editIsEvent.checked = event.meta && typeof event.meta.is_event === "boolean" ? event.meta.is_event : true;
+    }
+    editModal.style.display = "block";
+  }
+
+  if (tbody) {
+    tbody.addEventListener("click", async (event) => {
+      const target = event.target.closest("button");
+      if (!target) {
+        return;
+      }
+      const eventId = target.dataset.eventId;
+      if (!eventId) {
+        return;
+      }
+      if (target.classList.contains("event-edit")) {
+        try {
+          const detail = await apiFetch(`/admin/api/events/${eventId}`);
+          openEditModal(detail);
+        } catch (err) {
+          setError(err.message || String(err));
+        }
+      }
+      if (target.classList.contains("event-delete")) {
+        if (!confirm("Delete this event? This cannot be undone.")) {
+          return;
+        }
+        try {
+          await apiFetch(`/admin/api/events/${eventId}`, { method: "DELETE" });
+          showToast("Event deleted");
+          load(1).catch((err) => setError(err.message || String(err)));
+        } catch (err) {
+          setError(err.message || String(err));
+        }
+      }
+    });
+  }
+
+  if (editClose && editModal) {
+    editClose.addEventListener("click", () => {
+      editModal.style.display = "none";
+    });
+  }
+
+  if (editSave) {
+    editSave.addEventListener("click", async () => {
+      const eventId = editId.value;
+      if (!eventId) {
+        showToast("Missing event id");
+        return;
+      }
+      const candidateValue = editCandidate.value;
+      const payload = {
+        title: editTitle.value || undefined,
+        kind: editKind.value || undefined,
+        status: editStatus.value || undefined,
+        severity: editSeverity.value || undefined,
+        incident_date: editDate.value || undefined,
+        entity: editEntity.value || undefined,
+        confidence_tier: editTier.value || undefined,
+        confidence: editConfidence.value ? parseFloat(editConfidence.value) : undefined,
+        candidate: candidateValue === "" ? undefined : candidateValue === "true",
+        summary: editSummary.value || undefined,
+        tags: editTags.value ? editTags.value.split(",").map((t) => t.trim()).filter(Boolean) : undefined,
+        is_event: editIsEvent ? editIsEvent.checked : undefined,
+      };
+      try {
+        await apiFetch(`/admin/api/events/${eventId}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+        showToast("Event updated");
+        if (editModal) editModal.style.display = "none";
+        load(1).catch((err) => setError(err.message || String(err)));
+      } catch (err) {
+        setError(err.message || String(err));
+      }
+    });
+  }
+
+  if (editDelete) {
+    editDelete.addEventListener("click", async () => {
+      const eventId = editId.value;
+      if (!eventId) {
+        return;
+      }
+      if (!confirm("Delete this event? This cannot be undone.")) {
+        return;
+      }
+      try {
+        await apiFetch(`/admin/api/events/${eventId}`, { method: "DELETE" });
+        showToast("Event deleted");
+        if (editModal) editModal.style.display = "none";
+        load(1).catch((err) => setError(err.message || String(err)));
+      } catch (err) {
+        setError(err.message || String(err));
+      }
+    });
   }
 
   if (form) {

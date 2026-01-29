@@ -626,3 +626,12 @@ def _build_config(cfg: dict[str, Any]) -> Config:
 
 def _deep_copy(value: dict[str, Any]) -> dict[str, Any]:
     return json.loads(json.dumps(value))
+
+
+def is_article_markdown_enabled() -> bool:
+    value = os.environ.get("SV_ENABLE_ARTICLE_MARKDOWN")
+    if value is None:
+        value = os.environ.get("SV_WRITE_ARTICLE_PAGES")
+    if value is None:
+        return False
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
