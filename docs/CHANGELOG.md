@@ -491,3 +491,17 @@ All structural changes (schema/query/pipeline/job types/routing/build) must be r
   - None.
 - Manual operator steps:
   - Restart workers to pick up new SV_WORKER_ONLY_TYPES.
+
+---
+
+- Date: 2026-02-01
+- Summary: Removed legacy site/ directory and ignored site-public output.
+- Files touched:
+  - .gitignore
+  - site/ (removed)
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - None.

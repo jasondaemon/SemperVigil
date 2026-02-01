@@ -31,6 +31,7 @@ data/
 logs/
 
 # --- Generated site output ---
+site-public/
 site/public/
 site/resources/
 site/.hugo_build.lock
