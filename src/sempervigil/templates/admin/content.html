@@ -20,8 +20,14 @@
       </select>
       <select id="content-missing">
         <option value="">Missing field</option>
-        <option value="content">Missing content</option>
         <option value="summary">Missing summary</option>
+        <option value="products">Missing product/vendor</option>
+      </select>
+      <select id="content-state">
+        <option value="">Any content state</option>
+        <option value="missing">Missing content</option>
+        <option value="partial">Partial content</option>
+        <option value="full">Full content</option>
       </select>
       <input type="date" id="content-after">
       <input type="date" id="content-before">
@@ -58,8 +64,7 @@
           <option value="MEDIUM">MEDIUM</option>
           <option value="LOW">LOW</option>
         </select>
-        <input type="number" step="0.1" id="content-min-cvss" placeholder="Min CVSS">
-        {% if watchlist_enabled %}
+                {% if watchlist_enabled %}
         <label class="inline-check">
           <input type="checkbox" id="content-watchlist-only">
           Watchlist hits only
@@ -85,6 +90,7 @@
           <th>ID</th>
           <th>Date</th>
           <th>Title / Summary</th>
+          <th>Status</th>
           <th>Source</th>
           {% if watchlist_enabled %}
           <th>Watchlist</th>

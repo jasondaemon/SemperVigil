@@ -336,7 +336,16 @@ SEMPERVIGIL_KEY_ID=v1</pre>
       </thead>
       <tbody>
         {% for profile in profiles %}
-        <tr data-profile-id="{{ profile.id }}">
+        <tr
+          data-profile-id="{{ profile.id }}"
+          data-provider-id="{{ profile.primary_provider_id }}"
+          data-model-id="{{ profile.primary_model_id }}"
+          data-prompt-id="{{ profile.prompt_id }}"
+          data-schema-id="{{ profile.schema_id }}"
+          data-params='{{ profile.params | tojson | safe }}'
+          data-fallback='{{ profile.fallback | tojson | safe }}'
+          data-enabled="{{ profile.is_enabled }}"
+        >
           <td class="profile-name">{{ profile.name }}</td>
           <td class="profile-provider">{{ profile.provider_name }}</td>
           <td class="profile-model">{{ profile.model_name }}</td>

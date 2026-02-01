@@ -1,5 +1,7 @@
 # NEXT_STEP_PLAN.md — Phase 1: CVE Linking + Audit Trace (No Events)
 
+> **Current runtime notes:** see [CURRENT_CONTEXT.md](CURRENT_CONTEXT.md) before troubleshooting or starting a new chat.
+
 ## Goal (Phase 1)
 For each accepted article:
 1) deterministically extract CVE IDs (and a few basic signals)

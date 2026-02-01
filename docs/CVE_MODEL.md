@@ -1,5 +1,7 @@
 # CVE_MODEL.md — CVE Intelligence Model (Draft)
 
+> **Current runtime notes:** see [CURRENT_CONTEXT.md](CURRENT_CONTEXT.md) before troubleshooting or starting a new chat.
+
 > Design-only reference for CVE ingestion and correlation.
 > No implementation changes should occur without explicit approval.
 

@@ -13,7 +13,6 @@ async function apiFetch(url, options = {}) {
   }
   return response.json();
 }
-
 function showToast(message) {
   const toast = document.createElement("div");
   toast.className = "toast";
@@ -22,6 +21,9 @@ function showToast(message) {
   setTimeout(() => toast.remove(), 2500);
 }
 
+function toast(message, _type) {
+  showToast(message);
+}
 function esc(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -30,7 +32,6 @@ function esc(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 }
-
 function formatAbsolute(value) {
   if (!value) {
     return "";
@@ -55,7 +56,6 @@ function formatAbsolute(value) {
   );
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
 }
-
 function formatRelative(value) {
   if (!value) {
     return "";
@@ -89,10 +89,15 @@ function formatRelative(value) {
   return `${parts.month} ${parts.day} ${parts.hour}:${parts.minute}`;
 }
 
+function formatDateOnly(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" });
+}
 function formatTimestamp(value) {
   return formatAbsolute(value);
 }
-
 function applyTimestampFormatting(root = document) {
   root.querySelectorAll("[data-ts]").forEach((el) => {
     const raw = el.getAttribute("data-ts");
@@ -105,7 +110,6 @@ function applyTimestampFormatting(root = document) {
     }
   });
 }
-
 function shortId(value) {
   const id = String(value || "");
   if (id.length <= 12) {
@@ -113,7 +117,6 @@ function shortId(value) {
   }
   return `${id.slice(0, 6)}…${id.slice(-4)}`;
 }
-
 function renderShortId(value, href) {
   const full = String(value || "");
   const short = shortId(full);
@@ -125,7 +128,6 @@ function renderShortId(value, href) {
     </span>
   `;
 }
-
 function statusBadge(status) {
   const value = String(status || "unknown");
   let cls = "badge muted";
@@ -134,7 +136,6 @@ function statusBadge(status) {
   if (value === "running" || value === "queued") cls = "badge warn";
   return `<span class="${cls}">${esc(value)}</span>`;
 }
-
 function applyShortIds(root = document) {
   root.querySelectorAll(".id-short").forEach((el) => {
     const full = el.getAttribute("title") || el.textContent || "";
@@ -142,7 +143,6 @@ function applyShortIds(root = document) {
     el.textContent = shortId(full);
   });
 }
-
 function formatWhen(job) {
   const when = job.finished_at || job.started_at || job.requested_at || "";
   const titleParts = [
@@ -153,7 +153,6 @@ function formatWhen(job) {
   const title = titleParts.join(" | ");
   return `<span data-ts="${esc(when)}" title="${esc(title)}">${esc(formatRelative(when))}</span>`;
 }
-
 function wireCopyButtons(root = document) {
   root.addEventListener("click", async (event) => {
     const target = event.target;
@@ -172,7 +171,6 @@ function wireCopyButtons(root = document) {
     }
   });
 }
-
 function wireActionMenus(root = document) {
   const closeAll = () => {
     root.querySelectorAll(".action-menu.open").forEach((menu) => menu.classList.remove("open"));
@@ -204,28 +202,15 @@ function wireActionMenus(root = document) {
     }
   });
 }
-
 function wireDashboard() {
   const backlog = document.getElementById("dashboard-backlog");
   const jobsPanel = document.getElementById("dashboard-job-counts");
   const checkBtn = document.getElementById("dashboard-pipeline-check");
+  const queueBanner = document.getElementById("queue-stale-banner");
   if (!backlog || !jobsPanel) {
     return;
   }
-
-  const jobTypes = [
-    "ingest_source",
-    "fetch_article_content",
-    "summarize_article_llm",
-    "write_article_markdown",
-    "cve_sync",
-    "events_rebuild",
-    "build_site",
-    "derive_events_from_articles",
-    "enrich_event_from_web",
-    "promote_event_web_source_to_article",
-  ];
-
+  const staleMinutes = parseInt(document.body.dataset.queueStaleMinutes || "0", 10);
   function renderBacklog(data) {
     backlog.innerHTML = "";
     const items = [
@@ -269,10 +254,28 @@ function wireDashboard() {
         action: "cve_description",
       },
       {
+        label: "Articles missing product/vendor",
+        value: data.articles_missing_products_count || 0,
+        link: "/ui/content?type=article&missing=products",
+        action: "article_products",
+      },
+      {
         label: "CVEs missing product/vendor/version",
         value: data.cves_missing_products_count || 0,
         link: "/ui/cves",
         action: "cve_products",
+      },
+      {
+        label: "Articles missing threat actors",
+        value: data.articles_missing_threat_actors_count || 0,
+        link: "/ui/content?type=article&missing=threat_actors",
+        action: "article_threats",
+      },
+      {
+        label: "CVEs missing threat actors",
+        value: data.cves_missing_threat_actors_count || 0,
+        link: "/ui/cves",
+        action: "cve_threats",
       },
       {
         label: "LLM configured",
@@ -288,90 +291,201 @@ function wireDashboard() {
     items.forEach((item) => {
       const card = document.createElement("div");
       card.className = "card";
+      const hasAction = Boolean(item.action);
+      const actionLabel = "Queue";
+      const limitSelect =
+        item.action === "cve_products" ||
+        item.action === "article_products" ||
+        item.action === "article_threats" ||
+        item.action === "cve_threats"
+          ? `<label class="inline-select">Limit
+               <select class="dashboard-limit" data-kind="${item.action}">
+                 <option value="50">50</option>
+                 <option value="200" selected>200</option>
+                 <option value="500">500</option>
+               </select>
+             </label>`
+          : "";
       card.innerHTML = `
         <div class="card-title">${item.label}</div>
-        <div class="card-value"><a href="${item.link}">${item.value}</a></div>
-        ${item.action ? `<button class="btn small secondary dashboard-queue" data-kind="${item.action}">Queue missing</button>` : ""}
+        <div class="card-metric">
+          <div class="card-value"><a href="${item.link}">${item.value}</a></div>
+          ${hasAction ? `<div class="card-metric-actions">
+            <button class="btn tiny secondary dashboard-queue" data-kind="${item.action}">${actionLabel}</button>
+            ${limitSelect}
+          </div>` : ""}
+        </div>
+        ${hasAction ? `<div class="card-note" data-kind="${item.action}"></div>` : ""}
       `;
       backlog.appendChild(card);
     });
   }
-
-  function renderJobCounts(counts) {
-    jobsPanel.innerHTML = "<h3>Job Queue</h3>";
-    const table = document.createElement("table");
-    table.className = "table compact";
-    table.innerHTML = `
+  function renderJobCounts(counts, jobTypes, countsSince) {
+    const types = jobTypes && jobTypes.length ? jobTypes : Object.keys(counts).sort();
+    const sinceEl = document.getElementById("dashboard-job-counts-since");
+    if (sinceEl) {
+      if (countsSince) {
+        sinceEl.textContent = `since ${formatTimestamp(countsSince)}`;
+      } else {
+        sinceEl.textContent = "";
+      }
+    }
+    const headerHtml = `
       <thead>
         <tr>
           <th>Job Type</th>
           <th>Queued</th>
-          <th>Running</th>
           <th>Failed</th>
+          <th>Completed</th>
         </tr>
       </thead>
       <tbody></tbody>
     `;
-    const body = table.querySelector("tbody");
-    jobTypes.forEach((jobType) => {
-      const statusMap = counts[jobType] || {};
-      const row = document.createElement("tr");
-      row.innerHTML = `
-        <td>${jobType}</td>
-        <td>${statusMap.queued || 0}</td>
-        <td>${statusMap.running || 0}</td>
-        <td>${statusMap.failed || 0}</td>
-      `;
-      body.appendChild(row);
+    const midpoint = Math.ceil(types.length / 2);
+    const columns = [types.slice(0, midpoint), types.slice(midpoint)];
+    const wrapper = document.createElement("div");
+    wrapper.className = "job-counts-grid";
+    columns.forEach((column) => {
+      const table = document.createElement("table");
+      table.className = "table compact job-counts-table";
+      table.innerHTML = headerHtml;
+      const body = table.querySelector("tbody");
+      column.forEach((jobType) => {
+        const statusMap = counts[jobType] || {};
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${jobType}</td>
+          <td>${statusMap.queued || 0}</td>
+          <td>${statusMap.failed || 0}</td>
+          <td>${statusMap.succeeded || 0}</td>
+        `;
+        body.appendChild(row);
+      });
+      wrapper.appendChild(table);
     });
-    jobsPanel.appendChild(table);
+    const container = document.getElementById("dashboard-job-counts-table");
+    if (container) {
+      container.innerHTML = "";
+      container.appendChild(wrapper);
+    } else {
+      jobsPanel.innerHTML = "<h3>Job Queue</h3>";
+      jobsPanel.appendChild(wrapper);
+    }
   }
-
   async function loadMetrics() {
     const data = await apiFetch("/admin/api/dashboard/metrics");
     renderBacklog(data);
-    renderJobCounts(data.job_counts_by_type_status || {});
+    renderJobCounts(
+      data.job_counts_by_type_status || {},
+      data.job_types || [],
+      data.job_counts_since || null
+    );
   }
-
-
+  async function loadQueueDiagnostics() {
+    if (!queueBanner || !staleMinutes) {
+      return;
+    }
+    const data = await apiFetch("/admin/api/diagnostics/queue");
+    const items = Array.isArray(data.queue) ? data.queue : [];
+    const stale = items.filter((item) => {
+      if (typeof item.oldest_age_minutes !== "number") {
+        return false;
+      }
+      return item.oldest_age_minutes >= staleMinutes;
+    });
+    if (!stale.length) {
+      queueBanner.style.display = "none";
+      queueBanner.textContent = "";
+      return;
+    }
+    const detail = stale
+      .map((item) => `${item.job_type} (${item.oldest_age_minutes}m, ${item.queued} queued)`)
+      .join("; ");
+    queueBanner.textContent = `Queued jobs older than ${staleMinutes}m: ${detail}. Hint: No worker claims this job type; check SV_WORKER_ONLY_TYPES.`;
+    queueBanner.style.display = "block";
+  }
   backlog.addEventListener("click", async (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
       return;
     }
+    if (target.classList.contains("dashboard-refresh")) {
+      loadMetrics().catch((err) => showToast(err.message || String(err)));
+      return;
+    }
     if (target.classList.contains("dashboard-queue")) {
       const kind = target.dataset.kind || "";
+      const limitSelect = backlog.querySelector(`.dashboard-limit[data-kind="${kind}"]`);
+      const limit = limitSelect ? parseInt(limitSelect.value, 10) : undefined;
+      const note = backlog.querySelector(`.card-note[data-kind="${kind}"]`);
       try {
         const payload = await apiFetch("/admin/api/dashboard/queue_missing", {
           method: "POST",
-          body: JSON.stringify({ kind }),
+          body: JSON.stringify({ kind, limit }),
         });
         if (payload.status === "disabled") {
-          showToast(payload.message || "Summarization disabled");
+          const msg = payload.message || "Queue disabled";
+          showToast(msg);
+          if (note) {
+            note.textContent = msg;
+          }
         } else if (payload.job_id) {
           showToast(`Queued: ${payload.job_id}`);
         } else {
           showToast(`Queued ${payload.queued || 0} (skipped ${payload.skipped || 0})`);
         }
+        if (note && payload.status !== "disabled") {
+          note.textContent = `Queued ${payload.queued || 0} (skipped ${payload.skipped || 0})`;
+        }
         await loadMetrics();
       } catch (err) {
         showToast(err.message || String(err));
+        if (note) {
+          note.textContent = err.message || String(err);
+        }
       }
     }
   });
-
   if (checkBtn) {
     checkBtn.addEventListener("click", () => {
       loadMetrics().catch((err) => showToast(err.message || String(err)));
     });
   }
-
+  const resetFailuresBtn = document.getElementById("reset-failures");
+  if (resetFailuresBtn) {
+    resetFailuresBtn.addEventListener("click", async () => {
+      try {
+        const payload = await apiFetch("/admin/api/dashboard/reset_failures", { method: "POST" });
+        const since = payload && payload.counts_since ? formatTimestamp(payload.counts_since) : null;
+        showToast(since ? `Counts reset (${since})` : "Failure counts reset", "success");
+        loadMetrics().catch((err) => showToast(err.message || String(err)));
+      } catch (err) {
+        showToast(err.message || String(err), "error");
+      }
+    });
+  }
+  const rebuildVendorBtn = document.getElementById("dashboard-rebuild-vendor-products");
+  if (rebuildVendorBtn) {
+    rebuildVendorBtn.addEventListener("click", async () => {
+      try {
+        const payload = await apiFetch("/admin/api/dashboard/rebuild_vendor_products", { method: "POST" });
+        if (payload && payload.status === "queued") {
+          showToast(`Vendor/product rebuild queued (${payload.job_id})`, "success");
+        } else {
+          showToast("Vendor/product rebuild queued", "success");
+        }
+      } catch (err) {
+        showToast(err.message || String(err), "error");
+      }
+    });
+  }
   loadMetrics().catch((err) => showToast(err.message || String(err)));
+  loadQueueDiagnostics().catch(() => undefined);
   setInterval(() => {
     loadMetrics().catch(() => undefined);
+    loadQueueDiagnostics().catch(() => undefined);
   }, 10000);
 }
-
 function wireLogs() {
   const output = document.getElementById("logs-output");
   if (!output) {
@@ -382,6 +496,10 @@ function wireLogs() {
   const autoToggle = document.getElementById("logs-auto");
   const pinToggle = document.getElementById("logs-pin");
   const refreshBtn = document.getElementById("logs-refresh");
+  const openBtn = document.getElementById("logs-open");
+  const buildControls = document.getElementById("logs-build-controls");
+  const buildStdoutBtn = document.getElementById("logs-build-stdout");
+  const buildStderrBtn = document.getElementById("logs-build-stderr");
   const eventList = document.getElementById("logs-event-list");
   const jobList = document.getElementById("logs-job-list");
   const eventAllBtn = document.getElementById("logs-event-all");
@@ -391,7 +509,38 @@ function wireLogs() {
   let rawLines = [];
   let selectedEvents = null;
   let selectedJobs = null;
-
+  let buildMode = "";
+  const knownEvents = [
+    "job_claimed",
+    "job_succeeded",
+    "job_failed",
+    "build_claimed",
+    "build_succeeded",
+    "build_failed",
+    "builder_once_start",
+    "builder_once_done",
+    "ingest_due_sources_enqueued",
+    "ingest_counts",
+    "source_parsed",
+    "article_markdown_written",
+    "events_purge_start",
+    "events_purge_done",
+    "cve_missing_description_queued",
+    "cve_missing_products_queued",
+    "cve_sync_start",
+    "cve_sync_done",
+    "event_queued",
+    "job_enqueued",
+  ];
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("logs") === "1") {
+    document.body.classList.add("logs-standalone");
+    document.querySelectorAll("section.panel").forEach((panel) => {
+      if (panel.id !== "dashboard-logs") {
+        panel.style.display = "none";
+      }
+    });
+  }
   function parseLine(line) {
     const eventMatch = line.match(/\bevent=([^\s]+)/);
     const jobMatch = line.match(/\bjob_type=([^\s]+)/);
@@ -400,7 +549,6 @@ function wireLogs() {
       jobType: jobMatch ? jobMatch[1] : "",
     };
   }
-
   function buildFilterList(container, items, prefix, selected) {
     container.innerHTML = "";
     items.forEach((item) => {
@@ -412,10 +560,37 @@ function wireLogs() {
         <input type="checkbox" data-value="${item.value}" ${checked ? "checked" : ""} id="${id}">
         <span>${item.value || "—"} <span class="muted">(${item.count})</span></span>
       `;
+      const suppressBtn = document.getElementById("article-suppress-toggle");
+      if (suppressBtn) {
+        suppressBtn.addEventListener("click", async () => {
+          try {
+            const result = await apiFetch(`/admin/api/articles/${articleId}/suppress`, {
+              method: "POST",
+              body: JSON.stringify({ suppressed: !item.suppressed }),
+            });
+            showToast(result.suppressed ? "Article suppressed" : "Article unsuppressed");
+            wireContentArticle();
+          } catch (err) {
+            showToast(err.message || String(err));
+          }
+        });
+      }
       container.appendChild(label);
     });
   }
-
+  let jobTypeUniverse = null;
+  async function loadJobTypeUniverse() {
+    if (jobTypeUniverse) {
+      return;
+    }
+    try {
+      const data = await apiFetch("/admin/api/dashboard/metrics");
+      const types = Array.isArray(data.job_types) ? data.job_types : [];
+      jobTypeUniverse = types.map((value) => ({ value, count: 0 }));
+    } catch (err) {
+      jobTypeUniverse = [];
+    }
+  }
   function collectValues(lines) {
     const eventCounts = new Map();
     const jobCounts = new Map();
@@ -428,6 +603,11 @@ function wireLogs() {
         jobCounts.set(parsed.jobType, (jobCounts.get(parsed.jobType) || 0) + 1);
       }
     });
+    knownEvents.forEach((evt) => {
+      if (!eventCounts.has(evt)) {
+        eventCounts.set(evt, 0);
+      }
+    });
     const events = [...eventCounts.entries()]
       .sort((a, b) => b[1] - a[1])
       .map(([value, count]) => ({ value, count }));
@@ -436,7 +616,6 @@ function wireLogs() {
       .map(([value, count]) => ({ value, count }));
     return { events, jobs };
   }
-
   function getCheckedValues(container) {
     if (!container) return null;
     const checked = new Set();
@@ -447,14 +626,12 @@ function wireLogs() {
     });
     return checked;
   }
-
   function setAll(container, checked) {
     if (!container) return;
     container.querySelectorAll("input[type='checkbox']").forEach((input) => {
       input.checked = checked;
     });
   }
-
   function renderFiltered() {
     selectedEvents = getCheckedValues(eventList);
     selectedJobs = getCheckedValues(jobList);
@@ -475,38 +652,74 @@ function wireLogs() {
       output.scrollTop = output.scrollHeight;
     }
   }
-
   async function loadLogs() {
+    await loadJobTypeUniverse();
     const service = serviceSelect.value;
     const lines = linesSelect.value;
-    const data = await apiFetch(`/admin/api/logs/tail?service=${service}&lines=${lines}`);
-    rawLines = (data.text || "").split("\n").filter((line) => line.trim() !== "");
+    if (service === "builder" && buildMode) {
+      const data = await apiFetch(
+        `/admin/api/logs/builds/latest?stream=${buildMode}&lines=${lines}`
+      );
+      const header = data.log_path ? `# ${data.log_path}\n` : "";
+      output.textContent = `${header}${data.text || ""}`;
+      rawLines = (data.text || "").split("\n").filter((line) => line.trim() !== "");
+    } else {
+      const data = await apiFetch(`/admin/api/logs/tail?service=${service}&lines=${lines}`);
+      rawLines = (data.text || "").split("\n").filter((line) => line.trim() !== "");
+    }
     const { events, jobs } = collectValues(rawLines);
+    let jobListItems = jobs;
+    if (jobTypeUniverse && jobTypeUniverse.length) {
+      const merged = new Map(jobTypeUniverse.map((item) => [item.value, item]));
+      jobs.forEach((item) => {
+        merged.set(item.value, item);
+      });
+      jobListItems = Array.from(merged.values()).sort((a, b) => a.value.localeCompare(b.value));
+    }
     if (eventList && events.length) {
       buildFilterList(eventList, events, "logs-event", selectedEvents);
     }
-    if (jobList && jobs.length) {
-      buildFilterList(jobList, jobs, "logs-job", selectedJobs);
+    if (jobList && jobListItems.length) {
+      buildFilterList(jobList, jobListItems, "logs-job", selectedJobs);
     }
     renderFiltered();
   }
-
+  if (openBtn) {
+    openBtn.addEventListener("click", () => {
+      const url = `${window.location.origin}/ui/?logs=1`;
+      window.open(url, "_blank", "noopener");
+    });
+  }
   if (refreshBtn) {
     refreshBtn.addEventListener("click", () => {
       loadLogs().catch((err) => showToast(err.message || String(err)));
     });
   }
-
+  if (buildStdoutBtn) {
+    buildStdoutBtn.addEventListener("click", () => {
+      buildMode = "stdout";
+      loadLogs().catch((err) => showToast(err.message || String(err)));
+    });
+  }
+  if (buildStderrBtn) {
+    buildStderrBtn.addEventListener("click", () => {
+      buildMode = "stderr";
+      loadLogs().catch((err) => showToast(err.message || String(err)));
+    });
+  }
   [serviceSelect, linesSelect].forEach((el) => {
     if (el) {
       el.addEventListener("change", () => {
         selectedEvents = null;
         selectedJobs = null;
+        buildMode = "";
+        if (buildControls) {
+          buildControls.style.display = serviceSelect.value === "builder" ? "flex" : "none";
+        }
         loadLogs().catch((err) => showToast(err.message || String(err)));
       });
     }
   });
-
   if (eventList) {
     eventList.addEventListener("change", () => renderFiltered());
   }
@@ -537,16 +750,16 @@ function wireLogs() {
       renderFiltered();
     });
   }
-
   setInterval(() => {
     if (autoToggle && autoToggle.checked) {
       loadLogs().catch(() => undefined);
     }
   }, 4000);
-
+  if (buildControls && serviceSelect && serviceSelect.value === "builder") {
+    buildControls.style.display = "flex";
+  }
   loadLogs().catch((err) => showToast(err.message || String(err)));
 }
-
 function wireWatchlist() {
   const vendorTable = document.getElementById("watch-vendors-table");
   const productTable = document.getElementById("watch-products-table");
@@ -562,7 +775,6 @@ function wireWatchlist() {
   const suggestVendors = document.getElementById("watch-suggest-vendors");
   const suggestProducts = document.getElementById("watch-suggest-products");
   const recomputeBtn = document.getElementById("watch-recompute");
-
   function renderVendors(items) {
     const tbody = vendorTable.querySelector("tbody");
     tbody.innerHTML = "";
@@ -576,7 +788,6 @@ function wireWatchlist() {
       tbody.appendChild(row);
     });
   }
-
   function renderProducts(items) {
     const tbody = productTable.querySelector("tbody");
     tbody.innerHTML = "";
@@ -597,7 +808,6 @@ function wireWatchlist() {
       tbody.appendChild(row);
     });
   }
-
   function renderSuggestions(data) {
     if (suggestVendors) {
       suggestVendors.innerHTML = "";
@@ -616,7 +826,6 @@ function wireWatchlist() {
       });
     }
   }
-
   async function refreshAll() {
     const vendors = await apiFetch("/admin/api/watchlist/vendors");
     renderVendors(vendors.items || []);
@@ -625,7 +834,6 @@ function wireWatchlist() {
     const suggestions = await apiFetch("/admin/api/watchlist/suggestions");
     renderSuggestions(suggestions);
   }
-
   vendorForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const name = vendorInput.value.trim();
@@ -640,7 +848,6 @@ function wireWatchlist() {
     showToast("Vendor added");
     refreshAll().catch((err) => showToast(err.message || String(err)));
   });
-
   productForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const name = productInput.value.trim();
@@ -663,7 +870,6 @@ function wireWatchlist() {
     showToast("Product added");
     refreshAll().catch((err) => showToast(err.message || String(err)));
   });
-
   vendorTable.addEventListener("click", async (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
@@ -675,7 +881,6 @@ function wireWatchlist() {
       refreshAll().catch((err) => showToast(err.message || String(err)));
     }
   });
-
   vendorTable.addEventListener("change", async (event) => {
     const target = event.target;
     if (!(target instanceof HTMLInputElement)) {
@@ -690,7 +895,6 @@ function wireWatchlist() {
     });
     showToast("Vendor updated");
   });
-
   productTable.addEventListener("click", async (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
@@ -702,7 +906,6 @@ function wireWatchlist() {
       refreshAll().catch((err) => showToast(err.message || String(err)));
     }
   });
-
   productTable.addEventListener("change", async (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
@@ -724,7 +927,6 @@ function wireWatchlist() {
       showToast("Mode updated");
     }
   });
-
   if (suggestVendors) {
     suggestVendors.addEventListener("click", async (event) => {
       const target = event.target;
@@ -743,7 +945,6 @@ function wireWatchlist() {
       refreshAll().catch((err) => showToast(err.message || String(err)));
     });
   }
-
   if (suggestProducts) {
     suggestProducts.addEventListener("click", async (event) => {
       const target = event.target;
@@ -768,24 +969,20 @@ function wireWatchlist() {
       refreshAll().catch((err) => showToast(err.message || String(err)));
     });
   }
-
   if (recomputeBtn) {
     recomputeBtn.addEventListener("click", async () => {
       await apiFetch("/admin/api/watchlist/recompute", { method: "POST" });
       showToast("Scope recomputed");
     });
   }
-
   refreshAll().catch((err) => showToast(err.message || String(err)));
 }
-
 function buildPageList(current, total) {
   const pages = new Set([1, total, current - 2, current - 1, current, current + 1, current + 2]);
   return Array.from(pages)
     .filter((p) => p >= 1 && p <= total)
     .sort((a, b) => a - b);
 }
-
 function renderPager(container, total, page, size, onPage) {
   if (!container) {
     return;
@@ -794,7 +991,6 @@ function renderPager(container, total, page, size, onPage) {
   const totalPages = Math.max(1, Math.ceil(total / size));
   const controls = document.createElement("div");
   controls.className = "pager-controls";
-
   const prev = document.createElement("button");
   prev.type = "button";
   prev.className = "btn secondary";
@@ -802,7 +998,6 @@ function renderPager(container, total, page, size, onPage) {
   prev.disabled = page <= 1;
   prev.addEventListener("click", () => onPage(page - 1));
   controls.appendChild(prev);
-
   const pages = buildPageList(page, totalPages);
   let last = 0;
   pages.forEach((p) => {
@@ -820,7 +1015,6 @@ function renderPager(container, total, page, size, onPage) {
     controls.appendChild(btn);
     last = p;
   });
-
   const next = document.createElement("button");
   next.type = "button";
   next.className = "btn secondary";
@@ -828,15 +1022,12 @@ function renderPager(container, total, page, size, onPage) {
   next.disabled = page >= totalPages;
   next.addEventListener("click", () => onPage(page + 1));
   controls.appendChild(next);
-
   const info = document.createElement("div");
   info.className = "pager-info";
   info.textContent = `Page ${page} of ${totalPages}`;
-
   container.appendChild(controls);
   container.appendChild(info);
 }
-
 function wireNavDropdowns() {
   const dropdowns = Array.from(document.querySelectorAll(".nav-dropdown"));
   if (!dropdowns.length) {
@@ -877,7 +1068,6 @@ function wireNavDropdowns() {
     }
   });
 }
-
 function wireEnqueueButtons() {
   document.querySelectorAll("[data-enqueue]").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -923,9 +1113,7 @@ function wireEnqueueButtons() {
       }
     });
   }
-
 }
-
 function wireSources() {
   const form = document.getElementById("source-form");
   if (!form) {
@@ -933,27 +1121,99 @@ function wireSources() {
   }
   const table = document.getElementById("sources-table");
   const tbody = table ? table.querySelector("tbody") : null;
-  const idField = document.getElementById("source-id");
   const nameField = document.getElementById("source-name");
   const kindField = document.getElementById("source-kind");
   const urlField = document.getElementById("source-url");
   const intervalField = document.getElementById("source-interval");
   const tagsField = document.getElementById("source-tags");
-  const enabledField = document.getElementById("source-enabled");
+  const addOpen = document.getElementById("source-add-open");
+  const addModal = document.getElementById("source-add-modal");
+  const addClose = document.getElementById("source-add-close");
   const resetBtn = document.getElementById("source-reset");
-
+  function normalizeOverrides(raw) {
+    const base = {
+      discovery: { mode: "default", allowlist_regex: "", blocklist_regex: "" },
+      content: {
+        mode: "default",
+        min_chars: 800,
+        include_selectors: [],
+        exclude_selectors: [],
+        strip_patterns: [],
+        allow_fallback_to_default: true,
+      },
+    };
+    if (!raw || typeof raw !== "object") {
+      return base;
+    }
+    const discovery = raw.discovery && typeof raw.discovery === "object" ? raw.discovery : {};
+    const content = raw.content && typeof raw.content === "object" ? raw.content : {};
+    return {
+      discovery: {
+        mode: discovery.mode || base.discovery.mode,
+        allowlist_regex: discovery.allowlist_regex || "",
+        blocklist_regex: discovery.blocklist_regex || "",
+      },
+      content: {
+        mode: content.mode || base.content.mode,
+        min_chars: Number.isFinite(parseInt(content.min_chars, 10))
+          ? parseInt(content.min_chars, 10)
+          : base.content.min_chars,
+        include_selectors: Array.isArray(content.include_selectors)
+          ? content.include_selectors
+          : [],
+        exclude_selectors: Array.isArray(content.exclude_selectors)
+          ? content.exclude_selectors
+          : [],
+        strip_patterns: Array.isArray(content.strip_patterns)
+          ? content.strip_patterns
+          : [],
+        allow_fallback_to_default:
+          content.allow_fallback_to_default === undefined
+            ? base.content.allow_fallback_to_default
+            : !!content.allow_fallback_to_default,
+      },
+    };
+  }
+  function listToText(value) {
+    if (!Array.isArray(value)) {
+      return "";
+    }
+    return value.join("\n");
+  }
+  function parseList(value) {
+    if (!value) {
+      return [];
+    }
+    return value
+      .split(/\n|,/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  function overridesIsEmpty(overrides) {
+    if (!overrides) {
+      return true;
+    }
+    const d = overrides.discovery || {};
+    const c = overrides.content || {};
+    const discoveryDefault =
+      (d.mode || "default") === "default" && !d.allowlist_regex && !d.blocklist_regex;
+    const contentDefault =
+      (c.mode || "default") === "default" &&
+      (parseInt(c.min_chars || 800, 10) === 800) &&
+      (!c.include_selectors || c.include_selectors.length === 0) &&
+      (!c.exclude_selectors || c.exclude_selectors.length === 0) &&
+      (!c.strip_patterns || c.strip_patterns.length === 0) &&
+      (c.allow_fallback_to_default === undefined || c.allow_fallback_to_default === true);
+    return discoveryDefault && contentDefault;
+  }
   function resetForm() {
-    idField.value = "";
     nameField.value = "";
     kindField.value = "rss";
     urlField.value = "";
     intervalField.value = "60";
     tagsField.value = "";
-    enabledField.checked = true;
   }
-
   resetBtn.addEventListener("click", resetForm);
-
   function renderSourcesTable(sources) {
     if (!tbody) {
       return;
@@ -963,37 +1223,156 @@ function wireSources() {
       const row = document.createElement("tr");
       row.dataset.sourceId = source.id;
       row.dataset.sourceUrl = source.url || "";
+      row.dataset.sourceName = source.name || "";
+      row.dataset.sourceKind = source.kind || "";
+      row.dataset.sourceInterval = source.interval_minutes || "";
+      row.dataset.sourceTags = (source.tags || []).join(", ");
+      const overrides = normalizeOverrides(source.overrides);
+      const discovery = overrides.discovery;
+      const content = overrides.content;
       const acquiring = source.acquire_status === "queued" || source.acquire_status === "running";
       const acquireLabel = acquiring ? `Acquire (${source.acquire_status})` : "Acquire";
       const newCount = source.new_count || 0;
       const gatheredCount = source.gathered_count || 0;
       const summarizedCount = source.summarized_count || 0;
+      let statusHtml = '<span class="status-pill">Unknown</span>';
+      if (source.last_error) {
+        statusHtml = '<span class="status-pill status-error">Error</span>';
+      } else if (source.pause_until || source.enabled === false) {
+        statusHtml = '<button class="status-pill status-warn source-resume" type="button" title="Click to resume">Paused</button>';
+      } else {
+        statusHtml = '<button class="status-pill status-ok source-pause" type="button" title="Click to pause">Enabled</button>';
+      }
       row.innerHTML = `
-        <td><input type="checkbox" class="toggle-enabled" ${source.enabled ? "checked" : ""}></td>
-        <td class="source-name">${source.name}</td>
-        <td class="source-kind">${source.kind || ""}</td>
-        <td class="source-interval">${source.interval_minutes}</td>
-        <td>
-          ${source.last_error ? '<span class="status-pill status-error">Error</span>' : source.pause_until ? '<button class="status-pill status-warn source-resume" type="button" title="Click to resume">Paused</button>' : source.last_ok_at ? '<span class="status-pill status-ok">OK</span>' : '<span class="status-pill">Unknown</span>'}
+        <td>${statusHtml}</td>
+        <td class="source-cell">
+          <div class="source-line">
+            <span class="source-name">${esc(source.name)}</span>
+          </div>
         </td>
-        <td>${esc(formatTimestamp(source.pause_until))}</td>
-        <td class="truncate" title="${source.paused_reason || ""}">${source.paused_reason || ""}</td>
-        <td>${newCount}</td>
-        <td>${gatheredCount}</td>
-        <td>${summarizedCount}</td>
-        <td>${source.articles_24h || 0}</td>
-        <td>${source.total_articles || 0}</td>
-        <td class="source-tags">${(source.tags || []).join(", ")}</td>
-        <td>${esc(formatTimestamp(source.last_ok_at))}</td>
-        <td class="truncate" title="${source.last_error || ""}">${source.last_error || ""}</td>
+        <td class="source-cell source-stack">
+          ${source.pause_until || source.enabled === false ? `
+          <div class="source-line">
+            <span class="source-meta">Pause until:</span>
+            <span>${esc(formatTimestamp(source.pause_until))}</span>
+          </div>
+          <div class="source-subline">
+            <span class="source-meta">Reason:</span>
+            <span class="truncate" title="${esc(source.paused_reason || "")}">${esc(source.paused_reason || "")}</span>
+          </div>` : ""}
+          <div class="source-subline">
+            ${source.last_successful_poll_at ? `<span class="source-meta">Last Successful Poll:</span><span>${esc(formatTimestamp(source.last_successful_poll_at))}</span>` : ""}
+            ${source.last_article_at ? `<span class="source-meta">Last Article Acquired:</span><span>${esc(formatTimestamp(source.last_article_at))}</span>` : ""}
+            ${source.last_error ? `<span class="source-meta">Last Error:</span><span class="truncate" title="${esc(source.last_error)}">${esc(source.last_error)}</span>` : ""}
+          </div>
+        </td>
+        <td class="source-cell">
+          <div class="counts-line">
+            <span class="count-pill ${newCount ? "count-attn" : ""}">New ${newCount}</span>
+            <span class="count-pill ${gatheredCount ? "count-attn" : ""}">Gathered ${gatheredCount}</span>
+          </div>
+          <div class="counts-line">
+            <span class="count-pill">24h ${source.articles_24h || 0}</span>
+            <span class="count-pill">Total ${source.total_articles || 0}</span>
+          </div>
+        </td>
         <td class="table-actions">
-          <button class="btn small secondary acquire-source" type="button" ${acquiring ? "disabled" : ""}>${acquireLabel}</button>
-          <button class="btn small fetch-missing" type="button" ${newCount > 0 ? "" : "disabled"}>Fetch</button>
-          <button class="btn small summarize-missing" type="button" ${gatheredCount > 0 ? "" : "disabled"}>Summarize</button>
-          <button class="btn small test-source" type="button">Test</button>
-          <button class="btn small secondary history-source" type="button">History</button>
-          <button class="btn small secondary edit-source" type="button">Edit</button>
-          <button class="btn small danger delete-source" type="button">Delete</button>
+          <div class="actions-grid">
+            <button class="btn small secondary acquire-source" type="button" ${acquiring ? "disabled" : ""}>${acquireLabel}</button>
+            <button class="btn small fetch-missing" type="button" ${newCount > 0 ? "" : "disabled"}>Fetch</button>
+            <button class="btn small summarize-missing" type="button" ${gatheredCount > 0 ? "" : "disabled"}>Summarize</button>
+            <button class="btn small test-source" type="button">Test</button>
+            <button class="btn small secondary history-source" type="button">History</button>
+            <button class="btn small secondary edit-source" type="button">Edit</button>
+            <button class="btn small danger delete-source" type="button">Delete</button>
+          </div>
+        </td>
+      `;
+      const editRow = document.createElement("tr");
+      editRow.className = "edit-result";
+      editRow.dataset.sourceId = source.id;
+      editRow.style.display = "none";
+      editRow.innerHTML = `
+        <td colspan="5">
+          <form class="source-edit-form">
+            <div class="grid">
+              <label>Source ID<input type="text" value="${esc(source.id)}" readonly></label>
+              <label>Name<input type="text" name="name" value="${esc(source.name)}"></label>
+              <label>Kind
+                <select name="kind">
+                  <option value="rss" ${source.kind === "rss" ? "selected" : ""}>rss</option>
+                  <option value="html" ${source.kind === "html" ? "selected" : ""}>html</option>
+                </select>
+              </label>
+              <label>URL<input type="url" name="url" value="${esc(source.url || "")}"></label>
+              <label>Interval (min)<input type="number" name="interval" value="${source.interval_minutes || 60}"></label>
+              <label>Tags (comma)<input type="text" name="tags" value="${esc((source.tags || []).join(", "))}"></label>
+            </div>
+            <details class="source-overrides">
+              <summary>Overrides</summary>
+              <div class="muted help-text">Only set this for problematic sources; blank = default behavior.</div>
+              <div class="grid">
+                <label>Discovery mode
+                  <select name="override-discovery-mode">
+                    <option value="default" ${discovery.mode === "default" ? "selected" : ""}>default</option>
+                    <option value="rss_only" ${discovery.mode === "rss_only" ? "selected" : ""}>rss_only</option>
+                  </select>
+                </label>
+                <label>Discovery allowlist regex
+                  <input type="text" name="override-discovery-allowlist" value="${esc(
+                    discovery.allowlist_regex || ""
+                  )}">
+                </label>
+                <label>Discovery blocklist regex
+                  <input type="text" name="override-discovery-blocklist" value="${esc(
+                    discovery.blocklist_regex || ""
+                  )}">
+                </label>
+                <label>Content mode
+                  <select name="override-content-mode">
+                    <option value="default" ${content.mode === "default" ? "selected" : ""}>default</option>
+                    <option value="jsonld_articlebody" ${
+                      content.mode === "jsonld_articlebody" ? "selected" : ""
+                    }>jsonld_articlebody</option>
+                    <option value="readability" ${content.mode === "readability" ? "selected" : ""}>readability</option>
+                    <option value="trafilatura" ${content.mode === "trafilatura" ? "selected" : ""}>trafilatura</option>
+                    <option value="css_selectors" ${content.mode === "css_selectors" ? "selected" : ""}>css_selectors</option>
+                  </select>
+                </label>
+                <label>Content min chars
+                  <input type="number" name="override-content-min-chars" value="${content.min_chars || 800}">
+                </label>
+                <label>Include selectors (one per line)
+                  <textarea name="override-content-include" rows="3">${esc(listToText(content.include_selectors))}</textarea>
+                </label>
+                <label>Exclude selectors (one per line)
+                  <textarea name="override-content-exclude" rows="3">${esc(listToText(content.exclude_selectors))}</textarea>
+                </label>
+                <label>Strip patterns (regex, one per line)
+                  <textarea name="override-content-strip" rows="3">${esc(listToText(content.strip_patterns))}</textarea>
+                </label>
+                <label class="checkbox">
+                  <input type="checkbox" name="override-content-fallback" ${
+                    content.allow_fallback_to_default ? "checked" : ""
+                  }> Allow fallback to default
+                </label>
+              </div>
+              <div class="override-test">
+                <label>Test extraction URL
+                  <input type="url" name="override-test-url" placeholder="https://example.com/story/...">
+                </label>
+                <button class="btn small secondary test-override" type="button">Test override</button>
+                <div class="override-test-result" hidden>
+                  <div class="mono override-test-meta"></div>
+                  <pre class="mono override-test-preview"></pre>
+                </div>
+              </div>
+            </details>
+            <div class="actions">
+              <button class="btn small edit-save" type="button">Save</button>
+              <button class="btn small secondary edit-cancel" type="button">Cancel</button>
+            </div>
+          </form>
         </td>
       `;
       const testRow = document.createElement("tr");
@@ -1001,8 +1380,9 @@ function wireSources() {
       testRow.dataset.sourceId = source.id;
       testRow.style.display = "none";
       testRow.innerHTML = `
-        <td colspan="16">
+        <td colspan="5">
           <div class="test-summary"></div>
+          <button class="btn small secondary test-close" type="button">Hide</button>
           <details class="test-details">
             <summary>Details</summary>
             <pre class="mono test-raw"></pre>
@@ -1013,13 +1393,13 @@ function wireSources() {
       historyRow.className = "history-result";
       historyRow.dataset.sourceId = source.id;
       historyRow.style.display = "none";
-      historyRow.innerHTML = `<td colspan="16"><div class="history-table"></div></td>`;
+      historyRow.innerHTML = `<td colspan="5"><div class="history-table"></div></td>`;
       tbody.appendChild(row);
+      tbody.appendChild(editRow);
       tbody.appendChild(testRow);
       tbody.appendChild(historyRow);
     });
   }
-
   async function refreshSources() {
     try {
       const sources = await apiFetch("/sources");
@@ -1028,36 +1408,31 @@ function wireSources() {
       alert(err);
     }
   }
-
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const payload = {
-      id: idField.value.trim() || undefined,
       name: nameField.value.trim(),
       kind: kindField.value,
       url: urlField.value.trim(),
       interval_minutes: parseInt(intervalField.value, 10),
       tags: tagsField.value.trim(),
-      enabled: enabledField.checked,
+      enabled: true,
     };
-    const hasId = Boolean(idField.value);
-    const target = hasId ? `/sources/${idField.value}` : "/sources";
-    const method = hasId ? "PUT" : "POST";
     try {
-      await apiFetch(target, {
-        method,
+      await apiFetch("/sources", {
+        method: "POST",
         body: JSON.stringify(payload),
       });
-      if (!hasId) {
-        resetForm();
+      resetForm();
+      showToast("Source added");
+      if (addModal) {
+        addModal.style.display = "none";
       }
-      showToast("Source saved");
       await refreshSources();
     } catch (err) {
       alert(err);
     }
   });
-
   if (tbody) {
     tbody.addEventListener("click", async (event) => {
       const target = event.target;
@@ -1069,18 +1444,74 @@ function wireSources() {
         return;
       }
       const sourceId = row.dataset.sourceId;
-
       if (target.classList.contains("edit-source")) {
-        idField.value = sourceId;
-        nameField.value = row.querySelector(".source-name").textContent.trim();
-        kindField.value = row.querySelector(".source-kind").textContent.trim() || "rss";
-        urlField.value = row.dataset.sourceUrl || "";
-        intervalField.value = row.querySelector(".source-interval").textContent.trim() || "60";
-        tagsField.value = row.querySelector(".source-tags").textContent.trim();
-        enabledField.checked = row.querySelector(".toggle-enabled").checked;
+        const editRow = document.querySelector(
+          `tr.edit-result[data-source-id="${sourceId}"]`
+        );
+        editRow.style.display = editRow.style.display === "table-row" ? "none" : "table-row";
         return;
       }
-
+      if (target.classList.contains("edit-cancel")) {
+        const editRow = target.closest("tr.edit-result");
+        if (editRow) {
+          editRow.style.display = "none";
+        }
+        return;
+      }
+      if (target.classList.contains("edit-save")) {
+        const editRow = target.closest("tr.edit-result");
+        const formEl = editRow.querySelector(".source-edit-form");
+        const overrides = {
+          discovery: {
+            mode: formEl.querySelector('select[name="override-discovery-mode"]').value,
+            allowlist_regex: formEl
+              .querySelector('input[name="override-discovery-allowlist"]')
+              .value.trim(),
+            blocklist_regex: formEl
+              .querySelector('input[name="override-discovery-blocklist"]')
+              .value.trim(),
+          },
+          content: {
+            mode: formEl.querySelector('select[name="override-content-mode"]').value,
+            min_chars: parseInt(
+              formEl.querySelector('input[name="override-content-min-chars"]').value,
+              10
+            ),
+            include_selectors: parseList(
+              formEl.querySelector('textarea[name="override-content-include"]').value
+            ),
+            exclude_selectors: parseList(
+              formEl.querySelector('textarea[name="override-content-exclude"]').value
+            ),
+            strip_patterns: parseList(
+              formEl.querySelector('textarea[name="override-content-strip"]').value
+            ),
+            allow_fallback_to_default: !!formEl.querySelector(
+              'input[name="override-content-fallback"]'
+            ).checked,
+          },
+        };
+        const payload = {
+          name: formEl.querySelector('input[name="name"]').value.trim(),
+          kind: formEl.querySelector('select[name="kind"]').value,
+          url: formEl.querySelector('input[name="url"]').value.trim(),
+          interval_minutes: parseInt(formEl.querySelector('input[name="interval"]').value, 10),
+          tags: formEl.querySelector('input[name="tags"]').value.trim(),
+          overrides: overridesIsEmpty(overrides) ? null : overrides,
+        };
+        try {
+          await apiFetch(`/sources/${sourceId}`, {
+            method: "PUT",
+            body: JSON.stringify(payload),
+          });
+          showToast("Source saved");
+          editRow.style.display = "none";
+          await refreshSources();
+        } catch (err) {
+          alert(err);
+        }
+        return;
+      }
       if (target.classList.contains("source-resume")) {
         if (!confirm("Resume this source?")) {
           return;
@@ -1094,7 +1525,22 @@ function wireSources() {
         }
         return;
       }
-
+      if (target.classList.contains("source-pause")) {
+        if (!confirm("Pause this source?")) {
+          return;
+        }
+        try {
+          await apiFetch(`/sources/${sourceId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ enabled: false }),
+          });
+          showToast("Source paused");
+          await refreshSources();
+        } catch (err) {
+          alert(err);
+        }
+        return;
+      }
       if (target.classList.contains("delete-source")) {
         if (!confirm(`Delete source ${sourceId}?`)) {
           return;
@@ -1108,7 +1554,6 @@ function wireSources() {
         }
         return;
       }
-
       if (target.classList.contains("acquire-source")) {
         try {
           const result = await apiFetch(`/admin/api/sources/${sourceId}/acquire`, {
@@ -1122,7 +1567,6 @@ function wireSources() {
         }
         return;
       }
-
       if (target.classList.contains("fetch-missing")) {
         try {
           const result = await apiFetch(`/admin/api/sources/${sourceId}/fetch_missing`, {
@@ -1134,7 +1578,6 @@ function wireSources() {
         }
         return;
       }
-
       if (target.classList.contains("summarize-missing")) {
         try {
           const result = await apiFetch(`/admin/api/sources/${sourceId}/summarize_missing`, {
@@ -1147,6 +1590,13 @@ function wireSources() {
           showToast(`Summarize queued: ${result.queued || 0}`);
         } catch (err) {
           alert(err);
+        }
+        return;
+      }
+      if (target.classList.contains("test-close")) {
+        const outputRow = target.closest("tr.test-result");
+        if (outputRow) {
+          outputRow.style.display = "none";
         }
         return;
       }
@@ -1169,7 +1619,30 @@ function wireSources() {
         }
         return;
       }
-
+      if (target.classList.contains("test-override")) {
+        const editRow = target.closest("tr.edit-result");
+        const formEl = editRow.querySelector(".source-edit-form");
+        const urlValue = formEl.querySelector('input[name="override-test-url"]').value.trim();
+        if (!urlValue) {
+          alert("Enter a URL to test.");
+          return;
+        }
+        const resultBox = formEl.querySelector(".override-test-result");
+        const meta = formEl.querySelector(".override-test-meta");
+        const preview = formEl.querySelector(".override-test-preview");
+        try {
+          const result = await apiFetch(`/admin/api/sources/${sourceId}/test_override`, {
+            method: "POST",
+            body: JSON.stringify({ url: urlValue }),
+          });
+          meta.textContent = `method=${result.method} chars=${result.char_count}`;
+          preview.textContent = result.preview_first_400 || "";
+          resultBox.hidden = false;
+        } catch (err) {
+          alert(err);
+        }
+        return;
+      }
       if (target.classList.contains("history-source")) {
         const outputRow = document.querySelector(
           `tr.history-result[data-source-id="${sourceId}"]`
@@ -1218,31 +1691,8 @@ function wireSources() {
         return;
       }
     });
-
-    tbody.addEventListener("change", async (event) => {
-      const target = event.target;
-      if (!(target instanceof HTMLInputElement)) {
-        return;
-      }
-      if (!target.classList.contains("toggle-enabled")) {
-        return;
-      }
-      const row = target.closest("tr");
-      const sourceId = row.dataset.sourceId;
-      try {
-        await apiFetch(`/sources/${sourceId}`, {
-          method: "PATCH",
-          body: JSON.stringify({ enabled: target.checked }),
-        });
-        showToast("Source updated");
-      } catch (err) {
-        alert(err);
-        target.checked = !target.checked;
-      }
-    });
   }
 }
-
 function wireJobs() {
   const refresh = document.getElementById("jobs-refresh");
   const cancelAll = document.getElementById("jobs-cancel-all");
@@ -1257,7 +1707,6 @@ function wireJobs() {
   if (!refresh || !table || !tbody) {
     return;
   }
-
   const knownJobTypes = [
     "ingest_due_sources",
     "ingest_source",
@@ -1270,15 +1719,19 @@ function wireJobs() {
     "derive_events_from_articles",
     "enrich_event_from_web",
     "promote_event_web_source_to_article",
+    "article_enrich_products",
+    "article_enrich_threat_actors",
+    "article_products_backfill",
+    "article_threat_actors_backfill",
     "enrich_event_summary_llm",
     "build_daily_summary",
     "source_acquire",
     "smoke_test",
+    "cve_enrich_threat_actors",
+    "cve_threat_actors_backfill",
   ];
-
   let page = 1;
   let pageSize = sizeSelect ? parseInt(sizeSelect.value, 10) || 20 : 20;
-
   if (typeFilter && typeFilter.tagName === "SELECT" && typeFilter.options.length <= 1) {
     knownJobTypes.forEach((jobType) => {
       const opt = document.createElement("option");
@@ -1287,7 +1740,6 @@ function wireJobs() {
       typeFilter.appendChild(opt);
     });
   }
-
   function formatResult(job) {
     if (job.job_type === "build_site" && job.result) {
       const exitCode = job.result.exit_code ?? "";
@@ -1298,7 +1750,6 @@ function wireJobs() {
     }
     return job.error || (job.result ? JSON.stringify(job.result) : "");
   }
-
   function renderRows(jobs) {
     tbody.innerHTML = "";
     jobs.forEach((job) => {
@@ -1366,7 +1817,6 @@ function wireJobs() {
       });
     });
   }
-
   function buildParams() {
     const params = new URLSearchParams();
     params.set("page", String(page));
@@ -1379,7 +1829,6 @@ function wireJobs() {
     }
     return params;
   }
-
   async function refreshJobs() {
     const params = buildParams();
     const payload = await apiFetch(`/jobs?${params.toString()}`);
@@ -1393,11 +1842,9 @@ function wireJobs() {
     }
     return jobs;
   }
-
   refresh.addEventListener("click", () => {
     refreshJobs().catch((err) => alert(err));
   });
-
   if (applyBtn) {
     applyBtn.addEventListener("click", () => {
       page = 1;
@@ -1405,7 +1852,6 @@ function wireJobs() {
       refreshJobs().catch((err) => alert(err));
     });
   }
-
   if (clearBtn) {
     clearBtn.addEventListener("click", () => {
       if (statusFilter) statusFilter.value = "";
@@ -1415,7 +1861,6 @@ function wireJobs() {
       refreshJobs().catch((err) => alert(err));
     });
   }
-
   if (sizeSelect) {
     sizeSelect.addEventListener("change", () => {
       pageSize = parseInt(sizeSelect.value, 10) || pageSize;
@@ -1423,7 +1868,6 @@ function wireJobs() {
       refreshJobs().catch((err) => alert(err));
     });
   }
-
   if (cancelAll) {
     cancelAll.addEventListener("click", async () => {
       if (!confirm("Cancel all queued and running jobs?")) {
@@ -1438,7 +1882,6 @@ function wireJobs() {
       }
     });
   }
-
   tbody.addEventListener("click", async (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
@@ -1462,7 +1905,6 @@ function wireJobs() {
       }
       return;
     }
-
     if (!target.classList.contains("job-cancel")) {
       return;
     }
@@ -1481,7 +1923,6 @@ function wireJobs() {
       alert(err.message || String(err));
     }
   });
-
   let polling = false;
   async function poll() {
     if (polling) {
@@ -1503,10 +1944,8 @@ function wireJobs() {
       polling = false;
     }
   }
-
   poll();
 }
-
 function wireLogin() {
   const form = document.getElementById("login-form");
   if (!form) {
@@ -1528,7 +1967,6 @@ function wireLogin() {
     }
   });
 }
-
 function wireRuntimeConfig() {
   const form = document.getElementById("runtime-config-form");
   if (!form) {
@@ -1544,24 +1982,20 @@ function wireRuntimeConfig() {
       console.error(err);
     }
   }
-
   function parseList(value) {
     return value
       .split(/\n|,/)
       .map((item) => item.trim())
       .filter(Boolean);
   }
-
   function intOr(value, fallback) {
     const parsed = parseInt(value, 10);
     return Number.isFinite(parsed) ? parsed : fallback;
   }
-
   function floatOr(value, fallback) {
     const parsed = parseFloat(value);
     return Number.isFinite(parsed) ? parsed : fallback;
   }
-
   function setValue(id, value) {
     const el = document.getElementById(id);
     if (!el) {
@@ -1573,35 +2007,27 @@ function wireRuntimeConfig() {
     }
     el.value = value ?? "";
   }
-
   function loadConfig() {
     const cfg = baseConfig || {};
     setValue("app-name", cfg.app?.name);
     setValue("app-timezone", cfg.app?.timezone);
-
     setValue("paths-data-dir", cfg.paths?.data_dir);
     setValue("paths-output-dir", cfg.paths?.output_dir);
     setValue("paths-run-reports-dir", cfg.paths?.run_reports_dir);
-
     setValue("publishing-format", cfg.publishing?.format);
     setValue("publishing-hugo-section", cfg.publishing?.hugo_section);
     setValue("publishing-write-json-index", cfg.publishing?.write_json_index);
     setValue("publishing-json-index-path", cfg.publishing?.json_index_path);
     setValue("publishing-public-base-url", cfg.publishing?.public_base_url);
-
     setValue("ingest-timeout", cfg.ingest?.http?.timeout_seconds);
     setValue("ingest-user-agent", cfg.ingest?.http?.user_agent);
     setValue("ingest-max-retries", cfg.ingest?.http?.max_retries);
     setValue("ingest-backoff", cfg.ingest?.http?.backoff_seconds);
-
     setValue("dedupe-enabled", cfg.ingest?.dedupe?.enabled);
     setValue("dedupe-strategy", cfg.ingest?.dedupe?.strategy);
-
     setValue("filters-allow", (cfg.ingest?.filters?.allow_keywords || []).join("\n"));
     setValue("filters-deny", (cfg.ingest?.filters?.deny_keywords || []).join("\n"));
-
     setValue("jobs-lock-timeout", cfg.jobs?.lock_timeout_seconds);
-
     setValue("cve-enabled", cfg.cve?.enabled);
     setValue("cve-sync-interval", cfg.cve?.sync_interval_minutes);
     setValue("cve-results-per-page", cfg.cve?.results_per_page);
@@ -1609,11 +2035,9 @@ function wireRuntimeConfig() {
     setValue("cve-backoff", cfg.cve?.backoff_seconds);
     setValue("cve-max-retries", cfg.cve?.max_retries);
     setValue("cve-prefer-v4", cfg.cve?.prefer_v4);
-
     setValue("runtime-llm-json", JSON.stringify(cfg.llm || {}, null, 2));
     setValue("runtime-per-source-json", JSON.stringify(cfg.per_source_tweaks || {}, null, 2));
   }
-
   loadConfig();
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1628,14 +2052,11 @@ function wireRuntimeConfig() {
     nextConfig.ingest.filters = nextConfig.ingest.filters || {};
     nextConfig.jobs = nextConfig.jobs || {};
     nextConfig.cve = nextConfig.cve || {};
-
     nextConfig.app.name = document.getElementById("app-name").value.trim();
     nextConfig.app.timezone = document.getElementById("app-timezone").value.trim();
-
     nextConfig.paths.data_dir = document.getElementById("paths-data-dir").value.trim();
     nextConfig.paths.output_dir = document.getElementById("paths-output-dir").value.trim();
     nextConfig.paths.run_reports_dir = document.getElementById("paths-run-reports-dir").value.trim();
-
     nextConfig.publishing.format = document.getElementById("publishing-format").value.trim();
     nextConfig.publishing.hugo_section = document
       .getElementById("publishing-hugo-section")
@@ -1649,7 +2070,6 @@ function wireRuntimeConfig() {
     nextConfig.publishing.public_base_url = document
       .getElementById("publishing-public-base-url")
       .value.trim();
-
     nextConfig.ingest.http.timeout_seconds = intOr(
       document.getElementById("ingest-timeout").value,
       nextConfig.ingest.http.timeout_seconds
@@ -1663,22 +2083,18 @@ function wireRuntimeConfig() {
       document.getElementById("ingest-backoff").value,
       nextConfig.ingest.http.backoff_seconds
     );
-
     nextConfig.ingest.dedupe.enabled = document.getElementById("dedupe-enabled").checked;
     nextConfig.ingest.dedupe.strategy = document.getElementById("dedupe-strategy").value.trim();
-
     nextConfig.ingest.filters.allow_keywords = parseList(
       document.getElementById("filters-allow").value
     );
     nextConfig.ingest.filters.deny_keywords = parseList(
       document.getElementById("filters-deny").value
     );
-
     nextConfig.jobs.lock_timeout_seconds = intOr(
       document.getElementById("jobs-lock-timeout").value,
       nextConfig.jobs.lock_timeout_seconds
     );
-
     nextConfig.cve.enabled = document.getElementById("cve-enabled").checked;
     nextConfig.cve.sync_interval_minutes = intOr(
       document.getElementById("cve-sync-interval").value,
@@ -1701,7 +2117,6 @@ function wireRuntimeConfig() {
       nextConfig.cve.max_retries
     );
     nextConfig.cve.prefer_v4 = document.getElementById("cve-prefer-v4").checked;
-
     try {
       nextConfig.llm = parseJsonField(
         document.getElementById("runtime-llm-json").value,
@@ -1728,7 +2143,6 @@ function wireRuntimeConfig() {
     }
   });
 }
-
 function wirePersonalization() {
   const form = document.getElementById("personalization-form");
   if (!form) {
@@ -1740,7 +2154,6 @@ function wirePersonalization() {
   const exposureMode = document.getElementById("watchlist-exposure");
   const rssEnabled = document.getElementById("watchlist-rss-enabled");
   const rssToken = document.getElementById("watchlist-rss-token");
-
   function setError(message) {
     if (!error) return;
     if (message) {
@@ -1751,7 +2164,6 @@ function wirePersonalization() {
       error.style.display = "none";
     }
   }
-
   function setNote(message) {
     if (!note) return;
     if (message) {
@@ -1762,7 +2174,6 @@ function wirePersonalization() {
       note.style.display = "none";
     }
   }
-
   async function load() {
     const data = await apiFetch("/admin/config/runtime");
     const cfg = data.config || {};
@@ -1780,7 +2191,6 @@ function wirePersonalization() {
       rssToken.value = personalization.rss_private_token || "";
     }
   }
-
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     setError("");
@@ -1803,10 +2213,8 @@ function wirePersonalization() {
       setError(err.message || String(err));
     }
   });
-
   load().catch((err) => setError(err.message || String(err)));
 }
-
 function parseJsonField(value, fallback) {
   if (!value) {
     return fallback;
@@ -1818,7 +2226,6 @@ function parseJsonField(value, fallback) {
     throw err;
   }
 }
-
 function wireAiProviders() {
   const form = document.getElementById("provider-form");
   if (!form) {
@@ -1832,7 +2239,6 @@ function wireAiProviders() {
   const retriesField = document.getElementById("provider-retries");
   const enabledField = document.getElementById("provider-enabled");
   const resetBtn = document.getElementById("provider-reset");
-
   function resetForm() {
     idField.value = "";
     nameField.value = "";
@@ -1842,9 +2248,7 @@ function wireAiProviders() {
     retriesField.value = "2";
     enabledField.checked = true;
   }
-
   resetBtn.addEventListener("click", resetForm);
-
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const payload = {
@@ -1865,7 +2269,6 @@ function wireAiProviders() {
       alert(err);
     }
   });
-
   document.querySelectorAll(".edit-provider").forEach((btn) => {
     btn.addEventListener("click", () => {
       const row = btn.closest("tr");
@@ -1875,7 +2278,6 @@ function wireAiProviders() {
       baseField.value = row.querySelector(".provider-base-url").textContent.trim();
     });
   });
-
   document.querySelectorAll(".toggle-provider").forEach((checkbox) => {
     checkbox.addEventListener("change", async () => {
       const row = checkbox.closest("tr");
@@ -1891,7 +2293,6 @@ function wireAiProviders() {
       }
     });
   });
-
   document.querySelectorAll(".set-provider-key").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const row = btn.closest("tr");
@@ -1911,7 +2312,6 @@ function wireAiProviders() {
       }
     });
   });
-
   document.querySelectorAll(".clear-provider-key").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const row = btn.closest("tr");
@@ -1927,7 +2327,6 @@ function wireAiProviders() {
       }
     });
   });
-
   document.querySelectorAll(".test-provider").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const row = btn.closest("tr");
@@ -1941,7 +2340,6 @@ function wireAiProviders() {
     });
   });
 }
-
 function wireAiModels() {
   const form = document.getElementById("model-form");
   if (!form) {
@@ -1955,7 +2353,6 @@ function wireAiModels() {
   const paramsField = document.getElementById("model-params");
   const enabledField = document.getElementById("model-enabled");
   const resetBtn = document.getElementById("model-reset");
-
   function resetForm() {
     idField.value = "";
     nameField.value = "";
@@ -1964,9 +2361,7 @@ function wireAiModels() {
     paramsField.value = "";
     enabledField.checked = true;
   }
-
   resetBtn.addEventListener("click", resetForm);
-
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const payload = {
@@ -1987,7 +2382,6 @@ function wireAiModels() {
       alert(err);
     }
   });
-
   document.querySelectorAll(".edit-model").forEach((btn) => {
     btn.addEventListener("click", () => {
       const row = btn.closest("tr");
@@ -1997,7 +2391,6 @@ function wireAiModels() {
       tagsField.value = row.querySelector(".model-tags").textContent.trim();
     });
   });
-
   document.querySelectorAll(".toggle-model").forEach((checkbox) => {
     checkbox.addEventListener("change", async () => {
       const row = checkbox.closest("tr");
@@ -2013,7 +2406,6 @@ function wireAiModels() {
       }
     });
   });
-
   document.querySelectorAll(".delete-model").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const row = btn.closest("tr");
@@ -2030,7 +2422,6 @@ function wireAiModels() {
     });
   });
 }
-
 function wireAiPrompts() {
   const form = document.getElementById("prompt-form");
   if (!form) {
@@ -2044,7 +2435,6 @@ function wireAiPrompts() {
   const userField = document.getElementById("prompt-user");
   const notesField = document.getElementById("prompt-notes");
   const resetBtn = document.getElementById("prompt-reset");
-
   function resetForm() {
     idField.value = "";
     nameField.value = "";
@@ -2053,7 +2443,6 @@ function wireAiPrompts() {
     userField.value = "";
     notesField.value = "";
   }
-
   async function refreshPrompts() {
     if (!tableBody) {
       return;
@@ -2074,9 +2463,7 @@ function wireAiPrompts() {
       )
       .join("");
   }
-
   resetBtn.addEventListener("click", resetForm);
-
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const payload = {
@@ -2097,7 +2484,6 @@ function wireAiPrompts() {
       alert(err);
     }
   });
-
   if (tableBody) {
     tableBody.addEventListener("click", async (event) => {
       const btn = event.target.closest("button");
@@ -2136,10 +2522,8 @@ function wireAiPrompts() {
       }
     });
   }
-
   refreshPrompts().catch(() => {});
 }
-
 function wireAiSchemas() {
   const form = document.getElementById("schema-form");
   if (!form) {
@@ -2150,16 +2534,13 @@ function wireAiSchemas() {
   const versionField = document.getElementById("schema-version");
   const jsonField = document.getElementById("schema-json");
   const resetBtn = document.getElementById("schema-reset");
-
   function resetForm() {
     idField.value = "";
     nameField.value = "";
     versionField.value = "v1";
     jsonField.value = "";
   }
-
   resetBtn.addEventListener("click", resetForm);
-
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const payload = {
@@ -2177,7 +2558,6 @@ function wireAiSchemas() {
       alert(err);
     }
   });
-
   document.querySelectorAll(".edit-schema").forEach((btn) => {
     btn.addEventListener("click", () => {
       const row = btn.closest("tr");
@@ -2186,7 +2566,6 @@ function wireAiSchemas() {
       versionField.value = row.querySelector(".schema-version").textContent.trim();
     });
   });
-
   document.querySelectorAll(".delete-schema").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const row = btn.closest("tr");
@@ -2203,7 +2582,6 @@ function wireAiSchemas() {
     });
   });
 }
-
 function wireAiProfiles() {
   const form = document.getElementById("profile-form");
   if (!form) {
@@ -2219,7 +2597,6 @@ function wireAiProfiles() {
   const fallbackField = document.getElementById("profile-fallback");
   const enabledField = document.getElementById("profile-enabled");
   const resetBtn = document.getElementById("profile-reset");
-
   function resetForm() {
     idField.value = "";
     nameField.value = "";
@@ -2227,9 +2604,7 @@ function wireAiProfiles() {
     fallbackField.value = "";
     enabledField.checked = true;
   }
-
   resetBtn.addEventListener("click", resetForm);
-
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const payload = {
@@ -2252,15 +2627,20 @@ function wireAiProfiles() {
       alert(err);
     }
   });
-
   document.querySelectorAll(".edit-profile").forEach((btn) => {
     btn.addEventListener("click", () => {
       const row = btn.closest("tr");
       idField.value = row.dataset.profileId;
       nameField.value = row.querySelector(".profile-name").textContent.trim();
+      providerField.value = row.dataset.providerId || "";
+      modelField.value = row.dataset.modelId || "";
+      promptField.value = row.dataset.promptId || "";
+      schemaField.value = row.dataset.schemaId || "";
+      paramsField.value = row.dataset.params || "";
+      fallbackField.value = row.dataset.fallback || "";
+      enabledField.checked = row.dataset.enabled === "True" || row.dataset.enabled === "true";
     });
   });
-
   document.querySelectorAll(".toggle-profile").forEach((checkbox) => {
     checkbox.addEventListener("change", async () => {
       const row = checkbox.closest("tr");
@@ -2276,7 +2656,6 @@ function wireAiProfiles() {
       }
     });
   });
-
   document.querySelectorAll(".delete-profile").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const row = btn.closest("tr");
@@ -2292,7 +2671,6 @@ function wireAiProfiles() {
       }
     });
   });
-
   document.querySelectorAll(".test-profile").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const row = btn.closest("tr");
@@ -2317,7 +2695,6 @@ function wireAiProfiles() {
     });
   });
 }
-
 function wireAiRouting() {
   document.querySelectorAll(".save-route").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -2341,7 +2718,6 @@ function wireAiRouting() {
     });
   });
 }
-
 function wireAiStageControls() {
   const clearBtn = document.getElementById("ai-clear-queued");
   const result = document.getElementById("ai-clear-queued-result");
@@ -2363,7 +2739,6 @@ function wireAiStageControls() {
     }
   });
 }
-
 function wireCveSearch() {
   const form = document.getElementById("cve-search-form");
   const table = document.getElementById("cve-table");
@@ -2375,7 +2750,6 @@ function wireCveSearch() {
   const error = document.getElementById("cve-error");
   const pageSize = 50;
   let currentPage = 1;
-
   async function load(page) {
     currentPage = page;
     if (error) {
@@ -2388,38 +2762,77 @@ function wireCveSearch() {
     const minCvss = document.getElementById("cve-min-cvss").value;
     const after = document.getElementById("cve-after").value;
     const before = document.getElementById("cve-before").value;
-    const inScope = document.getElementById("cve-in-scope").checked;
-
+    const missingDesc = document.getElementById("cve-missing-description").checked;
+    const missingProducts = document.getElementById("cve-missing-products").checked;
     const params = new URLSearchParams();
     if (query) params.set("query", query);
     if (severities.length) params.set("severity", severities.join(","));
-    if (minCvss) params.set("min_cvss", minCvss);
     if (after) params.set("after", after);
     if (before) params.set("before", before);
-    if (inScope) params.set("in_scope", "true");
     params.set("page", String(page));
     params.set("page_size", String(pageSize));
-
     const data = await apiFetch(`/admin/api/cves?${params.toString()}`);
     tbody.innerHTML = "";
+    if (!data.items || !data.items.length) {
+      const row = document.createElement("tr");
+      row.innerHTML = `<td colspan="4" class="muted">No products found. Run “Backfill from CVEs” or enqueue CVE enrichment.</td>`;
+      tbody.appendChild(row);
+      renderPager(pager, data.total, data.page, data.page_size, load);
+      return;
+    }
     data.items.forEach((item) => {
       const row = document.createElement("tr");
-      const scopeText =
-        item.in_scope === null || item.in_scope === undefined ? "n/a" : item.in_scope ? "yes" : "no";
+      const missingDescFlag = !item.summary;
+      const hasProducts = (item.affected_products && item.affected_products.length) || (item.product_versions && item.product_versions.length);
+      const missingProductsFlag = !hasProducts;
+      const statusPills = [
+        missingDescFlag ? '<span class="status-pill status-warn">Missing description</span>' : '<span class="status-pill status-ok">Desc ok</span>',
+        missingProductsFlag ? '<span class="status-pill status-warn">Missing products</span>' : '<span class="status-pill status-ok">Products ok</span>',
+      ].join(" ");
+      const actions = `
+        <div class="table-actions compact">
+          <button class="btn small action-cve-desc" data-cve-id="${item.cve_id}" ${missingDescFlag ? "" : "disabled"}>Fetch desc</button>
+          <button class="btn small action-cve-products" data-cve-id="${item.cve_id}" ${missingProductsFlag ? "" : "disabled"}>Enrich products</button>
+        </div>
+      `;
       row.innerHTML = `
         <td><a href="/ui/cves/${item.cve_id}">${item.cve_id}</a></td>
-        <td>${esc(formatTimestamp(item.published_at))}</td>
-        <td>${esc(formatTimestamp(item.last_modified_at))}</td>
+        <td>${esc(formatDateOnly(item.published_at))}</td>
+        <td>${esc(formatDateOnly(item.last_modified_at))}</td>
         <td>${item.preferred_base_severity || ""}</td>
         <td>${item.preferred_base_score || ""}</td>
         <td class="truncate" title="${item.summary || ""}">${item.summary || ""}</td>
-        <td>${scopeText}</td>
+        <td class="cve-status">${statusPills}</td>
+        <td class="actions">${actions}</td>
       `;
       tbody.appendChild(row);
     });
     renderPager(pager, data.total, data.page, data.page_size, load);
   }
-
+  tbody.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    const cveId = target.dataset.cveId;
+    if (!cveId) {
+      return;
+    }
+    try {
+      if (target.classList.contains("action-cve-desc")) {
+        const result = await apiFetch(`/admin/api/cves/${cveId}/refresh`, { method: "POST" });
+        toast(`Queued ${renderShortId(result.job_id || cveId)}`, "success");
+        load(currentPage);
+      }
+      if (target.classList.contains("action-cve-products")) {
+        const result = await apiFetch(`/admin/api/cves/${cveId}/enrich_products`, { method: "POST" });
+        toast(result.status === "already_queued" ? "Already queued" : `Queued ${renderShortId(result.job_id || cveId)}`, "success");
+        load(currentPage);
+      }
+    } catch (err) {
+      toast(err.message || String(err), "error");
+    }
+  });
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     load(1).catch((err) => {
@@ -2429,7 +2842,6 @@ function wireCveSearch() {
       }
     });
   });
-
   load(currentPage).catch((err) => {
     if (error) {
       error.textContent = err.message || String(err);
@@ -2437,7 +2849,6 @@ function wireCveSearch() {
     }
   });
 }
-
 function wireCveDetail() {
   const container = document.getElementById("cve-detail");
   if (!container) {
@@ -2461,12 +2872,11 @@ function wireCveDetail() {
       const v40 = item.cvss_v40 || null;
       const v31List = item.cvss_v31_list || [];
       const v40List = item.cvss_v40_list || [];
-      const products = item.affected_products || [];
       const vendorProducts = item.vendor_products || [];
       const cpes = item.affected_cpes || [];
       const domains = item.reference_domains || [];
       const productVersions = item.product_versions || [];
-      const cveTags = item.tags || [];
+      const threatActors = item.threat_actors || [];
       const otherScores = [...v31List, ...v40List]
         .map((entry) => {
           const version = entry.version || "unknown";
@@ -2505,7 +2915,21 @@ function wireCveDetail() {
         <h3>Description</h3>
         <p>${item.description_text || ""}</p>
         <h3>Affected Products</h3>
-        <pre class="mono">${products.length ? products.join("\\n") : "None found"}</pre>
+        ${
+          vendorProducts.length
+            ? `<ul>${vendorProducts
+                .map((vp) => {
+                  let vendor = vp.vendor_display || vp.vendor_norm || "";
+                  if (vendor && vendor.toLowerCase() === "unknown") {
+                    vendor = "";
+                  }
+                  const product = vp.product_display || vp.product_norm || "";
+                  const label = vendor && product ? `${vendor} — ${product}` : product || vendor || "";
+                  return `<li>${esc(label)}</li>`;
+                })
+                .join("")}</ul>`
+            : `<p class="muted">No products linked.</p>`
+        }
         ${vendorProducts.length && watchlistEnabled ? `
           <div class="actions">
             ${vendorProducts
@@ -2519,14 +2943,27 @@ function wireCveDetail() {
         ` : ""}
         <h3>Product Versions</h3>
         <pre class="mono">${productVersions.length ? productVersions.join("\\n") : "None found"}</pre>
-                <h3>Tags</h3>
-        <pre class="mono">${cveTags.length ? cveTags.join("\n") : "None"}</pre>
+        <h3>Threat Actors</h3>
+        ${
+          threatActors.length
+            ? `<ul>${threatActors
+                .map((actor) => {
+                  const name = actor.display_name || actor.actor_key || "";
+                  const kind = actor.actor_type || "";
+                  const country = actor.country || "";
+                  const confidence =
+                    actor.confidence === null || actor.confidence === undefined ? "" : ` (${actor.confidence})`;
+                  const meta = [kind, country].filter(Boolean).join(" · ");
+                  return `<li>${esc(name)}${meta ? ` <span class="muted">(${esc(meta)}${esc(confidence)})</span>` : ""}</li>`;
+                })
+                .join("")}</ul>`
+            : `<p class="muted">None found.</p>`
+        }
 <h3>Affected CPEs</h3>
         <pre class="mono">${cpes.length ? cpes.join("\\n") : "None found"}</pre>
         <h3>Reference Domains</h3>
         <pre class="mono">${domains.length ? domains.join("\\n") : "None found"}</pre>
-      `;
-      if (!watchlistEnabled) {
+      `;      if (!watchlistEnabled) {
         return;
       }
       container.querySelectorAll(".add-watch-vendor").forEach((btn) => {
@@ -2574,7 +3011,6 @@ function wireCveDetail() {
       container.textContent = err.message || String(err);
     });
 }
-
 function wireCveSettings() {
   const form = document.getElementById("cve-settings-form");
   if (!form) {
@@ -2582,14 +3018,12 @@ function wireCveSettings() {
   }
   const error = document.getElementById("cve-settings-error");
   const note = document.getElementById("cve-settings-note");
-
   function setSeverities(values) {
     const select = document.getElementById("cve-severities");
     Array.from(select.options).forEach((opt) => {
       opt.selected = values.includes(opt.value);
     });
   }
-
   async function load() {
     const data = await apiFetch("/admin/api/cves/settings");
     const settings = data.settings || {};
@@ -2613,7 +3047,6 @@ function wireCveSettings() {
       note.textContent = `Last run: ${formatTimestamp(settings.last_run_at) || "unknown"}`;
     }
   }
-
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     error.style.display = "none";
@@ -2656,7 +3089,6 @@ function wireCveSettings() {
       error.style.display = "block";
     }
   });
-
   const runNow = document.getElementById("cve-run-now");
   const testNow = document.getElementById("cve-test-now");
   const testOutput = document.getElementById("cve-test-output");
@@ -2673,7 +3105,6 @@ function wireCveSettings() {
       }
     });
   }
-
   if (testNow && testOutput) {
     testNow.addEventListener("click", async () => {
       try {
@@ -2690,7 +3121,6 @@ function wireCveSettings() {
       }
     });
   }
-
   async function loadCompleteness() {
     if (!completenessCards || !missingTable) {
       return;
@@ -2730,13 +3160,11 @@ function wireCveSettings() {
       missingTable.appendChild(row);
     });
   }
-
   Promise.all([load(), loadCompleteness()]).catch((err) => {
     error.textContent = err.message || String(err);
     error.style.display = "block";
   });
 }
-
 function wireContentSearch() {
   const form = document.getElementById("content-search-form");
   const table = document.getElementById("content-table");
@@ -2750,6 +3178,7 @@ function wireContentSearch() {
   const selectedTagsEl = document.getElementById("content-selected-tags");
   const tagsField = document.getElementById("content-tags");
   const missingField = document.getElementById("content-missing");
+  const contentStateField = document.getElementById("content-state");
   const contentErrorField = document.getElementById("content-content-error");
   const summaryErrorField = document.getElementById("content-summary-error");
   const needsField = document.getElementById("content-needs");
@@ -2758,7 +3187,6 @@ function wireContentSearch() {
   let pageSize = parseInt(document.getElementById("content-page-size").value, 10);
   let currentPage = 1;
   let selectedTags = new Set();
-
   function setError(message) {
     if (!error) {
       return;
@@ -2771,11 +3199,9 @@ function wireContentSearch() {
       error.style.display = "none";
     }
   }
-
   function syncTagField() {
     tagsField.value = Array.from(selectedTags).join(", ");
   }
-
   function renderSelectedTags() {
     if (!selectedTagsEl) {
       return;
@@ -2795,7 +3221,6 @@ function wireContentSearch() {
       selectedTagsEl.appendChild(chip);
     });
   }
-
   function renderTagList(tags) {
     if (!tagList) {
       return;
@@ -2819,21 +3244,18 @@ function wireContentSearch() {
       tagList.appendChild(btn);
     });
   }
-
   function parseTagsInput(value) {
     return value
       .split(",")
       .map((tag) => tag.trim())
       .filter(Boolean);
   }
-
   function buildPageList(current, total) {
     const pages = new Set([1, total, current - 2, current - 1, current, current + 1, current + 2]);
     return Array.from(pages)
       .filter((p) => p >= 1 && p <= total)
       .sort((a, b) => a - b);
   }
-
   function renderPager(total, page, size) {
     if (!pager) {
       return;
@@ -2842,7 +3264,6 @@ function wireContentSearch() {
     const totalPages = Math.max(1, Math.ceil(total / size));
     const controls = document.createElement("div");
     controls.className = "pager-controls";
-
     const prev = document.createElement("button");
     prev.type = "button";
     prev.className = "btn secondary";
@@ -2850,7 +3271,6 @@ function wireContentSearch() {
     prev.disabled = page <= 1;
     prev.addEventListener("click", () => load(page - 1));
     controls.appendChild(prev);
-
     const pages = buildPageList(page, totalPages);
     let last = 0;
     pages.forEach((p) => {
@@ -2868,7 +3288,6 @@ function wireContentSearch() {
       controls.appendChild(btn);
       last = p;
     });
-
     const next = document.createElement("button");
     next.type = "button";
     next.className = "btn secondary";
@@ -2876,15 +3295,12 @@ function wireContentSearch() {
     next.disabled = page >= totalPages;
     next.addEventListener("click", () => load(page + 1));
     controls.appendChild(next);
-
     const info = document.createElement("div");
     info.className = "pager-info";
     info.textContent = `Page ${page} of ${totalPages}`;
-
     pager.appendChild(controls);
     pager.appendChild(info);
   }
-
   function applyQueryParams() {
     const params = new URLSearchParams(window.location.search);
     const setValue = (id, key) => {
@@ -2898,11 +3314,10 @@ function wireContentSearch() {
     setValue("content-source", "source_id");
     setValue("content-has-summary", "has_summary");
     setValue("content-tags", "tags");
-    setValue("content-severity", "severity");
-    setValue("content-min-cvss", "min_cvss");
     setValue("content-after", "after");
     setValue("content-before", "before");
     setValue("content-missing", "missing");
+    setValue("content-state", "content_state");
     setValue("content-needs", "needs");
     if (contentErrorField && params.get("content_error") === "1") {
       contentErrorField.checked = true;
@@ -2922,7 +3337,6 @@ function wireContentSearch() {
       currentPage = parseInt(params.get("page"), 10) || currentPage;
     }
   }
-
   async function load(page) {
     currentPage = page;
     setError("");
@@ -2933,35 +3347,38 @@ function wireContentSearch() {
     const source = document.getElementById("content-source").value;
     const hasSummary = document.getElementById("content-has-summary").value;
     const tags = document.getElementById("content-tags").value.trim();
-    const severity = document.getElementById("content-severity").value;
-    const minCvss = document.getElementById("content-min-cvss").value;
-    const after = document.getElementById("content-after").value;
+        const after = document.getElementById("content-after").value;
     const before = document.getElementById("content-before").value;
     const watchlistOnly = watchlistEnabled && watchlistOnlyField && watchlistOnlyField.checked;
     const missing = missingField ? missingField.value : "";
+    const contentState = contentStateField ? contentStateField.value : "";
     const needs = needsField ? needsField.value : "";
     const contentError = contentErrorField && contentErrorField.checked;
     const summaryError = summaryErrorField && summaryErrorField.checked;
-
     if (query) params.set("query", query);
     if (type) params.set("type", type);
     if (source) params.set("source_id", source);
     if (hasSummary) params.set("has_summary", hasSummary);
     if (tags) params.set("tags", tags);
-    if (severity) params.set("severity", severity);
-    if (minCvss) params.set("min_cvss", minCvss);
     if (after) params.set("after", after);
     if (before) params.set("before", before);
     if (missing) params.set("missing", missing);
+    if (contentState) params.set("content_state", contentState);
     if (needs) params.set("needs", needs);
     if (contentError) params.set("content_error", "1");
     if (summaryError) params.set("summary_error", "1");
     if (watchlistOnly) params.set("watchlist_hit", "true");
     params.set("page", String(page));
     params.set("page_size", String(pageSize));
-
     const data = await apiFetch(`/admin/api/content/search?${params.toString()}`);
     tbody.innerHTML = "";
+    if (!data.items || !data.items.length) {
+      const row = document.createElement("tr");
+      row.innerHTML = `<td colspan="3" class="muted">No products found. Run “Backfill from CVEs” or enqueue CVE enrichment.</td>`;
+      tbody.appendChild(row);
+      renderPager(pager, data.total, data.page, data.page_size, load);
+      return;
+    }
     data.items.forEach((item) => {
       const row = document.createElement("tr");
       const date = item.published_at || item.ingested_at || "";
@@ -2994,15 +3411,31 @@ function wireContentSearch() {
                 }>Generate summary</button>
                 <button type="button" class="action-publish" data-article-id="${item.id}">Publish markdown</button>
                 <button type="button" class="action-derive-event" data-article-id="${item.id}">Derive event</button>
+                <button type="button" class="action-suppress" data-article-id="${item.id}" data-suppressed="${item.suppressed ? "1" : "0"}">${item.suppressed ? "Unsuppress" : "Suppress"}</button>
+                <button type="button" class="action-delete" data-article-id="${item.id}">Delete article</button>
               </div>
             </div>
           </div>
         `;
       }
+      const contentLen = Number(item.content_len || 0);
+      const contentPill = item.has_content
+        ? null
+        : contentLen > 0
+          ? '<span class="status-pill status-warn">Partial content</span>'
+          : '<span class="status-pill status-warn">No content</span>';
+      const statusPills = [
+        item.suppressed ? '<span class="status-pill status-muted">Suppressed</span>' : null,
+        contentPill,
+        item.has_summary ? null : '<span class="status-pill status-warn">No summary</span>',
+        item.content_error ? '<span class="status-pill status-error">Content error</span>' : null,
+        item.summary_error ? '<span class="status-pill status-error">Summary error</span>' : null,
+      ].filter(Boolean).join(" ");
       row.innerHTML = `
         <td>${link ? renderShortId(idValue, link) : renderShortId(idValue)}</td>
         <td><span data-ts="${esc(date)}"></span></td>
-        <td class="line-clamp-2" title="${esc(title)}">${esc(title)}</td>
+        <td class="line-clamp-2 ${item.suppressed ? "is-suppressed" : ""}" title="${esc(title)}">${esc(title)}</td>
+        <td class="content-status">${statusPills || '<span class="status-pill status-muted">OK</span>'}</td>
         <td class="truncate" title="${esc(item.source_name || "")}">${esc(item.source_name || "")}</td>
         ${watchlistCell}
         <td class="actions">${actions}</td>
@@ -3012,17 +3445,38 @@ function wireContentSearch() {
     applyTimestampFormatting(tbody);
     renderPager(data.total, data.page, data.page_size);
   }
-
   document.getElementById("content-page-size").addEventListener("change", () => {
     pageSize = parseInt(document.getElementById("content-page-size").value, 10);
     load(1).catch((err) => setError(err.message || String(err)));
   });
-
+  tbody.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    const cveId = target.dataset.cveId;
+    if (!cveId) {
+      return;
+    }
+    try {
+      if (target.classList.contains("action-cve-desc")) {
+        const result = await apiFetch(`/admin/api/cves/${cveId}/refresh`, { method: "POST" });
+        toast(`Queued ${renderShortId(result.job_id || cveId)}`, "success");
+        load(currentPage);
+      }
+      if (target.classList.contains("action-cve-products")) {
+        const result = await apiFetch(`/admin/api/cves/${cveId}/enrich_products`, { method: "POST" });
+        toast(result.status === "already_queued" ? "Already queued" : `Queued ${renderShortId(result.job_id || cveId)}`, "success");
+        load(currentPage);
+      }
+    } catch (err) {
+      toast(err.message || String(err), "error");
+    }
+  });
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     load(1).catch((err) => setError(err.message || String(err)));
   });
-
   tbody.addEventListener("click", async (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
@@ -3055,6 +3509,27 @@ function wireContentSearch() {
         const result = await apiFetch(`/admin/api/cves/${cveId}/refresh`, { method: "POST" });
         showToast(`${result.status}: ${result.job_id || ""}`.trim());
       }
+      if (target.classList.contains("action-suppress")) {
+        const articleId = target.dataset.articleId;
+        const currentlySuppressed = target.dataset.suppressed === "1";
+        const result = await apiFetch(`/admin/api/articles/${articleId}/suppress`, {
+          method: "POST",
+          body: JSON.stringify({ suppressed: !currentlySuppressed }),
+        });
+        showToast(result.suppressed ? "Article suppressed" : "Article unsuppressed");
+        load(currentPage).catch((err) => setError(err.message || String(err)));
+      }
+      if (target.classList.contains("action-delete")) {
+        const articleId = target.dataset.articleId;
+        if (!confirm(`Delete article ${articleId}?`)) {
+          return;
+        }
+        await apiFetch(`/admin/api/articles/${articleId}`, { method: "DELETE" });
+        showToast("Article deleted");
+        const scrollY = window.scrollY;
+        await load(page).catch((err) => setError(err.message || String(err)));
+        window.scrollTo(0, scrollY);
+      }
       if (target.classList.contains("action-derive-event")) {
         const articleId = target.dataset.articleId;
         const result = await apiFetch(`/admin/api/events/derive`, {
@@ -3067,7 +3542,6 @@ function wireContentSearch() {
       showToast(err.message || String(err));
     }
   });
-
   applyQueryParams();
   if (tagList) {
     apiFetch("/admin/api/content/tags")
@@ -3078,16 +3552,13 @@ function wireContentSearch() {
     selectedTags = new Set(parseTagsInput(tagsField.value));
     renderSelectedTags();
   }
-
   tagsField.addEventListener("change", () => {
     selectedTags = new Set(parseTagsInput(tagsField.value));
     renderSelectedTags();
     load(1).catch((err) => setError(err.message || String(err)));
   });
-
   load(currentPage).catch((err) => setError(err.message || String(err)));
 }
-
 function wireContentArticle() {
   const container = document.getElementById("article-detail");
   if (!container) {
@@ -3101,6 +3572,7 @@ function wireContentArticle() {
       const content = item.content_text || "";
       const htmlExcerpt = item.content_html_excerpt || "";
       const error = item.content_error || "";
+      const threatActors = item.threat_actors || [];
       let summaryBlock = "";
       let rawJsonBlock = "";
       if (summaryRaw) {
@@ -3133,12 +3605,45 @@ function wireContentArticle() {
       }
       container.innerHTML = `
         <div class="kv">
-          <div><strong>${esc(item.title || "")}</strong></div>
+          <div class="${item.suppressed ? "is-suppressed" : ""}"><strong>${esc(item.title || "")}</strong></div>
           <div>Source: ${esc(item.source_id || "")}</div>
           <div>Published: ${esc(formatTimestamp(item.published_at))}</div>
           <div>Ingested: ${esc(formatTimestamp(item.ingested_at))}</div>
           <div><a href="${esc(item.original_url || "")}" target="_blank" rel="noopener">Open URL</a></div>
+          <div>Suppressed: ${item.suppressed ? "yes" : "no"}</div>
+          <div class="actions">
+            <button class="btn small" id="article-suppress-toggle">${item.suppressed ? "Unsuppress" : "Suppress"}</button>
+            <button class="btn small secondary" id="article-publish-markdown">Publish markdown</button>
+          </div>
         </div>
+        <h3>Products & Vendors</h3>
+        ${
+          Array.isArray(item.products) && item.products.length
+            ? `<ul>${item.products
+                .map((prod) => {
+                  const label = prod.display_name || `${prod.vendor || ""} ${prod.product || ""}`.trim();
+                  const link = prod.product_key ? `/ui/products/${prod.product_key}` : "";
+                  return `<li>${link ? `<a href="${link}">${esc(label)}</a>` : esc(label)}</li>`;
+                })
+                .join("")}</ul>`
+            : `<p class="muted">No products linked.</p>`
+        }
+        <h3>Threat Actors</h3>
+        ${
+          threatActors.length
+            ? `<ul>${threatActors
+                .map((actor) => {
+                  const name = actor.display_name || actor.actor_key || "";
+                  const kind = actor.actor_type || "";
+                  const country = actor.country || "";
+                  const confidence =
+                    actor.confidence === null || actor.confidence === undefined ? "" : ` (${actor.confidence})`;
+                  const meta = [kind, country].filter(Boolean).join(" · ");
+                  return `<li>${esc(name)}${meta ? ` <span class="muted">(${esc(meta)}${esc(confidence)})</span>` : ""}</li>`;
+                })
+                .join("")}</ul>`
+            : `<p class="muted">None found.</p>`
+        }
         <h3>Summary</h3>
         ${summaryBlock}
         ${rawJsonBlock}
@@ -3146,13 +3651,231 @@ function wireContentArticle() {
         <pre class="mono wrap-pre">${esc(content || "No extracted content available.")}</pre>
         ${htmlExcerpt ? `<h3>HTML Excerpt</h3><pre class="mono wrap-pre">${esc(htmlExcerpt)}</pre>` : ""}
         ${error ? `<p class="error">Content error: ${esc(error)}</p>` : ""}
+        <h3>Edit Content</h3>
+        <p class="muted">Paste full text here to override the extracted content.</p>
+        <textarea id="article-content-edit" class="mono wrap-pre" rows="12">${esc(content || "")}</textarea>
+        <div class="form-actions">
+          <button class="btn" id="article-content-save" type="button">Save Content</button>
+        </div>
       `;
+      const saveBtn = document.getElementById("article-content-save");
+      const publishBtn = document.getElementById("article-publish-markdown");
+      if (publishBtn) {
+        publishBtn.addEventListener("click", async () => {
+          try {
+            const resp = await apiFetch(`/admin/api/articles/${articleId}/publish`, { method: "POST" });
+            toast(`Publish queued (${resp.job_id || "ok"})`, "success");
+          } catch (err) {
+            toast(err.message || String(err), "error");
+          }
+        });
+      }
+      if (saveBtn) {
+        saveBtn.addEventListener("click", async () => {
+          const textarea = document.getElementById("article-content-edit");
+          const value = textarea ? textarea.value : "";
+          try {
+            const resp = await apiFetch(`/admin/api/articles/${articleId}/content`, {
+              method: "PATCH",
+              body: JSON.stringify({ content_text: value }),
+            });
+            toast(`Saved content (${resp.content_len || 0} chars)`, "success");
+          } catch (err) {
+            toast(err.message || String(err), "error");
+          }
+        });
+      }
     })
     .catch((err) => {
       container.textContent = err.message || String(err);
     });
 }
 
+function wireThreatsList() {
+  const table = document.getElementById("threats-table");
+  const tbody = document.querySelector("#threats-table tbody");
+  const pager = document.getElementById("threats-pager");
+  const form = document.getElementById("threats-search-form");
+  const error = document.getElementById("threats-error");
+  const backfillArticles = document.getElementById("threats-backfill-articles");
+  const backfillCves = document.getElementById("threats-backfill-cves");
+  const backfillLimit = document.getElementById("threats-backfill-limit");
+  if (!table || !tbody || !form) {
+    return;
+  }
+  let page = 1;
+  let pageSize = 50;
+  function renderPager(total, pageSizeValue) {
+    if (!pager) {
+      return;
+    }
+    pager.innerHTML = "";
+    if (!total) {
+      return;
+    }
+    const totalPages = Math.ceil(total / pageSizeValue);
+    if (totalPages <= 1) {
+      return;
+    }
+    const prev = document.createElement("button");
+    prev.className = "btn small";
+    prev.textContent = "Prev";
+    prev.disabled = page <= 1;
+    prev.addEventListener("click", () => {
+      page = Math.max(1, page - 1);
+      load(page);
+    });
+    pager.appendChild(prev);
+    const info = document.createElement("span");
+    info.className = "pager-info";
+    info.textContent = `Page ${page} of ${totalPages}`;
+    pager.appendChild(info);
+    const next = document.createElement("button");
+    next.className = "btn small";
+    next.textContent = "Next";
+    next.disabled = page >= totalPages;
+    next.addEventListener("click", () => {
+      page = Math.min(totalPages, page + 1);
+      load(page);
+    });
+    pager.appendChild(next);
+  }
+  async function load(nextPage) {
+    page = nextPage || 1;
+    const query = document.getElementById("threats-query").value.trim();
+    pageSize = parseInt(document.getElementById("threats-page-size").value, 10) || 50;
+    const params = new URLSearchParams();
+    if (query) {
+      params.set("query", query);
+    }
+    params.set("page", String(page));
+    params.set("page_size", String(pageSize));
+    const data = await apiFetch(`/admin/api/threats?${params.toString()}`);
+    tbody.innerHTML = "";
+    const items = data.items || [];
+    if (!items.length) {
+      const row = document.createElement("tr");
+      row.innerHTML = `<td colspan="5" class="muted">No threat actors found.</td>`;
+      tbody.appendChild(row);
+      renderPager(data.total || 0, pageSize);
+      return;
+    }
+    items.forEach((item) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td><a href="/ui/threats/${encodeURIComponent(item.actor_key)}">${esc(item.display_name || item.actor_key || "")}</a></td>
+        <td>${esc(item.actor_type || "unknown")}</td>
+        <td>${item.alias_count ?? 0}</td>
+        <td>${item.article_count ?? 0}</td>
+        <td>${item.cve_count ?? 0}</td>
+      `;
+      tbody.appendChild(row);
+    });
+    renderPager(data.total || 0, pageSize);
+  }
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (error) {
+      error.style.display = "none";
+    }
+    load(1).catch((err) => {
+      if (error) {
+        error.textContent = err.message || String(err);
+        error.style.display = "block";
+      }
+    });
+  });
+  load(page).catch((err) => {
+    if (error) {
+      error.textContent = err.message || String(err);
+      error.style.display = "block";
+    }
+  });
+  const limitValue = () => parseInt(backfillLimit?.value || "200", 10) || 200;
+  if (backfillArticles) {
+    backfillArticles.addEventListener("click", async () => {
+      try {
+        const payload = await apiFetch("/admin/api/threats/backfill/articles", {
+          method: "POST",
+          body: JSON.stringify({ limit: limitValue() }),
+        });
+        toast(`Queued article threat backfill (${payload.job_id})`, "success");
+      } catch (err) {
+        toast(err.message || String(err), "error");
+      }
+    });
+  }
+  if (backfillCves) {
+    backfillCves.addEventListener("click", async () => {
+      try {
+        const payload = await apiFetch("/admin/api/threats/backfill/cves", {
+          method: "POST",
+          body: JSON.stringify({ limit: limitValue() }),
+        });
+        toast(`Queued CVE threat backfill (${payload.job_id})`, "success");
+      } catch (err) {
+        toast(err.message || String(err), "error");
+      }
+    });
+  }
+}
+
+function wireThreatDetail() {
+  const container = document.getElementById("threat-detail");
+  if (!container) {
+    return;
+  }
+  const actorKey = container.dataset.actorKey;
+  apiFetch(`/admin/api/threats/${encodeURIComponent(actorKey)}`)
+    .then((item) => {
+      const aliases = item.aliases || [];
+      const articles = item.articles || [];
+      const cves = item.cves || [];
+      container.innerHTML = `
+        <div class="kv">
+          <div><strong>${esc(item.display_name || item.actor_key || "")}</strong></div>
+          <div>Type: ${esc(item.actor_type || "unknown")}</div>
+          ${item.country ? `<div>Country: ${esc(item.country)}</div>` : ""}
+          ${
+            item.confidence !== null && item.confidence !== undefined
+              ? `<div>Confidence: ${item.confidence}</div>`
+              : ""
+          }
+        </div>
+        <h3>Aliases</h3>
+        ${aliases.length ? `<ul>${aliases.map((alias) => `<li>${esc(alias)}</li>`).join("")}</ul>` : `<p class="muted">None.</p>`}
+        <h3>Linked Articles</h3>
+        ${
+          articles.length
+            ? `<ul>${articles
+                .map(
+                  (article) =>
+                    `<li><a href="/ui/content/articles/${article.id}">${esc(article.title || "")}</a> <span class="muted">${esc(
+                      formatTimestamp(article.published_at)
+                    )}</span></li>`
+                )
+                .join("")}</ul>`
+            : `<p class="muted">No linked articles.</p>`
+        }
+        <h3>Linked CVEs</h3>
+        ${
+          cves.length
+            ? `<ul>${cves
+                .map(
+                  (cve) =>
+                    `<li><a href="/ui/cves/${cve.cve_id}">${esc(cve.cve_id || "")}</a> <span class="muted">${esc(
+                      cve.severity || ""
+                    )}</span></li>`
+                )
+                .join("")}</ul>`
+            : `<p class="muted">No linked CVEs.</p>`
+        }
+      `;
+    })
+    .catch((err) => {
+      container.textContent = err.message || String(err);
+    });
+}
 function wireEvents() {
   const createBtn = document.getElementById("events-create");
   const createModal = document.getElementById("event-create-modal");
@@ -3197,7 +3920,6 @@ function wireEvents() {
   const purgePreviewBtn = document.getElementById("events-purge-preview");
   let pageSize = 50;
   let eventsById = {};
-
   function setError(message) {
     if (!error) {
       return;
@@ -3210,7 +3932,6 @@ function wireEvents() {
       error.style.display = "none";
     }
   }
-
   async function load(page) {
     setError("");
     const params = new URLSearchParams();
@@ -3223,7 +3944,6 @@ function wireEvents() {
     const includeLegacy = document.getElementById("events-include-legacy");
     if (query) params.set("query", query);
     if (kind) params.set("kind", kind);
-    if (severity) params.set("severity", severity);
     if (status) params.set("status", status);
     if (after) params.set("after", after);
     if (before) params.set("before", before);
@@ -3259,7 +3979,6 @@ function wireEvents() {
     applyTimestampFormatting(tbody);
     renderPager(pager, data.total, data.page, data.page_size, load);
   }
-
   if (createBtn && createModal) {
     createBtn.addEventListener("click", () => {
       createModal.style.display = "block";
@@ -3300,8 +4019,6 @@ function wireEvents() {
       }
     });
   }
-
-
   function openEditModal(event) {
     if (!editModal) {
       return;
@@ -3323,7 +4040,6 @@ function wireEvents() {
     }
     editModal.style.display = "block";
   }
-
   if (tbody) {
     tbody.addEventListener("click", async (event) => {
       const target = event.target.closest("button");
@@ -3356,13 +4072,11 @@ function wireEvents() {
       }
     });
   }
-
   if (editClose && editModal) {
     editClose.addEventListener("click", () => {
       editModal.style.display = "none";
     });
   }
-
   if (editSave) {
     editSave.addEventListener("click", async () => {
       const eventId = editId.value;
@@ -3398,7 +4112,6 @@ function wireEvents() {
       }
     });
   }
-
   if (editDelete) {
     editDelete.addEventListener("click", async () => {
       const eventId = editId.value;
@@ -3418,14 +4131,36 @@ function wireEvents() {
       }
     });
   }
-
   if (form) {
-    form.addEventListener("submit", (event) => {
+    tbody.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    const cveId = target.dataset.cveId;
+    if (!cveId) {
+      return;
+    }
+    try {
+      if (target.classList.contains("action-cve-desc")) {
+        const result = await apiFetch(`/admin/api/cves/${cveId}/refresh`, { method: "POST" });
+        toast(`Queued ${renderShortId(result.job_id || cveId)}`, "success");
+        load(currentPage);
+      }
+      if (target.classList.contains("action-cve-products")) {
+        const result = await apiFetch(`/admin/api/cves/${cveId}/enrich_products`, { method: "POST" });
+        toast(result.status === "already_queued" ? "Already queued" : `Queued ${renderShortId(result.job_id || cveId)}`, "success");
+        load(currentPage);
+      }
+    } catch (err) {
+      toast(err.message || String(err), "error");
+    }
+  });
+  form.addEventListener("submit", (event) => {
       event.preventDefault();
       load(1).catch((err) => setError(err.message || String(err)));
     });
   }
-
   if (rebuildBtn) {
     rebuildBtn.addEventListener("click", async () => {
       if (!confirm("Rebuild events from CVEs?")) {
@@ -3447,7 +4182,6 @@ function wireEvents() {
       }
     });
   }
-
   if (normalizeBtn) {
     normalizeBtn.addEventListener("click", async () => {
       try {
@@ -3462,7 +4196,6 @@ function wireEvents() {
       }
     });
   }
-
   if (deriveBtn) {
     deriveBtn.addEventListener("click", async () => {
       try {
@@ -3480,7 +4213,6 @@ function wireEvents() {
       }
     });
   }
-
   async function runPurge(dryRunOverride) {
     const dryRunBox = document.getElementById("events-purge-dry");
     const modeSelect = document.getElementById("events-purge-mode");
@@ -3531,22 +4263,22 @@ function wireEvents() {
       setError(err.message || String(err));
     }
   }
-
   if (purgeBtn) {
     purgeBtn.addEventListener("click", async () => {
-      runPurge();
+      const dryRunBox = document.getElementById("events-purge-dry");
+      if (dryRunBox && dryRunBox.checked) {
+        dryRunBox.checked = false;
+      }
+      runPurge(false);
     });
   }
-
   if (purgePreviewBtn) {
     purgePreviewBtn.addEventListener("click", async () => {
       runPurge(true);
     });
   }
-
   load(1).catch((err) => setError(err.message || String(err)));
 }
-
 function wireEventDetail() {
   const container = document.getElementById("event-detail");
   if (!container) {
@@ -3565,7 +4297,6 @@ function wireEventDetail() {
   const webPromote = document.getElementById("event-web-promote");
   const webShowDiscarded = document.getElementById("event-web-show-discarded");
   const webShowLow = document.getElementById("event-web-show-low");
-
   function setWebError(message) {
     if (!webError) {
       return;
@@ -3578,7 +4309,6 @@ function wireEventDetail() {
       webError.style.display = "none";
     }
   }
-
   async function loadWebSources() {
     if (!webTable) {
       return;
@@ -3623,7 +4353,6 @@ function wireEventDetail() {
     });
     applyTimestampFormatting(webTable);
   }
-
   apiFetch(`/admin/api/events/${eventId}`)
     .then((event) => {
       const summaryBtn = document.getElementById("event-summary-refresh");
@@ -3753,7 +4482,6 @@ function wireEventDetail() {
           loadWebSources().catch((err) => setWebError(err.message || String(err)));
         });
       }
-
       if (articlesTable) {
         articlesTable.addEventListener("click", async (evt) => {
           const target = evt.target;
@@ -3774,7 +4502,6 @@ function wireEventDetail() {
           }
         });
       }
-
       if (webSearchBtn) {
         webSearchBtn.addEventListener("click", async () => {
           try {
@@ -3841,7 +4568,6 @@ function wireEventDetail() {
       container.innerHTML = `<div class="error-banner">${err.message || String(err)}</div>`;
     });
 }
-
 function wireProducts() {
   const table = document.getElementById("products-table");
   if (!table) {
@@ -3853,7 +4579,6 @@ function wireProducts() {
   const form = document.getElementById("products-filters");
   const backfillBtn = document.getElementById("products-backfill");
   let pageSize = 50;
-
   function setError(message) {
     if (!error) {
       return;
@@ -3866,7 +4591,6 @@ function wireProducts() {
       error.style.display = "none";
     }
   }
-
   async function load(page) {
     setError("");
     const params = new URLSearchParams();
@@ -3878,143 +4602,31 @@ function wireProducts() {
     params.set("page_size", String(pageSize));
     const data = await apiFetch(`/admin/api/products?${params.toString()}`);
     tbody.innerHTML = "";
+    if (!data.items || !data.items.length) {
+      const row = document.createElement("tr");
+      row.innerHTML = `<td colspan="3" class="muted">No products found. Run “Backfill from CVEs” or enqueue CVE enrichment.</td>`;
+      tbody.appendChild(row);
+      renderPager(pager, data.total, data.page, data.page_size, load);
+      return;
+    }
     data.items.forEach((item) => {
       const row = document.createElement("tr");
       row.innerHTML = `
         <td>${item.vendor_name || ""}</td>
         <td><a href="/ui/products/${item.product_key}">${item.product_name || ""}</a></td>
         <td class="mono">${item.product_key || ""}</td>
+        <td class="mono">${item.link_count ?? 0}</td>
       `;
       tbody.appendChild(row);
     });
     renderPager(pager, data.total, data.page, data.page_size, load);
   }
-
-
-  function openEditModal(event) {
-    if (!editModal) {
-      return;
-    }
-    editId.value = event.id || "";
-    editTitle.value = event.title || "";
-    editKind.value = event.kind || "other";
-    editStatus.value = event.status || "open";
-    editSeverity.value = event.severity || "UNKNOWN";
-    editDate.value = event.incident_date || "";
-    editEntity.value = event.entity || "";
-    editTier.value = event.confidence_tier || "watch";
-    editConfidence.value = event.confidence ?? "";
-    editCandidate.value = event.candidate === true ? "true" : event.candidate === false ? "false" : "";
-    editSummary.value = event.summary || "";
-    editTags.value = ((event.meta && event.meta.tags) || event.tags || []).join(",");
-    if (editIsEvent) {
-      editIsEvent.checked = event.meta && typeof event.meta.is_event === "boolean" ? event.meta.is_event : true;
-    }
-    editModal.style.display = "block";
-  }
-
-  if (tbody) {
-    tbody.addEventListener("click", async (event) => {
-      const target = event.target.closest("button");
-      if (!target) {
-        return;
-      }
-      const eventId = target.dataset.eventId;
-      if (!eventId) {
-        return;
-      }
-      if (target.classList.contains("event-edit")) {
-        try {
-          const detail = await apiFetch(`/admin/api/events/${eventId}`);
-          openEditModal(detail);
-        } catch (err) {
-          setError(err.message || String(err));
-        }
-      }
-      if (target.classList.contains("event-delete")) {
-        if (!confirm("Delete this event? This cannot be undone.")) {
-          return;
-        }
-        try {
-          await apiFetch(`/admin/api/events/${eventId}`, { method: "DELETE" });
-          showToast("Event deleted");
-          load(1).catch((err) => setError(err.message || String(err)));
-        } catch (err) {
-          setError(err.message || String(err));
-        }
-      }
-    });
-  }
-
-  if (editClose && editModal) {
-    editClose.addEventListener("click", () => {
-      editModal.style.display = "none";
-    });
-  }
-
-  if (editSave) {
-    editSave.addEventListener("click", async () => {
-      const eventId = editId.value;
-      if (!eventId) {
-        showToast("Missing event id");
-        return;
-      }
-      const candidateValue = editCandidate.value;
-      const payload = {
-        title: editTitle.value || undefined,
-        kind: editKind.value || undefined,
-        status: editStatus.value || undefined,
-        severity: editSeverity.value || undefined,
-        incident_date: editDate.value || undefined,
-        entity: editEntity.value || undefined,
-        confidence_tier: editTier.value || undefined,
-        confidence: editConfidence.value ? parseFloat(editConfidence.value) : undefined,
-        candidate: candidateValue === "" ? undefined : candidateValue === "true",
-        summary: editSummary.value || undefined,
-        tags: editTags.value ? editTags.value.split(",").map((t) => t.trim()).filter(Boolean) : undefined,
-        is_event: editIsEvent ? editIsEvent.checked : undefined,
-      };
-      try {
-        await apiFetch(`/admin/api/events/${eventId}`, {
-          method: "PUT",
-          body: JSON.stringify(payload),
-        });
-        showToast("Event updated");
-        if (editModal) editModal.style.display = "none";
-        load(1).catch((err) => setError(err.message || String(err)));
-      } catch (err) {
-        setError(err.message || String(err));
-      }
-    });
-  }
-
-  if (editDelete) {
-    editDelete.addEventListener("click", async () => {
-      const eventId = editId.value;
-      if (!eventId) {
-        return;
-      }
-      if (!confirm("Delete this event? This cannot be undone.")) {
-        return;
-      }
-      try {
-        await apiFetch(`/admin/api/events/${eventId}`, { method: "DELETE" });
-        showToast("Event deleted");
-        if (editModal) editModal.style.display = "none";
-        load(1).catch((err) => setError(err.message || String(err)));
-      } catch (err) {
-        setError(err.message || String(err));
-      }
-    });
-  }
-
   if (form) {
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       load(1).catch((err) => setError(err.message || String(err)));
     });
   }
-
   if (backfillBtn) {
     backfillBtn.addEventListener("click", async () => {
       if (!confirm("Backfill products from existing CVEs?")) {
@@ -4032,10 +4644,8 @@ function wireProducts() {
       }
     });
   }
-
   load(1).catch((err) => setError(err.message || String(err)));
 }
-
 function wireProductDetail() {
   const container = document.getElementById("product-detail");
   if (!container) {
@@ -4049,10 +4659,11 @@ function wireProductDetail() {
   const cvePager = document.getElementById("product-cves-pager");
   const eventsTable = document.getElementById("product-events-table");
   const eventsPager = document.getElementById("product-events-pager");
+  const articlesTable = document.getElementById("product-articles-table");
+  const articlesPager = document.getElementById("product-articles-pager");
   const cveFilters = document.getElementById("product-cve-filters");
   let cvePageSize = 50;
   let eventsPageSize = 25;
-
   function renderFacets(facets) {
     facetsEl.innerHTML = "";
     const entries = Object.entries(facets || {});
@@ -4067,7 +4678,6 @@ function wireProductDetail() {
       facetsEl.appendChild(chip);
     });
   }
-
   async function loadProduct() {
     const data = await apiFetch(`/admin/api/products/${productKey}`);
     container.innerHTML = `
@@ -4077,7 +4687,6 @@ function wireProductDetail() {
     container.appendChild(facetsEl);
     renderFacets(data.facets);
   }
-
   function selectedSeverities() {
     if (!cveFilters) {
       return "";
@@ -4090,7 +4699,6 @@ function wireProductDetail() {
     });
     return values.join(",");
   }
-
   async function loadCves(page) {
     const params = new URLSearchParams();
     const severity = selectedSeverities();
@@ -4119,6 +4727,29 @@ function wireProductDetail() {
       renderPager(cvePager, data.total, data.page, data.page_size, loadCves);
     }
   }
+  async function loadArticles(page) {
+    const params = new URLSearchParams();
+    params.set("page", String(page));
+    params.set("page_size", String(25));
+    const data = await apiFetch(
+      `/admin/api/products/${productKey}/articles?${params.toString()}`
+    );
+    if (articlesTable) {
+      const body = articlesTable.querySelector("tbody");
+      body.innerHTML = "";
+      data.items.forEach((item) => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${esc(formatTimestamp(item.published_at || item.ingested_at))}</td>
+          <td>${esc(item.source_name || "")}</td>
+          <td><a href="/ui/content/${item.id}">${esc(item.title || "")}</a></td>
+          <td>${esc(item.tags || "")}</td>
+        `;
+        body.appendChild(row);
+      });
+      renderPager(articlesPager, data.total, data.page, data.page_size, loadArticles);
+    }
+  }
 
   async function loadEvents(page) {
     const params = new URLSearchParams();
@@ -4144,27 +4775,24 @@ function wireProductDetail() {
       renderPager(eventsPager, data.total, data.page, data.page_size, loadEvents);
     }
   }
-
   if (cveFilters) {
     cveFilters.addEventListener("change", () => {
       loadCves(1).catch((err) => showToast(err.message || String(err)));
     });
   }
-
   loadProduct()
     .then(() => loadCves(1))
     .then(() => loadEvents(1))
+    .then(() => loadArticles(1))
     .catch((err) => {
       container.innerHTML = `<div class="error-banner">${err.message || String(err)}</div>`;
     });
 }
-
 function wireDangerZone() {
   const section = document.querySelector(".danger-zone");
   if (!section) {
     return;
   }
-
   function setup(panelId, confirmToken, endpoint, allowFiles) {
     const panel = document.getElementById(panelId);
     if (!panel) {
@@ -4175,15 +4803,12 @@ function wireDangerZone() {
     const btn = panel.querySelector(".danger-btn");
     const result = panel.querySelector(".danger-result");
     const deleteFiles = panel.querySelector(".danger-delete-files");
-
     function updateState() {
       const ok = ack.checked && confirmInput.value.trim() === confirmToken;
       btn.disabled = !ok;
     }
-
     ack.addEventListener("change", updateState);
     confirmInput.addEventListener("input", updateState);
-
     btn.addEventListener("click", async () => {
       result.textContent = "";
       try {
@@ -4201,16 +4826,13 @@ function wireDangerZone() {
         result.textContent = err.message || String(err);
       }
     });
-
     updateState();
   }
-
   setup("danger-articles", "DELETE_ALL_ARTICLES", "/admin/api/admin/clear/articles", true);
   setup("danger-cves", "DELETE_ALL_CVES", "/admin/api/admin/clear/cves", false);
   setup("danger-events", "DELETE_ALL_EVENTS", "/admin/api/admin/clear/events", false);
   setup("danger-all", "DELETE_ALL_CONTENT", "/admin/api/admin/clear/all", true);
 }
-
 function wireDebug() {
   const cards = document.getElementById("debug-cards");
   if (!cards) {
@@ -4219,13 +4841,13 @@ function wireDebug() {
   const error = document.getElementById("debug-error");
   const refresh = document.getElementById("debug-refresh");
   const smoke = document.getElementById("debug-smoke");
+  const productsSmoke = document.getElementById("debug-products-smoke");
   const buildNow = document.getElementById("debug-build");
   const jobsBody = document.querySelector("#debug-jobs-table tbody");
   const buildEl = document.getElementById("debug-build");
   const cveEl = document.getElementById("debug-cve-sync");
   const ingestEl = document.getElementById("debug-ingest");
   const llmBody = document.querySelector("#debug-llm-table tbody");
-
   function renderCards(data) {
     cards.innerHTML = "";
     const items = [
@@ -4250,7 +4872,6 @@ function wireDebug() {
       cards.appendChild(card);
     });
   }
-
   function renderJobs(rows) {
     if (!jobsBody) {
       return;
@@ -4270,7 +4891,6 @@ function wireDebug() {
       jobsBody.appendChild(row);
     });
   }
-
   function renderLlmRuns(rows) {
     if (!llmBody) {
       return;
@@ -4292,7 +4912,6 @@ function wireDebug() {
       llmBody.appendChild(row);
     });
   }
-
   async function loadOverview() {
     if (error) {
       error.style.display = "none";
@@ -4312,7 +4931,6 @@ function wireDebug() {
       ingestEl.textContent = JSON.stringify(data.last_article_ingest || {}, null, 2);
     }
   }
-
   if (refresh) {
     refresh.addEventListener("click", () => {
       loadOverview().catch((err) => {
@@ -4323,7 +4941,6 @@ function wireDebug() {
       });
     });
   }
-
   if (smoke) {
     smoke.addEventListener("click", async () => {
       try {
@@ -4340,7 +4957,23 @@ function wireDebug() {
       }
     });
   }
-
+  if (productsSmoke) {
+    productsSmoke.addEventListener("click", async () => {
+      try {
+        const data = await apiFetch("/admin/api/debug/products-smoke", {
+          method: "POST",
+          body: JSON.stringify({}),
+        });
+        const status = data.status || "ok";
+        showToast(`Product smoke: ${status}`);
+      } catch (err) {
+        if (error) {
+          error.textContent = err.message || String(err);
+          error.style.display = "block";
+        }
+      }
+    });
+  }
   if (buildNow) {
     buildNow.addEventListener("click", async () => {
       try {
@@ -4357,7 +4990,6 @@ function wireDebug() {
       }
     });
   }
-
   loadOverview().catch((err) => {
     if (error) {
       error.textContent = err.message || String(err);
@@ -4402,7 +5034,6 @@ async function wireAnalytics() {
         plugins: { legend: { display: false } },
       },
     });
-
     const stats = await apiFetch("/admin/analytics/source_stats?days=7&runs=20");
     if (stats.error) {
       if (error) {
@@ -4429,7 +5060,6 @@ async function wireAnalytics() {
         )
         .join("");
     }
-
     const dateBtn = document.getElementById("brief-date-run");
     const dateField = document.getElementById("brief-date");
     if (dateBtn && dateField) {
@@ -4463,7 +5093,6 @@ async function wireAnalytics() {
     }
   }
 }
-
 function wireAiTest() {
   const form = document.getElementById("ai-test-form");
   if (!form) {
@@ -4474,7 +5103,6 @@ function wireAiTest() {
   const promptField = document.getElementById("ai-test-prompt");
   const output = document.getElementById("ai-test-output");
   const runsBody = document.querySelector("#ai-runs-table tbody");
-
   async function loadRuns() {
     if (!runsBody) {
       return;
@@ -4497,7 +5125,6 @@ function wireAiTest() {
       runsBody.appendChild(row);
     });
   }
-
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (output) {
@@ -4522,10 +5149,8 @@ function wireAiTest() {
       }
     }
   });
-
   loadRuns().catch((err) => console.error(err));
 }
-
 document.addEventListener("DOMContentLoaded", () => {
   wireNavDropdowns();
   wireEnqueueButtons();
@@ -4549,6 +5174,8 @@ document.addEventListener("DOMContentLoaded", () => {
   wireCveSettings();
   wireContentSearch();
   wireContentArticle();
+  wireThreatsList();
+  wireThreatDetail();
   wireEvents();
   wireEventDetail();
   wireProducts();

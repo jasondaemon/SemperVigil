@@ -551,3 +551,31 @@ def preview_cves(
         "filtered": filtered,
         "items": items,
     }
+
+def sync_cve_id(conn, api_key: str | None, cve_id: str) -> bool:
+    if not cve_id:
+        return False
+    api_base = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+    params = {"cveId": cve_id}
+    url = f"{api_base}?{urlencode(params)}"
+    headers = {"User-Agent": "SemperVigil/0.1"}
+    if api_key:
+        headers["apiKey"] = api_key
+    try:
+        request = Request(url, headers=headers)
+        with urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return False
+    items = payload.get("vulnerabilities") or []
+    if not items:
+        return False
+    logger = logging.getLogger("sempervigil.cve_sync")
+    updated = False
+    for item in items:
+        cve_item = item.get("cve") or {}
+        processed = process_cve_item(conn, cve_item, True, {}, None, False, logger)
+        if processed:
+            updated = True
+    return updated
+

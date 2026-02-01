@@ -1,5 +1,9 @@
 # SemperVigil
 
+> **Current runtime notes:** see [CURRENT_CONTEXT.md](CURRENT_CONTEXT.md) before troubleshooting or starting a new chat.
+> **Build pipeline (stable):** see [BUILD_PIPELINE.md](BUILD_PIPELINE.md) and [CHANGE_CONTROL.md](CHANGE_CONTROL.md).
+> Pipeline-affecting changes require a CHANGE_CONTROL entry.
+
 **SemperVigil** (Latin: *“always watchful”*) is a configurable, containerized
 news aggregation and intelligence pipeline.
 
@@ -76,6 +80,9 @@ For full details, see:
 
 ## Documentation Map
 
+**Build + serve pipeline (must not change):**
+See `docs/BUILD_PIPELINE.md` for the stable, enforced Hugo build + web serve flow, mounts, and verification steps.
+
 If you are reading this repo for the first time:
 
 - **Start here**
@@ -90,6 +97,9 @@ If you are reading this repo for the first time:
 
 - **Admin / settings UI**
   - `docs/SETTINGS_UI_MODEL.md`
+
+- **Build pipeline**
+  - `docs/BUILD_PIPELINE.md`
 
 These documents are the **source of truth** for implementation decisions.
 

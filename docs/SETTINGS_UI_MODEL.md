@@ -1,5 +1,7 @@
 # SETTINGS_UI_MODEL.md — Settings UI & Admin Data Model
 
+> **Current runtime notes:** see [CURRENT_CONTEXT.md](CURRENT_CONTEXT.md) before troubleshooting or starting a new chat.
+
 > The settings UI is the operational cockpit for SemperVigil. It manages DB-driven configuration so deployments can be re-themed (cybersecurity, fandom, etc.) without code changes.
 
 ## 1) Design Principles

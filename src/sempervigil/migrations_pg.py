@@ -17,6 +17,18 @@ def _has_column(conn, table: str, column: str) -> bool:
     return row is not None
 
 
+def _table_exists(conn, table: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_name = %s
+        """,
+        (table,),
+    ).fetchone()
+    return row is not None
+
+
 def _events_visibility_ready(conn) -> bool:
     return _has_column(conn, "events", "candidate") and _has_column(conn, "events", "evidence")
 
@@ -85,6 +97,70 @@ def apply_migrations_pg(conn) -> None:
             )
             conn.commit()
             logger.info("migration_applied version=pg_event_enrich_006")
+            applied.add("pg_event_enrich_006")
+        if "pg_article_products_007" not in applied:
+            _migrate_article_products(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_article_products_007", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_article_products_007")
+            applied.add("pg_article_products_007")
+        if "pg_threat_actors_008" not in applied:
+            _migrate_threat_actors(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_threat_actors_008", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_threat_actors_008")
+            applied.add("pg_threat_actors_008")
+        if "pg_cve_prompt_009" not in applied:
+            _migrate_cve_enrich_prompt(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_cve_prompt_009", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_cve_prompt_009")
+            applied.add("pg_cve_prompt_009")
+        if "pg_vendor_product_tag_cleanup_010" not in applied:
+            _migrate_vendor_product_tag_cleanup(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_vendor_product_tag_cleanup_010", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_vendor_product_tag_cleanup_010")
+            applied.add("pg_vendor_product_tag_cleanup_010")
+        if "pg_llm_vendor_product_prompts_011" not in applied:
+            _migrate_llm_vendor_product_prompts(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_llm_vendor_product_prompts_011", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_llm_vendor_product_prompts_011")
+            applied.add("pg_llm_vendor_product_prompts_011")
+        if "pg_llm_event_classify_012" not in applied:
+            _migrate_llm_event_classify_prompts(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_llm_event_classify_012", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_llm_event_classify_012")
+            applied.add("pg_llm_event_classify_012")
+        if "pg_source_overrides_013" not in applied:
+            _migrate_source_overrides(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_source_overrides_013", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_source_overrides_013")
+            applied.add("pg_source_overrides_013")
         else:
             conn.commit()
         return
@@ -141,6 +217,55 @@ def apply_migrations_pg(conn) -> None:
     conn.commit()
     logger.info("migration_applied version=pg_event_enrich_006")
 
+    conn.execute("BEGIN")
+    _migrate_article_products(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_article_products_007", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_article_products_007")
+
+    conn.execute("BEGIN")
+    _migrate_threat_actors(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_threat_actors_008", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_threat_actors_008")
+
+    _migrate_cve_enrich_prompt(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_cve_prompt_009", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_cve_prompt_009")
+
+    _migrate_vendor_product_tag_cleanup(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_vendor_product_tag_cleanup_010", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_vendor_product_tag_cleanup_010")
+
+    _migrate_llm_vendor_product_prompts(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_llm_vendor_product_prompts_011", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_llm_vendor_product_prompts_011")
+
+    _migrate_llm_event_classify_prompts(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_llm_event_classify_012", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_llm_event_classify_012")
 
 def _bootstrap_schema(conn) -> None:
     conn.execute(
@@ -161,6 +286,7 @@ def _bootstrap_schema(conn) -> None:
             url TEXT NULL,
             interval_minutes INTEGER NOT NULL DEFAULT 60,
             tags_json TEXT NULL,
+            overrides JSONB NULL,
             last_checked_at TEXT NULL,
             last_ok_at TEXT NULL,
             last_error TEXT NULL
@@ -250,6 +376,7 @@ def _bootstrap_schema(conn) -> None:
         )
         """
     )
+    _create_article_product_tables(conn)
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS settings (
@@ -483,6 +610,7 @@ def _bootstrap_schema(conn) -> None:
         )
         """
     )
+    _create_threat_actor_tables(conn)
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS cve_products (
@@ -646,6 +774,7 @@ def _bootstrap_schema(conn) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_products_vendor ON products(vendor_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cve_products_product ON cve_products(product_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cve_products_cve ON cve_products(cve_id)")
+    _create_threat_actor_indexes(conn)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_last_seen ON events(last_seen_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_severity ON events(severity)")
@@ -700,6 +829,82 @@ def _migrate_events_visibility(conn) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_kind_visibility ON events(kind, visibility)")
 
 
+def _create_article_product_tables(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS article_products (
+            article_id BIGINT NOT NULL REFERENCES articles(id),
+            product_id BIGINT NOT NULL REFERENCES products(id),
+            source TEXT NOT NULL DEFAULT 'llm',
+            evidence_json TEXT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(article_id, product_id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_article_products_product_id ON article_products(product_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_article_products_article_id ON article_products(article_id)"
+    )
+
+
+def _create_threat_actor_tables(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS threat_actors (
+            id BIGSERIAL PRIMARY KEY,
+            actor_key TEXT NOT NULL UNIQUE,
+            display_name TEXT NOT NULL,
+            actor_type TEXT NOT NULL,
+            country TEXT NULL,
+            confidence INTEGER NULL,
+            first_seen TEXT NULL,
+            last_seen TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS threat_actor_aliases (
+            actor_id BIGINT NOT NULL REFERENCES threat_actors(id) ON DELETE CASCADE,
+            alias TEXT NOT NULL,
+            UNIQUE(actor_id, alias)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS article_threat_actors (
+            article_id BIGINT NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+            actor_id BIGINT NOT NULL REFERENCES threat_actors(id) ON DELETE CASCADE,
+            UNIQUE(article_id, actor_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cve_threat_actors (
+            cve_id TEXT NOT NULL REFERENCES cves(cve_id) ON DELETE CASCADE,
+            actor_id BIGINT NOT NULL REFERENCES threat_actors(id) ON DELETE CASCADE,
+            UNIQUE(cve_id, actor_id)
+        )
+        """
+    )
+
+
+def _create_threat_actor_indexes(conn) -> None:
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_threat_actors_key ON threat_actors(actor_key)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_threat_actors_display ON threat_actors(display_name)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_article_threat_actors_article ON article_threat_actors(article_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_article_threat_actors_actor ON article_threat_actors(actor_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cve_threat_actors_cve ON cve_threat_actors(cve_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cve_threat_actors_actor ON cve_threat_actors(actor_id)")
+
+
 def _migrate_event_web_sources(conn) -> None:
     conn.execute(
         """
@@ -745,3 +950,388 @@ def _migrate_event_web_sources(conn) -> None:
         )
         """
     )
+
+
+def _migrate_article_products(conn) -> None:
+    _create_article_product_tables(conn)
+
+
+def _migrate_threat_actors(conn) -> None:
+    _create_threat_actor_tables(conn)
+    _create_threat_actor_indexes(conn)
+
+
+def _migrate_cve_enrich_prompt(conn) -> None:
+    if not (
+        _table_exists(conn, "pipeline_stage_config")
+        and _table_exists(conn, "llm_profiles")
+        and _table_exists(conn, "llm_prompts")
+    ):
+        return
+    row = conn.execute(
+        "SELECT profile_id FROM pipeline_stage_config WHERE stage_name = %s",
+        ("cve_enrich_products",),
+    ).fetchone()
+    if not row:
+        return
+    profile_id = row[0]
+    prompt_row = conn.execute(
+        "SELECT prompt_id FROM llm_profiles WHERE id = %s",
+        (profile_id,),
+    ).fetchone()
+    if not prompt_row:
+        return
+    prompt_id = prompt_row[0]
+    if not prompt_id:
+        return
+    system_template = "\n".join(
+        [
+            "You extract affected software vendor/product/version from CVE text.",
+            "Return JSON only.",
+            "",
+            "Rules:",
+            "- Only return proper-noun product names.",
+            "- Do NOT use generic nouns as products (e.g., software, application, system, service, library) unless part of the proper name.",
+            "- Prefer evidence in this order:",
+            "  1) Explicit CPEs or affected product lists",
+            "  2) Sentences like \"affects X\" or \"vulnerability in X\"",
+            "  3) Proper nouns near words like software/product/library/RMM",
+            "- If vendor is unknown, set vendor to null.",
+            "- If product is unknown or missing, omit the item.",
+            "- Versions: keep raw strings; do not parse.",
+            "",
+            "Output schema:",
+            "{\"items\": [{\"vendor\": null|\"Vendor\", \"product\": \"Product\", \"versions\": [\"<string>\"]}]}",
+        ]
+    )
+    user_template = "{{input}}"
+    conn.execute(
+        """
+        UPDATE llm_prompts
+        SET system_template = %s,
+            user_template = %s,
+            version = %s,
+            notes = %s
+        WHERE id = %s
+        """,
+        (
+            system_template,
+            user_template,
+            "2026-01-31",
+            "Hardened CVE vendor/product extraction prompt for smaller models.",
+            prompt_id,
+        ),
+    )
+
+
+def _migrate_vendor_product_tag_cleanup(conn) -> None:
+    if not _table_exists(conn, "article_tags"):
+        return
+    conn.execute(
+        """
+        DELETE FROM article_tags
+        WHERE tag LIKE 'vendor:%%' OR tag LIKE 'product:%%'
+        """
+    )
+
+
+def _upsert_llm_schema(conn, schema_id: str, name: str, version: str, json_schema: str) -> None:
+    if not _table_exists(conn, "llm_schemas"):
+        return
+    conn.execute(
+        """
+        INSERT INTO llm_schemas (id, name, version, json_schema, created_at)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            version = excluded.version,
+            json_schema = excluded.json_schema
+        """,
+        (schema_id, name, version, json_schema, utc_now_iso()),
+    )
+
+
+def _upsert_llm_prompt(
+    conn, prompt_id: str, name: str, version: str, system_template: str, user_template: str, notes: str
+) -> None:
+    if not _table_exists(conn, "llm_prompts"):
+        return
+    conn.execute(
+        """
+        INSERT INTO llm_prompts (id, name, version, system_template, user_template, notes, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            version = excluded.version,
+            system_template = excluded.system_template,
+            user_template = excluded.user_template,
+            notes = excluded.notes
+        """,
+        (prompt_id, name, version, system_template, user_template, notes, utc_now_iso()),
+    )
+
+
+def _update_stage_profile_prompt_schema(
+    conn, stage_name: str, prompt_id: str, schema_id: str | None
+) -> None:
+    if not _table_exists(conn, "pipeline_stage_config") or not _table_exists(conn, "llm_profiles"):
+        return
+    row = conn.execute(
+        "SELECT profile_id FROM pipeline_stage_config WHERE stage_name = %s",
+        (stage_name,),
+    ).fetchone()
+    if not row:
+        return
+    profile_id = row[0]
+    if schema_id:
+        conn.execute(
+            """
+            UPDATE llm_profiles
+            SET prompt_id = %s, schema_id = %s, updated_at = %s
+            WHERE id = %s
+            """,
+            (prompt_id, schema_id, utc_now_iso(), profile_id),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE llm_profiles
+            SET prompt_id = %s, updated_at = %s
+            WHERE id = %s
+            """,
+            (prompt_id, utc_now_iso(), profile_id),
+        )
+
+
+def _migrate_llm_vendor_product_prompts(conn) -> None:
+    if not (_table_exists(conn, "llm_prompts") and _table_exists(conn, "llm_schemas")):
+        return
+    schema_article_products = """
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["product"],
+            "properties": {
+              "vendor": { "type": ["string", "null"] },
+              "product": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+    """.strip()
+    schema_cve_products = """
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["product", "versions"],
+            "properties": {
+              "vendor": { "type": ["string", "null"] },
+              "product": { "type": "string" },
+              "versions": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+    """.strip()
+    schema_threat_actors = """
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "type", "aliases", "confidence"],
+            "properties": {
+              "name": { "type": "string" },
+              "type": { "type": "string", "enum": ["apt", "crimeware", "nation_state", "unknown"] },
+              "country": { "type": ["string", "null"] },
+              "aliases": { "type": "array", "items": { "type": "string" } },
+              "confidence": { "type": "integer", "minimum": 0, "maximum": 100 }
+            }
+          }
+        }
+      }
+    }
+    """.strip()
+
+    _upsert_llm_schema(conn, "schema_article_enrich_products_v1", "Article Enrich Products", "v1", schema_article_products)
+    _upsert_llm_schema(conn, "schema_cve_enrich_products_v1", "CVE Enrich Products", "v1", schema_cve_products)
+    _upsert_llm_schema(conn, "schema_threat_actors_v1", "Threat Actors", "v1", schema_threat_actors)
+
+    _upsert_llm_prompt(
+        conn,
+        "prompt_article_enrich_products_v1",
+        "Article Enrich Products",
+        "v1",
+        "\n".join(
+            [
+                "Extract affected vendor/product from the article content.",
+                "Return JSON only.",
+                "",
+                "Rules:",
+                "- Output must be: {\"items\":[{\"vendor\":\"...\",\"product\":\"...\"}]}",
+                "- If vendor or product is not explicit, return an empty items list.",
+                "- product MUST be explicit; omit items without a clear product.",
+                "- Do not include tags, categories, NIST, or commentary.",
+                "- Do not hallucinate.",
+            ]
+        ),
+        "{{input}}",
+        "Strict JSON-only vendor/product extraction for articles.",
+    )
+    _upsert_llm_prompt(
+        conn,
+        "prompt_cve_enrich_products_v1",
+        "CVE Enrich Products",
+        "v1",
+        "\n".join(
+            [
+                "Extract affected vendor/product/version from CVE text.",
+                "Return JSON only.",
+                "",
+                "Rules:",
+                "- Output must be: {\"items\":[{\"vendor\":\"...\",\"product\":\"...\",\"versions\":[\"...\"]}]}",
+                "- versions must be [] if none. Do not guess.",
+                "- If vendor or product is not explicit, return an empty items list.",
+                "- product MUST be explicit; omit items without a clear product.",
+                "- Do not include tags, categories, NIST, or commentary.",
+                "- Do not hallucinate.",
+            ]
+        ),
+        "{{input}}",
+        "Strict JSON-only vendor/product extraction for CVEs.",
+    )
+    _upsert_llm_prompt(
+        conn,
+        "prompt_threat_actor_extract_v1",
+        "Threat Actor Extraction",
+        "v1",
+        "\n".join(
+            [
+                "Extract threat actors (APTs, crimeware groups, nation-state actors) from the input.",
+                "Return JSON only.",
+                "",
+                "Output must be:",
+                "{\"items\":[{\"name\":\"...\",\"type\":\"apt|crimeware|nation_state|unknown\",\"country\":\"..\",\"aliases\":[\"...\"],\"confidence\":0-100}]}",
+                "",
+                "Rules:",
+                "- Use type 'unknown' if unclear.",
+                "- country may be null.",
+                "- aliases must be [] if none.",
+                "- If no specific actor is named, return an empty items list.",
+                "- Do not add commentary.",
+            ]
+        ),
+        "{{input}}",
+        "Strict JSON-only threat actor extraction.",
+    )
+
+    _update_stage_profile_prompt_schema(
+        conn,
+        "article_enrich_products",
+        "prompt_article_enrich_products_v1",
+        "schema_article_enrich_products_v1",
+    )
+    _update_stage_profile_prompt_schema(
+        conn,
+        "cve_enrich_products",
+        "prompt_cve_enrich_products_v1",
+        "schema_cve_enrich_products_v1",
+    )
+    _update_stage_profile_prompt_schema(
+        conn,
+        "article_enrich_threat_actors",
+        "prompt_threat_actor_extract_v1",
+        "schema_threat_actors_v1",
+    )
+    _update_stage_profile_prompt_schema(
+        conn,
+        "cve_enrich_threat_actors",
+        "prompt_threat_actor_extract_v1",
+        "schema_threat_actors_v1",
+    )
+
+
+def _migrate_llm_event_classify_prompts(conn) -> None:
+    if not (_table_exists(conn, "llm_prompts") and _table_exists(conn, "llm_schemas")):
+        return
+    _migrate_llm_vendor_product_prompts(conn)
+    schema_event_classify = """
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["is_event", "event_type", "victim", "headline", "summary", "confidence"],
+      "properties": {
+        "is_event": { "type": "boolean" },
+        "event_type": { "type": "string" },
+        "victim": { "type": "string" },
+        "headline": { "type": "string" },
+        "summary": { "type": "string" },
+        "confidence": { "type": "integer", "minimum": 0, "maximum": 100 }
+      }
+    }
+    """.strip()
+    _upsert_llm_schema(
+        conn,
+        "schema_event_classify_v1",
+        "Event Classify",
+        "v1",
+        schema_event_classify,
+    )
+    _upsert_llm_prompt(
+        conn,
+        "prompt_event_classify_v1",
+        "Event Classify",
+        "v1",
+        "\n".join(
+            [
+                "Classify whether the article describes a cybersecurity incident/event.",
+                "Return JSON only.",
+                "",
+                "Output must be:",
+                "{\"is_event\":true|false,\"event_type\":\"...\",\"victim\":\"...\",\"headline\":\"...\",\"summary\":\"...\",\"confidence\":0-100}",
+                "",
+                "Rules:",
+                "- If not an event, set is_event=false and leave other fields empty strings.",
+                "- Use event_type values like: breach, ransomware, intrusion, ddos, malware_campaign, exploit_in_the_wild, advisory, vuln_disclosure, outage, other.",
+                "- victim should be the primary affected organization/entity if explicit.",
+                "- Do not invent victims or event types.",
+                "- summary should be 1-2 concise sentences.",
+            ]
+        ),
+        "{{input}}",
+        "Strict JSON-only event classification.",
+    )
+    _update_stage_profile_prompt_schema(
+        conn,
+        "derive_events_from_articles",
+        "prompt_event_classify_v1",
+        "schema_event_classify_v1",
+    )
+
+
+def _migrate_source_overrides(conn) -> None:
+    conn.execute("ALTER TABLE sources ADD COLUMN IF NOT EXISTS overrides JSONB NULL")

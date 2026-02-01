@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -15,6 +16,7 @@ from bs4 import BeautifulSoup
 from .config import Config
 from .models import Article, Decision, Source, SourceTactic
 from .policy import resolve_policy
+from .source_overrides import compile_pattern, normalize_source_overrides, should_allow_url
 from .tagger import derive_tags
 from .storage import article_exists, list_tactics
 from .utils import extract_published_at, log_event, normalize_url, stable_id_from_url, utc_now_iso
@@ -196,6 +198,12 @@ def process_source(
     ignore_dedupe: bool = False,
 ) -> SourceResult:
     tactics = list_tactics(conn, source.id)
+    overrides = normalize_source_overrides(source.overrides)
+    discovery_cfg = overrides.get("discovery", {})
+    allow_re = compile_pattern(discovery_cfg.get("allowlist_regex"), logger, "discovery.allowlist_regex")
+    block_re = compile_pattern(discovery_cfg.get("blocklist_regex"), logger, "discovery.blocklist_regex")
+    if discovery_cfg.get("mode") == "rss_only":
+        tactics = [tactic for tactic in tactics if tactic.tactic_type != "html_index"]
     if not tactics:
         return SourceResult(
             source_id=source.id,
@@ -218,7 +226,16 @@ def process_source(
     final_result: SourceResult | None = None
     for tactic in tactics:
         result, note = _run_tactic(
-            source, tactic, config, logger, conn, test_mode=test_mode, ignore_dedupe=ignore_dedupe
+            source,
+            tactic,
+            config,
+            logger,
+            conn,
+            discovery_cfg=discovery_cfg,
+            allow_re=allow_re,
+            block_re=block_re,
+            test_mode=test_mode,
+            ignore_dedupe=ignore_dedupe,
         )
         notes.append(note)
         if result.status == "ok":
@@ -239,10 +256,14 @@ def _run_tactic(
     config: Config,
     logger: logging.Logger,
     conn,
+    discovery_cfg: dict[str, Any],
+    allow_re: re.Pattern | None,
+    block_re: re.Pattern | None,
     test_mode: bool,
     ignore_dedupe: bool,
 ) -> tuple[SourceResult, dict[str, Any]]:
     policy = resolve_policy(tactic.config or {}, logger)
+    prefer_entry_summary = bool(policy.get("parse", {}).get("prefer_entry_summary", True))
     dedupe_strategy = policy.get("dedupe", {}).get("strategy")
     if dedupe_strategy and dedupe_strategy != "canonical_url_hash":
         log_event(
@@ -353,6 +374,20 @@ def _run_tactic(
         fetched_at = utc_now_iso()
         total_entries = len(entries)
         for index, entry in enumerate(entries, start=1):
+            link = entry.get("link") or entry.get("id")
+            if link:
+                allowed, reason = should_allow_url(link, allow_re, block_re)
+                if not allowed:
+                    decision = _skip_override_decision(
+                        entry,
+                        policy,
+                        fetched_at,
+                        reason or "override_filter",
+                        prefer_entry_summary,
+                    )
+                    decisions.append(decision)
+                    skipped_filters += 1
+                    continue
             decision, article = evaluate_entry(
                 entry,
                 source,
@@ -506,6 +541,20 @@ def _run_tactic(
     fetched_at = utc_now_iso()
     total_entries = len(entries)
     for index, entry in enumerate(entries, start=1):
+        link = entry.get("link") or entry.get("id")
+        if link:
+            allowed, reason = should_allow_url(link, allow_re, block_re)
+            if not allowed:
+                decision = _skip_override_decision(
+                    entry,
+                    policy,
+                    fetched_at,
+                    reason or "override_filter",
+                    prefer_entry_summary,
+                )
+                decisions.append(decision)
+                skipped_filters += 1
+                continue
         decision, article = evaluate_entry(
             entry,
             source,
@@ -584,4 +633,39 @@ def _run_tactic(
             "found_count": len(entries),
             "accepted_count": len(accepted),
         },
+    )
+
+
+def _skip_override_decision(
+    entry: Any,
+    policy: dict[str, Any],
+    fetched_at: str,
+    reason: str,
+    prefer_entry_summary: bool,
+) -> Decision:
+    title = (entry.get("title") or "").strip()
+    link = entry.get("link") or entry.get("id")
+    summary = _entry_summary(entry, prefer_entry_summary)
+    derived_tags = derive_tags(policy.get("tags", {}), title, summary)
+    normalized_url = None
+    stable_id = None
+    if link:
+        url_norm_cfg = policy.get("canonical_url", {})
+        normalized_url = normalize_url(
+            link,
+            strip_tracking_params=bool(url_norm_cfg.get("strip_tracking_params", True)),
+            tracking_params=list(url_norm_cfg.get("tracking_params", [])),
+        )
+        stable_id = stable_id_from_url(normalized_url)
+    published_at, published_at_source = extract_published_at(entry, fetched_at)
+    return Decision(
+        decision="SKIP",
+        reasons=[reason],
+        normalized_url=normalized_url,
+        stable_id=stable_id,
+        published_at=published_at,
+        published_at_source=published_at_source,
+        title=title or normalized_url or (link or ""),
+        original_url=link,
+        tags=derived_tags,
     )

@@ -1,5 +1,7 @@
 # TARGET-STATE.md
 
+> **Current runtime notes:** see [CURRENT_CONTEXT.md](CURRENT_CONTEXT.md) before troubleshooting or starting a new chat.
+
 ## Purpose
 SemperVigil is a public, technically oriented security news and vulnerability intelligence site. It prioritizes **impact and actions first**, then **evidence and technical depth**, with three primary experiences:
 

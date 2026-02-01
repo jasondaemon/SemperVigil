@@ -5,6 +5,7 @@ import dataclasses
 import hashlib
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import sys
 import os
 import re
@@ -15,7 +16,7 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-from uuid import UUID
+from uuid import UUID, uuid4
 
 
 def log_event(logger: logging.Logger, level: int, event: str, **fields: Any) -> None:
@@ -56,12 +57,14 @@ def _maybe_add_file_handler(level_name: str) -> None:
     log_path = os.environ.get("SV_LOG_FILE")
     if not log_path:
         return
+    max_bytes = int(os.environ.get("SV_LOG_MAX_BYTES", 25 * 1024 * 1024))
+    backup_count = int(os.environ.get("SV_LOG_BACKUPS", 3))
     root = logging.getLogger()
     for handler in root.handlers:
         if isinstance(handler, logging.FileHandler) and handler.baseFilename == log_path:
             return
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    handler = logging.FileHandler(log_path)
+    handler = RotatingFileHandler(log_path, maxBytes=max_bytes, backupCount=backup_count)
     handler.setLevel(getattr(logging, level_name, logging.INFO))
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     root.addHandler(handler)
@@ -82,6 +85,37 @@ def _ensure_stdout_handler(level_name: str) -> None:
 
 def json_dumps(value: Any) -> str:
     return json.dumps(value, default=_json_default, sort_keys=True)
+
+
+def atomic_write_text(path: str | Path, content: str, *, encoding: str = "utf-8") -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    suffix = f".tmp.{os.getpid()}.{uuid4().hex}"
+    temp_path = target.with_name(f"{target.name}{suffix}")
+    try:
+        with temp_path.open("w", encoding=encoding) as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, target)
+    except Exception:
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
+        raise
+
+
+def atomic_write_json(
+    path: str | Path,
+    obj: Any,
+    *,
+    indent: int = 2,
+    encoding: str = "utf-8",
+) -> None:
+    payload = json.dumps(obj, indent=indent, default=_json_default)
+    atomic_write_text(path, payload, encoding=encoding)
 
 
 def _json_default(value: Any) -> Any:

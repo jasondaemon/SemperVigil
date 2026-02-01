@@ -8,7 +8,7 @@ from typing import Iterable
 import yaml
 
 from .models import Article
-from .utils import slugify
+from .utils import atomic_write_json, atomic_write_text, slugify
 
 
 def _safe_filename(article: Article) -> str:
@@ -49,8 +49,7 @@ def write_article_markdown(
     )
     content += "---\n\n"
     content += body
-    with open(path, "w", encoding="utf-8") as handle:
-        handle.write(content)
+    atomic_write_text(path, content)
     return path
 
 
@@ -83,8 +82,7 @@ def write_json_index(
         }
         for article in articles
     ]
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
+    atomic_write_json(path, payload, indent=2)
 
 
 def write_tag_indexes(articles: Iterable[Article], output_dir: str, section: str) -> list[str]:
@@ -99,7 +97,8 @@ def write_tag_indexes(articles: Iterable[Article], output_dir: str, section: str
 
     written: list[str] = []
     for tag in sorted(tag_map):
-        tag_dir = tags_root / tag
+        tag_slug = slugify(tag)
+        tag_dir = tags_root / tag_slug
         tag_dir.mkdir(parents=True, exist_ok=True)
         path = tag_dir / "_index.md"
         frontmatter = {"title": f"Tag: {tag}"}
@@ -120,7 +119,7 @@ def write_tag_indexes(articles: Iterable[Article], output_dir: str, section: str
             lines.append(f"- [{article.title}](/{section}/{slug}/) ({date_part})")
 
         content = "\n".join(lines) + "\n"
-        path.write_text(content, encoding="utf-8")
+        atomic_write_text(path, content)
         written.append(str(path))
 
     return written
@@ -156,8 +155,7 @@ def write_events_index(events: Iterable[dict[str, object]], base_static_dir: str
             }
         )
     path = os.path.join(index_dir, "events.json")
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
+    atomic_write_json(path, payload, indent=2)
     return path
 
 
@@ -219,7 +217,6 @@ def write_events_markdown(
             lines.append("")
         content = "\n".join(lines).strip() + "\n"
         path = os.path.join(output_dir, f"{event_id}.md")
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(content)
+        atomic_write_text(path, content)
         written.append(path)
     return written

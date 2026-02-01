@@ -1,5 +1,7 @@
 # SemperVigil — Base Context
 
+> **Current runtime notes:** see [CURRENT_CONTEXT.md](CURRENT_CONTEXT.md) before troubleshooting or starting a new chat.
+
 > **SemperVigil** (Latin: *“always watchful”*) is a configurable, containerized
 > news aggregation, correlation, and intelligence system.
 

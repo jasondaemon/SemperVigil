@@ -26,6 +26,7 @@ services:
       SV_DATA_DIR: /data
       SV_HUGO_SOURCE_DIR: /site-src
       SV_HUGO_OUTPUT_DIR: /site
+      SV_FIX_SITE_PERMS: "0"
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
       SV_LOG_FILE: /data/logs/admin.log
       SV_UMASK: ${SV_UMASK:-002}
@@ -43,7 +44,7 @@ services:
       - "0.0.0.0:${SV_ADMIN_PORT:-8001}:8000"
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
-      - ${SV_DATA_DIR:-/nfs/sempervigil/data}:/data
+      - ${SV_DATA_DIR:-./data}:/data
       - ./tools:/tools:ro
     networks:
       - svnet
@@ -56,7 +57,9 @@ services:
       context: .
       dockerfile: docker/ingest/Dockerfile
     # NOTE: no container_name so we can scale this service
-    hostname: worker-fetch
+    depends_on:
+      - vpn
+      - db
     labels:
       com.sempervigil.role: "worker"
       com.sempervigil.queue: "fetch"
@@ -68,11 +71,16 @@ services:
       SV_DATA_DIR: /data
       SV_HUGO_SOURCE_DIR: /site-src
       SV_HUGO_OUTPUT_DIR: /site
+      SV_FIX_SITE_PERMS: "0"
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
       SV_LOG_FILE: /data/logs/worker.log
       SV_UMASK: ${SV_UMASK:-002}
       SV_DB_URL: ${SV_DB_URL:-}
-      SV_WORKER_ONLY_TYPES: "ingest_due_sources,ingest_source,html_index,rss_index,fetch_article_content,cve_sync,derive_events_from_articles,enrich_event_from_web,promote_event_web_source_to_article"
+      HTTP_PROXY:  http://vpn:8888
+      HTTPS_PROXY: http://vpn:8888
+      # ✅ critical: keep internal services direct (no proxy)
+      NO_PROXY: db,admin,web,searxng,localhost,127.0.0.1
+      SV_WORKER_ONLY_TYPES: "ingest_due_sources,ingest_source,fetch_article_content,cve_sync,build_daily_summary,derive_events_from_articles,enrich_event_from_web,promote_event_web_source_to_article,article_products_backfill,rebuild_vendor_products,source_acquire"
     command:
       - sh
       - -lc
@@ -83,13 +91,40 @@ services:
         sempervigil-worker
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
-      - ${SV_DATA_DIR:-/nfs/sempervigil/data}:/data
-      - ${SV_SITE_SRC_DIR:-/nfs/sempervigil/site-src}:/site-src
+      - ${SV_DATA_DIR:-./data}:/data
+      - ${SV_SITE_SRC_DIR:-./site-src}:/site-src
       - ./tools:/tools:ro
     networks:
       - svnet
     restart: unless-stopped
-
+  vpn:
+    image: qmcgaw/gluetun:latest
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    dns:
+      - 127.0.0.11
+    dns_search: []
+    environment:
+      - VPN_SERVICE_PROVIDER=private internet access
+      - OPENVPN_USER=${PIA_USER}
+      - OPENVPN_PASSWORD=${PIA_PASS}
+      - SERVER_REGIONS=${PIA_REGION:-us_east}
+      # Optional hardening:
+      - FIREWALL=on
+      - DOT=off
+      - FIREWALL_OUTBOUND_SUBNETS=172.16.0.0/12
+      # ✅ enable the HTTP proxy (8888)
+      - HTTPPROXY=on
+      # optional, but helpful:
+      - HTTPPROXY_LOG=on
+    volumes:
+      - ./data/gluetun:/gluetun
+    networks:
+      - svnet
+    restart: unless-stopped
+    
   worker_llm:
     build:
       context: .
@@ -107,11 +142,12 @@ services:
       SV_DATA_DIR: /data
       SV_HUGO_SOURCE_DIR: /site-src
       SV_HUGO_OUTPUT_DIR: /site
+      SV_FIX_SITE_PERMS: "0"
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
       SV_LOG_FILE: /data/logs/worker.log
       SV_UMASK: ${SV_UMASK:-002}
       SV_DB_URL: ${SV_DB_URL:-}
-      SV_WORKER_ONLY_TYPES: "summarize_article_llm,enrich_event_summary_llm,cve_enrich_llm"
+      SV_WORKER_ONLY_TYPES: "summarize_article_llm,enrich_event_summary_llm,cve_enrich_llm,article_enrich_products,article_enrich_threat_actors,cve_enrich_threat_actors,article_threat_actors_backfill,cve_threat_actors_backfill"
       SV_LLM_MAX_INFLIGHT: "1"
       SV_WORKER_CONCURRENCY: "1"
     command:
@@ -124,8 +160,8 @@ services:
         sempervigil-worker
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
-      - ${SV_DATA_DIR:-/nfs/sempervigil/data}:/data
-      - ${SV_SITE_SRC_DIR:-/nfs/sempervigil/site-src}:/site-src
+      - ${SV_DATA_DIR:-./data}:/data
+      - ${SV_SITE_SRC_DIR:-./site-src}:/site-src
       - ./tools:/tools:ro
     networks:
       - svnet
@@ -148,15 +184,16 @@ services:
       SV_HUGO_CACHE_DIR: /data/hugo_cache
       SV_HUGO_MODULES_DIR: /data/hugo_modules
       SV_DB_URL: ${SV_DB_URL:-}
+      SV_FIX_SITE_PERMS: "0"
       SV_HUGO_SOURCE_DIR: /site-src
       SV_HUGO_OUTPUT_DIR: /site
     working_dir: /repo
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - .:/repo:ro
-      - ${SV_DATA_DIR:-/nfs/sempervigil/data}:/data
-      - ${SV_SITE_SRC_DIR:-/nfs/sempervigil/site-src}:/site-src
-      - ${SV_SITE_PUBLIC_DIR:-/nfs/sempervigil/site-public}:/site
+      - ${SV_DATA_DIR:-./data}:/data
+      - ${SV_SITE_SRC_DIR:-./site-src}:/site-src
+      - ${SV_SITE_PUBLIC_DIR:-./site-public}:/site
       - ./tools:/tools:ro
     command:
       - sh
@@ -185,16 +222,17 @@ services:
       SV_HUGO_CACHE_DIR: /data/hugo_cache
       SV_HUGO_MODULES_DIR: /data/hugo_modules
       SV_DB_URL: ${SV_DB_URL:-}
+      SV_FIX_SITE_PERMS: "0"
       SV_HUGO_SOURCE_DIR: /site-src
       SV_HUGO_OUTPUT_DIR: /site
-      SV_BUILDER_POLL_SECONDS: ${SV_BUILDER_POLL_SECONDS:-10}
+      SV_BUILDER_POLL_SECONDS: ${SV_BUILDER_POLL_SECONDS:-60}
     working_dir: /repo
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - .:/repo:ro
-      - ${SV_DATA_DIR:-/nfs/sempervigil/data}:/data
-      - ${SV_SITE_SRC_DIR:-/nfs/sempervigil/site-src}:/site-src
-      - ${SV_SITE_PUBLIC_DIR:-/nfs/sempervigil/site-public}:/site
+      - ${SV_DATA_DIR:-./data}:/data
+      - ${SV_SITE_SRC_DIR:-./site-src}:/site-src
+      - ${SV_SITE_PUBLIC_DIR:-./site-public}:/site
       - ./tools:/tools:ro
     command:
       - sh
@@ -212,10 +250,11 @@ services:
   web:
     image: nginxinc/nginx-unprivileged:alpine
     container_name: sempervigil-web
+    user: "${SV_UID:-1000}:${SV_GID:-1000}"
     ports:
       - "${SV_WEB_PORT:-8080}:8080"
     volumes:
-      - ${SV_SITE_PUBLIC_DIR:-/nfs/sempervigil/site-public}:/usr/share/nginx/html:ro
+      - ${SV_SITE_PUBLIC_DIR:-./site-public}:/usr/share/nginx/html:ro
     networks:
       - svnet
     restart: unless-stopped
@@ -228,8 +267,7 @@ services:
     environment:
       BASE_URL: ${SEARXNG_BASE_URL:-http://searxng:8080/}
     volumes:
-      - ${SV_SEARXNG_DATA_DIR:-/nfs/sempervigil/searxng}/settings.yml:/etc/searxng/settings.yml:ro
-      - ${SV_SEARXNG_DATA_DIR:-/nfs/sempervigil/searxng}/limiter.toml:/etc/searxng/limiter.toml:ro
+      - ${SV_SEARXNG_DATA_DIR:-./searxng}:/etc/searxng
     networks: [svnet]
     restart: unless-stopped
 
@@ -246,12 +284,13 @@ services:
       - .env
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
-      - ${SV_DATA_DIR:-/nfs/sempervigil/data}:/data
-      - ${SV_SITE_SRC_DIR:-/nfs/sempervigil/site-src}:/site-src
+      - ${SV_DATA_DIR:-./data}:/data
+      - ${SV_SITE_SRC_DIR:-./site-src}:/site-src
     working_dir: /app
     command: ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
     environment:
       SV_DB_URL: ${SV_DB_URL:-}
+      SV_FIX_SITE_PERMS: "0"
 
 volumes:
   sempervigil_pgdata:

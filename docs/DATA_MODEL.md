@@ -1,5 +1,7 @@
 # DATA_MODEL.md — SemperVigil Database Schema
 
+> **Current runtime notes:** see [CURRENT_CONTEXT.md](CURRENT_CONTEXT.md) before troubleshooting or starting a new chat.
+
 > Postgres is the system of record. Schema is designed to migrate cleanly to Postgres later.
 > Prefer additive migrations (new tables/columns), avoid destructive changes.
 

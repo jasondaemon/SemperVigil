@@ -1,9 +1,161 @@
 # SemperVigil Architecture
 
+> **Current runtime notes:** see [CURRENT_CONTEXT.md](CURRENT_CONTEXT.md) before troubleshooting or starting a new chat.
+
 > **Canonical architecture specification**
 >
 > This document is the authoritative reference for SemperVigil’s design.
 > All implementation work (human or Codex) must conform to it.
+
+---
+
+## DO NOT DEVIATE
+
+These rules are invariant unless explicitly approved and logged in `docs/CHANGELOG.md`.
+
+- **Vendor/Product data** must be stored ONLY in:
+  `vendors`, `products`, `article_products`, `cve_products`, `cve_product_versions`.
+  Vendor/product data must NEVER be encoded as tags.
+  Unknowns are represented by absence of links (no sentinel rows).
+- **Threat actors** must be stored ONLY in:
+  `threat_actors`, `threat_actor_aliases`, `article_threat_actors`, `cve_threat_actors`.
+  Unknowns are represented by absence of links (no sentinel rows).
+- **Topical tags** must be stored ONLY in `article_tags` (tag_type = topical).
+  They must never include `vendor:*` or `product:*`.
+- **Build pipeline** remains the portable compose pipeline (no hardcoded `/nfs`).
+  Do not change build scripts in this task.
+
+---
+
+## 0. Architecture Overview
+
+SemperVigil is a **database-orchestrated ingestion and publishing system** with strict
+separation between public access, internal control, and worker execution.
+
+Only a single component is exposed to the public internet. All orchestration,
+state, and coordination occurs internally via PostgreSQL.
+
+### Architecture Diagram
+
+> **NOTE:** This diagram is canonical.  
+> Any implementation or refactor must preserve these trust boundaries and flows.
+
+### SemperVigil System Architecture Diagram
+(File: docs/architecture/sempervigil-architecture.png)
+![SemperVigil System Architecture](archdiag.png)
+---
+
+## 0.1 Trust Zones
+
+- **Public / Internet**
+  - Untrusted users and networks
+- **DMZ / Edge**
+  - Internet-facing reverse proxy only
+- **Internal Control Plane**
+  - Configuration, orchestration, and build control
+- **Internal Workers & Data Plane**
+  - Stateless workers and core data store
+- **External Dependencies**
+  - Outbound-only services (e.g., VPN egress, LLM inference)
+
+---
+
+## 0.2 Object Legend
+
+### Public / Internet
+
+#### Public User
+Represents any external user accessing the SemperVigil website via a browser.
+Has no access to internal services, databases, or administrative interfaces.
+
+#### Public Internet / Cloud
+Untrusted external network through which all public access originates.
+
+---
+
+### DMZ / Edge
+
+#### Firewall
+Network boundary that port-forwards inbound traffic to Nginx Proxy Manager.
+No application logic is exposed at this layer.
+
+#### Nginx Proxy Manager (NPM)
+The **only internet-exposed container**.
+Acts as a reverse proxy routing HTTP(S) traffic to the internal `web` container.
+Has no database access and no awareness of internal jobs or state.
+
+---
+
+### Internal Control Plane
+
+#### web (Static Site)
+Serves Hugo-generated static content.
+Reads files from an internal NFS share populated by the Hugo builder.
+Has no database access and executes no jobs.
+
+#### Admin
+Internal-only administrative interface used by trusted operators.
+Used to manage configuration, define sources, and enqueue jobs.
+Reads from and writes to PostgreSQL.
+Never exposed to the public internet.
+
+#### Postgres Database
+The **central coordination and state store** for the entire system.
+Maintains:
+- job queues
+- configuration
+- raw fetched content
+- enriched summaries
+- build state
+
+All services interact **through Postgres**, not directly with each other.
+
+#### Scheduler
+Monitors Postgres for content and state changes.
+Coordinates site build workflows.
+Triggers Hugo builds when new or updated content is ready.
+
+#### Hugo Builder
+Generates the static site from content stored in Postgres.
+Outputs files to a shared NFS location consumed by the `web` container.
+Does not serve content directly.
+
+---
+
+### Internal Workers & Data Plane
+
+#### worker-fetch (Scaled)
+Stateless acquisition workers that pull fetch jobs from Postgres.
+Retrieve external content (RSS, HTML, feeds).
+Write raw content and metadata back to Postgres.
+Designed for horizontal scaling.
+
+#### VPN
+Outbound-only network path used exclusively by `worker-fetch`.
+Ensures acquisition traffic exits through a controlled egress point.
+No inbound access and no use by admin, web, or LLM workers.
+
+#### worker-llm
+Stateless enrichment worker that pulls summarization and analysis jobs from Postgres.
+Performs:
+- summarization
+- vendor identification
+- product and event extraction
+
+Writes structured results back to Postgres.
+
+#### Ollama
+Internal Large Language Model inference service used by `worker-llm`.
+Provides local LLM execution without external API dependency.
+Not exposed to the public internet.
+
+---
+
+### Flow Semantics
+
+- **Solid arrows** indicate internal data or job flow mediated by Postgres.
+- **Dashed arrows** indicate outbound or external dependency communication.
+- **Stacked worker icons** indicate horizontally scalable services.
 
 ---
 
@@ -195,6 +347,42 @@ When a source yields zero articles or parse failures:
    - optionally generate an LLM prompt (manual execution)
 
 No automatic LLM calls for scraping.
+
+---
+
+## 8.1 Source Overrides (Per-Source)
+
+Overrides let us tune discovery + content extraction for problematic sources without changing the global pipeline.
+If overrides are unset, behavior is unchanged.
+
+Stored in `sources.overrides` (JSONB) with this schema:
+
+```
+overrides.discovery:
+  mode: "default" | "rss_only"
+  allowlist_regex: optional string
+  blocklist_regex: optional string
+
+overrides.content:
+  mode: "default" | "jsonld_articlebody" | "readability" | "trafilatura" | "css_selectors"
+  min_chars: int (default 800)
+  include_selectors: [string] (default [])
+  exclude_selectors: [string] (default [])
+  strip_patterns: [string] (default [])
+  allow_fallback_to_default: bool (default true)
+```
+
+Example (wired.com):
+
+```
+discovery:
+  mode: rss_only
+  allowlist_regex: ^https://www\.wired\.com/story/
+  blocklist_regex: /(tag|category|author|newsletter|subscribe|account|search|video|podcast)/
+content:
+  mode: jsonld_articlebody
+  min_chars: 800
+```
 
 ---
 

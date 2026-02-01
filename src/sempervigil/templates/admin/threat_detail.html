@@ -1,0 +1,9 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "content" %}
+{% set nav_subactive = "threats" %}
+{% block content %}
+  <section class="panel">
+    <h2>Threat Actor Detail</h2>
+    <div id="threat-detail" data-actor-key="{{ actor_key }}"></div>
+  </section>
+{% endblock %}

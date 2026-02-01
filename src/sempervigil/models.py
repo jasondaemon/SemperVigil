@@ -31,6 +31,7 @@ class Source:
     pause_until: str | None
     paused_reason: str | None
     robots_notes: str | None
+    overrides: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)

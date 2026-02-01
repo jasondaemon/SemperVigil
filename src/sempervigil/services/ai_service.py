@@ -507,6 +507,10 @@ def create_profile(conn: Any, payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("provider_id, model_id, and prompt_id are required")
     profile_id = str(payload.get("id") or uuid.uuid4())
     schema_id = payload.get("schema_id")
+    if prompt_id and not get_prompt(conn, prompt_id):
+        raise ValueError(f"prompt_not_found:{prompt_id}")
+    if schema_id and not get_schema(conn, str(schema_id)):
+        raise ValueError(f"schema_not_found:{schema_id}")
     params = payload.get("params") or {}
     fallback = payload.get("fallback") or []
     enabled = bool(payload.get("is_enabled", True))
@@ -545,6 +549,10 @@ def update_profile(conn: Any, profile_id: str, payload: dict[str, Any]) -> dict[
     model_id = str(payload.get("primary_model_id") or current["primary_model_id"]).strip()
     prompt_id = str(payload.get("prompt_id") or current["prompt_id"]).strip()
     schema_id = payload.get("schema_id", current.get("schema_id"))
+    if prompt_id and not get_prompt(conn, prompt_id):
+        raise ValueError(f"prompt_not_found:{prompt_id}")
+    if schema_id and not get_schema(conn, str(schema_id)):
+        raise ValueError(f"schema_not_found:{schema_id}")
     params = payload.get("params", current.get("params", {}))
     fallback = payload.get("fallback", current.get("fallback", []))
     enabled = bool(payload.get("is_enabled", current.get("is_enabled", True)))
@@ -624,6 +632,13 @@ def set_pipeline_routing(conn: Any, stage_name: str, profile_id: str) -> None:
 def get_active_profile_for_stage(
     conn: Any, stage_name: str
 ) -> tuple[dict[str, Any] | None, str]:
+    require_schema_stages = {
+        "article_enrich_products",
+        "cve_enrich_products",
+        "article_enrich_threat_actors",
+        "cve_enrich_threat_actors",
+        "derive_events_from_articles",
+    }
     routing = {row["stage_name"]: row["profile_id"] for row in list_pipeline_routing(conn)}
     profile_id = routing.get(stage_name)
     if not profile_id:
@@ -643,6 +658,8 @@ def get_active_profile_for_stage(
         return None, "model_missing"
     if not model.get("is_enabled", True):
         return None, "model_disabled"
+    if stage_name in require_schema_stages and not profile.get("schema_id"):
+        return None, "schema_missing"
     prompt = get_prompt(conn, profile["prompt_id"])
     if not prompt:
         return None, "prompt_missing"

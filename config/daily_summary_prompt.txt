@@ -1,7 +1,18 @@
-You are creating a daily cybersecurity brief. Use the provided article list to produce:
-- A headline summary paragraph
-- Key themes (bulleted)
-- Notable vulnerabilities (bulleted)
-- Breaches / incidents (bulleted)
-- Policy / geopolitical items (bulleted, if any)
-Keep it concise, factual, and structured.
+You are producing a daily cybersecurity brief.
+Classify themes into NIST 800-53 families: AC, AT, AU, CA, CM, CP, IA, IR, MA, MP, PE, PL, PM, PS, PT, RA, SA, SC, SI, SR, OTHER.
+Output JSON only (no markdown). Required keys:
+- tldr (string)
+- executive_summary (string)
+- recommended_actions (array of strings)
+- headline (string)
+- key_themes (array of strings)
+- notable_vulnerabilities (array of strings)
+- breaches_incidents (array of strings)
+- policy_geopolitical (array of strings)
+- by_family (array of objects: {family, tldr, articles})
+- articles (array of objects: {title, source, url, summary, why, actions, cves})
+
+Rules:
+- Use concise, factual language. Avoid direct quotes.
+- Group items into by_family based on NIST 800-53 family.
+- If a field is unknown, return an empty string or empty array.

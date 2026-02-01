@@ -3,42 +3,19 @@
 {% set nav_subactive = "sources" %}
 {% set nav_subactive = "sources" %}
 {% block content %}
-  <section class="panel">
-    <h2>Add / Edit Source</h2>
-    <form id="source-form">
-      <input type="hidden" id="source-id">
-      <div class="grid">
-        <label>Name<input type="text" id="source-name" required></label>
-        <label>Kind
-          <select id="source-kind">
-            <option value="rss">rss</option>
-            <option value="html">html</option>
-          </select>
-        </label>
-        <label>URL<input type="url" id="source-url" required></label>
-        <label>Interval (min)<input type="number" id="source-interval" value="60"></label>
-        <label>Tags (comma)<input type="text" id="source-tags"></label>
-        <label class="checkbox"><input type="checkbox" id="source-enabled" checked> Enabled</label>
-      </div>
-      <div class="actions">
-        <button class="btn" type="submit">Save Source</button>
-        <button class="btn secondary" type="button" id="source-reset">Reset</button>
-      </div>
-    </form>
-  </section>
+  
 
   <section class="panel">
     <a id="test-sources"></a>
-    <h2>Sources</h2>
+    <div class="panel-header"><h2>Sources</h2><button class="btn small" type="button" id="source-add-open">Add Source</button></div>
     <div class="ui-build">UI build: {{ ui_build or "unknown" }}</div>
     <table id="sources-table" class="table-compact">
       <thead>
         <tr>
-          <th>Enabled</th>
+          <th>Status</th>
           <th>Source</th>
-          <th>Pause</th>
+          <th>Health / Pause</th>
           <th>Counts</th>
-          <th>Tags / Health</th>
           <th>Actions</th>
         </tr>
       </thead>
@@ -46,48 +23,53 @@
         {% for source in sources %}
         <tr data-source-id="{{ source.id }}" data-source-url="{{ source.url }}" class="source-row">
           <td>
-            <input type="checkbox" class="toggle-enabled" {% if source.enabled %}checked{% endif %}>
+            {% if source.last_error %}
+              <span class="status-pill status-error">Error</span>
+            {% elif source.pause_until or not source.enabled %}
+              <button class="status-pill status-warn source-resume" type="button" title="Click to resume">Paused</button>
+            {% else %}
+              <button class="status-pill status-ok source-pause" type="button" title="Click to pause">Enabled</button>
+            {% endif %}
           </td>
           <td class="source-cell">
             <div class="source-line">
               <span class="source-name">{{ source.name }}</span>
             </div>
+          </td>
+          <td class="source-cell source-stack">
+            {% if source.pause_until or not source.enabled %}
+            <div class="source-line">
+              <span class="source-meta">Pause until:</span>
+              <span data-ts="{{ source.pause_until or '' }}"></span>
+            </div>
             <div class="source-subline">
-              <span class="source-kind">{{ source.kind or "" }}</span>
-              <span class="source-interval">{{ source.interval_minutes }} min</span>
+              <span class="source-meta">Reason:</span>
+              <span class="truncate" title="{{ source.paused_reason or '' }}">{{ source.paused_reason or "" }}</span>
+            </div>
+            {% endif %}
+            <div class="source-subline">
+              {% if source.last_successful_poll_at %}
+              <span class="source-meta">Last Successful Poll:</span>
+              <span data-ts="{{ source.last_successful_poll_at }}"></span>
+              {% endif %}
+              {% if source.last_article_at %}
+              <span class="source-meta">Last Article Acquired:</span>
+              <span data-ts="{{ source.last_article_at }}"></span>
+              {% endif %}
               {% if source.last_error %}
-                <span class="status-pill status-error">Error</span>
-              {% elif source.pause_until %}
-                <button class="status-pill status-warn source-resume" type="button" title="Click to resume">Paused</button>
-              {% elif source.last_ok_at %}
-                <span class="status-pill status-ok">OK</span>
-              {% else %}
-                <span class="status-pill">Unknown</span>
+              <span class="source-meta">Last Error:</span>
+              <span class="truncate" title="{{ source.last_error }}">{{ source.last_error }}</span>
               {% endif %}
             </div>
           </td>
           <td class="source-cell">
-            <div class="source-line"><span data-ts="{{ source.pause_until or '' }}"></span></div>
-            <div class="source-subline truncate" title="{{ source.paused_reason or '' }}">{{ source.paused_reason or "" }}</div>
-          </td>
-          <td class="source-cell">
             <div class="counts-line">
-              <span class="count-pill">New {{ source.new_count or 0 }}</span>
-              <span class="count-pill">Gathered {{ source.gathered_count or 0 }}</span>
-              <span class="count-pill">Summarized {{ source.summarized_count or 0 }}</span>
+              <span class="count-pill {% if source.new_count %}count-attn{% endif %}">New {{ source.new_count or 0 }}</span>
+              <span class="count-pill {% if source.gathered_count %}count-attn{% endif %}">Gathered {{ source.gathered_count or 0 }}</span>
             </div>
             <div class="counts-line">
               <span class="count-pill">24h {{ source.articles_24h }}</span>
               <span class="count-pill">Total {{ source.total_articles }}</span>
-            </div>
-          </td>
-          <td class="source-cell">
-            <div class="source-line source-tags">{{ source.tags | join(", ") }}</div>
-            <div class="source-subline">
-              <span class="source-meta">Last OK:</span>
-              <span data-ts="{{ source.last_ok_at or '' }}"></span>
-              <span class="source-meta">Last Error:</span>
-              <span class="truncate" title="{{ source.last_error or '' }}">{{ source.last_error or "" }}</span>
             </div>
           </td>
           <td class="table-actions">
@@ -102,9 +84,88 @@
             </div>
           </td>
         </tr>
+        <tr class="edit-result" data-source-id="{{ source.id }}" style="display:none;">
+          <td colspan="5">
+            <form class="source-edit-form">
+              {% set overrides = source.overrides or {} %}
+              {% set discovery = overrides.get("discovery", {}) %}
+              {% set content = overrides.get("content", {}) %}
+              <div class="grid">
+                <label>Source ID<input type="text" value="{{ source.id }}" readonly></label>
+              <label>Name<input type="text" name="name" value="{{ source.name }}"></label>
+                <label>Kind
+                  <select name="kind">
+                    <option value="rss" {% if source.kind == "rss" %}selected{% endif %}>rss</option>
+                    <option value="html" {% if source.kind == "html" %}selected{% endif %}>html</option>
+                  </select>
+                </label>
+                <label>URL<input type="url" name="url" value="{{ source.url }}"></label>
+                <label>Interval (min)<input type="number" name="interval" value="{{ source.interval_minutes }}"></label>
+                <label>Tags (comma)<input type="text" name="tags" value="{{ source.tags | join(", ") }}"></label>
+              </div>
+              <details class="source-overrides">
+                <summary>Overrides</summary>
+                <div class="muted help-text">Only set this for problematic sources; blank = default behavior.</div>
+                <div class="grid">
+                  <label>Discovery mode
+                    <select name="override-discovery-mode">
+                      <option value="default" {% if discovery.get("mode") == "default" or not discovery.get("mode") %}selected{% endif %}>default</option>
+                      <option value="rss_only" {% if discovery.get("mode") == "rss_only" %}selected{% endif %}>rss_only</option>
+                    </select>
+                  </label>
+                  <label>Discovery allowlist regex
+                    <input type="text" name="override-discovery-allowlist" value="{{ discovery.get('allowlist_regex','') }}">
+                  </label>
+                  <label>Discovery blocklist regex
+                    <input type="text" name="override-discovery-blocklist" value="{{ discovery.get('blocklist_regex','') }}">
+                  </label>
+                  <label>Content mode
+                    <select name="override-content-mode">
+                      <option value="default" {% if content.get("mode") == "default" or not content.get("mode") %}selected{% endif %}>default</option>
+                      <option value="jsonld_articlebody" {% if content.get("mode") == "jsonld_articlebody" %}selected{% endif %}>jsonld_articlebody</option>
+                      <option value="readability" {% if content.get("mode") == "readability" %}selected{% endif %}>readability</option>
+                      <option value="trafilatura" {% if content.get("mode") == "trafilatura" %}selected{% endif %}>trafilatura</option>
+                      <option value="css_selectors" {% if content.get("mode") == "css_selectors" %}selected{% endif %}>css_selectors</option>
+                    </select>
+                  </label>
+                  <label>Content min chars
+                    <input type="number" name="override-content-min-chars" value="{{ content.get('min_chars', 800) }}">
+                  </label>
+                  <label>Include selectors (one per line)
+                    <textarea name="override-content-include" rows="3">{{ (content.get('include_selectors') or []) | join("\n") }}</textarea>
+                  </label>
+                  <label>Exclude selectors (one per line)
+                    <textarea name="override-content-exclude" rows="3">{{ (content.get('exclude_selectors') or []) | join("\n") }}</textarea>
+                  </label>
+                  <label>Strip patterns (regex, one per line)
+                    <textarea name="override-content-strip" rows="3">{{ (content.get('strip_patterns') or []) | join("\n") }}</textarea>
+                  </label>
+                  <label class="checkbox">
+                    <input type="checkbox" name="override-content-fallback" {% if content.get("allow_fallback_to_default", true) %}checked{% endif %}> Allow fallback to default
+                  </label>
+                </div>
+                <div class="override-test">
+                  <label>Test extraction URL
+                    <input type="url" name="override-test-url" placeholder="https://example.com/story/...">
+                  </label>
+                  <button class="btn small secondary test-override" type="button">Test override</button>
+                  <div class="override-test-result" hidden>
+                    <div class="mono override-test-meta"></div>
+                    <pre class="mono override-test-preview"></pre>
+                  </div>
+                </div>
+              </details>
+              <div class="actions">
+                <button class="btn small edit-save" type="button">Save</button>
+                <button class="btn small secondary edit-cancel" type="button">Cancel</button>
+              </div>
+            </form>
+          </td>
+        </tr>
         <tr class="test-result" data-source-id="{{ source.id }}" style="display:none;">
-          <td colspan="6">
+          <td colspan="5">
             <div class="test-summary"></div>
+            <button class="btn small secondary test-close" type="button">Hide</button>
             <details class="test-details">
               <summary>Details</summary>
               <pre class="mono test-raw"></pre>
@@ -112,7 +173,7 @@
           </td>
         </tr>
         <tr class="history-result" data-source-id="{{ source.id }}" style="display:none;">
-          <td colspan="6">
+          <td colspan="5">
             <div class="history-table"></div>
           </td>
         </tr>
@@ -120,4 +181,32 @@
       </tbody>
     </table>
   </section>
+  <div class="modal" id="source-add-modal" style="display:none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Add Source</h3>
+        <button class="btn small secondary" type="button" id="source-add-close">Close</button>
+      </div>
+      <form id="source-form">
+        <input type="hidden" id="source-id">
+        <div class="grid">
+          <label>Name<input type="text" id="source-name" required></label>
+          <label>Kind
+            <select id="source-kind">
+              <option value="rss">rss</option>
+              <option value="html">html</option>
+            </select>
+          </label>
+          <label>URL<input type="url" id="source-url" required></label>
+          <label>Interval (min)<input type="number" id="source-interval" value="60"></label>
+          <label>Tags (comma)<input type="text" id="source-tags"></label>
+        </div>
+        <div class="actions">
+          <button class="btn" type="submit">Add Source</button>
+          <button class="btn secondary" type="button" id="source-reset">Reset</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
 {% endblock %}

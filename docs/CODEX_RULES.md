@@ -1,5 +1,7 @@
 # CODEX_RULES — SemperVigil
 
+> **Current runtime notes:** see [CURRENT_CONTEXT.md](CURRENT_CONTEXT.md) before troubleshooting or starting a new chat.
+
 ## Prime Directive
 SemperVigil is a configurable, containerized news aggregation system that prioritizes:
 - correctness, reproducibility, and debuggability

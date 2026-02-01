@@ -139,32 +139,72 @@ body {
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 16px;
+  gap: 12px;
 }
 
 .card {
   background: #ffffff;
-  padding: 12px;
-  border-radius: 10px;
+  padding: 10px;
+  border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.05);
 }
 
 .card-title {
-  font-size: 12px;
+  font-size: 11px;
   text-transform: uppercase;
   color: #6b7280;
 }
 
 .card-value {
-  font-size: 28px;
+  font-size: 22px;
   font-weight: 700;
+}
+
+.card-metric {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.card-metric-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .card-actions {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 10px;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+  align-items: center;
+}
+
+.inline-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.inline-select select {
+  padding: 2px 4px;
+}
+
+.card-note {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.btn.ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
 }
 
 .panel {
@@ -310,6 +350,11 @@ th, td {
 .status-muted {
   background: #e5e7eb;
   color: #6b7280;
+}
+
+.is-suppressed {
+  text-decoration: line-through;
+  color: #9ca3af;
 }
 
 .inline-check {
@@ -772,9 +817,9 @@ th, td {
   margin-bottom: 8px;
 }
 .log-filter-list {
-  display: grid;
-  gap: 6px;
-  max-height: 160px;
+  column-count: 2;
+  column-gap: 16px;
+  max-height: 200px;
   overflow: auto;
 }
 .checkbox.compact {
@@ -782,6 +827,23 @@ th, td {
   align-items: center;
   gap: 8px;
   font-size: 12px;
+}
+.log-filter-list .checkbox.compact {
+  break-inside: avoid;
+  width: 100%;
+}
+
+.job-counts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.job-counts-table {
+  font-size: 12px;
+}
+.job-counts-table th,
+.job-counts-table td {
+  padding: 4px 6px;
 }
 
 .ui-build {
@@ -860,6 +922,13 @@ th, td {
   color: #1e3a8a;
   font-size: 12px;
 }
+.count-pill.count-attn {
+  background: #fff4e5;
+  color: #92400e;
+}
+.status-pill.source-pause{border:0;background:none;cursor:pointer;padding:2px 8px;}
+.status-pill.source-pause:hover{filter:brightness(0.95);}
+.edit-result .actions{margin-top:8px;}
 .actions-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -867,4 +936,55 @@ th, td {
 }
 .actions-grid .btn {
   width: 100%;
+}
+
+.source-stack .source-subline{display:block;margin-top:2px;flex-wrap:nowrap;}
+.source-stack .source-line{display:block;}
+
+#content-table tbody tr{border-bottom:1px solid #e5e7eb;}
+#content-table td{vertical-align:top;border-bottom:0;}
+#content-table .content-status{white-space:nowrap;}
+#content-table .line-clamp-2{max-width:520px;}
+
+.table-actions.compact{display:flex;gap:6px;flex-wrap:wrap;}
+.cve-status .status-pill{margin-right:6px;}
+
+.logs-standalone #dashboard-logs {
+  margin-top: 0;
+}
+.logs-standalone .log-tail {
+  max-height: calc(100vh - 220px);
+}
+
+.source-overrides {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.source-overrides summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.source-overrides .help-text {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.override-test {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.override-test-result {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
 }

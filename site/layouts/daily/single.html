@@ -1,11 +1,58 @@
+{{ define "main" }}
 {{ $day := .Date.Format "2006-01-02" }}
 {{ $data := index site.Data.daily $day }}
-<main class="daily-brief">
-  <h1>{{ .Title }}</h1>
+<article class="prose dark:prose-invert max-w-none">
+  <header class="mb-6">
+    <h1 class="m-0">{{ .Title }}</h1>
+    <p class="text-sm text-neutral-500 dark:text-neutral-400">{{ $day }}</p>
+  </header>
   {{ if $data }}
     <section class="daily-summary">
-      {{ with $data.headline }}<p>{{ . }}</p>{{ end }}
+      {{ with $data.headline }}<p class="text-lg font-medium">{{ . }}</p>{{ end }}
     </section>
+    {{ with $data.tldr }}
+      <section>
+        <h2>TLDR</h2>
+        <p>{{ . }}</p>
+      </section>
+    {{ end }}
+    {{ with $data.executive_summary }}
+      <section>
+        <h2>Executive Summary</h2>
+        <p>{{ . }}</p>
+      </section>
+    {{ end }}
+    {{ with $data.recommended_actions }}
+      <section>
+        <h2>Recommended Actions</h2>
+        <ul>{{ range . }}<li>{{ . }}</li>{{ end }}</ul>
+      </section>
+    {{ end }}
+    {{ with $data.by_family }}
+      <section>
+        <h2>By NIST Family</h2>
+        {{ range . }}
+          <div class="family-block">
+            <h3>{{ .family }}</h3>
+            {{ with .tldr }}<p>{{ . }}</p>{{ end }}
+            {{ with .articles }}
+              <ul>
+                {{ range . }}
+                  <li>
+                    <a href="{{ .url }}" target="_blank" rel="noopener">{{ .title }}</a>
+                    — {{ .source }}
+                    {{ with .summary }}<div>{{ . }}</div>{{ end }}
+                    {{ with .why }}<div>{{ . }}</div>{{ end }}
+                    {{ with .actions }}<div>{{ delimit . "; " }}</div>{{ end }}
+                    {{ with .cves }}<div>{{ delimit . ", " }}</div>{{ end }}
+                  </li>
+                {{ end }}
+              </ul>
+            {{ end }}
+          </div>
+        {{ end }}
+      </section>
+    {{ end }}
     {{ with $data.key_themes }}
       <section>
         <h2>Key Themes</h2>
@@ -43,4 +90,6 @@
   {{ else }}
     <p>No summary data found for {{ $day }}.</p>
   {{ end }}
-</main>
+</article>
+
+{{ end }}

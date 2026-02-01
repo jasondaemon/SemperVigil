@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -25,6 +26,10 @@ from .storage import (
     upsert_tactic,
     enqueue_job,
     list_jobs,
+    get_job,
+    list_jobs_by_types_since,
+    list_article_ids_missing_products,
+    has_pending_article_job,
 )
 from .tagger import normalize_tag
 from .utils import configure_logging, log_event, utc_now_iso
@@ -74,6 +79,20 @@ def _write_run_report(report_dir: str, report: dict) -> str:
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(report, handle, indent=2)
     return path
+
+
+def _wait_for_job(conn, job_id: str, timeout_seconds: int) -> object | None:
+    start = time.monotonic()
+    last_job = None
+    while time.monotonic() - start < timeout_seconds:
+        job = get_job(conn, job_id)
+        if not job:
+            return None
+        last_job = job
+        if job.status in {"running", "succeeded", "failed", "canceled"}:
+            return job
+        time.sleep(1)
+    return last_job
 
 
 def _load_latest_report(report_dir: str) -> dict | None:
@@ -487,6 +506,124 @@ def _cmd_jobs_list(args: argparse.Namespace, logger: logging.Logger) -> int:
     return 0
 
 
+def _cmd_jobs_products_smoke(args: argparse.Namespace, logger: logging.Logger) -> int:
+    conn = init_db()
+    limit = max(1, int(args.limit))
+    timeout_seconds = max(10, int(args.timeout_seconds))
+    start_marker = utc_now_iso()
+    ok = True
+
+    def matches_worker(value: str | None, candidates: list[str]) -> bool:
+        if not value:
+            return False
+        lowered = value.lower()
+        return any(candidate in lowered for candidate in candidates)
+    missing_ids = list_article_ids_missing_products(conn, limit=limit)
+    log_event(
+        logger,
+        logging.INFO,
+        "products_smoke_missing",
+        missing_count=len(missing_ids),
+        limit=limit,
+    )
+    backfill_job_id = enqueue_job(conn, "article_products_backfill", {"limit": limit})
+    log_event(
+        logger,
+        logging.INFO,
+        "products_smoke_backfill_enqueued",
+        job_id=backfill_job_id,
+    )
+    backfill_job = _wait_for_job(conn, backfill_job_id, timeout_seconds)
+    if not backfill_job:
+        log_event(logger, logging.ERROR, "products_smoke_backfill_timeout", job_id=backfill_job_id)
+        return 1
+    log_event(
+        logger,
+        logging.INFO,
+        "products_smoke_backfill_claimed",
+        job_id=backfill_job.id,
+        status=backfill_job.status,
+        locked_by=backfill_job.locked_by,
+    )
+    if not matches_worker(backfill_job.locked_by, ["worker-fetch", "worker_fetch"]):
+        ok = False
+        log_event(
+            logger,
+            logging.WARNING,
+            "products_smoke_backfill_worker_mismatch",
+            expected="worker_fetch",
+            locked_by=backfill_job.locked_by,
+        )
+    if backfill_job.status in {"queued", "running"}:
+        backfill_job = _wait_for_job(conn, backfill_job.id, timeout_seconds)
+    if backfill_job:
+        log_event(
+            logger,
+            logging.INFO,
+            "products_smoke_backfill_done",
+            job_id=backfill_job.id,
+            status=backfill_job.status,
+            result=backfill_job.result or {},
+        )
+
+    if missing_ids and not has_pending_article_job(conn, "article_enrich_products", int(missing_ids[0])):
+        direct_job_id = enqueue_job(
+            conn,
+            "article_enrich_products",
+            {"article_id": int(missing_ids[0])},
+        )
+        log_event(
+            logger,
+            logging.INFO,
+            "products_smoke_enrich_enqueued",
+            job_id=direct_job_id,
+            article_id=missing_ids[0],
+        )
+
+    enrich_jobs = list_jobs_by_types_since(
+        conn,
+        types=["article_enrich_products"],
+        since=start_marker,
+    )
+    if not enrich_jobs:
+        log_event(logger, logging.WARNING, "products_smoke_no_enrich_jobs")
+        return 0
+    target_job = enrich_jobs[0]
+    claimed = _wait_for_job(conn, target_job.id, timeout_seconds)
+    if not claimed:
+        log_event(logger, logging.ERROR, "products_smoke_enrich_timeout", job_id=target_job.id)
+        return 1
+    log_event(
+        logger,
+        logging.INFO,
+        "products_smoke_enrich_claimed",
+        job_id=claimed.id,
+        status=claimed.status,
+        locked_by=claimed.locked_by,
+    )
+    if not matches_worker(claimed.locked_by, ["worker-llm", "worker_llm"]):
+        ok = False
+        log_event(
+            logger,
+            logging.WARNING,
+            "products_smoke_enrich_worker_mismatch",
+            expected="worker_llm",
+            locked_by=claimed.locked_by,
+        )
+    if claimed.status in {"queued", "running"}:
+        claimed = _wait_for_job(conn, claimed.id, timeout_seconds)
+    if claimed:
+        log_event(
+            logger,
+            logging.INFO,
+            "products_smoke_enrich_done",
+            job_id=claimed.id,
+            status=claimed.status,
+            result=claimed.result or {},
+        )
+    return 0 if ok else 1
+
+
 def _cmd_searxng_test(args: argparse.Namespace, logger: logging.Logger) -> int:
     url = os.getenv("SV_SEARXNG_URL", "").strip()
     if not url:
@@ -661,6 +798,8 @@ def build_parser() -> argparse.ArgumentParser:
             "promote_event_web_source_to_article",
             "enrich_event_summary_llm",
             "cve_enrich_llm",
+            "article_enrich_products",
+            "article_products_backfill",
         ],
         help="Job type to enqueue",
     )
@@ -675,6 +814,17 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_list = jobs_subparsers.add_parser("list", help="List recent jobs")
     jobs_list.add_argument("--limit", type=int, default=20, help="Number of jobs to show")
     jobs_list.set_defaults(func=_cmd_jobs_list)
+    jobs_products_smoke = jobs_subparsers.add_parser(
+        "products-smoke", help="Smoke test article product enrichment routing"
+    )
+    jobs_products_smoke.add_argument("--limit", type=int, default=5, help="Backfill limit")
+    jobs_products_smoke.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=120,
+        help="Timeout for job claim/completion checks",
+    )
+    jobs_products_smoke.set_defaults(func=_cmd_jobs_products_smoke)
 
     cve_parser = subparsers.add_parser("cve", help="CVE ingestion commands")
     cve_subparsers = cve_parser.add_subparsers(dest="cve_command", required=True)

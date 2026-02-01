@@ -1,0 +1,45 @@
+{{ define "main" }}
+  {{ $slug := .Params.vendor_slug }}
+  {{ $map := site.Data.vendor_map | default dict }}
+  {{ $entry := index $map $slug }}
+
+  <section class="sv-vp sv-vp--single" data-vp-default-slug="{{ $slug }}">
+    <header class="sv-vp-header">
+      <h1 class="mt-5 text-4xl font-extrabold text-neutral-900 dark:text-neutral">
+        {{ if $entry }}{{ $entry.display_name }}{{ else }}Vendor{{ end }}
+      </h1>
+      {{ if $entry }}
+        <p class="mt-2 text-base text-neutral-500 dark:text-neutral-400">
+          {{ $entry.article_count }} articles · {{ $entry.cve_count }} CVEs
+        </p>
+      {{ end }}
+    </header>
+
+    <div class="sv-vp-detail" data-vp-detail>
+      <div class="sv-vp-detail-body">
+        <div>
+          <h3 class="sv-vp-subtitle">Related Articles</h3>
+          <div class="sv-vp-list" data-vp-articles></div>
+        </div>
+        <div>
+          <h3 class="sv-vp-subtitle">Related CVEs</h3>
+          <div class="sv-vp-list" data-vp-cves></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <script id="sv-vendors-data" type="application/json">
+    {{ site.Data.vendors | default (slice) | jsonify }}
+  </script>
+  <script id="sv-vendor-map" type="application/json">
+    {{ site.Data.vendor_map | default dict | jsonify }}
+  </script>
+
+  {{ $js := resources.Get "js/vendor_product.js" | resources.Minify | resources.Fingerprint (site.Params.fingerprintAlgorithm | default "sha512") }}
+  <script
+    type="text/javascript"
+    src="{{ $js.RelPermalink }}"
+    integrity="{{ $js.Data.Integrity }}"
+    data-vp-page="vendor-single"></script>
+{{ end }}

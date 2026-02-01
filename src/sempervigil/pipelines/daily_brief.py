@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
+
+from ..utils import atomic_write_json, atomic_write_text
 
 
 def write_daily_brief(
@@ -47,6 +48,6 @@ def write_daily_brief(
                 lines.append(f"  - {bullet}")
         lines.append("")
 
-    md_path.write_text("\n".join(lines), encoding="utf-8")
-    json_path.write_text(json.dumps(items, indent=2), encoding="utf-8")
+    atomic_write_text(md_path, "\n".join(lines))
+    atomic_write_json(json_path, items, indent=2)
     return {"markdown_path": str(md_path), "json_path": str(json_path)}

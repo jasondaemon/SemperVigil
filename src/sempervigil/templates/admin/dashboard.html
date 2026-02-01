@@ -1,6 +1,7 @@
 {% extends "admin/base.html" %}
 {% set nav_active = "dashboard" %}
 {% block content %}
+  <div id="queue-stale-banner" class="banner warning" style="display:none;"></div>
   <section class="cards">
     <div class="card">
       <div class="card-title">Sources</div>
@@ -34,12 +35,23 @@
     </p>
     <div class="actions">
       <button class="btn secondary" id="dashboard-pipeline-check" type="button">Run Pipeline Check</button>
+      <button class="btn secondary" id="dashboard-metrics-refresh" type="button">Refresh</button>
+      <button class="btn secondary" id="dashboard-rebuild-vendor-products" type="button">Rebuild Vendor/Product Indexes</button>
     </div>
     <div class="grid" id="dashboard-backlog"></div>
-    <div class="panel" id="dashboard-job-counts"></div>
+    <div class="panel" id="dashboard-job-counts">
+      <div class="panel-header">
+        <h3>Job Queue</h3>
+        <div class="panel-actions">
+          <span class="muted" id="dashboard-job-counts-since"></span>
+          <button class="btn small" id="reset-failures" type="button">Reset Counters</button>
+        </div>
+      </div>
+      <div id="dashboard-job-counts-table"></div>
+    </div>
   </section>
 
-  <section class="panel">
+  <section class="panel" id="dashboard-logs">
     <h2>Log Tail</h2>
     <div class="filters inline">
       <label>Service
@@ -49,6 +61,10 @@
           <option value="builder">builder</option>
         </select>
       </label>
+      <div class="logs-build-controls" id="logs-build-controls" style="display:none;">
+        <button class="btn secondary small" type="button" id="logs-build-stdout">Builder stdout</button>
+        <button class="btn secondary small" type="button" id="logs-build-stderr">Builder stderr</button>
+      </div>
       <label>Lines
         <select id="logs-lines">
           <option value="50">50</option>
@@ -60,6 +76,7 @@
       <label class="checkbox"><input type="checkbox" id="logs-auto" checked> Auto-refresh</label>
       <label class="checkbox"><input type="checkbox" id="logs-pin" checked> Pin to bottom</label>
       <button class="btn secondary" type="button" id="logs-refresh">Refresh</button>
+      <button class="btn secondary icon" type="button" id="logs-open" title="Open in new window" aria-label="Open log tail in new window">↗</button>
     </div>
     <div class="log-filters">
       <div class="log-filter-group">

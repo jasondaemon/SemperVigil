@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+from pathlib import Path
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
@@ -29,6 +30,20 @@ def _tail(text: str, max_lines: int = 120) -> str:
     return "\n".join(lines[-max_lines:])
 
 
+def _tail_file(path: Path, max_lines: int = 120, max_bytes: int = 400_000) -> str:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            read_size = min(size, max_bytes)
+            handle.seek(-read_size, os.SEEK_END)
+            data = handle.read().decode("utf-8", errors="replace")
+    except FileNotFoundError:
+        return ""
+    lines = data.splitlines()
+    return "\n".join(lines[-max_lines:])
+
+
 def _last_successful_build_at(conn) -> datetime | None:
     row = conn.execute(
         """
@@ -47,14 +62,31 @@ def _last_successful_build_at(conn) -> datetime | None:
         return None
 
 
-def _run_hugo_until_done(conn, job_id: str) -> tuple[int, str, str, bool, list[str]]:
+def _build_log_paths(data_dir: str, job_id: str) -> dict[str, Path]:
+    logs_dir = Path(data_dir) / "logs" / "builds"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    return {
+        "stdout": logs_dir / f"{job_id}.stdout.log",
+        "stderr": logs_dir / f"{job_id}.stderr.log",
+    }
+
+
+def _run_hugo_until_done(
+    conn, job_id: str, log_paths: dict[str, Path]
+) -> tuple[int, str, str, bool, list[str]]:
     cmd = ["/bin/sh", "/tools/hugo-build.sh"]
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    stdout_path = log_paths["stdout"]
+    stderr_path = log_paths["stderr"]
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    with stdout_path.open("a", encoding="utf-8") as stdout_file, stderr_path.open(
+        "a", encoding="utf-8"
+    ) as stderr_file:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=stdout_file,
+            stderr=stderr_file,
+            text=True,
+        )
     canceled = False
     while True:
         if is_job_canceled(conn, job_id):
@@ -68,11 +100,72 @@ def _run_hugo_until_done(conn, job_id: str) -> tuple[int, str, str, bool, list[s
         if proc.poll() is not None:
             break
         time.sleep(0.5)
-    stdout, stderr = proc.communicate()
-    stdout = (stdout or "").strip()
-    stderr = (stderr or "").strip()
+    proc.wait()
+    stdout = _tail_file(stdout_path)
+    stderr = _tail_file(stderr_path)
     return proc.returncode or 0, stdout, stderr, canceled, cmd
 
+
+
+def _derive_product_title(md_path: Path) -> str:
+    stem = md_path.stem
+    if "__" in stem:
+        vendor, product = stem.split("__", 1)
+        vendor = vendor.replace("_", " ").strip()
+        product = product.replace("_", " ").strip()
+        return f"{vendor} {product}".strip()
+    return stem.replace("_", " ").strip()
+
+
+def _sanitize_title_value(value: str, md_path: Path) -> tuple[str, bool]:
+    raw = value.strip()
+    if raw.startswith("'") and raw.endswith("'") and len(raw) >= 2:
+        raw = raw[1:-1].replace("''", "'")
+    elif raw.startswith('"') and raw.endswith('"') and len(raw) >= 2:
+        raw = raw[1:-1].replace('\\"', '"')
+    raw = raw.replace("\\", "")
+    replaced = False
+    if len(raw) > 200:
+        raw = _derive_product_title(md_path)
+        replaced = True
+    escaped = raw.replace("'", "''")
+    return f"title: '{escaped}'", replaced
+
+
+def _sanitize_product_pages(source_dir: str) -> int:
+    content_dir = Path(source_dir) / "content" / "products"
+    if not content_dir.exists():
+        return 0
+    fixed = 0
+    for md_path in content_dir.glob("*.md"):
+        try:
+            lines = md_path.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            continue
+        in_front_matter = False
+        changed = False
+        for idx, line in enumerate(lines):
+            if idx == 0 and line.strip() == "---":
+                in_front_matter = True
+                continue
+            if in_front_matter and line.strip() == "---":
+                break
+            if in_front_matter and line.startswith("title:"):
+                new_line, replaced = _sanitize_title_value(line[len("title:"):], md_path)
+                if new_line != line:
+                    lines[idx] = new_line
+                    changed = True
+                elif replaced:
+                    lines[idx] = new_line
+                    changed = True
+                break
+        try:
+            md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except Exception:
+            continue
+        if changed:
+            fixed += 1
+    return fixed
 
 def run_once(builder_id: str) -> int:
     logger = _setup_logging()
@@ -87,6 +180,14 @@ def run_once(builder_id: str) -> int:
 
     set_umask_from_env()
     ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir))
+    source_dir = os.environ.get("SV_HUGO_SOURCE_DIR")
+    if not source_dir:
+        try:
+            source_dir = str(Path(config.paths.output_dir).parent.parent)
+        except Exception:
+            source_dir = None
+    if source_dir:
+        _sanitize_product_pages(source_dir)
     job = claim_next_job(
         conn,
         builder_id,
@@ -121,10 +222,18 @@ def run_once(builder_id: str) -> int:
                 log_event(logger, logging.INFO, "builder_once_done", builder_id=builder_id)
                 return 0
 
-    log_event(logger, logging.INFO, "build_claimed", job_id=job.id)
+    log_paths = _build_log_paths(config.paths.data_dir, job.id)
+    log_event(
+        logger,
+        logging.INFO,
+        "build_claimed",
+        job_id=job.id,
+        stdout_log_path=str(log_paths["stdout"]),
+        stderr_log_path=str(log_paths["stderr"]),
+    )
     start = time.time()
     try:
-        returncode, stdout, stderr, canceled, cmd = _run_hugo_until_done(conn, job.id)
+        returncode, stdout, stderr, canceled, cmd = _run_hugo_until_done(conn, job.id, log_paths)
     except Exception as exc:  # noqa: BLE001
         fail_job(conn, job.id, str(exc))
         log_event(logger, logging.ERROR, "build_failed", job_id=job.id, error=str(exc))
@@ -139,7 +248,8 @@ def run_once(builder_id: str) -> int:
     if returncode != 0:
         tail = _tail(stderr or stdout)
         error_detail = (
-            f"cmd={' '.join(cmd)}\nstdout:\n{stdout}\nstderr:\n{stderr}".strip()
+            f"cmd={' '.join(cmd)}\nstdout_tail:\n{stdout}\nstderr_tail:\n{stderr}\n"
+            f"stdout_log_path={log_paths['stdout']}\nstderr_log_path={log_paths['stderr']}".strip()
         )
         fail_job(conn, job.id, error_detail or f"hugo exited with {returncode}")
         log_event(
@@ -160,6 +270,8 @@ def run_once(builder_id: str) -> int:
         "stderr_tail": _tail(stderr),
         "duration_s": duration,
         "output_path": os.environ.get("SV_HUGO_OUTPUT_DIR", "/site"),
+        "stdout_log_path": str(log_paths["stdout"]),
+        "stderr_log_path": str(log_paths["stderr"]),
     }
     if complete_job(conn, job.id, result=result_payload):
         log_event(logger, logging.INFO, "build_succeeded", job_id=job.id)

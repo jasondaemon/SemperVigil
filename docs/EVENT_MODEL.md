@@ -1,5 +1,7 @@
 # EVENT_MODEL.md — Event Lifecycle (Design-Only)
 
+> **Current runtime notes:** see [CURRENT_CONTEXT.md](CURRENT_CONTEXT.md) before troubleshooting or starting a new chat.
+
 > Design-only reference for event lifecycle and aggregation behavior.
 > No implementation changes implied.
 

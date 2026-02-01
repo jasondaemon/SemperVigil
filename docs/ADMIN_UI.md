@@ -1,5 +1,7 @@
 # Admin UI
 
+> **Current runtime notes:** see [CURRENT_CONTEXT.md](CURRENT_CONTEXT.md) before troubleshooting or starting a new chat.
+
 Admin UI is served at `/ui` from the admin container. If `SV_ADMIN_TOKEN` is set,
 login via `/ui/login`.
 

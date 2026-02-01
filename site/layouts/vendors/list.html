@@ -1,0 +1,62 @@
+{{ define "main" }}
+  {{ $vendorsData := site.Data.vendors | default (slice) }}
+  {{ $vendors := $vendorsData }}
+  {{ if and (kindIs "map" $vendorsData) (isset $vendorsData "items") }}
+    {{ $vendors = index $vendorsData "items" }}
+  {{ end }}
+  {{ $cloud := where $vendors "total_count" "gt" 1 }}
+
+  <section class="sv-vp">
+    <header class="sv-vp-header">
+      <h1 class="mt-5 text-4xl font-extrabold text-neutral-900 dark:text-neutral">Vendors</h1>
+      <p class="mt-2 text-base text-neutral-500 dark:text-neutral-400">Browse vendors linked to today’s articles and CVEs.</p>
+    </header>
+
+    <div class="sv-vp-controls">
+      <label class="sv-vp-label" for="sv-vendors-search">Search vendors</label>
+      <input id="sv-vendors-search" class="sv-vp-search" type="search" placeholder="Search all vendors…" autocomplete="off" />
+    </div>
+
+    <div class="sv-vp-cloud" data-vp-cloud>
+      {{ range $cloud }}
+        <button class="sv-chip sv-cloud-item" type="button" data-slug="{{ .slug }}">
+          <span class="sv-cloud-name">{{ .display_name }}</span>
+          <span class="sv-cloud-count">{{ .total_count }}</span>
+        </button>
+      {{ end }}
+    </div>
+
+    <div class="sv-vp-results" data-vp-results hidden></div>
+
+    <div class="sv-vp-detail" data-vp-detail hidden>
+      <div class="sv-vp-detail-header">
+        <h2 class="sv-vp-detail-title" data-vp-title></h2>
+        <div class="sv-vp-detail-meta" data-vp-meta></div>
+      </div>
+      <div class="sv-vp-detail-body">
+        <div>
+          <h3 class="sv-vp-subtitle">Related Articles</h3>
+          <div class="sv-vp-list" data-vp-articles></div>
+        </div>
+        <div>
+          <h3 class="sv-vp-subtitle">Related CVEs</h3>
+          <div class="sv-vp-list" data-vp-cves></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <script id="sv-vendors-data" type="application/json">
+    {{ $vendors | jsonify }}
+  </script>
+  <script id="sv-vendor-map" type="application/json">
+    {{ site.Data.vendor_map | default dict | jsonify }}
+  </script>
+
+  {{ $js := resources.Get "js/vendor_product.js" | resources.Minify | resources.Fingerprint (site.Params.fingerprintAlgorithm | default "sha512") }}
+  <script
+    type="text/javascript"
+    src="{{ $js.RelPermalink }}"
+    integrity="{{ $js.Data.Integrity }}"
+    data-vp-page="vendors"></script>
+{{ end }}

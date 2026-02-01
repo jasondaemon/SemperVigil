@@ -11,6 +11,7 @@ HUGO_CACHE_DIR="${SV_HUGO_CACHE_DIR:-${DATA_DIR}/hugo_cache}"
 HUGO_MODULES_DIR="${SV_HUGO_MODULES_DIR:-${DATA_DIR}/hugo_modules}"
 SV_UID="${SV_UID:-1000}"
 SV_GID="${SV_GID:-1000}"
+SV_FIX_SITE_PERMS="${SV_FIX_SITE_PERMS:-1}"
 
 mkdir -p \
   "${DATA_DIR}/logs" \
@@ -43,17 +44,23 @@ ensure_if_mounted_or_writable "${SITE_SRC_DIR}/data/articles"
 ensure_if_mounted_or_writable "${SITE_SRC_DIR}/data/daily"
 ensure_if_mounted_or_writable "${SITE_PUBLIC_DIR}"
 
-if [ "$(id -u)" = "0" ]; then
-  chown -R "${SV_UID}:${SV_GID}" "${DATA_DIR}" || true
-  [ -d "${SITE_SRC_DIR}" ] && chown -R "${SV_UID}:${SV_GID}" "${SITE_SRC_DIR}" || true
-  [ -d "${SITE_PUBLIC_DIR}" ] && chown -R "${SV_UID}:${SV_GID}" "${SITE_PUBLIC_DIR}" || true
-else
-  chmod -R u+rwX,g+rwX "${DATA_DIR}" || true
-  [ -d "${SITE_SRC_DIR}" ] && chmod -R u+rwX,g+rwX "${SITE_SRC_DIR}" || true
-  [ -d "${SITE_PUBLIC_DIR}" ] && chmod -R u+rwX,g+rwX "${SITE_PUBLIC_DIR}" || true
-  if command -v setfacl >/dev/null 2>&1; then
-    setfacl -R -m "u:${SV_UID}:rwx" -m "g:${SV_GID}:rwx" "${DATA_DIR}" || true
-    [ -d "${SITE_SRC_DIR}" ] && setfacl -R -m "u:${SV_UID}:rwx" -m "g:${SV_GID}:rwx" "${SITE_SRC_DIR}" || true
-    [ -d "${SITE_PUBLIC_DIR}" ] && setfacl -R -m "u:${SV_UID}:rwx" -m "g:${SV_GID}:rwx" "${SITE_PUBLIC_DIR}" || true
+fix_perms_tree() {
+  target="$1"
+  if [ ! -d "$target" ]; then
+    return
   fi
+  if [ "$(id -u)" = "0" ]; then
+    find "$target" -name '@eaDir' -prune -o -exec chown "${SV_UID}:${SV_GID}" {} + || true
+  else
+    find "$target" -name '@eaDir' -prune -o -exec chmod u+rwX,g+rwX {} + || true
+    if command -v setfacl >/dev/null 2>&1; then
+      find "$target" -name '@eaDir' -prune -o -exec setfacl -m "u:${SV_UID}:rwx" -m "g:${SV_GID}:rwx" {} + || true
+    fi
+  fi
+}
+
+fix_perms_tree "${DATA_DIR}"
+if [ "${SV_FIX_SITE_PERMS}" != "0" ]; then
+  fix_perms_tree "${SITE_SRC_DIR}"
+  fix_perms_tree "${SITE_PUBLIC_DIR}"
 fi

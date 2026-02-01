@@ -1,5 +1,7 @@
 # LINKING_MODEL.md — Article ↔ Event ↔ CVE Linking (Design-Only)
 
+> **Current runtime notes:** see [CURRENT_CONTEXT.md](CURRENT_CONTEXT.md) before troubleshooting or starting a new chat.
+
 > Deterministic-first linking rules for SemperVigil.
 > No implementation changes implied.
 

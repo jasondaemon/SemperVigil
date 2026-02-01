@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from typing import Any
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi import Body, APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 try:
@@ -30,12 +32,15 @@ from .config import (
 )
 from .admin_ui import TEMPLATES, ui_router
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
+from .utils import utc_now_iso
+from .worker import WORKER_JOB_TYPES, _site_root_from_output_dir, _write_vendor_product_indexes
 from .storage import (
     enqueue_job,
     get_source_run_streaks,
     init_db,
     list_jobs,
     list_jobs_filtered,
+    list_queued_job_stats,
     cancel_job,
     cancel_all_jobs,
     cancel_jobs_by_type,
@@ -44,6 +49,7 @@ from .storage import (
     count_table,
     get_last_job_by_type,
     get_job,
+    has_pending_job,
 )
 from .cve_filters import CveSignals, matches_filters
 from .cve_sync import CveSyncConfig, isoformat_utc, preview_cves
@@ -57,13 +63,17 @@ from .storage import (
     get_dashboard_metrics,
     get_event,
     get_article_by_id,
+    update_article_content,
     get_article_tags,
     get_cve,
     get_cve_last_seen,
     get_product,
     get_product_cves,
     get_product_facets,
+    count_articles_for_product,
+    list_articles_for_product,
     get_setting,
+    set_setting,
     get_source_stats,
     get_pending_article_job_id,
     get_pending_cve_job_id,
@@ -72,6 +82,7 @@ from .storage import (
     list_article_ids_missing_summary,
     list_article_ids_missing_content,
     list_article_ids_missing_content_all,
+    list_article_ids_missing_products,
     list_article_ids_ready_for_summary,
     list_article_ids_ready_for_summary_all,
     list_article_ids_with_content_error_all,
@@ -84,6 +95,11 @@ from .storage import (
     list_event_web_sources,
     list_llm_runs,
     insert_llm_run,
+    list_products_for_article,
+    get_article_threat_actors,
+    list_threat_actors,
+    get_threat_actor_detail,
+    list_jobs_by_types_since,
     query_products,
     backfill_products_from_cves,
     cve_data_completeness,
@@ -106,14 +122,17 @@ from .storage import (
     create_event,
     update_event,
     delete_event,
+    update_article_suppressed,
     upsert_event_by_key,
     link_event_article,
     update_event_summary_from_articles,
     normalize_cve_cluster_event_keys,
     mark_event_web_source_status,
     promote_event_web_source_to_article,
+    has_pending_article_job,
 )
 from .ingest import process_source
+from .pipelines.content_fetch import fetch_article_content
 from .services.sources_service import (
     create_source,
     delete_source,
@@ -180,6 +199,26 @@ def _read_log_tail(path: str, max_lines: int, max_bytes: int) -> str:
         return ""
     lines = data.splitlines()
     return "\n".join(lines[-max_lines:])
+
+
+def _parse_iso(value: str) -> datetime:
+    if value.endswith("Z"):
+        value = value.replace("Z", "+00:00")
+    return datetime.fromisoformat(value).astimezone(timezone.utc)
+
+
+def _wait_for_job(conn: Any, job_id: str, timeout_seconds: int) -> Any:
+    start = time.monotonic()
+    last_job = None
+    while time.monotonic() - start < timeout_seconds:
+        job = get_job(conn, job_id)
+        if not job:
+            return None
+        last_job = job
+        if job.status in {"running", "succeeded", "failed", "canceled"}:
+            return job
+        time.sleep(1)
+    return last_job
 
 app = FastAPI(title="SemperVigil Admin API")
 
@@ -254,6 +293,10 @@ class CveTestRequest(BaseModel):
     limit: int = 5
 
 
+class ArticleContentUpdate(BaseModel):
+    content_text: str
+
+
 class ClearRequest(BaseModel):
     confirm: str
     delete_files: bool = False
@@ -262,6 +305,11 @@ class ClearRequest(BaseModel):
 class SmokeRequest(BaseModel):
     sources_limit: int = 2
     per_source_limit: int = 10
+
+
+class ProductsSmokeRequest(BaseModel):
+    limit: int = 5
+    timeout_seconds: int = 120
 
 
 class SourceAcquireRequest(BaseModel):
@@ -340,15 +388,85 @@ def logs_tail(service: str, lines: int = 200) -> dict[str, object]:
     return {"service": service_key, "lines": line_limit, "text": text}
 
 
+@app.get("/admin/api/logs/builds/latest", dependencies=[Depends(_require_admin_token)])
+def logs_latest_build(stream: str = "stdout", lines: int = 200) -> dict[str, object]:
+    service_key = str(stream or "stdout").strip().lower()
+    if service_key not in {"stdout", "stderr"}:
+        raise HTTPException(status_code=400, detail="invalid_stream")
+    line_limit = max(1, min(int(lines or 200), 500))
+    conn = _get_conn()
+    last_build = get_last_job_by_type(conn, "build_site")
+    log_path = None
+    if last_build and isinstance(last_build.result, dict):
+        key = f"{service_key}_log_path"
+        value = last_build.result.get(key)
+        if isinstance(value, str) and value:
+            log_path = value
+    if not log_path:
+        logs_dir = Path("/data/logs/builds")
+        if not logs_dir.exists():
+            return {"stream": service_key, "lines": line_limit, "text": "", "log_path": None}
+        suffix = f".{service_key}.log"
+        candidates = sorted(
+            logs_dir.glob(f"*{suffix}"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if candidates:
+            log_path = str(candidates[0])
+    if not log_path:
+        return {"stream": service_key, "lines": line_limit, "text": "", "log_path": None}
+    text = _read_log_tail(log_path, line_limit, max_bytes=400_000)
+    return {"stream": service_key, "lines": line_limit, "text": text, "log_path": log_path}
+
+
 @app.get("/admin/api/dashboard/metrics", dependencies=[Depends(_require_admin_token)])
 def dashboard_metrics() -> dict[str, object]:
     conn = _get_conn()
     metrics = get_dashboard_metrics(conn)
+    metrics["job_types"] = sorted(set(WORKER_JOB_TYPES + ["build_site"]))
     stage_statuses = list_stage_statuses(conn, STAGE_NAMES)
     metrics["llm_stage_active"] = sum(1 for item in stage_statuses if item["status"] == "active")
     metrics["llm_stage_total"] = len(stage_statuses)
     metrics["llm_configured"] = metrics["llm_stage_active"] > 0
     return metrics
+
+@app.post("/admin/api/dashboard/reset_failures", dependencies=[Depends(_require_admin_token)])
+def dashboard_reset_failures() -> dict[str, object]:
+    conn = _get_conn()
+    now = utc_now_iso()
+    set_setting(conn, "dashboard_failures_since", now)
+    set_setting(conn, "dashboard_job_counts_since", now)
+    conn.commit()
+    return {
+        "status": "ok",
+        "failures_since": get_setting(conn, "dashboard_failures_since", None),
+        "counts_since": get_setting(conn, "dashboard_job_counts_since", None),
+    }
+
+
+@app.post("/admin/api/dashboard/rebuild_vendor_products", dependencies=[Depends(_require_admin_token)])
+def dashboard_rebuild_vendor_products() -> dict[str, object]:
+    conn = _get_conn()
+    job_id = enqueue_job(conn, "rebuild_vendor_products", {})
+    return {"status": "queued", "job_id": job_id}
+
+
+@app.post("/admin/api/threats/backfill/articles", dependencies=[Depends(_require_admin_token)])
+def threats_backfill_articles(payload: dict | None = Body(None)) -> dict[str, object]:
+    conn = _get_conn()
+    limit = int(payload.get("limit") or 200) if payload else 200
+    job_id = enqueue_job(conn, "article_threat_actors_backfill", {"limit": limit})
+    return {"status": "queued", "job_id": job_id, "limit": limit}
+
+
+@app.post("/admin/api/threats/backfill/cves", dependencies=[Depends(_require_admin_token)])
+def threats_backfill_cves(payload: dict | None = Body(None)) -> dict[str, object]:
+    conn = _get_conn()
+    limit = int(payload.get("limit") or 200) if payload else 200
+    job_id = enqueue_job(conn, "cve_threat_actors_backfill", {"limit": limit})
+    return {"status": "queued", "job_id": job_id, "limit": limit}
+
 
 
 @app.get("/admin/api/cves/settings", dependencies=[Depends(_require_admin_token)])
@@ -446,6 +564,18 @@ def dashboard_queue_missing(payload: dict[str, object]) -> dict[str, object]:
             total=len(cve_ids),
         )
         return {"status": "queued", "queued": queued, "skipped": skipped, "total": len(cve_ids)}
+    if kind == "article_products":
+        limit = int(payload.get("limit") or 500)
+        job_id = enqueue_job(conn, "article_products_backfill", {"limit": limit})
+        return {"status": "queued", "job_id": job_id}
+    if kind == "article_threats":
+        limit = int(payload.get("limit") or 200)
+        job_id = enqueue_job(conn, "article_threat_actors_backfill", {"limit": limit})
+        return {"status": "queued", "job_id": job_id}
+    if kind == "cve_threats":
+        limit = int(payload.get("limit") or 200)
+        job_id = enqueue_job(conn, "cve_threat_actors_backfill", {"limit": limit})
+        return {"status": "queued", "job_id": job_id}
     raise HTTPException(status_code=400, detail="unknown_kind")
 
 
@@ -660,6 +790,11 @@ def enqueue(job: JobRequest, _: None = Depends(_require_admin_token)) -> dict[st
     logger = logging.getLogger("sempervigil.admin")
     conn = _get_conn()
     payload = {"source_id": job.source_id} if job.source_id else None
+    if job.job_type == "build_site" and has_pending_job(conn, "build_site"):
+        last = get_last_job_by_type(conn, "build_site")
+        if last and last.status in {"queued", "running"}:
+            return {"status": "already_queued", "job_id": last.id}
+        return {"status": "already_queued"}
     job_id = enqueue_job(conn, job.job_type, payload, debounce=True)
     log_event(
         logger,
@@ -783,6 +918,30 @@ def debug_overview() -> dict[str, object]:
     }
 
 
+@app.get("/admin/api/diagnostics/queue", dependencies=[Depends(_require_admin_token)])
+def queue_diagnostics() -> dict[str, object]:
+    conn = _get_conn()
+    now = datetime.now(tz=timezone.utc)
+    items = []
+    for row in list_queued_job_stats(conn):
+        oldest_at = row.get("oldest_requested_at")
+        age_minutes = None
+        if isinstance(oldest_at, str):
+            try:
+                age_minutes = int((now - _parse_iso(oldest_at)).total_seconds() // 60)
+            except Exception:  # noqa: BLE001
+                age_minutes = None
+        items.append(
+            {
+                "job_type": row.get("job_type"),
+                "queued": row.get("queued"),
+                "oldest_requested_at": oldest_at,
+                "oldest_age_minutes": age_minutes,
+            }
+        )
+    return {"now": now.isoformat(), "queue": items}
+
+
 @app.post("/admin/api/debug/smoke", dependencies=[Depends(_require_admin_token)])
 def debug_smoke(payload: SmokeRequest) -> dict[str, object]:
     conn = _get_conn()
@@ -796,6 +955,119 @@ def debug_smoke(payload: SmokeRequest) -> dict[str, object]:
         debounce=True,
     )
     return {"job_id": job_id}
+
+
+@app.post("/admin/api/debug/products-smoke", dependencies=[Depends(_require_admin_token)])
+def debug_products_smoke(payload: ProductsSmokeRequest) -> dict[str, object]:
+    conn = _get_conn()
+    limit = max(1, int(payload.limit))
+    timeout_seconds = max(10, int(payload.timeout_seconds))
+    result: dict[str, object] = {
+        "limit": limit,
+        "timeout_seconds": timeout_seconds,
+        "steps": [],
+    }
+    status = "ok"
+
+    def add_step(step: str, status: str, **extra) -> None:
+        entry = {"step": step, "status": status}
+        if extra:
+            entry.update(extra)
+        result["steps"].append(entry)
+
+    def matches_worker(value: str | None, candidates: list[str]) -> bool:
+        if not value:
+            return False
+        lowered = value.lower()
+        return any(candidate in lowered for candidate in candidates)
+
+    start_marker = utc_now_iso()
+    missing_ids = list_article_ids_missing_products(conn, limit=limit)
+    add_step("scan_missing_products", "ok", missing_count=len(missing_ids))
+
+    backfill_job_id = enqueue_job(conn, "article_products_backfill", {"limit": limit})
+    add_step("enqueue_backfill", "ok", job_id=backfill_job_id)
+    backfill_job = _wait_for_job(conn, backfill_job_id, timeout_seconds)
+    if not backfill_job:
+        add_step("backfill_claim", "timeout")
+        result["status"] = "timeout"
+        return result
+    add_step(
+        "backfill_claim",
+        "ok",
+        status=backfill_job.status,
+        locked_by=backfill_job.locked_by,
+    )
+    if not matches_worker(backfill_job.locked_by, ["worker-fetch", "worker_fetch"]):
+        add_step(
+            "backfill_worker_check",
+            "warning",
+            expected="worker_fetch",
+            locked_by=backfill_job.locked_by,
+        )
+        status = "warning"
+    if backfill_job.status in {"queued", "running"}:
+        backfill_job = _wait_for_job(conn, backfill_job_id, timeout_seconds)
+    if backfill_job:
+        add_step(
+            "backfill_complete",
+            "ok" if backfill_job.status in {"succeeded", "failed", "canceled"} else "timeout",
+            status=backfill_job.status,
+            result=backfill_job.result or {},
+        )
+
+    if missing_ids and not has_pending_article_job(
+        conn, "article_enrich_products", int(missing_ids[0])
+    ):
+        direct_job_id = enqueue_job(
+            conn,
+            "article_enrich_products",
+            {"article_id": int(missing_ids[0])},
+        )
+        add_step("enqueue_enrich_direct", "ok", job_id=direct_job_id, article_id=missing_ids[0])
+
+    enrich_jobs = list_jobs_by_types_since(
+        conn,
+        types=["article_enrich_products"],
+        since=start_marker,
+    )
+    if not enrich_jobs:
+        add_step("enrich_claim", "skipped", reason="no_jobs_enqueued")
+        result["status"] = "skipped"
+        return result
+
+    target_job = enrich_jobs[0]
+    claimed = _wait_for_job(conn, target_job.id, timeout_seconds)
+    if not claimed:
+        add_step("enrich_claim", "timeout", job_id=target_job.id)
+        result["status"] = "timeout"
+        return result
+    add_step(
+        "enrich_claim",
+        "ok",
+        job_id=claimed.id,
+        status=claimed.status,
+        locked_by=claimed.locked_by,
+    )
+    if not matches_worker(claimed.locked_by, ["worker-llm", "worker_llm"]):
+        add_step(
+            "enrich_worker_check",
+            "warning",
+            expected="worker_llm",
+            locked_by=claimed.locked_by,
+        )
+        status = "warning"
+    if claimed.status in {"queued", "running"}:
+        claimed = _wait_for_job(conn, claimed.id, timeout_seconds)
+    if claimed:
+        add_step(
+            "enrich_complete",
+            "ok" if claimed.status in {"succeeded", "failed", "canceled"} else "timeout",
+            status=claimed.status,
+            result=claimed.result or {},
+        )
+    result["status"] = status
+    return result
 
 
 @app.get("/jobs")
@@ -841,6 +1113,11 @@ class SourceRequest(BaseModel):
     enabled: bool | None = None
     interval_minutes: int | None = None
     tags: list[str] | str | None = None
+    overrides: dict[str, object] | str | None = None
+
+
+class SourceOverrideTestRequest(BaseModel):
+    url: str
 
 
 class ProviderRequest(BaseModel):
@@ -1065,6 +1342,37 @@ def sources_test(
     }
 
 
+@app.post(
+    "/admin/api/sources/{source_id}/test_override",
+    dependencies=[Depends(_require_admin_token)],
+)
+def sources_test_override(source_id: str, payload: SourceOverrideTestRequest) -> dict[str, object]:
+    conn = _get_conn()
+    source = get_source(conn, source_id)
+    if not source:
+        raise HTTPException(status_code=404, detail="source_not_found")
+    url = str(payload.url or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url_required")
+    try:
+        config = load_runtime_config(conn)
+    except ConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    result = fetch_article_content(
+        url,
+        timeout_seconds=config.ingest.http.timeout_seconds,
+        user_agent=config.ingest.http.user_agent,
+        logger=logging.getLogger("sempervigil.admin"),
+        overrides=source.get("overrides"),
+    )
+    content_text = str(result.get("content_text") or "")
+    return {
+        "method": result.get("method") or "default",
+        "char_count": len(content_text),
+        "preview_first_400": content_text[:400],
+    }
+
+
 @app.post("/admin/api/sources/{source_id}/acquire", dependencies=[Depends(_require_admin_token)])
 def sources_acquire(
     source_id: str, payload: SourceAcquireRequest | None = None
@@ -1190,6 +1498,8 @@ def api_cves(
     query: str | None = None,
     severity: str | None = None,
     min_cvss: float | None = None,
+    missing_description: bool | None = None,
+    missing_products: bool | None = None,
     after: str | None = None,
     before: str | None = None,
     vendor: str | None = None,
@@ -1209,7 +1519,8 @@ def api_cves(
         query=query,
         severities=severities,
         min_cvss=min_cvss,
-        missing_description=None,
+        missing_description=missing_description,
+        missing_products=missing_products,
         after=after,
         before=before,
         vendor_keywords=vendor_keywords,
@@ -1261,6 +1572,26 @@ def api_cve_detail(cve_id: str) -> dict[str, object]:
         cve["scope_reasons"] = []
     cve["watchlist_enabled"] = _watchlist_enabled(conn)
     return cve
+
+
+@app.get("/admin/api/threats", dependencies=[Depends(_require_admin_token)])
+def api_threats(
+    query: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict[str, object]:
+    conn = _get_conn()
+    items, total = list_threat_actors(conn, query=query, page=page, page_size=page_size)
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@app.get("/admin/api/threats/{actor_key}", dependencies=[Depends(_require_admin_token)])
+def api_threat_detail(actor_key: str) -> dict[str, object]:
+    conn = _get_conn()
+    detail = get_threat_actor_detail(conn, actor_key)
+    if not detail:
+        raise HTTPException(status_code=404, detail="threat_actor_not_found")
+    return detail
 
 
 @app.get("/admin/api/events", dependencies=[Depends(_require_admin_token)])
@@ -1658,6 +1989,7 @@ def api_product_detail(product_key: str) -> dict[str, object]:
     if not product:
         raise HTTPException(status_code=404, detail="product_not_found")
     facets = get_product_facets(conn, product["product_id"])
+    facets["article_count"] = count_articles_for_product(conn, product["product_id"])
     return {"product": product, "facets": facets}
 
 
@@ -1666,6 +1998,8 @@ def api_product_cves(
     product_key: str,
     severity: str | None = None,
     min_cvss: float | None = None,
+    missing_description: bool | None = None,
+    missing_products: bool | None = None,
     page: int = 1,
     page_size: int = 50,
 ) -> dict[str, object]:
@@ -1696,6 +2030,35 @@ def api_product_events(
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
+@app.get("/admin/api/products/{product_key}/articles", dependencies=[Depends(_require_admin_token)])
+def api_product_articles(
+    product_key: str,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict[str, object]:
+    conn = _get_conn()
+    product = get_product(conn, product_key)
+    if not product:
+        raise HTTPException(status_code=404, detail="product_not_found")
+    items, total = list_articles_for_product(
+        conn,
+        product["product_id"],
+        page=page,
+        page_size=page_size,
+    )
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+
+
+@app.post("/admin/api/products/backfill_articles", dependencies=[Depends(_require_admin_token)])
+def api_products_backfill_articles(payload: dict[str, object] | None = None) -> dict[str, object]:
+    conn = _get_conn()
+    limit = None
+    if payload and isinstance(payload.get("limit"), int):
+        limit = int(payload["limit"])
+    job_id = enqueue_job(conn, "article_products_backfill", {"limit": limit} if limit else {})
+    return {"status": "ok", "job_id": job_id}
 @app.post("/admin/api/products/backfill", dependencies=[Depends(_require_admin_token)])
 def api_products_backfill(payload: dict[str, object] | None = None) -> dict[str, object]:
     conn = _get_conn()
@@ -1713,12 +2076,15 @@ def api_content_search(
     source_id: str | None = None,
     has_summary: bool | None = None,
     missing: str | None = None,
+    content_state: str | None = None,
     content_error: bool | None = None,
     summary_error: bool | None = None,
     needs: str | None = None,
     watchlist_hit: bool | None = None,
     severity: str | None = None,
     min_cvss: float | None = None,
+    missing_description: bool | None = None,
+    missing_products: bool | None = None,
     after: str | None = None,
     before: str | None = None,
     tags: str | None = None,
@@ -1739,6 +2105,7 @@ def api_content_search(
             source_id=source_id,
             has_summary=has_summary,
             missing=missing,
+            content_state=content_state,
             content_error=content_error,
             summary_error=summary_error,
             needs=needs,
@@ -1765,12 +2132,15 @@ def api_content_search(
         )
         vendor_keywords = [item.strip() for item in vendor.split(",")] if vendor else None
         product_keywords = [item.strip() for item in product.split(",")] if product else None
+        md = missing_description if missing_description is not None else (missing == "description")
+        mp = missing_products if missing_products is not None else (missing == "products")
         cve_items, cve_total = search_cves(
             conn,
             query=query,
             severities=severities,
             min_cvss=min_cvss,
-            missing_description=True if missing == "description" else None,
+            missing_description=md,
+            missing_products=mp,
             after=after,
             before=before,
             vendor_keywords=vendor_keywords,
@@ -1855,6 +2225,8 @@ def api_article_summarize(article_id: int) -> dict[str, object]:
 
 @app.post("/admin/api/articles/{article_id}/publish", dependencies=[Depends(_require_admin_token)])
 def api_article_publish(article_id: int) -> dict[str, object]:
+    if not is_article_markdown_enabled():
+        raise HTTPException(status_code=400, detail="article_markdown_disabled")
     conn = _get_conn()
     article = get_article_by_id(conn, int(article_id))
     if not article:
@@ -1901,6 +2273,39 @@ def api_article_pipeline(article_id: int) -> dict[str, object]:
         job_ids.append(enqueue_job(conn, "write_article_markdown", _build_write_payload(conn, article)))
     return {"status": "queued", "job_ids": job_ids}
 
+@app.post("/admin/api/articles/{article_id}/suppress", dependencies=[Depends(_require_admin_token)])
+def api_article_suppress(article_id: int, payload: dict | None = Body(None)) -> dict[str, object]:
+    conn = _get_conn()
+    payload = payload or {}
+    suppressed = payload.get("suppressed")
+    reason = payload.get("reason") if isinstance(payload, dict) else None
+    if suppressed is None:
+        # toggle
+        article = get_article_by_id(conn, article_id)
+        meta_json = article.get("meta_json") if article else None
+        current = False
+        if meta_json:
+            try:
+                meta = json.loads(meta_json)
+                if isinstance(meta, dict):
+                    current = bool(meta.get("suppressed"))
+            except Exception:
+                current = False
+        suppressed = not current
+    result = update_article_suppressed(conn, article_id, bool(suppressed), reason if isinstance(reason, str) else None)
+    return {"status": "ok", **result}
+
+@app.delete("/admin/api/articles/{article_id}", dependencies=[Depends(_require_admin_token)])
+def api_article_delete(article_id: int):
+    conn = init_db()
+    conn.execute("DELETE FROM event_articles WHERE article_id = %s", (article_id,))
+    conn.execute("DELETE FROM article_tags WHERE article_id = %s", (article_id,))
+    conn.execute("DELETE FROM article_products WHERE article_id = %s", (article_id,))
+    conn.execute("DELETE FROM articles WHERE id = %s", (article_id,))
+    conn.commit()
+    return {"status": "deleted", "article_id": article_id}
+
+
 
 @app.post("/admin/api/cves/{cve_id}/refresh", dependencies=[Depends(_require_admin_token)])
 def api_cve_refresh(cve_id: str) -> dict[str, object]:
@@ -1911,6 +2316,19 @@ def api_cve_refresh(cve_id: str) -> dict[str, object]:
     job_id = enqueue_job(conn, "cve_sync", {"cve_id": cve_id})
     return {"status": "queued", "job_id": job_id}
 
+@app.post("/admin/api/cves/{cve_id}/enrich_products", dependencies=[Depends(_require_admin_token)])
+def api_cve_enrich_products(cve_id: str) -> dict[str, object]:
+    conn = _get_conn()
+    profile, reason = get_active_profile_for_stage(conn, "cve_enrich_products")
+    if not profile:
+        raise HTTPException(status_code=400, detail=f"CVE enrichment disabled: {reason}")
+    existing = get_pending_job_id_for_cve(conn, "cve_enrich_llm", cve_id)
+    if existing:
+        return {"status": "already_queued", "job_id": existing}
+    job_id = enqueue_job(conn, "cve_enrich_llm", {"cve_id": cve_id, "profile_id": profile.get("id")})
+    return {"status": "queued", "job_id": job_id}
+
+
 
 @app.get("/admin/api/content/articles/{article_id}", dependencies=[Depends(_require_admin_token)])
 def api_article_detail(article_id: int) -> dict[str, object]:
@@ -1918,7 +2336,37 @@ def api_article_detail(article_id: int) -> dict[str, object]:
     article = get_article_by_id(conn, article_id)
     if not article:
         raise HTTPException(status_code=404, detail="article_not_found")
+    products = list_products_for_article(conn, article_id)
+    threat_actors = get_article_threat_actors(conn, article_id)
+    article = dict(article)
+    article["products"] = products
+    article["threat_actors"] = threat_actors
     return article
+
+@app.patch("/admin/api/articles/{article_id}/content", dependencies=[Depends(_require_admin_token)])
+def api_article_update_content(article_id: int, payload: ArticleContentUpdate) -> dict[str, object]:
+    conn = _get_conn()
+    article = get_article_by_id(conn, int(article_id))
+    if not article:
+        raise HTTPException(status_code=404, detail="article_not_found")
+    content_text = payload.content_text or ""
+    try:
+        min_len = int(os.environ.get("SV_CONTENT_MIN_LEN", "500"))
+    except ValueError:
+        min_len = 500
+    has_full_content = len(content_text) >= min_len
+    update_article_content(
+        conn,
+        int(article_id),
+        content_text=content_text,
+        content_html=article.get("content_html"),
+        content_fetched_at=utc_now_iso(),
+        content_error=None,
+        has_full_content=has_full_content,
+    )
+    conn.commit()
+    return {"status": "ok", "article_id": article_id, "content_len": len(content_text), "has_full_content": has_full_content}
+
 
 
 @app.get("/admin/api/content/tags", dependencies=[Depends(_require_admin_token)])
@@ -2024,6 +2472,7 @@ def source_to_model(source: dict[str, object]):
         pause_until=source.get("pause_until"),
         paused_reason=source.get("paused_reason"),
         robots_notes=None,
+        overrides=source.get("overrides"),
     )
 
 

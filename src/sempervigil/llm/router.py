@@ -26,6 +26,11 @@ STAGE_NAMES = [
     "merge_story",
     "exec_brief",
     "classify_topic",
+    "cve_enrich_products",
+    "cve_enrich_threat_actors",
+    "article_enrich_products",
+    "article_enrich_threat_actors",
+    "derive_events_from_articles",
 ]
 
 
@@ -368,7 +373,33 @@ def _maybe_parse_json(raw: str) -> Any:
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
+        extracted = _extract_json_payload(raw)
+        if extracted:
+            try:
+                return json.loads(extracted)
+            except json.JSONDecodeError:
+                return raw
         return raw
+
+
+def _extract_json_payload(raw: str) -> str | None:
+    if not raw:
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    start_obj = text.find("{")
+    start_arr = text.find("[")
+    starts = [s for s in (start_obj, start_arr) if s != -1]
+    if not starts:
+        return None
+    start = min(starts)
+    end_obj = text.rfind("}")
+    end_arr = text.rfind("]")
+    end = max(end_obj, end_arr)
+    if end == -1 or end <= start:
+        return None
+    return text[start : end + 1].strip()
 
 
 def _validate_json(schema: dict[str, Any], payload: Any) -> dict[str, Any]:

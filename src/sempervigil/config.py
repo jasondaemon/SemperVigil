@@ -157,7 +157,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "jobs": {
         "lock_timeout_seconds": 600,
-        "build_debounce_seconds": 600,
+        "build_debounce_seconds": 0,
     },
     "cve": {
         "enabled": True,
@@ -564,7 +564,10 @@ def _build_config(cfg: dict[str, Any]) -> Config:
     )
 
     ingest = IngestConfig(http=http, dedupe=dedupe, filters=filters)
-    build_debounce = jobs_cfg.get("build_debounce_seconds", 600)
+    env_debounce = os.getenv("SV_BUILD_DEBOUNCE_SECONDS")
+    build_debounce = jobs_cfg.get("build_debounce_seconds", 0)
+    if env_debounce is not None and str(env_debounce).strip() != "":
+        build_debounce = int(env_debounce)
     jobs = JobsConfig(
         lock_timeout_seconds=int(jobs_cfg.get("lock_timeout_seconds")),
         build_debounce_seconds=int(build_debounce),

@@ -53,11 +53,21 @@ def _apply_umask() -> None:
 
 
 def _ensure_dir(path: Path) -> None:
+    existed = path.exists()
     try:
         path.mkdir(parents=True, exist_ok=True)
     except PermissionError:
         return
-    _safe_chmod(path, 0o775)
+    if not existed:
+        _safe_chmod(path, _dir_mode())
+
+
+def _dir_mode() -> int:
+    mode_value = os.environ.get("SV_DIR_MODE", "775")
+    try:
+        return int(mode_value, 8)
+    except (ValueError, TypeError):
+        return 0o775
 
 
 def _safe_chmod(path: Path, mode: int) -> None:

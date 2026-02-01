@@ -56,6 +56,7 @@ def _base_context(request: Request) -> dict[str, object]:
     site_url = str(publishing.get("public_base_url") or "").strip()
     admin_js = BASE_DIR / "static" / "admin" / "admin.js"
     ui_build = os.environ.get("SV_UI_BUILD")
+    queue_stale_minutes = int(os.environ.get("SV_QUEUE_STALE_MINUTES", "30"))
     if not ui_build and admin_js.exists():
         ts = datetime.utcfromtimestamp(admin_js.stat().st_mtime)
         ui_build = ts.strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -68,6 +69,7 @@ def _base_context(request: Request) -> dict[str, object]:
         "watchlist_enabled": bool(personalization.get("watchlist_enabled")),
         "watchlist_exposure_mode": personalization.get("watchlist_exposure_mode") or "private_only",
         "ui_build": ui_build,
+        "queue_stale_minutes": queue_stale_minutes,
     }
 
 
@@ -143,6 +145,29 @@ def ui_router(token_guard) -> APIRouter:
             },
         )
 
+    @router.get("/threats", response_class=HTMLResponse)
+    def threats(request: Request):
+        return TEMPLATES.TemplateResponse(
+            "admin/threats.html",
+            {
+                **_base_context(request),
+                "nav_active": "content",
+                "nav_subactive": "threats",
+            },
+        )
+
+    @router.get("/threats/{actor_key}", response_class=HTMLResponse)
+    def threat_detail(request: Request, actor_key: str):
+        return TEMPLATES.TemplateResponse(
+            "admin/threat_detail.html",
+            {
+                **_base_context(request),
+                "nav_active": "content",
+                "nav_subactive": "threats",
+                "actor_key": actor_key,
+            },
+        )
+
     @router.get("/health", response_class=HTMLResponse)
     def health(request: Request):
         conn = _get_conn()
@@ -209,15 +234,17 @@ def ui_router(token_guard) -> APIRouter:
     @router.get("/ai", response_class=HTMLResponse)
     def ai_config(request: Request):
         conn = _get_conn()
+        prompts = list_prompts(conn)
+        profiles = list_profiles(conn)
         return TEMPLATES.TemplateResponse(
             "admin/ai.html",
             {
                 **_base_context(request),
                 "providers": list_providers(conn),
                 "models": list_models(conn),
-                "prompts": list_prompts(conn),
+                "prompts": prompts,
                 "schemas": list_schemas(conn),
-                "profiles": list_profiles(conn),
+                "profiles": profiles,
                 "routing": list_pipeline_routing(conn),
                 "stages": STAGE_NAMES,
                 "stage_statuses": list_stage_statuses(conn, STAGE_NAMES),

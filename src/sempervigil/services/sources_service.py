@@ -31,6 +31,7 @@ def list_sources(conn: Any) -> list[dict[str, Any]]:
         "default_frequency_minutes",
         "pause_until",
         "paused_reason",
+        "overrides",
     ]
     cols = [col for col in select_cols if col in columns]
     cursor = conn.execute(f"SELECT {', '.join(cols)} FROM sources ORDER BY id")
@@ -44,6 +45,7 @@ def list_sources(conn: Any) -> list[dict[str, Any]]:
         data["url"] = data.get("url") or data.get("base_url")
         data["kind"] = data.get("kind")
         data["tags"] = _parse_tags(data.get("tags_json"))
+        data["overrides"] = _parse_overrides(data.get("overrides"))
         if data.get("id") in acquire_map:
             data["acquire_status"] = acquire_map[data["id"]]["status"]
             data["acquire_job_id"] = acquire_map[data["id"]]["job_id"]
@@ -51,6 +53,8 @@ def list_sources(conn: Any) -> list[dict[str, Any]]:
         data["new_count"] = counts.get("new_count", 0)
         data["gathered_count"] = counts.get("gathered_count", 0)
         data["summarized_count"] = counts.get("summarized_count", 0)
+        data["last_successful_poll_at"] = _last_successful_poll(conn, data.get("id"))
+        data["last_article_at"] = _last_article_ingested(conn, data.get("id"))
         rows.append(data)
     return rows
 
@@ -81,29 +85,55 @@ def create_source(conn: Any, payload: dict[str, Any]) -> dict[str, Any]:
     enabled = bool(payload.get("enabled", True))
     interval = int(payload.get("interval_minutes", 60))
     tags = _parse_tags(payload.get("tags"))
+    overrides = _normalize_overrides_payload(payload.get("overrides"))
     now = utc_now_iso()
+    columns = _table_columns(conn, "sources")
 
-    conn.execute(
-        """
-        INSERT INTO sources
-            (id, name, enabled, kind, url, interval_minutes, tags_json,
-             base_url, default_frequency_minutes, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """,
-        (
-            source_id,
-            name,
-            1 if enabled else 0,
-            kind,
-            url,
-            interval,
-            json_dumps(tags) if tags else None,
-            url,
-            interval,
-            now,
-            now,
-        ),
-    )
+    if "overrides" in columns:
+        conn.execute(
+            """
+            INSERT INTO sources
+                (id, name, enabled, kind, url, interval_minutes, tags_json,
+                 base_url, default_frequency_minutes, overrides, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+            """,
+            (
+                source_id,
+                name,
+                1 if enabled else 0,
+                kind,
+                url,
+                interval,
+                json_dumps(tags) if tags else None,
+                url,
+                interval,
+                json_dumps(overrides) if overrides is not None else None,
+                now,
+                now,
+            ),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO sources
+                (id, name, enabled, kind, url, interval_minutes, tags_json,
+                 base_url, default_frequency_minutes, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                source_id,
+                name,
+                1 if enabled else 0,
+                kind,
+                url,
+                interval,
+                json_dumps(tags) if tags else None,
+                url,
+                interval,
+                now,
+                now,
+            ),
+        )
     conn.commit()
     _ensure_tactic(conn, source_id, kind, url, enabled)
     return get_source(conn, source_id) or {}
@@ -147,28 +177,54 @@ def update_source(conn: Any, source_id: str, payload: dict[str, Any]) -> dict[st
     enabled = bool(payload.get("enabled", current.get("enabled", True)))
     interval = int(payload.get("interval_minutes", current.get("interval_minutes", 60)))
     tags = _parse_tags(payload.get("tags", current.get("tags")))
+    overrides = _normalize_overrides_payload(payload.get("overrides", current.get("overrides")))
     now = utc_now_iso()
+    columns = _table_columns(conn, "sources")
 
-    conn.execute(
-        """
-        UPDATE sources
-        SET name = %s, enabled = %s, kind = %s, url = %s, interval_minutes = %s,
-            tags_json = %s, base_url = %s, default_frequency_minutes = %s, updated_at = %s
-        WHERE id = %s
-        """,
-        (
-            name,
-            1 if enabled else 0,
-            kind,
-            url,
-            interval,
-            json_dumps(tags) if tags else None,
-            url,
-            interval,
-            now,
-            source_id,
-        ),
-    )
+    if "overrides" in columns:
+        conn.execute(
+            """
+            UPDATE sources
+            SET name = %s, enabled = %s, kind = %s, url = %s, interval_minutes = %s,
+                tags_json = %s, base_url = %s, default_frequency_minutes = %s,
+                overrides = %s::jsonb, updated_at = %s
+            WHERE id = %s
+            """,
+            (
+                name,
+                1 if enabled else 0,
+                kind,
+                url,
+                interval,
+                json_dumps(tags) if tags else None,
+                url,
+                interval,
+                json_dumps(overrides) if overrides is not None else None,
+                now,
+                source_id,
+            ),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE sources
+            SET name = %s, enabled = %s, kind = %s, url = %s, interval_minutes = %s,
+                tags_json = %s, base_url = %s, default_frequency_minutes = %s, updated_at = %s
+            WHERE id = %s
+            """,
+            (
+                name,
+                1 if enabled else 0,
+                kind,
+                url,
+                interval,
+                json_dumps(tags) if tags else None,
+                url,
+                interval,
+                now,
+                source_id,
+            ),
+        )
     conn.commit()
     _ensure_tactic(conn, source_id, kind, url, enabled)
     return get_source(conn, source_id) or {}
@@ -234,6 +290,37 @@ def _parse_tags(tags: Any) -> list[str]:
     return []
 
 
+def _parse_overrides(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+def _normalize_overrides_payload(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
 def _table_columns(conn: Any, table: str) -> set[str]:
     cursor = conn.execute(
         """
@@ -285,3 +372,33 @@ def _int_or_default(*values: Any) -> int:
         except (TypeError, ValueError):
             continue
     return 60
+
+
+def _last_successful_poll(conn: Any, source_id: str | None) -> str | None:
+    if not source_id or not _table_columns(conn, "source_health_history"):
+        return None
+    row = conn.execute(
+        """
+        SELECT ts
+        FROM source_health_history
+        WHERE source_id = %s AND ok = 1
+        ORDER BY ts DESC
+        LIMIT 1
+        """,
+        (source_id,),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def _last_article_ingested(conn: Any, source_id: str | None) -> str | None:
+    if not source_id or not _table_columns(conn, "articles"):
+        return None
+    row = conn.execute(
+        """
+        SELECT MAX(ingested_at)
+        FROM articles
+        WHERE source_id = %s
+        """,
+        (source_id,),
+    ).fetchone()
+    return row[0] if row else None

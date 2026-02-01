@@ -16,7 +16,7 @@ from .db import connect_db
 from .models import Article, Job, Source, SourceTactic
 from .normalize import cpe_to_vendor_product, normalize_name
 from .enrichment.url import normalize_url, url_hash
-from .utils import json_dumps, log_event, utc_now_iso, utc_now_iso_offset
+from .utils import json_dumps, log_event, utc_now_iso, utc_now_iso_offset, slugify
 from psycopg import errors as pg_errors
 
 _CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
@@ -93,7 +93,7 @@ def get_source(conn: Any, source_id: str) -> Source | None:
     cursor = conn.execute(
         """
         SELECT id, name, enabled, base_url, topic_key, default_frequency_minutes,
-               pause_until, paused_reason, robots_notes
+               pause_until, paused_reason, robots_notes, overrides
         FROM sources
         WHERE id = %s
         """,
@@ -110,7 +110,7 @@ def list_sources(conn: Any, enabled_only: bool = True) -> list[Source]:
         cursor = conn.execute(
             """
             SELECT id, name, enabled, base_url, topic_key, default_frequency_minutes,
-                   pause_until, paused_reason, robots_notes
+                   pause_until, paused_reason, robots_notes, overrides
             FROM sources
             WHERE enabled = 1
             ORDER BY id
@@ -120,7 +120,7 @@ def list_sources(conn: Any, enabled_only: bool = True) -> list[Source]:
         cursor = conn.execute(
             """
             SELECT id, name, enabled, base_url, topic_key, default_frequency_minutes,
-                   pause_until, paused_reason, robots_notes
+                   pause_until, paused_reason, robots_notes, overrides
             FROM sources
             ORDER BY id
             """
@@ -258,8 +258,8 @@ def insert_articles(conn: Any, articles: Iterable[Article]) -> int:
 def list_articles_for_day(conn: Any, day: str) -> list[dict[str, object]]:
     cursor = conn.execute(
         """
-        SELECT id, source_id, title, original_url, published_at, ingested_at, summary, brief_day,
-               summary_llm, summary_model, summary_generated_at
+        SELECT id, source_id, title, original_url, published_at, ingested_at, brief_day,
+               summary_llm, summary_model, summary_generated_at, meta_json
         FROM articles
         WHERE COALESCE(brief_day, SUBSTR(published_at, 1, 10), SUBSTR(ingested_at, 1, 10)) = %s
         ORDER BY COALESCE(published_at, ingested_at) DESC
@@ -275,11 +275,11 @@ def list_articles_for_day(conn: Any, day: str) -> list[dict[str, object]]:
             original_url,
             published_at,
             ingested_at,
-            summary,
             brief_day,
             summary_llm,
             summary_model,
             summary_generated_at,
+            meta_json,
         ) = row
         rows.append(
             {
@@ -289,11 +289,12 @@ def list_articles_for_day(conn: Any, day: str) -> list[dict[str, object]]:
                 "original_url": original_url,
                 "published_at": published_at,
                 "ingested_at": ingested_at,
-                "summary": summary,
+                "summary": None,
                 "brief_day": brief_day,
                 "summary_llm": summary_llm,
                 "summary_model": summary_model,
                 "summary_generated_at": summary_generated_at,
+                "meta_json": meta_json,
             }
         )
     return rows
@@ -325,6 +326,8 @@ def list_recent_articles(conn: Any, limit: int = 200) -> list[dict[str, object]]
         f"""
         SELECT a.id, a.title, a.original_url, a.published_at, a.ingested_at,
                a.source_id, s.name AS source_name,
+               a.summary_llm,
+               a.meta_json,
                {tag_select}
         FROM articles a
         LEFT JOIN sources s ON s.id = a.source_id
@@ -346,10 +349,80 @@ def list_recent_articles(conn: Any, limit: int = 200) -> list[dict[str, object]]
                 "ingested_at": row[4],
                 "source_id": row[5],
                 "source_name": row[6] or "",
-                "tags": row[7] or "",
+                "summary_llm": row[7],
+                "meta_json": row[8],
+                "tags": row[9] or "",
             }
         )
     return rows
+
+
+
+
+def _meta_is_suppressed(meta_json: object) -> bool:
+    if not meta_json:
+        return False
+    try:
+        parsed = json.loads(meta_json) if isinstance(meta_json, str) else meta_json
+    except Exception:
+        return False
+    if isinstance(parsed, dict):
+        return bool(parsed.get("suppressed"))
+    return False
+def list_cves_for_day(conn: Any, day: str, limit: int = 200) -> list[dict[str, object]]:
+
+    if not _table_exists(conn, "cves"):
+
+        return []
+
+    cursor = conn.execute(
+
+        """
+
+        SELECT c.cve_id, c.description_text, c.published_at, c.last_modified_at,
+
+               c.preferred_base_score, c.preferred_base_severity
+
+        FROM cves c
+
+        WHERE DATE(COALESCE(c.published_at, c.last_modified_at)) = %s
+
+        ORDER BY COALESCE(c.published_at, c.last_modified_at) DESC
+
+        LIMIT %s
+
+        """,
+
+        (day, limit),
+
+    )
+
+    rows = []
+
+    for row in cursor.fetchall():
+
+        rows.append(
+
+            {
+
+                "cve_id": row[0],
+
+                "description_text": row[1] or "",
+
+                "published_at": row[2],
+
+                "last_modified_at": row[3],
+
+                "preferred_base_score": row[4],
+
+                "preferred_base_severity": row[5] or "",
+
+            }
+
+        )
+
+    return rows
+
 
 
 def list_event_keys_for_articles(conn: Any, article_ids: list[int]) -> dict[int, list[str]]:
@@ -594,13 +667,14 @@ def link_cve_products_from_signals(
         vendor, product = cpe_to_vendor_product(cpe)
         if vendor and product:
             pairs.append((vendor, product))
-    if not pairs:
-        for product in products:
-            if product:
-                pairs.append(("unknown", product))
     created = 0
     for vendor_display, product_display in pairs:
-        vendor_id = upsert_vendor(conn, vendor_display)
+        vendor_norm = _normalize_vendor_display(vendor_display)
+        if not vendor_norm:
+            continue
+        if not product_display:
+            continue
+        vendor_id = upsert_vendor(conn, vendor_norm)
         product_id, _ = upsert_product(conn, vendor_id, product_display)
         link_cve_product(
             conn,
@@ -616,7 +690,12 @@ def link_cve_products_from_signals(
             if len(parts) != 3:
                 continue
             vendor_display, product_display, version = parts
-            vendor_id = upsert_vendor(conn, vendor_display)
+            vendor_norm = _normalize_vendor_display(vendor_display)
+            if not vendor_norm:
+                continue
+            if not product_display or not version:
+                continue
+            vendor_id = upsert_vendor(conn, vendor_norm)
             product_id, _ = upsert_product(conn, vendor_id, product_display)
             _link_cve_product_version(conn, cve_id, product_id, version, source)
     return {"links": created}
@@ -629,15 +708,24 @@ def link_cve_products_from_items(
     items: list[dict[str, object]],
     source: str = "llm",
 ) -> dict[str, int]:
-    created = 0
+    vendors_created = 0
+    products_created = 0
+    links_created = 0
+    versions_created = 0
     for item in items:
-        vendor_display = str(item.get("vendor") or "unknown").strip()
+        vendor_display = _normalize_vendor_display(item.get("vendor"))
         product_display = str(item.get("product") or "").strip()
         versions = item.get("versions") or []
-        if not product_display:
+        if not vendor_display or not product_display:
             continue
-        vendor_id = upsert_vendor(conn, vendor_display)
+        existing_vendor_id = get_vendor_id_by_name(conn, vendor_display)
+        vendor_id = existing_vendor_id or upsert_vendor(conn, vendor_display)
+        if existing_vendor_id is None:
+            vendors_created += 1
+        existing_product_id = get_product_id_by_vendor_name(conn, vendor_id, product_display)
         product_id, _ = upsert_product(conn, vendor_id, product_display)
+        if existing_product_id is None:
+            products_created += 1
         link_cve_product(
             conn,
             cve_id,
@@ -645,13 +733,19 @@ def link_cve_products_from_items(
             source=source,
             evidence={"vendor": vendor_display, "product": product_display},
         )
-        created += 1
+        links_created += 1
         if versions:
             for version in versions:
                 if not version:
                     continue
                 _link_cve_product_version(conn, cve_id, product_id, str(version), source)
-    return {"links": created}
+                versions_created += 1
+    return {
+        "vendors_created": vendors_created,
+        "products_created": products_created,
+        "links_created": links_created,
+        "versions_created": versions_created,
+    }
 
 
 def _link_cve_product_version(
@@ -793,6 +887,12 @@ def _table_columns(conn: Any, table: str) -> set[str]:
         (table,),
     )
     return {row[0] for row in cursor.fetchall()}
+
+
+def column_exists(conn: Any, table: str, column: str) -> bool:
+    if not _table_exists(conn, table):
+        return False
+    return column in _table_columns(conn, table)
 
 
 def record_source_run(
@@ -1017,6 +1117,30 @@ def list_jobs(conn: Any, limit: int = 50) -> list[Job]:
     return [_row_to_job(row) for row in cursor.fetchall()]
 
 
+def list_queued_job_stats(conn: Any) -> list[dict[str, object]]:
+    if not _table_exists(conn, "jobs"):
+        return []
+    cursor = conn.execute(
+        """
+        SELECT job_type, COUNT(*) AS queued_count, MIN(requested_at) AS oldest_requested_at
+        FROM jobs
+        WHERE status = 'queued'
+        GROUP BY job_type
+        ORDER BY queued_count DESC, job_type ASC
+        """
+    )
+    rows = []
+    for job_type, queued_count, oldest_requested_at in cursor.fetchall():
+        rows.append(
+            {
+                "job_type": job_type,
+                "queued": int(queued_count or 0),
+                "oldest_requested_at": oldest_requested_at,
+            }
+        )
+    return rows
+
+
 def get_schema_version(conn: Any) -> str | None:
     if not _table_exists(conn, "schema_migrations"):
         return None
@@ -1035,6 +1159,8 @@ def count_table(conn: Any, table: str) -> int:
 
 def get_dashboard_metrics(conn: Any) -> dict[str, object]:
     metrics: dict[str, object] = {}
+    metrics["cves_missing_description_count"] = 0
+    metrics["cves_missing_products_count"] = 0
     job_counts: dict[str, dict[str, int]] = {}
     if _table_exists(conn, "jobs"):
         cursor = conn.execute(
@@ -1047,6 +1173,27 @@ def get_dashboard_metrics(conn: Any) -> dict[str, object]:
         for job_type, status, count in cursor.fetchall():
             job_counts.setdefault(job_type, {})[status] = int(count or 0)
     metrics["job_counts_by_type_status"] = job_counts
+    failures_since = get_setting(conn, "dashboard_failures_since", None)
+    counts_since = get_setting(conn, "dashboard_job_counts_since", None) or failures_since
+    if counts_since and _table_exists(conn, "jobs"):
+        for job_type in list(job_counts.keys()):
+            if "failed" in job_counts[job_type]:
+                job_counts[job_type]["failed"] = 0
+            if "succeeded" in job_counts[job_type]:
+                job_counts[job_type]["succeeded"] = 0
+        cursor = conn.execute(
+            """
+            SELECT job_type, status, COUNT(*)
+            FROM jobs
+            WHERE status IN ('failed', 'succeeded') AND requested_at >= %s
+            GROUP BY job_type, status
+            """,
+            (counts_since,),
+        )
+        for job_type, status, count in cursor.fetchall():
+            job_counts.setdefault(job_type, {})[status] = int(count or 0)
+    metrics["job_failures_since"] = failures_since
+    metrics["job_counts_since"] = counts_since
     metrics["articles_pending_fetch"] = (
         job_counts.get("fetch_article_content", {}).get("queued", 0)
         + job_counts.get("fetch_article_content", {}).get("running", 0)
@@ -1098,33 +1245,36 @@ def get_dashboard_metrics(conn: Any) -> dict[str, object]:
     metrics["articles_missing_content_count"] = missing_content_count
     metrics["articles_with_content_error_count"] = content_error_count
     metrics["articles_missing_summary_count"] = missing_summary_count
+    metrics["articles_missing_products_count"] = count_articles_missing_products(conn)
+    metrics["articles_missing_threat_actors_count"] = count_articles_missing_threat_actors(conn)
 
 
-cve_missing_desc = 0
-if _table_exists(conn, "cves") and "description_text" in _table_columns(conn, "cves"):
-    row = conn.execute(
-        "SELECT COUNT(*) FROM cves c WHERE c.description_text IS NULL OR c.description_text = ''"
-    ).fetchone()
-    cve_missing_desc = int(row[0] or 0)
-metrics["cves_missing_description_count"] = cve_missing_desc
+    cve_missing_desc = 0
+    if _table_exists(conn, "cves") and "description_text" in _table_columns(conn, "cves"):
+        row = conn.execute(
+            "SELECT COUNT(*) FROM cves c WHERE c.description_text IS NULL OR c.description_text = ''"
+        ).fetchone()
+        cve_missing_desc = int(row[0] or 0)
+    metrics["cves_missing_description_count"] = cve_missing_desc
 
-cve_missing_products = 0
-if _table_exists(conn, "cves") and _table_exists(conn, "cve_products"):
-    row = conn.execute(
-        """
-        SELECT COUNT(*) FROM (
-            SELECT c.cve_id
-            FROM cves c
-            LEFT JOIN cve_products cp ON cp.cve_id = c.cve_id
-            LEFT JOIN cve_product_versions cpv ON cpv.cve_id = c.cve_id
-            GROUP BY c.cve_id
-            HAVING COUNT(cp.cve_id) = 0 OR COUNT(cpv.cve_id) = 0
-        ) t
-        """
-    ).fetchone()
-    cve_missing_products = int(row[0] or 0)
-metrics["cves_missing_products_count"] = cve_missing_products
-return metrics
+    cve_missing_products = 0
+    if _table_exists(conn, "cves") and _table_exists(conn, "cve_products"):
+        row = conn.execute(
+            """
+            SELECT COUNT(*) FROM (
+                SELECT c.cve_id
+                FROM cves c
+                LEFT JOIN cve_products cp ON cp.cve_id = c.cve_id
+                LEFT JOIN cve_product_versions cpv ON cpv.cve_id = c.cve_id
+                GROUP BY c.cve_id
+                HAVING COUNT(cp.cve_id) = 0 OR COUNT(cpv.cve_id) = 0
+            ) t
+            """
+        ).fetchone()
+        cve_missing_products = int(row[0] or 0)
+    metrics["cves_missing_products_count"] = cve_missing_products
+    metrics["cves_missing_threat_actors_count"] = count_cves_missing_threat_actors(conn)
+    return metrics
 
 
 def get_last_job_by_type(conn: Any, job_type: str) -> Job | None:
@@ -1383,7 +1533,7 @@ def has_pending_job(
 
 
 def enqueue_build_site_if_needed(
-    conn: Any, reason: str | None = None, debounce_seconds: int = 30
+    conn: Any, reason: str | None = None, debounce_seconds: int = 60
 ) -> str | None:
     if has_pending_job(conn, "build_site"):
         return None
@@ -1853,6 +2003,8 @@ def claim_next_job(
     allowed_types: list[str] | None = None,
     lock_timeout_seconds: int | None = None,
 ) -> Job | None:
+    if allowed_types is not None and not allowed_types:
+        return None
     for _ in range(20):
         with conn.transaction():
             if lock_timeout_seconds is not None:
@@ -1871,21 +2023,28 @@ def claim_next_job(
                 )
             params: list[object] = []
             type_clause = ""
-            if allowed_types:
+            if allowed_types is not None:
                 placeholders = ",".join(["%s"] * len(allowed_types))
                 type_clause = f" AND job_type IN ({placeholders})"
                 params.extend(allowed_types)
+            now = utc_now_iso()
             cursor = conn.execute(
                 f"""
-                SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
-                       finished_at, locked_by, locked_at, error
-                FROM jobs
-                WHERE status = 'queued' AND locked_by IS NULL {type_clause}
-                ORDER BY requested_at ASC
-                FOR UPDATE SKIP LOCKED
-                LIMIT 1
+                WITH next_job AS (
+                    SELECT id
+                    FROM jobs
+                    WHERE status = 'queued' AND locked_by IS NULL {type_clause}
+                    ORDER BY requested_at ASC
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                UPDATE jobs
+                SET status = 'running', started_at = %s, locked_by = %s, locked_at = %s
+                WHERE id IN (SELECT id FROM next_job)
+                RETURNING id, job_type, status, payload_json, result_json, requested_at, started_at,
+                          finished_at, locked_by, locked_at, error
                 """,
-                tuple(params),
+                tuple(params + [now, worker_id, now]),
             )
             row = cursor.fetchone()
             if not row:
@@ -1900,28 +2059,17 @@ def claim_next_job(
                 conn.execute(
                     """
                     UPDATE jobs
-                    SET requested_at = %s
-                    WHERE id = %s
+                    SET status = 'queued',
+                        requested_at = %s,
+                        started_at = NULL,
+                        locked_by = NULL,
+                        locked_at = NULL
+                    WHERE id = %s AND status = 'running'
                     """,
                     (not_before, row[0]),
                 )
                 continue
-            job_id = row[0]
-            now = utc_now_iso()
-            cursor = conn.execute(
-                """
-                UPDATE jobs
-                SET status = 'running', started_at = %s, locked_by = %s, locked_at = %s
-                WHERE id = %s AND status = 'queued' AND locked_by IS NULL
-                RETURNING id, job_type, status, payload_json, result_json, requested_at, started_at,
-                          finished_at, locked_by, locked_at, error
-                """,
-                (now, worker_id, now, job_id),
-            )
-            updated = cursor.fetchone()
-            if not updated:
-                return None
-            job = _row_to_job(updated)
+            job = _row_to_job(row)
             return Job(
                 id=job.id,
                 job_type=job.job_type,
@@ -2030,7 +2178,17 @@ def _row_to_source(row: tuple) -> Source:
         pause_until,
         paused_reason,
         robots_notes,
+        overrides_raw,
     ) = row
+    overrides = None
+    if overrides_raw is not None:
+        if isinstance(overrides_raw, dict):
+            overrides = overrides_raw
+        else:
+            try:
+                overrides = json.loads(overrides_raw)
+            except (TypeError, json.JSONDecodeError):
+                overrides = None
     return Source(
         id=source_id,
         name=name,
@@ -2041,6 +2199,7 @@ def _row_to_source(row: tuple) -> Source:
         pause_until=pause_until,
         paused_reason=paused_reason,
         robots_notes=robots_notes,
+        overrides=overrides,
     )
 
 
@@ -2209,6 +2368,7 @@ def get_article_by_id(conn: Any, article_id: int) -> dict[str, object] | None:
     if content_html:
         html_excerpt = content_html[:2000]
     has_full_content = bool(content_text) or bool(extracted_path)
+    suppressed = _meta_is_suppressed(article.get("meta_json"))
     return {
         "id": article.get("id"),
         "source_id": article.get("source_id"),
@@ -2231,6 +2391,7 @@ def get_article_by_id(conn: Any, article_id: int) -> dict[str, object] | None:
         "brief_day": article.get("brief_day"),
         "has_full_content": has_full_content,
         "meta_json": article.get("meta_json"),
+        "suppressed": suppressed,
         "created_at": article.get("created_at"),
         "updated_at": article.get("updated_at"),
     }
@@ -2449,8 +2610,8 @@ def list_article_tags(conn: Any) -> list[dict[str, object]]:
 
 def upsert_vendor(conn: Any, vendor_display: str) -> int:
     vendor_norm = normalize_name(vendor_display)
-    if not vendor_norm:
-        vendor_norm = "unknown"
+    if not vendor_norm or str(vendor_display or "").strip().lower() in {"unknown", "n/a", "none", "null"}:
+        raise ValueError("vendor_unknown")
     display = vendor_display.strip() or vendor_norm.replace("_", " ").title()
     now = utc_now_iso()
     try:
@@ -2480,62 +2641,242 @@ def upsert_vendor(conn: Any, vendor_display: str) -> int:
     conn.commit()
     return int(row[0])
 
-def list_cve_tags(conn: Any, cve_id: str) -> list[str]:
-    if not _table_exists(conn, "cve_products") or not _table_exists(conn, "products"):
+
+def _normalize_vendor_display(value: object) -> str | None:
+    vendor = str(value or "").strip()
+    if not vendor:
+        return None
+    if vendor.lower() in {"unknown", "n/a", "none", "null"}:
+        return None
+    return vendor
+
+
+def get_vendor_id_by_name(conn: Any, display_name: str) -> int | None:
+    if not _table_exists(conn, "vendors"):
+        return None
+    norm = normalize_name(display_name)
+    if not norm:
+        return None
+    row = conn.execute(
+        "SELECT id FROM vendors WHERE name_norm = %s",
+        (norm,),
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
+def get_product_id_by_vendor_name(conn: Any, vendor_id: int, display_name: str) -> int | None:
+    if not _table_exists(conn, "products"):
+        return None
+    norm = normalize_name(display_name)
+    if not norm:
+        return None
+    row = conn.execute(
+        "SELECT id FROM products WHERE vendor_id = %s AND name_norm = %s",
+        (vendor_id, norm),
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
+def get_threat_actor_id_by_key(conn: Any, actor_key: str) -> int | None:
+    if not _table_exists(conn, "threat_actors"):
+        return None
+    key = (actor_key or "").strip()
+    if not key:
+        return None
+    row = conn.execute(
+        "SELECT id FROM threat_actors WHERE actor_key = %s",
+        (key,),
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
+def upsert_threat_actor(
+    conn: Any,
+    actor_key: str | None,
+    display_name: str,
+    actor_type: str,
+    country: str | None = None,
+    confidence: int | None = None,
+) -> int:
+    display = (display_name or "").strip()
+    if not display or display.lower() in {"unknown", "n/a", "none", "null"}:
+        raise ValueError("actor_unknown")
+    key = (actor_key or "").strip() or slugify(display)
+    actor_kind = (actor_type or "").strip() or "unknown"
+    now = utc_now_iso()
+    conn.execute(
+        """
+        INSERT INTO threat_actors (
+            actor_key, display_name, actor_type, country, confidence,
+            first_seen, last_seen, created_at, updated_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT(actor_key) DO UPDATE SET
+            display_name = excluded.display_name,
+            actor_type = excluded.actor_type,
+            country = excluded.country,
+            confidence = excluded.confidence,
+            last_seen = excluded.last_seen,
+            updated_at = excluded.updated_at,
+            first_seen = COALESCE(threat_actors.first_seen, excluded.first_seen)
+        """,
+        (key, display, actor_kind, country, confidence, now, now, now, now),
+    )
+    row = conn.execute(
+        "SELECT id FROM threat_actors WHERE actor_key = %s",
+        (key,),
+    ).fetchone()
+    conn.commit()
+    return int(row[0])
+
+
+def add_threat_actor_alias(conn: Any, actor_id: int, alias: str) -> None:
+    alias_clean = (alias or "").strip()
+    if not alias_clean:
+        return
+    conn.execute(
+        """
+        INSERT INTO threat_actor_aliases (actor_id, alias)
+        VALUES (%s, %s)
+        ON CONFLICT DO NOTHING
+        """,
+        (actor_id, alias_clean),
+    )
+    conn.commit()
+
+
+def link_article_threat_actor(conn: Any, article_id: int, actor_id: int) -> None:
+    conn.execute(
+        """
+        INSERT INTO article_threat_actors (article_id, actor_id)
+        VALUES (%s, %s)
+        ON CONFLICT DO NOTHING
+        """,
+        (article_id, actor_id),
+    )
+    conn.commit()
+
+
+def link_cve_threat_actor(conn: Any, cve_id: str, actor_id: int) -> None:
+    conn.execute(
+        """
+        INSERT INTO cve_threat_actors (cve_id, actor_id)
+        VALUES (%s, %s)
+        ON CONFLICT DO NOTHING
+        """,
+        (cve_id, actor_id),
+    )
+    conn.commit()
+
+
+def _fetch_threat_actor_aliases(conn: Any, actor_ids: list[int]) -> dict[int, list[str]]:
+    if not actor_ids or not _table_exists(conn, "threat_actor_aliases"):
+        return {}
+    placeholders = ",".join(["%s"] * len(actor_ids))
+    cursor = conn.execute(
+        f"""
+        SELECT actor_id, alias
+        FROM threat_actor_aliases
+        WHERE actor_id IN ({placeholders})
+        ORDER BY alias
+        """,
+        actor_ids,
+    )
+    mapping: dict[int, list[str]] = {}
+    for actor_id, alias in cursor.fetchall():
+        mapping.setdefault(int(actor_id), []).append(alias)
+    return mapping
+
+
+def get_article_threat_actors(conn: Any, article_id: int) -> list[dict[str, object]]:
+    if not _table_exists(conn, "article_threat_actors"):
         return []
     cursor = conn.execute(
         """
-        SELECT v.display_name, p.display_name
-        FROM cve_products cp
-        JOIN products p ON p.id = cp.product_id
-        JOIN vendors v ON v.id = p.vendor_id
-        WHERE cp.cve_id = %s
-        ORDER BY v.display_name, p.display_name
+        SELECT ta.id, ta.actor_key, ta.display_name, ta.actor_type, ta.country, ta.confidence
+        FROM article_threat_actors ata
+        JOIN threat_actors ta ON ta.id = ata.actor_id
+        WHERE ata.article_id = %s
+        ORDER BY ta.display_name
+        """,
+        (article_id,),
+    )
+    rows = cursor.fetchall()
+    actor_ids = [int(row[0]) for row in rows]
+    aliases = _fetch_threat_actor_aliases(conn, actor_ids)
+    return [
+        {
+            "actor_id": int(row[0]),
+            "actor_key": row[1],
+            "display_name": row[2],
+            "actor_type": row[3],
+            "country": row[4],
+            "confidence": row[5],
+            "aliases": aliases.get(int(row[0]), []),
+        }
+        for row in rows
+    ]
+
+
+def get_cve_threat_actors(conn: Any, cve_id: str) -> list[dict[str, object]]:
+    if not _table_exists(conn, "cve_threat_actors"):
+        return []
+    cursor = conn.execute(
+        """
+        SELECT ta.id, ta.actor_key, ta.display_name, ta.actor_type, ta.country, ta.confidence
+        FROM cve_threat_actors cta
+        JOIN threat_actors ta ON ta.id = cta.actor_id
+        WHERE cta.cve_id = %s
+        ORDER BY ta.display_name
         """,
         (cve_id,),
     )
-    tags: list[str] = []
-    seen = set()
-    for vendor, product in cursor.fetchall():
-        if vendor and f"vendor:{vendor}" not in seen:
-            tags.append(f"vendor:{vendor}")
-            seen.add(f"vendor:{vendor}")
-        if product and f"product:{product}" not in seen:
-            tags.append(f"product:{product}")
-            seen.add(f"product:{product}")
-    return tags
+    rows = cursor.fetchall()
+    actor_ids = [int(row[0]) for row in rows]
+    aliases = _fetch_threat_actor_aliases(conn, actor_ids)
+    return [
+        {
+            "actor_id": int(row[0]),
+            "actor_key": row[1],
+            "display_name": row[2],
+            "actor_type": row[3],
+            "country": row[4],
+            "confidence": row[5],
+            "aliases": aliases.get(int(row[0]), []),
+        }
+        for row in rows
+    ]
+
+def list_cve_tags(conn: Any, cve_id: str) -> list[str]:
+    return []
 
 
 def list_article_cve_tags(conn: Any, article_ids: list[int]) -> dict[int, list[str]]:
     if not article_ids:
         return {}
-    if not (_table_exists(conn, "article_cves") and _table_exists(conn, "cve_products")):
-        return {}
-    placeholders = ",".join("%s" for _ in article_ids)
-    cursor = conn.execute(
-        f"""
-        SELECT ac.article_id, v.display_name, p.display_name
-        FROM article_cves ac
-        JOIN cve_products cp ON cp.cve_id = ac.cve_id
-        JOIN products p ON p.id = cp.product_id
-        JOIN vendors v ON v.id = p.vendor_id
-        WHERE ac.article_id IN ({placeholders})
-        """,
-        article_ids,
-    )
-    mapping: dict[int, list[str]] = {}
-    seen: dict[int, set[str]] = {}
-    for article_id, vendor, product in cursor.fetchall():
-        if article_id not in mapping:
-            mapping[article_id] = []
-            seen[article_id] = set()
-        if vendor and f"vendor:{vendor}" not in seen[article_id]:
-            mapping[article_id].append(f"vendor:{vendor}")
-            seen[article_id].add(f"vendor:{vendor}")
-        if product and f"product:{product}" not in seen[article_id]:
-            mapping[article_id].append(f"product:{product}")
-            seen[article_id].add(f"product:{product}")
-    return mapping
+    return {}
+
+
+def delete_vendor_product_tags(conn: Any) -> int:
+    removed = 0
+    if _table_exists(conn, "article_tags"):
+        cursor = conn.execute(
+            """
+            DELETE FROM article_tags
+            WHERE tag LIKE 'vendor:%' OR tag LIKE 'product:%'
+            """,
+        )
+        removed += int(cursor.rowcount or 0)
+    if _table_exists(conn, "cve_tags"):
+        cursor = conn.execute(
+            """
+            DELETE FROM cve_tags
+            WHERE tag LIKE 'vendor:%' OR tag LIKE 'product:%'
+            """,
+        )
+        removed += int(cursor.rowcount or 0)
+    conn.commit()
+    return removed
 
 
 
@@ -2543,13 +2884,15 @@ def upsert_product(
     conn: Any, vendor_id: int, product_display: str
 ) -> tuple[int, str]:
     product_norm = normalize_name(product_display)
-    if not product_norm:
-        product_norm = "unknown"
+    if not product_norm or str(product_display or "").strip().lower() in {"unknown", "n/a", "none", "null"}:
+        raise ValueError("product_unknown")
     vendor_row = conn.execute(
         "SELECT name_norm FROM vendors WHERE id = %s",
         (vendor_id,),
     ).fetchone()
-    vendor_norm = vendor_row[0] if vendor_row else "unknown"
+    if not vendor_row or not vendor_row[0]:
+        raise ValueError("vendor_missing")
+    vendor_norm = vendor_row[0]
     product_key = f"{vendor_norm}:{product_norm}"
     display = product_display.strip() or product_norm.replace("_", " ").title()
     now = utc_now_iso()
@@ -2625,12 +2968,13 @@ def backfill_products_from_cves(
             vendor, product = cpe_to_vendor_product(cpe)
             if vendor and product:
                 pairs.append((vendor, product))
-        if not pairs:
-            for product in products:
-                if product:
-                    pairs.append(("unknown", product))
         for vendor_display, product_display in pairs:
-            vendor_id = upsert_vendor(conn, vendor_display)
+            vendor_norm = _normalize_vendor_display(vendor_display)
+            if not vendor_norm:
+                continue
+            if not product_display:
+                continue
+            vendor_id = upsert_vendor(conn, vendor_norm)
             product_id, _ = upsert_product(conn, vendor_id, product_display)
             link_cve_product(
                 conn,
@@ -2642,6 +2986,77 @@ def backfill_products_from_cves(
     return stats
 
 
+
+
+def list_products_for_article(conn: Any, article_id: int) -> list[dict[str, str]]:
+    if not _table_exists(conn, "article_products") or not _table_exists(conn, "products"):
+        return []
+    cursor = conn.execute(
+        """
+        SELECT p.id,
+               p.product_key,
+               v.name_norm AS vendor_norm,
+               p.name_norm AS product_norm,
+               p.display_name,
+               v.display_name AS vendor_display
+        FROM article_products ap
+        JOIN products p ON p.id = ap.product_id
+        JOIN vendors v ON v.id = p.vendor_id
+        WHERE ap.article_id = %s
+        ORDER BY v.name_norm, p.name_norm
+        """,
+        (article_id,),
+    )
+    items = []
+    for product_id, product_key, vendor_norm, product_norm, display_name, vendor_display in cursor.fetchall():
+        vendor_label = vendor_display or vendor_norm or ""
+        product_label = display_name or product_norm or product_key or ""
+        label = f"{vendor_label} — {product_label}" if vendor_label and product_label else (product_label or vendor_label)
+        items.append(
+            {
+                "product_id": product_id,
+                "product_key": product_key,
+                "vendor": vendor_norm or "",
+                "product": product_norm or "",
+                "display_name": label or product_key or "",
+                "vendor_display": vendor_display or vendor_norm or "",
+                "product_display": display_name or product_norm or product_key or "",
+            }
+        )
+    return items
+
+
+def list_products_with_article_counts(conn: Any, limit: int = 200) -> list[dict[str, object]]:
+    if not _table_exists(conn, "products"):
+        return []
+    article_join = ""
+    if _table_exists(conn, "article_products"):
+        article_join = "LEFT JOIN article_products ap ON ap.product_id = p.id"
+    cursor = conn.execute(
+        f"""
+        SELECT p.id, p.product_key, p.display_name, v.display_name,
+               COUNT(ap.article_id) as article_count
+        FROM products p
+        LEFT JOIN vendors v ON v.id = p.vendor_id
+        {article_join}
+        GROUP BY p.id, v.display_name
+        ORDER BY article_count DESC, v.display_name, p.display_name
+        LIMIT %s
+        """,
+        (limit,),
+    )
+    items = []
+    for row in cursor.fetchall():
+        items.append(
+            {
+                "product_id": row[0],
+                "product_key": row[1],
+                "product_name": row[2],
+                "vendor_name": row[3],
+                "article_count": int(row[4] or 0),
+            }
+        )
+    return items
 def query_products(
     conn: Any,
     query: str | None,
@@ -2669,7 +3084,7 @@ def query_products(
         f"""
         SELECT COUNT(*)
         FROM products p
-        JOIN vendors v ON v.id = p.vendor_id
+        LEFT JOIN vendors v ON v.id = p.vendor_id
         {where_sql}
         """,
         params,
@@ -2679,9 +3094,17 @@ def query_products(
     offset = max(page - 1, 0) * page_size
     cursor = conn.execute(
         f"""
-        SELECT p.id, p.product_key, p.display_name, v.display_name
+        SELECT
+            p.id,
+            p.product_key,
+            p.display_name,
+            v.display_name,
+            (
+                COALESCE((SELECT COUNT(*) FROM article_products ap WHERE ap.product_id = p.id), 0)
+                + COALESCE((SELECT COUNT(*) FROM cve_products cp WHERE cp.product_id = p.id), 0)
+            ) AS link_count
         FROM products p
-        JOIN vendors v ON v.id = p.vendor_id
+        LEFT JOIN vendors v ON v.id = p.vendor_id
         {where_sql}
         ORDER BY v.display_name, p.display_name
         LIMIT %s OFFSET %s
@@ -2694,6 +3117,7 @@ def query_products(
             "product_key": row[1],
             "product_name": row[2],
             "vendor_name": row[3],
+            "link_count": int(row[4] or 0),
         }
         for row in cursor.fetchall()
     ]
@@ -2707,7 +3131,7 @@ def get_product(conn: Any, product_key: str) -> dict[str, object] | None:
         """
         SELECT p.id, p.product_key, p.display_name, v.display_name, v.name_norm
         FROM products p
-        JOIN vendors v ON v.id = p.vendor_id
+        LEFT JOIN vendors v ON v.id = p.vendor_id
         WHERE p.product_key = %s
         """,
         (product_key,),
@@ -2797,6 +3221,212 @@ def get_product_facets(conn: Any, product_id: int) -> dict[str, int]:
     return {row[0]: int(row[1]) for row in cursor.fetchall()}
 
 
+
+
+def link_article_product(
+    conn: Any,
+    article_id: int,
+    product_id: int,
+    source: str = "llm",
+    evidence: dict[str, object] | None = None,
+) -> None:
+    if not _table_exists(conn, "article_products"):
+        return
+    now = utc_now_iso()
+    conn.execute(
+        """
+        INSERT INTO article_products (article_id, product_id, source, evidence_json, created_at)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT(article_id, product_id) DO UPDATE SET
+            source=excluded.source,
+            evidence_json=COALESCE(excluded.evidence_json, article_products.evidence_json)
+        """,
+        (
+            article_id,
+            product_id,
+            source,
+            json_dumps(evidence) if evidence else None,
+            now,
+        ),
+    )
+    conn.commit()
+
+
+def count_articles_for_product(conn: Any, product_id: int) -> int:
+    if not _table_exists(conn, "article_products"):
+        return 0
+    row = conn.execute(
+        "SELECT COUNT(*) FROM article_products WHERE product_id = %s",
+        (product_id,),
+    ).fetchone()
+    return int(row[0] or 0)
+
+
+def count_products_for_article(conn: Any, article_id: int) -> int:
+    if not _table_exists(conn, "article_products"):
+        return 0
+    row = conn.execute(
+        "SELECT COUNT(*) FROM article_products WHERE article_id = %s",
+        (article_id,),
+    ).fetchone()
+    return int(row[0] or 0)
+
+
+def list_articles_for_product(
+    conn: Any,
+    product_id: int,
+    page: int,
+    page_size: int,
+) -> tuple[list[dict[str, object]], int]:
+    if not _table_exists(conn, "article_products") or not _table_exists(conn, "articles"):
+        return [], 0
+    tag_join = ""
+    tag_select = "'' AS tags"
+    if _table_exists(conn, "article_tags"):
+        tag_join = "LEFT JOIN article_tags t ON t.article_id = a.id"
+        tag_select = "COALESCE(string_agg(t.tag, ',' ORDER BY t.tag), '') AS tags"
+    count_cursor = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM article_products ap
+        JOIN articles a ON a.id = ap.article_id
+        WHERE ap.product_id = %s
+        """,
+        (product_id,),
+    )
+    total = count_cursor.fetchone()[0]
+    offset = max(page - 1, 0) * page_size
+    cursor = conn.execute(
+        f"""
+        SELECT a.id, a.title, a.original_url, a.published_at, a.ingested_at,
+               a.source_id, s.name AS source_name, a.summary_llm, a.meta_json,
+               {tag_select}
+        FROM article_products ap
+        JOIN articles a ON a.id = ap.article_id
+        LEFT JOIN sources s ON s.id = a.source_id
+        {tag_join}
+        WHERE ap.product_id = %s
+        GROUP BY a.id, s.name
+        ORDER BY COALESCE(a.published_at, a.ingested_at) DESC
+        LIMIT %s OFFSET %s
+        """,
+        (product_id, page_size, offset),
+    )
+    items = []
+    for row in cursor.fetchall():
+        items.append(
+            {
+                "id": row[0],
+                "title": row[1],
+                "original_url": row[2],
+                "published_at": row[3],
+                "ingested_at": row[4],
+                "source_id": row[5],
+                "source_name": row[6] or "",
+                "summary_llm": row[7],
+                "meta_json": row[8],
+                "tags": row[9] or "",
+            }
+        )
+    return items, int(total or 0)
+
+
+def count_articles_missing_products(conn: Any) -> int:
+    if not _table_exists(conn, "article_products") or not _table_exists(conn, "articles"):
+        return 0
+    cursor = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM articles a
+        LEFT JOIN article_products ap ON ap.article_id = a.id
+        WHERE ap.article_id IS NULL
+        """
+    )
+    row = cursor.fetchone()
+    return int(row[0] or 0)
+
+def count_articles_missing_threat_actors(conn: Any) -> int:
+    if not (_table_exists(conn, "articles") and _table_exists(conn, "article_threat_actors")):
+        return 0
+    cursor = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM articles a
+        LEFT JOIN article_threat_actors ata ON ata.article_id = a.id
+        WHERE ata.article_id IS NULL
+        """
+    )
+    row = cursor.fetchone()
+    return int(row[0] or 0)
+
+def count_cves_missing_threat_actors(conn: Any) -> int:
+    if not (_table_exists(conn, "cves") and _table_exists(conn, "cve_threat_actors")):
+        return 0
+    cursor = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM cves c
+        LEFT JOIN cve_threat_actors cta ON cta.cve_id = c.cve_id
+        WHERE cta.cve_id IS NULL
+        """
+    )
+    row = cursor.fetchone()
+    return int(row[0] or 0)
+
+
+def list_article_ids_missing_products(conn: Any, limit: int = 500) -> list[int]:
+    if not _table_exists(conn, "article_products") or not _table_exists(conn, "articles"):
+        return []
+    cursor = conn.execute(
+        """
+        SELECT a.id
+        FROM articles a
+        LEFT JOIN article_products ap ON ap.article_id = a.id
+        WHERE ap.article_id IS NULL
+        ORDER BY COALESCE(a.published_at, a.ingested_at) DESC
+        LIMIT %s
+        """,
+        (limit,),
+    )
+    return [int(row[0]) for row in cursor.fetchall()]
+
+
+def infer_article_products_from_cves(
+    conn: Any,
+    article_id: int,
+    cve_ids: list[str],
+) -> dict[str, int]:
+    if not cve_ids:
+        return {"links": 0}
+    if not _table_exists(conn, "article_products") or not _table_exists(conn, "cve_products"):
+        return {"links": 0}
+    placeholders = ",".join("%s" for _ in cve_ids)
+    cursor = conn.execute(
+        f"""
+        SELECT cp.cve_id, cp.product_id
+        FROM cve_products cp
+        WHERE cp.cve_id IN ({placeholders})
+        """,
+        cve_ids,
+    )
+    links = 0
+    seen: set[tuple[int, str]] = set()
+    for cve_id, product_id in cursor.fetchall():
+        if not product_id:
+            continue
+        key = (int(product_id), str(cve_id))
+        if key in seen:
+            continue
+        seen.add(key)
+        link_article_product(
+            conn,
+            article_id=article_id,
+            product_id=int(product_id),
+            source="cve_inferred",
+            evidence={"cve_id": str(cve_id)},
+        )
+        links += 1
+    return {"links": links}
 def list_product_keys_for_cve(conn: Any, cve_id: str) -> list[str]:
     if not _table_exists(conn, "cve_products") or not _table_exists(conn, "products"):
         return []
@@ -2820,7 +3450,7 @@ def get_product_display_by_key(conn: Any, product_key: str) -> dict[str, str] | 
         """
         SELECT p.display_name, v.display_name
         FROM products p
-        JOIN vendors v ON v.id = p.vendor_id
+        LEFT JOIN vendors v ON v.id = p.vendor_id
         WHERE p.product_key = %s
         """,
         (product_key,),
@@ -2943,11 +3573,14 @@ def upsert_event_by_key(
     evidence: list[str] | None = None,
 ) -> tuple[str, bool]:
     row = conn.execute(
-        "SELECT id FROM events WHERE event_key = %s",
+        "SELECT id, visibility FROM events WHERE event_key = %s",
         (event_key,),
     ).fetchone()
     if row:
-        event_id = row[0]
+        event_id, current_visibility = row
+        new_visibility = visibility
+        if current_visibility == "suppressed" and visibility == "active":
+            new_visibility = "suppressed"
         conn.execute(
             """
             UPDATE events
@@ -2982,7 +3615,7 @@ def upsert_event_by_key(
                 status,
                 bool(manual),
                 bool(manual),
-                visibility,
+                new_visibility,
                 confidence_tier,
                 json_dumps(reasons) if reasons is not None else None,
                 event_id,
@@ -3553,6 +4186,10 @@ def list_events(
     where: list[str] = []
     params: list[object] = []
     columns = _table_columns(conn, "events")
+    candidate_select = "candidate" if "candidate" in columns else "NULL AS candidate"
+    entity_select = "entity" if "entity" in columns else "NULL AS entity"
+    incident_select = "incident_date" if "incident_date" in columns else "NULL AS incident_date"
+    evidence_select = "evidence" if "evidence" in columns else "NULL AS evidence"
     if not include_suppressed and "visibility" in columns:
         where.append("visibility = 'active'")
     if status:
@@ -4592,6 +5229,7 @@ def search_articles(
     source_id: str | None,
     has_summary: bool | None,
     missing: str | None,
+    content_state: str | None,
     content_error: bool | None,
     summary_error: bool | None,
     needs: str | None,
@@ -4623,10 +5261,10 @@ def search_articles(
         where.append("a.source_id = %s")
         params.append(source_id)
     content_missing_clause = None
-    if "has_full_content" in columns:
-        content_missing_clause = "a.has_full_content = 0"
-    elif "content_text" in columns:
+    if "content_text" in columns:
         content_missing_clause = "(a.content_text IS NULL OR a.content_text = '')"
+    elif "has_full_content" in columns:
+        content_missing_clause = "a.has_full_content = 0"
     elif "extracted_text_path" in columns:
         content_missing_clause = "(a.extracted_text_path IS NULL OR a.extracted_text_path = '')"
     summary_missing_clause = None
@@ -4645,11 +5283,29 @@ def search_articles(
             where.append(content_missing_clause)
         else:
             return [], 0
+    if content_state:
+        if content_state == "full":
+            if "has_full_content" in columns:
+                where.append("a.has_full_content = 1")
+            elif "content_text" in columns:
+                where.append("(a.content_text IS NOT NULL AND a.content_text != '')")
+        elif content_state == "partial":
+            if "has_full_content" in columns and "content_text" in columns:
+                where.append("a.has_full_content = 0 AND a.content_text IS NOT NULL AND a.content_text != ''")
+        elif content_state == "missing":
+            if "content_text" in columns:
+                where.append("(a.content_text IS NULL OR a.content_text = '')")
+            elif "has_full_content" in columns:
+                where.append("a.has_full_content = 0")
     if missing == "summary":
         if summary_missing_clause:
             where.append(summary_missing_clause)
         else:
             return [], 0
+    if missing == "products":
+        if not _table_exists(conn, "article_products"):
+            return [], 0
+        where.append("NOT EXISTS (SELECT 1 FROM article_products ap WHERE ap.article_id = a.id)")
     if content_error:
         if "content_error" in columns:
             where.append("(a.content_error IS NOT NULL AND a.content_error != '')")
@@ -4757,6 +5413,9 @@ def search_articles(
         else "NULL AS watchlist_hit"
     )
     has_content_select = "NULL AS has_content"
+    content_len_select = "NULL AS content_len"
+    if "content_text" in columns:
+        content_len_select = "MAX(length(a.content_text)) AS content_len"
     if "has_full_content" in columns:
         has_content_select = "CASE WHEN a.has_full_content = 1 THEN 1 ELSE 0 END AS has_content"
     elif "content_text" in columns:
@@ -4786,8 +5445,10 @@ def search_articles(
                string_agg(t.tag, ',') as tags,
                {watchlist_select},
                {has_content_select},
+               {content_len_select},
                {content_error_select},
-               {summary_error_select}
+               {summary_error_select},
+               MAX(a.meta_json) as meta_json
         FROM articles a
         LEFT JOIN sources s ON s.id = a.source_id
         LEFT JOIN article_tags t ON t.article_id = a.id
@@ -4811,9 +5472,12 @@ def search_articles(
         tags_csv,
         watchlist_hit_value,
         has_content_value,
+        content_len_value,
         content_error_value,
         summary_error_value,
+        meta_json_value,
     ) in cursor.fetchall():
+        suppressed_value = _meta_is_suppressed(meta_json_value)
         items.append(
             {
                 "id": article_id,
@@ -4827,8 +5491,10 @@ def search_articles(
                 "tags": tags_csv.split(",") if tags_csv else [],
                 "watchlist_hit": bool(watchlist_hit_value) if watchlist_available else None,
                 "has_content": bool(has_content_value) if has_content_value is not None else None,
+                "content_len": int(content_len_value or 0) if content_len_value is not None else 0,
                 "content_error": content_error_value,
                 "summary_error": summary_error_value,
+                "suppressed": suppressed_value,
             }
         )
     return items, total
@@ -4879,6 +5545,7 @@ def get_cve(conn: Any, cve_id: str) -> dict[str, object] | None:
     cvss_v40_list = json.loads(cvss_v40_list_json) if cvss_v40_list_json else []
     product_versions = _list_cve_product_versions(conn, cve_id)
     vendor_products = list_cve_vendor_products(conn, cve_id)
+    threat_actors = get_cve_threat_actors(conn, cve_id)
     scope = None
     if _table_exists(conn, "cve_scope"):
         scope = conn.execute(
@@ -4904,6 +5571,7 @@ def get_cve(conn: Any, cve_id: str) -> dict[str, object] | None:
         "product_versions": product_versions,
         "tags": list_cve_tags(conn, cve_id),
         "vendor_products": vendor_products,
+        "threat_actors": threat_actors,
         "in_scope": bool(scope[0]) if scope else None,
         "scope_reasons": json.loads(scope[1] or "[]") if scope else [],
         "updated_at": data.get("updated_at"),
@@ -4925,6 +5593,7 @@ def search_cves(
     severities: list[str] | None,
     min_cvss: float | None,
     missing_description: bool | None,
+    missing_products: bool | None,
     after: str | None,
     before: str | None,
     vendor_keywords: list[str] | None,
@@ -4964,6 +5633,13 @@ def search_cves(
     if missing_description:
         if "description_text" in columns:
             where.append("(c.description_text IS NULL OR c.description_text = '')")
+        else:
+            return [], 0
+    if missing_products:
+        if _table_exists(conn, "cve_products"):
+            where.append("NOT EXISTS (SELECT 1 FROM cve_products cp WHERE cp.cve_id = c.cve_id)")
+        elif "affected_products_json" in columns:
+            where.append("(c.affected_products_json IS NULL OR c.affected_products_json = '' OR c.affected_products_json = '[]')")
         else:
             return [], 0
     if after:
@@ -5457,6 +6133,175 @@ def list_cve_vendor_products(conn: Any, cve_id: str) -> list[dict[str, object]]:
     ]
 
 
+def list_threat_actors(
+    conn: Any, query: str | None, page: int, page_size: int
+) -> tuple[list[dict[str, object]], int]:
+    if not _table_exists(conn, "threat_actors"):
+        return [], 0
+    where = ""
+    params: list[object] = []
+    if query:
+        like = f"%{query}%"
+        where = "WHERE ta.actor_key ILIKE %s OR ta.display_name ILIKE %s"
+        params.extend([like, like])
+    count_row = conn.execute(
+        f"SELECT COUNT(*) FROM threat_actors ta {where}",
+        params,
+    ).fetchone()
+    total = int(count_row[0] or 0) if count_row else 0
+    offset = max(page - 1, 0) * page_size
+    cursor = conn.execute(
+        f"""
+        SELECT ta.id,
+               ta.actor_key,
+               ta.display_name,
+               ta.actor_type,
+               COUNT(DISTINCT taa.alias) AS alias_count,
+               COUNT(DISTINCT ata.article_id) AS article_count,
+               COUNT(DISTINCT cta.cve_id) AS cve_count
+        FROM threat_actors ta
+        LEFT JOIN threat_actor_aliases taa ON taa.actor_id = ta.id
+        LEFT JOIN article_threat_actors ata ON ata.actor_id = ta.id
+        LEFT JOIN cve_threat_actors cta ON cta.actor_id = ta.id
+        {where}
+        GROUP BY ta.id
+        ORDER BY (COUNT(DISTINCT ata.article_id) + COUNT(DISTINCT cta.cve_id)) DESC, ta.display_name
+        LIMIT %s OFFSET %s
+        """,
+        [*params, page_size, offset],
+    )
+    items = []
+    for row in cursor.fetchall():
+        items.append(
+            {
+                "actor_id": row[0],
+                "actor_key": row[1],
+                "display_name": row[2],
+                "actor_type": row[3],
+                "alias_count": int(row[4] or 0),
+                "article_count": int(row[5] or 0),
+                "cve_count": int(row[6] or 0),
+            }
+        )
+    return items, total
+
+
+def get_threat_actor_detail(conn: Any, actor_key: str) -> dict[str, object] | None:
+    if not _table_exists(conn, "threat_actors"):
+        return None
+    row = conn.execute(
+        """
+        SELECT id, actor_key, display_name, actor_type, country, confidence, first_seen, last_seen
+        FROM threat_actors
+        WHERE actor_key = %s
+        """,
+        (actor_key,),
+    ).fetchone()
+    if not row:
+        return None
+    actor_id = int(row[0])
+    aliases = []
+    if _table_exists(conn, "threat_actor_aliases"):
+        aliases = [
+            r[0]
+            for r in conn.execute(
+                "SELECT alias FROM threat_actor_aliases WHERE actor_id = %s ORDER BY alias",
+                (actor_id,),
+            ).fetchall()
+        ]
+    articles = []
+    if _table_exists(conn, "article_threat_actors"):
+        cursor = conn.execute(
+            """
+            SELECT a.id, a.title, a.published_at, a.ingested_at, s.name
+            FROM article_threat_actors ata
+            JOIN articles a ON a.id = ata.article_id
+            LEFT JOIN sources s ON s.id = a.source_id
+            WHERE ata.actor_id = %s
+            ORDER BY COALESCE(a.published_at, a.ingested_at) DESC
+            LIMIT 200
+            """,
+            (actor_id,),
+        )
+        for article_id, title, published_at, ingested_at, source_name in cursor.fetchall():
+            articles.append(
+                {
+                    "id": article_id,
+                    "title": title or "",
+                    "published_at": published_at or ingested_at or "",
+                    "source": source_name or "",
+                }
+            )
+    cves = []
+    if _table_exists(conn, "cve_threat_actors"):
+        cursor = conn.execute(
+            """
+            SELECT c.cve_id, c.published_at, c.last_modified_at, c.preferred_base_severity
+            FROM cve_threat_actors cta
+            JOIN cves c ON c.cve_id = cta.cve_id
+            WHERE cta.actor_id = %s
+            ORDER BY COALESCE(c.published_at, c.last_modified_at) DESC
+            LIMIT 200
+            """,
+            (actor_id,),
+        )
+        for cve_id, published_at, last_modified_at, severity in cursor.fetchall():
+            cves.append(
+                {
+                    "cve_id": cve_id,
+                    "published_at": published_at or last_modified_at or "",
+                    "severity": severity or "",
+                }
+            )
+    return {
+        "actor_id": actor_id,
+        "actor_key": row[1],
+        "display_name": row[2],
+        "actor_type": row[3],
+        "country": row[4],
+        "confidence": row[5],
+        "first_seen": row[6],
+        "last_seen": row[7],
+        "aliases": aliases,
+        "articles": articles,
+        "cves": cves,
+    }
+
+
+def list_article_ids_missing_threat_actors(conn: Any, limit: int = 200) -> list[int]:
+    if not (_table_exists(conn, "articles") and _table_exists(conn, "article_threat_actors")):
+        return []
+    cursor = conn.execute(
+        """
+        SELECT a.id
+        FROM articles a
+        LEFT JOIN article_threat_actors ata ON ata.article_id = a.id
+        WHERE ata.article_id IS NULL
+        ORDER BY COALESCE(a.published_at, a.ingested_at) DESC
+        LIMIT %s
+        """,
+        (limit,),
+    )
+    return [int(row[0]) for row in cursor.fetchall() if row and row[0] is not None]
+
+
+def list_cve_ids_missing_threat_actors(conn: Any, limit: int = 200) -> list[str]:
+    if not (_table_exists(conn, "cves") and _table_exists(conn, "cve_threat_actors")):
+        return []
+    cursor = conn.execute(
+        """
+        SELECT c.cve_id
+        FROM cves c
+        LEFT JOIN cve_threat_actors cta ON cta.cve_id = c.cve_id
+        WHERE cta.cve_id IS NULL
+        ORDER BY COALESCE(c.published_at, c.last_modified_at) DESC
+        LIMIT %s
+        """,
+        (limit,),
+    )
+    return [str(row[0]) for row in cursor.fetchall() if row and row[0]]
+
+
 def _list_article_cve_ids(conn: Any, article_id: int) -> list[str]:
     if not _table_exists(conn, "article_cves"):
         return []
@@ -5671,6 +6516,39 @@ def cve_data_completeness(conn: Any, limit: int = 20) -> dict[str, object]:
     return {"counts": counts, "missing": missing, "missing_by_category": missing_by_category}
 
 
+
+
+def update_article_suppressed(
+    conn: Any, article_id: int, suppressed: bool, reason: str | None = None
+) -> dict[str, object]:
+    if not _table_exists(conn, "articles"):
+        raise ValueError("articles table not found")
+    row = conn.execute(
+        "SELECT meta_json FROM articles WHERE id = %s",
+        (article_id,),
+    ).fetchone()
+    meta: dict[str, object] = {}
+    if row and row[0]:
+        try:
+            meta = json.loads(row[0])
+            if not isinstance(meta, dict):
+                meta = {}
+        except Exception:
+            meta = {}
+    meta["suppressed"] = bool(suppressed)
+    if suppressed:
+        meta["suppressed_at"] = utc_now_iso()
+        if reason:
+            meta["suppressed_reason"] = reason
+    else:
+        meta.pop("suppressed_at", None)
+        meta.pop("suppressed_reason", None)
+    conn.execute(
+        "UPDATE articles SET meta_json = %s, updated_at = %s WHERE id = %s",
+        (json.dumps(meta), utc_now_iso(), article_id),
+    )
+    conn.commit()
+    return {"id": article_id, "suppressed": bool(suppressed)}
 def update_article_content(
     conn: Any,
     article_id: int,

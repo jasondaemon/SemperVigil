@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="/ui/static/admin/admin.css">
   </head>
-  <body data-timezone="{{ timezone or '' }}">
+  <body data-timezone="{{ timezone or '' }}" data-queue-stale-minutes="{{ queue_stale_minutes or '' }}">
     {% if show_nav|default(true) %}
       {% include "admin/_nav.html" %}
     {% endif %}

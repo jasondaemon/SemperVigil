@@ -1,5 +1,7 @@
 # IMPLEMENTATION_PLAN.md — Event & Linking Implementation Plan (Design-Only)
 
+> **Current runtime notes:** see [CURRENT_CONTEXT.md](CURRENT_CONTEXT.md) before troubleshooting or starting a new chat.
+
 > Implementation-ready plan derived from:
 > - `docs/EVENT_MODEL.md`
 > - `docs/LINKING_MODEL.md`
