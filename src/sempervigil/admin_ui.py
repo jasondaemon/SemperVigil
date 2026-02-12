@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 from .config import (
     bootstrap_events_settings,
+    bootstrap_schedule_settings,
     bootstrap_runtime_config,
     get_runtime_config,
 )
@@ -44,6 +46,7 @@ def _get_conn():
     conn = init_db()
     bootstrap_runtime_config(conn)
     bootstrap_events_settings(conn)
+    bootstrap_schedule_settings(conn)
     return conn
 
 
@@ -145,6 +148,28 @@ def ui_router(token_guard) -> APIRouter:
             },
         )
 
+    @router.get("/system/utilities", response_class=HTMLResponse)
+    def utilities(request: Request):
+        return TEMPLATES.TemplateResponse(
+            "admin/utilities.html",
+            {
+                **_base_context(request),
+                "nav_active": "system",
+                "nav_subactive": "utilities",
+            },
+        )
+
+    @router.get("/system/schedules", response_class=HTMLResponse)
+    def schedules(request: Request):
+        return TEMPLATES.TemplateResponse(
+            "admin/schedules.html",
+            {
+                **_base_context(request),
+                "nav_active": "system",
+                "nav_subactive": "schedules",
+            },
+        )
+
     @router.get("/threats", response_class=HTMLResponse)
     def threats(request: Request):
         return TEMPLATES.TemplateResponse(
@@ -165,6 +190,29 @@ def ui_router(token_guard) -> APIRouter:
                 "nav_active": "content",
                 "nav_subactive": "threats",
                 "actor_key": actor_key,
+            },
+        )
+
+    @router.get("/briefs", response_class=HTMLResponse)
+    def briefs(request: Request):
+        return TEMPLATES.TemplateResponse(
+            "admin/briefs.html",
+            {
+                **_base_context(request),
+                "nav_active": "content",
+                "nav_subactive": "briefs",
+            },
+        )
+
+    @router.get("/briefs/{day}", response_class=HTMLResponse)
+    def brief_detail(request: Request, day: str):
+        return TEMPLATES.TemplateResponse(
+            "admin/brief_detail.html",
+            {
+                **_base_context(request),
+                "nav_active": "content",
+                "nav_subactive": "briefs",
+                "brief_day": day,
             },
         )
 
@@ -234,16 +282,92 @@ def ui_router(token_guard) -> APIRouter:
     @router.get("/ai", response_class=HTMLResponse)
     def ai_config(request: Request):
         conn = _get_conn()
-        prompts = list_prompts(conn)
+        prompts_all = list_prompts(conn)
+        schemas_all = list_schemas(conn)
         profiles = list_profiles(conn)
+
+        def _version_key(value: str) -> tuple[int, str]:
+            text = (value or "").strip().lower()
+            digits = "".join(ch for ch in text if ch.isdigit())
+            return (int(digits) if digits else -1, text)
+
+        def _group_latest(items: list[dict[str, object]], key_fn=None):
+            grouped: dict[str, list[dict[str, object]]] = {}
+            for item in items:
+                key = key_fn(item) if key_fn else item["name"]
+                grouped.setdefault(str(key), []).append(item)
+            latest = []
+            history_map: dict[str, list[dict[str, object]]] = {}
+            for name, rows in grouped.items():
+                rows_sorted = sorted(rows, key=lambda r: _version_key(str(r.get("version") or "")))
+                latest_item = rows_sorted[-1]
+                latest.append(latest_item)
+                history = rows_sorted[:-1]
+                if history:
+                    history_map[name] = history
+            latest_sorted = sorted(latest, key=lambda r: (str(r.get("name") or ""), _version_key(str(r.get("version") or ""))))
+            return latest_sorted, history_map
+
+        def _prompt_group_name(item: dict[str, object]) -> str:
+            name = str(item.get("name") or "").strip()
+            version = str(item.get("version") or "").strip()
+            if version:
+                name = re.sub(
+                    rf"(?i)\s*[\-–—:]?\s*\(?{re.escape(version)}\)?\s*$",
+                    "",
+                    name,
+                )
+            name = re.sub(r"(?i)\s*[\-–—:]?\s*\(?v?\d+(\.\d+)*\)?\s*$", "", name).strip()
+            normalized = name.replace("_", " ").strip().lower()
+            normalized = re.sub(r"\s+", " ", normalized).strip()
+            if "daily_brief" in (str(item.get("name") or "")).lower() or "daily brief" in normalized:
+                if "cluster" in normalized:
+                    return "daily brief topic clustering"
+                if "summarize" in normalized or "topic summaries" in normalized:
+                    return "daily brief topic summaries"
+                if "nist" in normalized:
+                    return "daily brief nist mapping"
+                if "overall" in normalized or "synthesis" in normalized:
+                    return "daily brief overall synthesis"
+                return "daily brief"
+            return normalized or (name or str(item.get("name") or ""))
+
+        prompt_groups: dict[str, list[dict[str, object]]] = {}
+        for item in prompts_all:
+            key = _prompt_group_name(item)
+            prompt_groups.setdefault(key, []).append(item)
+        prompts_grouped = []
+        for key, rows in prompt_groups.items():
+            rows_sorted = sorted(rows, key=lambda r: _version_key(str(r.get("version") or "")))
+            latest_item = rows_sorted[-1]
+            history = rows_sorted[:-1]
+            prompts_grouped.append(
+                {
+                    "key": key,
+                    "latest": latest_item,
+                    "history": history,
+                }
+            )
+        prompts_grouped = sorted(
+            prompts_grouped,
+            key=lambda g: (str(g["latest"].get("name") or ""), _version_key(str(g["latest"].get("version") or ""))),
+        )
+        prompts_latest = [g["latest"] for g in prompts_grouped]
+        prompts_history = {g["key"]: g["history"] for g in prompts_grouped if g["history"]}
+        schemas_latest, schemas_history = _group_latest(schemas_all)
         return TEMPLATES.TemplateResponse(
             "admin/ai.html",
             {
                 **_base_context(request),
                 "providers": list_providers(conn),
                 "models": list_models(conn),
-                "prompts": prompts,
-                "schemas": list_schemas(conn),
+                "prompts": prompts_latest,
+                "prompts_grouped": prompts_grouped,
+                "prompts_all": prompts_all,
+                "prompts_history": prompts_history,
+                "schemas": schemas_latest,
+                "schemas_all": schemas_all,
+                "schemas_history": schemas_history,
                 "profiles": profiles,
                 "routing": list_pipeline_routing(conn),
                 "stages": STAGE_NAMES,

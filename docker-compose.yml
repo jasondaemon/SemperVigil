@@ -28,7 +28,8 @@ services:
       SV_HUGO_OUTPUT_DIR: /site
       SV_FIX_SITE_PERMS: "0"
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
-      SV_LOG_FILE: /data/logs/admin.log
+      SV_LOG_DIR: /log
+      SV_LOG_FILE: /log/admin.log
       SV_UMASK: ${SV_UMASK:-002}
       SV_ADMIN_TOKEN: ${SV_ADMIN_TOKEN:-}
       SV_DB_URL: ${SV_DB_URL:-}
@@ -45,6 +46,7 @@ services:
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - ${SV_DATA_DIR:-./data}:/data
+      - ${SV_LOG_DIR:-./log}:/log
       - ./tools:/tools:ro
     networks:
       - svnet
@@ -73,14 +75,15 @@ services:
       SV_HUGO_OUTPUT_DIR: /site
       SV_FIX_SITE_PERMS: "0"
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
-      SV_LOG_FILE: /data/logs/worker.log
+      SV_LOG_DIR: /log
+      SV_LOG_FILE: /log/worker.log
       SV_UMASK: ${SV_UMASK:-002}
       SV_DB_URL: ${SV_DB_URL:-}
       HTTP_PROXY:  http://vpn:8888
       HTTPS_PROXY: http://vpn:8888
       # ✅ critical: keep internal services direct (no proxy)
       NO_PROXY: db,admin,web,searxng,localhost,127.0.0.1
-      SV_WORKER_ONLY_TYPES: "ingest_due_sources,ingest_source,fetch_article_content,cve_sync,build_daily_summary,derive_events_from_articles,enrich_event_from_web,promote_event_web_source_to_article,article_products_backfill,rebuild_vendor_products,source_acquire"
+      SV_WORKER_ONLY_TYPES: "ingest_due_sources,ingest_source,fetch_article_content,cve_sync,enrich_event_from_web,promote_event_web_source_to_article,article_products_backfill,rebuild_vendor_products,source_acquire"
     command:
       - sh
       - -lc
@@ -92,6 +95,7 @@ services:
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - ${SV_DATA_DIR:-./data}:/data
+      - ${SV_LOG_DIR:-./log}:/log
       - ${SV_SITE_SRC_DIR:-./site-src}:/site-src
       - ./tools:/tools:ro
     networks:
@@ -144,10 +148,13 @@ services:
       SV_HUGO_OUTPUT_DIR: /site
       SV_FIX_SITE_PERMS: "0"
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
-      SV_LOG_FILE: /data/logs/worker.log
+      SV_LOG_DIR: /log
+      SV_LOG_FILE: /log/worker.log
       SV_UMASK: ${SV_UMASK:-002}
       SV_DB_URL: ${SV_DB_URL:-}
-      SV_WORKER_ONLY_TYPES: "summarize_article_llm,enrich_event_summary_llm,cve_enrich_llm,article_enrich_products,article_enrich_threat_actors,cve_enrich_threat_actors,article_threat_actors_backfill,cve_threat_actors_backfill"
+      SV_WORKER_PROVIDER_SCOPE: "non_openai"
+      SV_WORKER_ONLY_TYPES: "summarize_article_llm,summarize_article_context_llm,enrich_event_summary_llm,cve_enrich_llm,article_enrich_products,article_enrich_threat_actors,cve_enrich_threat_actors,article_threat_actors_backfill,cve_threat_actors_backfill,derive_events_from_articles,build_daily_brief"
+      SV_DAILY_BRIEF_MODE: "single"
       SV_LLM_MAX_INFLIGHT: "1"
       SV_WORKER_CONCURRENCY: "1"
     command:
@@ -161,6 +168,53 @@ services:
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - ${SV_DATA_DIR:-./data}:/data
+      - ${SV_LOG_DIR:-./log}:/log
+      - ${SV_SITE_SRC_DIR:-./site-src}:/site-src
+      - ./tools:/tools:ro
+    networks:
+      - svnet
+    restart: unless-stopped
+
+  worker_openai:
+    build:
+      context: .
+      dockerfile: docker/ingest/Dockerfile
+    hostname: worker-openai
+    labels:
+      com.sempervigil.role: "worker"
+      com.sempervigil.queue: "llm"
+      com.sempervigil.service: "worker_openai"
+    env_file:
+      - .env
+    environment:
+      SV_ENV: ${SV_ENV:-dev}
+      SV_DATA_DIR: /data
+      SV_HUGO_SOURCE_DIR: /site-src
+      SV_HUGO_OUTPUT_DIR: /site
+      SV_FIX_SITE_PERMS: "0"
+      SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
+      SV_LOG_DIR: /log
+      SV_LOG_FILE: /log/worker_openai.log
+      SV_LLM_LOG_HTTP: "1"
+      SV_UMASK: ${SV_UMASK:-002}
+      SV_DB_URL: ${SV_DB_URL:-}
+      SV_WORKER_PROVIDER_SCOPE: "openai"
+      SV_WORKER_ONLY_TYPES: "summarize_article_llm,enrich_event_summary_llm,cve_enrich_llm,article_enrich_products,article_enrich_threat_actors,cve_enrich_threat_actors,article_threat_actors_backfill,cve_threat_actors_backfill,derive_events_from_articles,build_daily_brief"
+      SV_DAILY_BRIEF_MODE: "single"
+      SV_LLM_MAX_INFLIGHT: "1"
+      SV_WORKER_CONCURRENCY: "1"
+    command:
+      - sh
+      - -lc
+      - |
+        set -e
+        umask ${SV_UMASK:-002}
+        sh /tools/ensure-dirs.sh
+        sempervigil-worker
+    user: "${SV_UID:-1000}:${SV_GID:-1000}"
+    volumes:
+      - ${SV_DATA_DIR:-./data}:/data
+      - ${SV_LOG_DIR:-./log}:/log
       - ${SV_SITE_SRC_DIR:-./site-src}:/site-src
       - ./tools:/tools:ro
     networks:
@@ -179,7 +233,8 @@ services:
     environment:
       SV_UMASK: ${SV_UMASK:-002}
       SV_DATA_DIR: /data
-      SV_LOG_FILE: /data/logs/builder.log
+      SV_LOG_DIR: /log
+      SV_LOG_FILE: /log/builder.log
       SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-http://localhost:${SV_WEB_PORT:-8080}/}
       SV_HUGO_CACHE_DIR: /data/hugo_cache
       SV_HUGO_MODULES_DIR: /data/hugo_modules
@@ -192,6 +247,7 @@ services:
     volumes:
       - .:/repo:ro
       - ${SV_DATA_DIR:-./data}:/data
+      - ${SV_LOG_DIR:-./log}:/log
       - ${SV_SITE_SRC_DIR:-./site-src}:/site-src
       - ${SV_SITE_PUBLIC_DIR:-./site-public}:/site
       - ./tools:/tools:ro
@@ -217,7 +273,8 @@ services:
     environment:
       SV_UMASK: ${SV_UMASK:-002}
       SV_DATA_DIR: /data
-      SV_LOG_FILE: /data/logs/builder.log
+      SV_LOG_DIR: /log
+      SV_LOG_FILE: /log/builder.log
       SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-http://localhost:${SV_WEB_PORT:-8080}/}
       SV_HUGO_CACHE_DIR: /data/hugo_cache
       SV_HUGO_MODULES_DIR: /data/hugo_modules
@@ -231,6 +288,7 @@ services:
     volumes:
       - .:/repo:ro
       - ${SV_DATA_DIR:-./data}:/data
+      - ${SV_LOG_DIR:-./log}:/log
       - ${SV_SITE_SRC_DIR:-./site-src}:/site-src
       - ${SV_SITE_PUBLIC_DIR:-./site-public}:/site
       - ./tools:/tools:ro
@@ -255,6 +313,7 @@ services:
       - "${SV_WEB_PORT:-8080}:8080"
     volumes:
       - ${SV_SITE_PUBLIC_DIR:-./site-public}:/usr/share/nginx/html:ro
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - svnet
     restart: unless-stopped

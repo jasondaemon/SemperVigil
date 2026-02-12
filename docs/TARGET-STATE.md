@@ -64,12 +64,12 @@ Progressive disclosure:
 Update cadence:
 - Content updated hourly (or more often), but the front page should remain fast and stable.
 
-### Daily News `/daily/YYYY-MM-DD/`
+### Daily Brief `/daily/YYYY-MM-DD/`
 Generated around midnight (timezone defined in runtime config).
 
 Required structure:
 1) **TL;DR** (5–8 bullets max)
-2) **Daily Summary** (executive-style but technical, 1–3 paragraphs)
+2) **Daily Brief** (executive-style but technical, 1–3 paragraphs)
 3) **Top Actions** (patch/mitigate/monitor bullets with links)
 4) **Stories** (grouped multi-source stories or single-source items)
    - Each story includes:
@@ -290,7 +290,7 @@ Index payload design:
 - Confirm LLM config + test endpoint + recordkeeping
 
 ### Phase B: Publish objects (Daily + Events + CVEs)
-- Produce daily summary markdown and publish
+- Produce daily brief JSON and publish
 - Produce event markdown and publish (already close)
 - Produce CVE markdown and publish
 - Produce JSON indexes: articles/events/cves/daily/products
@@ -308,4 +308,3 @@ Index payload design:
 - Add product pages and “all high/critical for product” views
 
 ### Development stages.
-

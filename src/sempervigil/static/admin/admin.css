@@ -142,6 +142,70 @@ body {
   gap: 12px;
 }
 
+.pipeline-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(320px, 1fr));
+  gap: 8px 16px;
+}
+
+.pipeline-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 72px 70px 120px;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 4px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+}
+
+.pipeline-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #6b7280;
+  letter-spacing: 0.02em;
+}
+
+.pipeline-value a {
+  font-size: 16px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.pipeline-value {
+  text-align: right;
+}
+
+.pipeline-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 20px;
+}
+
+.pipeline-limit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 20px;
+}
+
+.pipeline-note {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+@media (max-width: 900px) {
+  .pipeline-grid {
+    grid-template-columns: 1fr;
+  }
+  .pipeline-row {
+    grid-template-columns: minmax(160px, 1fr) auto auto auto;
+  }
+}
+
 .card {
   background: #ffffff;
   padding: 10px;
@@ -230,6 +294,20 @@ th, td {
 .table-compact td {
   padding: 6px 6px;
   vertical-align: top;
+}
+.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+.sorted-asc::after {
+  content: " ▲";
+  font-size: 0.75em;
+  color: #6b7280;
+}
+.sorted-desc::after {
+  content: " ▼";
+  font-size: 0.75em;
+  color: #6b7280;
 }
 
 .line-clamp-2 {
@@ -368,6 +446,10 @@ th, td {
 .stacked-form {
   display: grid;
   gap: 12px;
+}
+.stack {
+  display: grid;
+  gap: 16px;
 }
 
 .panel {

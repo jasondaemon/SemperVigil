@@ -1,0 +1,57 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "system" %}
+{% set nav_subactive = "schedules" %}
+{% block content %}
+  <section class="panel">
+    <h2>Job Schedules</h2>
+    <p class="muted">Configure scheduled jobs issued by the admin container. Times use the selected timezone.</p>
+    <form id="schedule-settings-form">
+      <div class="grid">
+        <label>Timezone
+          <select id="schedule-timezone">
+            <option value="">Use app default</option>
+            <option value="UTC">UTC</option>
+            <option value="America/New_York">America/New_York</option>
+            <option value="America/Chicago">America/Chicago</option>
+            <option value="America/Denver">America/Denver</option>
+            <option value="America/Phoenix">America/Phoenix</option>
+            <option value="America/Los_Angeles">America/Los_Angeles</option>
+            <option value="America/Anchorage">America/Anchorage</option>
+            <option value="Pacific/Honolulu">Pacific/Honolulu</option>
+            <option value="Europe/London">Europe/London</option>
+            <option value="Europe/Paris">Europe/Paris</option>
+            <option value="Asia/Tokyo">Asia/Tokyo</option>
+            <option value="Australia/Sydney">Australia/Sydney</option>
+          </select>
+        </label>
+      </div>
+      <div class="panel">
+        <h3>Daily Brief</h3>
+        <div class="grid">
+          <label class="checkbox"><input type="checkbox" id="schedule-brief-enabled"> Enabled</label>
+          <label>Time (HH:MM)
+            <input type="time" id="schedule-brief-time" value="07:30">
+          </label>
+        </div>
+        <div class="actions">
+          <button class="btn secondary" type="button" id="schedule-brief-run">Run Now</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Podcast (Placeholder)</h3>
+        <div class="grid">
+          <label class="checkbox"><input type="checkbox" id="schedule-podcast-enabled"> Enabled</label>
+          <label>Time (HH:MM)
+            <input type="time" id="schedule-podcast-time" value="08:00">
+          </label>
+        </div>
+        <p class="muted">Podcast job issuance will be wired when the pipeline is added.</p>
+      </div>
+      <div class="actions">
+        <button class="btn" type="submit">Save Settings</button>
+      </div>
+      <p class="error" id="schedule-settings-error" style="display:none;"></p>
+      <div class="panel-note" id="schedule-settings-note"></div>
+    </form>
+  </section>
+{% endblock %}

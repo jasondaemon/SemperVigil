@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
+from logging.handlers import RotatingFileHandler
+import os
 import socket
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -12,6 +16,7 @@ from typing import Any
 import jsonschema
 
 from ..services.ai_service import (
+    get_active_profile_for_stage,
     get_model,
     get_profile,
     get_provider,
@@ -19,19 +24,43 @@ from ..services.ai_service import (
     get_schema,
     load_provider_secret,
 )
+from ..utils import log_event
 
 STAGE_NAMES = [
     "summarize_article",
-    "extract_facts",
-    "merge_story",
-    "exec_brief",
-    "classify_topic",
+    "article_context_pack",
+    "daily_brief_overall_synthesis",
     "cve_enrich_products",
     "cve_enrich_threat_actors",
     "article_enrich_products",
     "article_enrich_threat_actors",
     "derive_events_from_articles",
 ]
+
+
+def run_pipeline_stage(
+    conn,
+    stage_name: str,
+    input_payload: str,
+    logger: logging.Logger,
+    profile_id: str | None = None,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    profile = None
+    reason = ""
+    if profile_id:
+        profile = get_profile(conn, profile_id)
+        if not profile:
+            raise ValueError("profile_not_found")
+    else:
+        profile, reason = get_active_profile_for_stage(conn, stage_name)
+        if not profile:
+            raise ValueError(f"llm_stage_{reason}")
+        profile_id = profile["id"]
+    ctx = dict(context or {})
+    ctx["stage"] = stage_name
+    result = run_profile(conn, profile_id, input_payload, logger, context=ctx)
+    return {"profile_id": profile_id, "stage": stage_name, **result}
 
 
 def test_provider(conn, provider_id: str, logger: logging.Logger) -> dict[str, Any]:
@@ -109,14 +138,24 @@ def test_model(
 
 
 def run_profile(
-    conn, profile_id: str, text: str, logger: logging.Logger
+    conn, profile_id: str, text: str, logger: logging.Logger, context: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     profile = get_profile(conn, profile_id)
     if not profile:
         raise ValueError("profile_not_found")
     safe_text = str(text or "")
-    if len(safe_text) > 50000:
-        safe_text = safe_text[:50000] + "\n\n[TRUNCATED: input exceeded 50000 chars]"
+    params = profile.get("params") or {}
+    max_input_chars = params.get("max_input_chars") or os.environ.get("SV_LLM_MAX_INPUT_CHARS", "50000")
+    try:
+        max_input_chars = int(max_input_chars)
+    except Exception:
+        max_input_chars = 50000
+    if max_input_chars <= 0:
+        max_input_chars = 50000
+    max_input_chars = min(max_input_chars, 800000)
+    logger.debug("llm_input_limit profile_id=%s max_input_chars=%s", profile_id, max_input_chars)
+    if len(safe_text) > max_input_chars:
+        safe_text = safe_text[:max_input_chars] + f"\n\n[TRUNCATED: input exceeded {max_input_chars} chars]"
     prompt = get_prompt(conn, profile["prompt_id"])
     if not prompt:
         raise ValueError("prompt_not_found")
@@ -125,15 +164,19 @@ def run_profile(
     errors: list[str] = []
     for attempt in attempts:
         try:
+            attempt_ctx = dict(context or {})
+            attempt_ctx.setdefault("profile_name", profile.get("name") or "")
             output = _call_with_profile(
                 conn,
+                profile_id,
                 attempt["provider_id"],
                 attempt["model_id"],
                 prompt,
                 schema,
-                profile.get("params") or {},
+                params,
                 safe_text,
                 logger,
+                context=attempt_ctx,
             )
             return output
         except Exception as exc:  # noqa: BLE001
@@ -143,6 +186,7 @@ def run_profile(
 
 def _call_with_profile(
     conn,
+    profile_id: str,
     provider_id: str,
     model_id: str,
     prompt: dict[str, Any],
@@ -150,6 +194,7 @@ def _call_with_profile(
     params: dict[str, Any],
     text: str,
     logger: logging.Logger,
+    context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     provider = get_provider(conn, provider_id)
     if not provider:
@@ -160,6 +205,24 @@ def _call_with_profile(
     api_key = load_provider_secret(conn, provider_id)
     base_url = provider.get("base_url") or _default_base_url(provider["type"])
     messages = _render_messages(prompt, text)
+    start = time.time()
+    prompt_name = prompt.get("name") if isinstance(prompt, dict) else ""
+    ctx = dict(context or {})
+    ctx.setdefault("profile_name", "")
+    ctx.setdefault("prompt_name", prompt_name)
+    ctx.setdefault("provider_name", provider.get("name") or "")
+    ctx.setdefault("model_name", model.get("model_name") or "")
+    log_event(
+        logger,
+        logging.INFO,
+        "llm_request_start",
+        profile_name=ctx.get("profile_name") or "",
+        prompt_name=ctx.get("prompt_name") or "",
+        provider_name=ctx.get("provider_name") or "",
+        model_name=ctx.get("model_name") or "",
+        stage=ctx.get("stage") or "",
+        job_type=ctx.get("job_type") or "",
+    )
     raw = _call_provider(
         provider["type"],
         base_url,
@@ -168,6 +231,20 @@ def _call_with_profile(
         messages,
         params,
         provider,
+        context=ctx,
+    )
+    latency_ms = int((time.time() - start) * 1000)
+    log_event(
+        logger,
+        logging.INFO,
+        "llm_request_done",
+        profile_name=ctx.get("profile_name") or "",
+        prompt_name=ctx.get("prompt_name") or "",
+        provider_name=ctx.get("provider_name") or "",
+        model_name=ctx.get("model_name") or "",
+        stage=ctx.get("stage") or "",
+        job_type=ctx.get("job_type") or "",
+        latency_ms=latency_ms,
     )
     parsed = _maybe_parse_json(raw)
     if schema:
@@ -185,6 +262,7 @@ def _call_with_profile(
                 repair_messages,
                 params,
                 provider,
+                context=ctx,
             )
             parsed = _maybe_parse_json(raw)
             validation = _validate_json(schema["json_schema"], parsed)
@@ -222,6 +300,7 @@ def _call_provider(
     messages: list[dict[str, str]],
     params: dict[str, Any],
     provider: dict[str, Any],
+    context: dict[str, Any] | None = None,
 ) -> str:
     if provider_type == "openai_compatible":
         path = _join_url(base_url, "/chat/completions")
@@ -231,7 +310,7 @@ def _call_provider(
             **_filter_params(params),
         }
         headers = _auth_headers(provider_type, api_key)
-        response = _http_request("POST", path, headers, payload, provider)
+        response = _http_request("POST", path, headers, payload, provider, context=context)
         return _read_openai(response)
     if provider_type == "anthropic":
         path = _join_url(base_url, "/messages")
@@ -242,7 +321,7 @@ def _call_provider(
             "messages": [{"role": "user", "content": messages[1]["content"]}],
         }
         headers = _auth_headers(provider_type, api_key)
-        response = _http_request("POST", path, headers, payload, provider)
+        response = _http_request("POST", path, headers, payload, provider, context=context)
         return _read_anthropic(response)
     if provider_type == "google":
         path = _join_url(
@@ -254,7 +333,7 @@ def _call_provider(
             "contents": [{"parts": [{"text": messages[1]["content"]}]}],
             "generationConfig": _filter_params(params),
         }
-        response = _http_request("POST", path, {}, payload, provider)
+        response = _http_request("POST", path, {}, payload, provider, context=context)
         return _read_google(response)
     raise ValueError("unsupported_provider_type")
 
@@ -265,19 +344,51 @@ def _http_request(
     headers: dict[str, str],
     payload: dict[str, Any] | None,
     provider: dict[str, Any],
+    context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     request = urllib.request.Request(url, data=data, method=method)
     request.add_header("Content-Type", "application/json")
     for key, value in headers.items():
         request.add_header(key, value)
-    timeout = max(75, int(provider.get("timeout_s", 75)))
+    timeout = int(provider.get("timeout_s", 1200))
     backoff = [1, 2]
     attempts = 0
+    provider_name = str(provider.get("name") or "").lower()
+    is_openai = str(provider.get("type") or "").lower() == "openai_compatible"
+    if is_openai:
+        base_url = str(provider.get("base_url") or "").lower()
+        if "api.openai.com" not in base_url and "openai" not in provider_name:
+            is_openai = False
+    logger = _ensure_openai_http_logger()
+    log_http = bool(os.environ.get("SV_LLM_LOG_HTTP"))
+    if is_openai:
+        log_http = True
+    provider_label = provider.get("name") or provider.get("id") or "provider"
+    started_at = time.time()
+    context = dict(context or {})
+    if log_http:
+        log_event(
+            logger,
+            logging.INFO,
+            "llm_http_start",
+            provider=provider_label,
+            provider_name=context.get("provider_name") or provider_label,
+            model_name=context.get("model_name") or "",
+            profile_name=context.get("profile_name") or "",
+            prompt_name=context.get("prompt_name") or "",
+            stage=context.get("stage") or "",
+            job_type=context.get("job_type") or "",
+            url=url,
+            timeout_s=timeout,
+            payload_bytes=len(data) if data else 0,
+        )
     while True:
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 raw = response.read().decode("utf-8")
+                status_code = response.getcode()
+                resp_headers = dict(response.headers.items())
             break
         except urllib.error.HTTPError as exc:
             if exc.code in {429, 503} and attempts < len(backoff):
@@ -285,6 +396,42 @@ def _http_request(
                 attempts += 1
                 continue
             raw = exc.read().decode("utf-8", errors="ignore")
+            status_code = exc.code
+            resp_headers = dict(exc.headers.items()) if exc.headers else {}
+            if log_http:
+                redacted_headers = {
+                    k: ("REDACTED" if k.lower() == "authorization" else v)
+                    for k, v in headers.items()
+                }
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "OpenAI_prompts",
+                    method=method,
+                    url=url,
+                    model=(payload or {}).get("model") if isinstance(payload, dict) else "",
+                    provider_name=context.get("provider_name") or provider_label,
+                    model_name=context.get("model_name") or "",
+                    profile_name=context.get("profile_name") or "",
+                    prompt_name=context.get("prompt_name") or "",
+                    stage=context.get("stage") or "",
+                    job_type=context.get("job_type") or "",
+                    request_headers=json.dumps(redacted_headers, ensure_ascii=False),
+                    request_body=json.dumps(payload, ensure_ascii=False) if payload is not None else "",
+                    response_status=status_code,
+                    response_headers=json.dumps(resp_headers, ensure_ascii=False),
+                    response_body=raw,
+                    elapsed_ms=int((time.time() - started_at) * 1000),
+                )
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "llm_http_error",
+                    provider=provider_label,
+                    url=url,
+                    status=status_code,
+                    elapsed_ms=int((time.time() - started_at) * 1000),
+                )
             raise ValueError(f"http_error {exc.code}: {raw[:500]}") from exc
         except urllib.error.URLError as exc:
             is_timeout = isinstance(exc.reason, (TimeoutError, socket.timeout))
@@ -292,13 +439,121 @@ def _http_request(
                 time.sleep(backoff[attempts])
                 attempts += 1
                 continue
+            if log_http:
+                redacted_headers = {
+                    k: ("REDACTED" if k.lower() == "authorization" else v)
+                    for k, v in headers.items()
+                }
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "OpenAI_prompts",
+                    method=method,
+                    url=url,
+                    model=(payload or {}).get("model") if isinstance(payload, dict) else "",
+                    provider_name=context.get("provider_name") or provider_label,
+                    model_name=context.get("model_name") or "",
+                    profile_name=context.get("profile_name") or "",
+                    prompt_name=context.get("prompt_name") or "",
+                    stage=context.get("stage") or "",
+                    job_type=context.get("job_type") or "",
+                    request_headers=json.dumps(redacted_headers, ensure_ascii=False),
+                    request_body=json.dumps(payload, ensure_ascii=False) if payload is not None else "",
+                    response_status="network_error",
+                    response_headers="{}",
+                    response_body=str(exc),
+                    elapsed_ms=int((time.time() - started_at) * 1000),
+                )
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "llm_http_error",
+                    provider=provider_label,
+                    url=url,
+                    status="network_error",
+                    elapsed_ms=int((time.time() - started_at) * 1000),
+                )
             raise ValueError(f"network_error: {exc}") from exc
         except socket.timeout as exc:
             if attempts < len(backoff):
                 time.sleep(backoff[attempts])
                 attempts += 1
                 continue
+            if log_http:
+                redacted_headers = {
+                    k: ("REDACTED" if k.lower() == "authorization" else v)
+                    for k, v in headers.items()
+                }
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "OpenAI_prompts",
+                    method=method,
+                    url=url,
+                    model=(payload or {}).get("model") if isinstance(payload, dict) else "",
+                    provider_name=context.get("provider_name") or provider_label,
+                    model_name=context.get("model_name") or "",
+                    profile_name=context.get("profile_name") or "",
+                    prompt_name=context.get("prompt_name") or "",
+                    stage=context.get("stage") or "",
+                    job_type=context.get("job_type") or "",
+                    request_headers=json.dumps(redacted_headers, ensure_ascii=False),
+                    request_body=json.dumps(payload, ensure_ascii=False) if payload is not None else "",
+                    response_status="timeout",
+                    response_headers="{}",
+                    response_body=str(exc),
+                    elapsed_ms=int((time.time() - started_at) * 1000),
+                )
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "llm_http_error",
+                    provider=provider_label,
+                    url=url,
+                    status="timeout",
+                    elapsed_ms=int((time.time() - started_at) * 1000),
+                )
             raise ValueError(f"timeout: {exc}") from exc
+    if log_http:
+        redacted_headers = {
+            k: ("REDACTED" if k.lower() == "authorization" else v) for k, v in headers.items()
+        }
+        log_event(
+            logger,
+            logging.INFO,
+            "OpenAI_prompts",
+            method=method,
+            url=url,
+            model=(payload or {}).get("model") if isinstance(payload, dict) else "",
+            provider_name=context.get("provider_name") or provider_label,
+            model_name=context.get("model_name") or "",
+            profile_name=context.get("profile_name") or "",
+            prompt_name=context.get("prompt_name") or "",
+            stage=context.get("stage") or "",
+            job_type=context.get("job_type") or "",
+            request_headers=json.dumps(redacted_headers, ensure_ascii=False),
+            request_body=json.dumps(payload, ensure_ascii=False) if payload is not None else "",
+            response_status=status_code,
+            response_headers=json.dumps(resp_headers, ensure_ascii=False),
+            response_body=raw,
+            elapsed_ms=int((time.time() - started_at) * 1000),
+        )
+        log_event(
+            logger,
+            logging.INFO,
+            "llm_http_done",
+            provider=provider_label,
+            provider_name=context.get("provider_name") or provider_label,
+            model_name=context.get("model_name") or "",
+            profile_name=context.get("profile_name") or "",
+            prompt_name=context.get("prompt_name") or "",
+            stage=context.get("stage") or "",
+            job_type=context.get("job_type") or "",
+            url=url,
+            status=status_code,
+            elapsed_ms=int((time.time() - started_at) * 1000),
+            response_bytes=len(raw.encode("utf-8", errors="ignore")),
+        )
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
@@ -327,6 +582,37 @@ def _read_google(response: dict[str, Any]) -> str:
     if not parts:
         raise ValueError("google_missing_parts")
     return parts[0].get("text") or ""
+
+
+def _ensure_openai_http_logger() -> logging.Logger:
+    logger = logging.getLogger("sempervigil.llm.http")
+    if getattr(logger, "_sv_openai_log_ready", False):
+        return logger
+    log_path = os.environ.get("SV_OPENAI_LOG_FILE", "/log/openai_http.log")
+    max_bytes = int(os.environ.get("SV_OPENAI_LOG_MAX_BYTES", 5 * 1024 * 1024))
+    backup_count = int(os.environ.get("SV_OPENAI_LOG_BACKUPS", 1))
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    handler = RotatingFileHandler(log_path, maxBytes=max_bytes, backupCount=backup_count)
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    tz_name = os.environ.get("SV_LOG_TZ", "America/New_York")
+    try:
+        zone = ZoneInfo(tz_name)
+    except Exception:
+        zone = None
+
+    def _converter(timestamp: float) -> time.struct_time:
+        if zone is None:
+            return time.localtime(timestamp)
+        return datetime.fromtimestamp(timestamp, tz=zone).timetuple()
+
+    formatter.converter = _converter  # type: ignore[assignment]
+    handler.setFormatter(formatter)
+    handler.setLevel(logging.INFO)
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    logger.propagate = False
+    logger._sv_openai_log_ready = True
+    return logger
 
 
 def _filter_params(params: dict[str, Any]) -> dict[str, Any]:

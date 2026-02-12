@@ -13,11 +13,10 @@
       <div class="card-actions">
         <button class="btn" data-enqueue="ingest_due_sources">Enqueue Ingest Due Sources</button>
         <button class="btn" data-enqueue="build_site">Enqueue Build Site</button>
-        <button class="btn secondary brief-today">Build Today's Brief</button>
         <div class="daily-summary-inline">
-          <label class="inline-label">Daily Summary</label>
-          <input type="date" id="daily-summary-date">
-          <button class="btn secondary" id="daily-summary-build">Build Daily Summary</button>
+          <label class="inline-label">Daily Brief</label>
+          <input type="date" id="daily-brief-date">
+          <button class="btn secondary" id="daily-brief-build">Build Daily Brief</button>
         </div>
       </div>
       {% if sources_count == 0 %}
@@ -27,18 +26,15 @@
   </section>
 
   <section class="panel" id="dashboard-pipeline">
-    <h2>Pipeline Status</h2>
-    <p class="muted">
-      Ingest creates article stubs first. Fetch content runs next (if enabled + URL present),
-      summarization follows fetch (or runs immediately if fetch is disabled), and markdown publish
-      runs per-article. Site build is a separate job.
-    </p>
-    <div class="actions">
-      <button class="btn secondary" id="dashboard-pipeline-check" type="button">Run Pipeline Check</button>
-      <button class="btn secondary" id="dashboard-metrics-refresh" type="button">Refresh</button>
-      <button class="btn secondary" id="dashboard-rebuild-vendor-products" type="button">Rebuild Vendor/Product Indexes</button>
+    <div class="panel-header">
+      <h2>Pipeline Status</h2>
+      <div class="panel-actions">
+        <a class="btn small secondary" href="/ui/system/utilities">Utilities</a>
+      </div>
     </div>
-    <div class="grid" id="dashboard-backlog"></div>
+    <div class="panel" id="dashboard-pipeline-metrics">
+      <div class="pipeline-grid" id="dashboard-backlog"></div>
+    </div>
     <div class="panel" id="dashboard-job-counts">
       <div class="panel-header">
         <h3>Job Queue</h3>
@@ -58,7 +54,12 @@
         <select id="logs-service">
           <option value="admin">admin</option>
           <option value="worker" selected>worker</option>
+          <option value="worker_fetch">worker_fetch</option>
+          <option value="worker_llm">worker_llm</option>
+          <option value="worker_openai">worker_openai</option>
+          <option value="openai_prompts">openai_prompts</option>
           <option value="builder">builder</option>
+          <option value="build_hugo">build_hugo</option>
         </select>
       </label>
       <div class="logs-build-controls" id="logs-build-controls" style="display:none;">

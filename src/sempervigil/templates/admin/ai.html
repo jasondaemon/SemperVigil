@@ -86,6 +86,8 @@ SEMPERVIGIL_KEY_ID=v1</pre>
           <th>Name</th>
           <th>Type</th>
           <th>Base URL</th>
+          <th>Timeout (s)</th>
+          <th>Retries</th>
           <th>Enabled</th>
           <th>Key</th>
           <th>Last Test</th>
@@ -94,10 +96,12 @@ SEMPERVIGIL_KEY_ID=v1</pre>
       </thead>
       <tbody>
         {% for provider in providers %}
-        <tr data-provider-id="{{ provider.id }}">
+        <tr data-provider-id="{{ provider.id }}" data-timeout="{{ provider.timeout_s or 30 }}" data-retries="{{ provider.retries or 2 }}">
           <td class="provider-name">{{ provider.name }}</td>
           <td class="provider-type">{{ provider.type }}</td>
           <td class="provider-base-url">{{ provider.base_url or "" }}</td>
+          <td class="provider-timeout">{{ provider.timeout_s or 30 }}</td>
+          <td class="provider-retries">{{ provider.retries or 2 }}</td>
           <td><input type="checkbox" class="toggle-provider" {% if provider.is_enabled %}checked{% endif %}></td>
           <td class="mono">
             {% if provider.key_last4 %}****{{ provider.key_last4 }}{% else %}not set{% endif %}
@@ -230,7 +234,8 @@ SEMPERVIGIL_KEY_ID=v1</pre>
         </tr>
       </thead>
       <tbody id="prompt-table-body">
-        {% for prompt in prompts %}
+        {% for group in prompts_grouped %}
+        {% set prompt = group.latest %}
         <tr data-prompt-id="{{ prompt.id }}">
           <td class="prompt-name">{{ prompt.name }}</td>
           <td class="prompt-version">{{ prompt.version }}</td>
@@ -239,6 +244,28 @@ SEMPERVIGIL_KEY_ID=v1</pre>
             <button class="btn small danger delete-prompt" type="button">Delete</button>
           </td>
         </tr>
+        {% set history = group.history %}
+        {% if history %}
+        <tr class="history-row">
+          <td colspan="3">
+            <details class="history-details">
+              <summary>History ({{ history | length }})</summary>
+              <div class="history-list">
+                {% for item in history %}
+                <div class="history-item" data-prompt-id="{{ item.id }}">
+                  <span class="mono">{{ item.version }}</span>
+                  <span class="muted">— {{ item.id }}</span>
+                  <span class="actions">
+                    <button class="btn small edit-prompt" type="button">Edit</button>
+                    <button class="btn small danger delete-prompt" type="button">Delete</button>
+                  </span>
+                </div>
+                {% endfor %}
+              </div>
+            </details>
+          </td>
+        </tr>
+        {% endif %}
         {% endfor %}
       </tbody>
     </table>
@@ -275,6 +302,28 @@ SEMPERVIGIL_KEY_ID=v1</pre>
             <button class="btn small danger delete-schema" type="button">Delete</button>
           </td>
         </tr>
+        {% set history = schemas_history.get(schema.name) %}
+        {% if history %}
+        <tr class="history-row">
+          <td colspan="3">
+            <details class="history-details">
+              <summary>History ({{ history | length }})</summary>
+              <div class="history-list">
+                {% for item in history %}
+                <div class="history-item" data-schema-id="{{ item.id }}">
+                  <span class="mono">{{ item.version }}</span>
+                  <span class="muted">— {{ item.id }}</span>
+                  <span class="actions">
+                    <button class="btn small edit-schema" type="button">Edit</button>
+                    <button class="btn small danger delete-schema" type="button">Delete</button>
+                  </span>
+                </div>
+                {% endfor %}
+              </div>
+            </details>
+          </td>
+        </tr>
+        {% endif %}
         {% endfor %}
       </tbody>
     </table>
@@ -302,7 +351,7 @@ SEMPERVIGIL_KEY_ID=v1</pre>
       </label>
       <label>Prompt
         <select id="profile-prompt">
-          {% for prompt in prompts %}
+          {% for prompt in prompts_all %}
           <option value="{{ prompt.id }}">{{ prompt.name }} {{ prompt.version }}</option>
           {% endfor %}
         </select>
@@ -310,7 +359,7 @@ SEMPERVIGIL_KEY_ID=v1</pre>
       <label>Schema
         <select id="profile-schema">
           <option value="">(none)</option>
-          {% for schema in schemas %}
+          {% for schema in schemas_all %}
           <option value="{{ schema.id }}">{{ schema.name }} {{ schema.version }}</option>
           {% endfor %}
         </select>

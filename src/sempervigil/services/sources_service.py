@@ -265,7 +265,7 @@ def _ensure_tactic(conn: Any, source_id: str, kind: str, url: str, enabled: bool
         source_id=source_id,
         tactic_type=tactic_type,
         enabled=enabled,
-        priority=100,
+        priority=0,
         config=config,
         last_success_at=None,
         last_error_at=None,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 import logging
 import os
 import hashlib
@@ -93,6 +94,7 @@ def get_source(conn: Any, source_id: str) -> Source | None:
     cursor = conn.execute(
         """
         SELECT id, name, enabled, base_url, topic_key, default_frequency_minutes,
+               kind, url,
                pause_until, paused_reason, robots_notes, overrides
         FROM sources
         WHERE id = %s
@@ -110,6 +112,7 @@ def list_sources(conn: Any, enabled_only: bool = True) -> list[Source]:
         cursor = conn.execute(
             """
             SELECT id, name, enabled, base_url, topic_key, default_frequency_minutes,
+                   kind, url,
                    pause_until, paused_reason, robots_notes, overrides
             FROM sources
             WHERE enabled = 1
@@ -120,12 +123,28 @@ def list_sources(conn: Any, enabled_only: bool = True) -> list[Source]:
         cursor = conn.execute(
             """
             SELECT id, name, enabled, base_url, topic_key, default_frequency_minutes,
+                   kind, url,
                    pause_until, paused_reason, robots_notes, overrides
             FROM sources
             ORDER BY id
             """
         )
     return [_row_to_source(row) for row in cursor.fetchall()]
+
+
+def list_tactics_for_source(conn: Any, source_id: str) -> list[SourceTactic]:
+    cursor = conn.execute(
+        """
+        SELECT id, source_id, tactic_type, enabled, priority, config_json,
+               last_success_at, last_error_at, error_streak
+        FROM source_tactics
+        WHERE source_id = %s
+        ORDER BY priority ASC
+        """,
+        (source_id,),
+    )
+    rows = cursor.fetchall()
+    return [_row_to_tactic(row) for row in rows]
 
 
 def list_due_sources(conn: Any, now_iso: str) -> list[Source]:
@@ -166,17 +185,18 @@ def upsert_tactic(conn: Any, tactic: SourceTactic) -> None:
     created_at = utc_now_iso()
     conn.execute(
         """
+        DELETE FROM source_tactics
+        WHERE source_id = %s AND tactic_type = %s
+        """,
+        (tactic.source_id, tactic.tactic_type),
+    )
+    cursor = conn.execute(
+        """
         INSERT INTO source_tactics
             (source_id, tactic_type, enabled, priority, config_json,
              last_success_at, last_error_at, error_streak, created_at, updated_at)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT(source_id, tactic_type, priority) DO UPDATE SET
-            enabled=excluded.enabled,
-            config_json=excluded.config_json,
-            last_success_at=excluded.last_success_at,
-            last_error_at=excluded.last_error_at,
-            error_streak=excluded.error_streak,
-            updated_at=excluded.updated_at
+        RETURNING id
         """,
         (
             tactic.source_id,
@@ -191,6 +211,7 @@ def upsert_tactic(conn: Any, tactic: SourceTactic) -> None:
             updated_at,
         ),
     )
+    cursor.fetchone()
     conn.commit()
 
 
@@ -256,15 +277,28 @@ def insert_articles(conn: Any, articles: Iterable[Article]) -> int:
 
 
 def list_articles_for_day(conn: Any, day: str) -> list[dict[str, object]]:
+    day_candidates = {day}
+    try:
+        base = datetime.fromisoformat(day).date()
+        day_candidates = {
+            base.isoformat(),
+            (base - timedelta(days=1)).isoformat(),
+            (base + timedelta(days=1)).isoformat(),
+        }
+    except ValueError:
+        day_candidates = {day}
+    day_values = sorted(day_candidates)
+    placeholders = ", ".join(["%s"] * len(day_values))
     cursor = conn.execute(
-        """
+        f"""
         SELECT id, source_id, title, original_url, published_at, ingested_at, brief_day,
-               summary_llm, summary_model, summary_generated_at, meta_json
+               summary_llm, summary_model, summary_generated_at, meta_json,
+               context_llm, context_model, context_generated_at, context_error
         FROM articles
-        WHERE COALESCE(brief_day, SUBSTR(published_at, 1, 10), SUBSTR(ingested_at, 1, 10)) = %s
+        WHERE COALESCE(brief_day, SUBSTR(published_at, 1, 10), SUBSTR(ingested_at, 1, 10)) IN ({placeholders})
         ORDER BY COALESCE(published_at, ingested_at) DESC
         """,
-        (day,),
+        tuple(day_values),
     )
     rows = []
     for row in cursor.fetchall():
@@ -280,7 +314,18 @@ def list_articles_for_day(conn: Any, day: str) -> list[dict[str, object]]:
             summary_model,
             summary_generated_at,
             meta_json,
+            context_llm,
+            context_model,
+            context_generated_at,
+            context_error,
         ) = row
+        effective_day = brief_day
+        if not effective_day:
+            published_at_raw = published_at or ingested_at or ""
+            if published_at_raw:
+                effective_day = _brief_day_from(str(published_at_raw))
+        if effective_day and str(effective_day) != str(day):
+            continue
         rows.append(
             {
                 "id": article_id,
@@ -295,6 +340,10 @@ def list_articles_for_day(conn: Any, day: str) -> list[dict[str, object]]:
                 "summary_model": summary_model,
                 "summary_generated_at": summary_generated_at,
                 "meta_json": meta_json,
+                "context_llm": context_llm,
+                "context_model": context_model,
+                "context_generated_at": context_generated_at,
+                "context_error": context_error,
             }
         )
     return rows
@@ -312,6 +361,176 @@ def list_summaries_for_day(conn: Any, day: str) -> list[dict[str, object]]:
             summary_data = {"summary": article["summary_llm"], "bullets": [], "why": "", "cves": []}
         rows.append({**article, "summary_data": summary_data})
     return rows
+
+
+def upsert_daily_brief(conn: Any, payload: dict[str, object]) -> None:
+    if not _table_exists(conn, "daily_briefs"):
+        return
+    meta = payload.get("meta") or {}
+    day = str(meta.get("brief_day") or payload.get("day") or "")
+    profile_id = meta.get("profile_id") or payload.get("profile_id")
+    def _normalize_json_payload(value: object, fallback: object) -> object:
+        if isinstance(value, (list, dict)):
+            return value
+        if isinstance(value, str):
+            text = value.strip()
+            if text.startswith("[") or text.startswith("{"):
+                try:
+                    parsed = json.loads(text)
+                except Exception:
+                    return fallback
+                if isinstance(parsed, (list, dict)):
+                    return parsed
+        return fallback
+
+    tldr = json_dumps(_normalize_json_payload(payload.get("tldr"), []))
+    highlights = json_dumps(_normalize_json_payload(payload.get("technical_synthesis"), {}))
+    families = json_dumps(_normalize_json_payload(payload.get("families"), []))
+    urls = json_dumps(_normalize_json_payload(payload.get("low_value"), []))
+    topics = json_dumps(_normalize_json_payload(payload.get("citations"), []))
+    meta_payload = dict(meta)
+    meta_payload["actions"] = payload.get("actions") or []
+    meta_json = json_dumps(meta_payload)
+    now = utc_now_iso()
+    conn.execute(
+        """
+        INSERT INTO daily_briefs
+            (brief_day, profile_id, tldr_json, highlights_json, families_json, urls_json,
+             topics_json, meta_json, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (brief_day) DO UPDATE SET
+            profile_id = excluded.profile_id,
+            tldr_json = excluded.tldr_json,
+            highlights_json = excluded.highlights_json,
+            families_json = excluded.families_json,
+            urls_json = excluded.urls_json,
+            topics_json = excluded.topics_json,
+            meta_json = excluded.meta_json,
+            updated_at = excluded.updated_at
+        """,
+        (day, profile_id, tldr, highlights, families, urls, topics, meta_json, now, now),
+    )
+    conn.commit()
+
+
+def list_daily_briefs(conn: Any, page: int = 1, page_size: int = 50) -> tuple[list[dict[str, object]], int]:
+    if not _table_exists(conn, "daily_briefs"):
+        return [], 0
+    page = max(int(page or 1), 1)
+    page_size = max(min(int(page_size or 50), 200), 1)
+    offset = (page - 1) * page_size
+    total = 0
+    count_cursor = conn.execute("SELECT COUNT(*) FROM daily_briefs")
+    row = count_cursor.fetchone()
+    if row:
+        total = int(row[0] or 0)
+    cursor = conn.execute(
+        """
+        SELECT brief_day, profile_id, tldr_json, highlights_json, families_json,
+               urls_json, topics_json, meta_json, created_at, updated_at
+        FROM daily_briefs
+        ORDER BY brief_day DESC
+        LIMIT %s OFFSET %s
+        """,
+        (page_size, offset),
+    )
+    items: list[dict[str, object]] = []
+    for row in cursor.fetchall():
+        (
+            brief_day,
+            profile_id,
+            tldr_json,
+            highlights_json,
+            families_json,
+            urls_json,
+            topics_json,
+            meta_json,
+            created_at,
+            updated_at,
+        ) = row
+        tldr = _safe_json_loads(tldr_json, [])
+        families = _safe_json_loads(families_json, [])
+        urls = _safe_json_loads(urls_json, [])
+        topics = _safe_json_loads(topics_json, [])
+        meta = _safe_json_loads(meta_json, {})
+        items.append(
+            {
+                "brief_day": str(brief_day),
+                "profile_id": profile_id,
+                "created_at": created_at,
+                "updated_at": updated_at,
+                "generated_at": meta.get("generated_at"),
+                "article_count": meta.get("article_count"),
+                "topic_count": meta.get("topic_count"),
+                "family_count": meta.get("family_count"),
+                "url_count": len(urls),
+                "tldr_count": len(tldr),
+            }
+        )
+    return items, total
+
+
+def get_daily_brief(conn: Any, day: str) -> dict[str, object] | None:
+    if not _table_exists(conn, "daily_briefs"):
+        return None
+    cursor = conn.execute(
+        """
+        SELECT brief_day, profile_id, tldr_json, highlights_json, families_json,
+               urls_json, topics_json, meta_json, created_at, updated_at
+        FROM daily_briefs
+        WHERE brief_day = %s
+        """,
+        (day,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        return None
+    (
+        brief_day,
+        profile_id,
+        tldr_json,
+        highlights_json,
+        families_json,
+        urls_json,
+        topics_json,
+        meta_json,
+        created_at,
+        updated_at,
+    ) = row
+    meta = _safe_json_loads(meta_json, {})
+    return {
+        "brief_day": str(brief_day),
+        "profile_id": profile_id,
+        "tldr": _safe_json_loads(tldr_json, []),
+        "technical_synthesis": _safe_json_loads(highlights_json, {}),
+        "actions": meta.get("actions", []),
+        "families": _safe_json_loads(families_json, []),
+        "low_value": _safe_json_loads(urls_json, []),
+        "citations": _safe_json_loads(topics_json, []),
+        "meta": meta,
+        "created_at": created_at,
+        "updated_at": updated_at,
+    }
+
+
+def _safe_json_loads(value: Any, default: object) -> object:
+    if value is None:
+        return default
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        parsed = json.loads(value)
+    except Exception:
+        return default
+    if isinstance(parsed, str):
+        text = parsed.strip()
+        if text.startswith("[") or text.startswith("{"):
+            try:
+                reparsed = json.loads(text)
+            except Exception:
+                return parsed
+            return reparsed
+    return parsed
 
 
 def list_recent_articles(conn: Any, limit: int = 200) -> list[dict[str, object]]:
@@ -986,7 +1205,7 @@ def get_source_run_streaks(conn: Any, source_id: str, limit: int = 20) -> dict[s
         break
     cursor = conn.execute(
         """
-        SELECT status, items_accepted
+        SELECT status, items_found
         FROM source_runs
         WHERE source_id = %s
         ORDER BY started_at DESC
@@ -994,8 +1213,8 @@ def get_source_run_streaks(conn: Any, source_id: str, limit: int = 20) -> dict[s
         """,
         (source_id, limit),
     )
-    for status, items_accepted in cursor.fetchall():
-        if status == "ok" and int(items_accepted) == 0:
+    for status, items_found in cursor.fetchall():
+        if status == "ok" and int(items_found) == 0:
             consecutive_zero += 1
             continue
         break
@@ -1035,24 +1254,32 @@ def enqueue_job(
     conn: Any,
     job_type: str,
     payload: dict[str, object] | None,
+    priority: int = 0,
     debounce: bool = False,
+    dedupe: bool = False,
 ) -> str:
     if debounce and _has_pending_job(conn, job_type):
         return _get_latest_job_id(conn, job_type)
+    payload_json = json_dumps(payload) if payload else None
+    if dedupe and payload_json:
+        existing = _get_pending_job_id_with_payload(conn, job_type, payload_json)
+        if existing:
+            return existing
     job_id = _new_job_id()
     now = utc_now_iso()
     conn.execute(
         """
         INSERT INTO jobs
-            (id, job_type, status, payload_json, result_json, requested_at, started_at,
+            (id, job_type, status, priority, payload_json, result_json, requested_at, started_at,
              finished_at, locked_by, locked_at, error)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             job_id,
             job_type,
             "queued",
-            json_dumps(payload) if payload else None,
+            int(priority),
+            payload_json,
             None,
             now,
             None,
@@ -1092,7 +1319,7 @@ def list_jobs_filtered(
     cursor = conn.execute(
         f"""
         SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
-               finished_at, locked_by, locked_at, error
+               finished_at, locked_by, locked_at, error, priority
         FROM jobs
         {where_sql}
         ORDER BY requested_at DESC
@@ -1107,7 +1334,7 @@ def list_jobs(conn: Any, limit: int = 50) -> list[Job]:
     cursor = conn.execute(
         """
         SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
-               finished_at, locked_by, locked_at, error
+               finished_at, locked_by, locked_at, error, priority
         FROM jobs
         ORDER BY requested_at DESC
         LIMIT %s
@@ -1185,7 +1412,8 @@ def get_dashboard_metrics(conn: Any) -> dict[str, object]:
             """
             SELECT job_type, status, COUNT(*)
             FROM jobs
-            WHERE status IN ('failed', 'succeeded') AND requested_at >= %s
+            WHERE status IN ('failed', 'succeeded')
+              AND COALESCE(finished_at, requested_at) >= %s
             GROUP BY job_type, status
             """,
             (counts_since,),
@@ -1202,6 +1430,10 @@ def get_dashboard_metrics(conn: Any) -> dict[str, object]:
         job_counts.get("summarize_article_llm", {}).get("queued", 0)
         + job_counts.get("summarize_article_llm", {}).get("running", 0)
     )
+    metrics["articles_pending_context"] = (
+        job_counts.get("summarize_article_context_llm", {}).get("queued", 0)
+        + job_counts.get("summarize_article_context_llm", {}).get("running", 0)
+    )
     metrics["articles_pending_publish"] = (
         job_counts.get("write_article_markdown", {}).get("queued", 0)
         + job_counts.get("write_article_markdown", {}).get("running", 0)
@@ -1214,9 +1446,25 @@ def get_dashboard_metrics(conn: Any) -> dict[str, object]:
     total_summarized = sum(v.get("summarized_count", 0) for v in state_counts.values())
     missing_content_count = 0
     content_error_count = 0
+    content_404_count = 0
+    content_stale_count = 0
     missing_summary_count = 0
+    missing_context_count = 0
     if article_columns:
         url_clause = "original_url IS NOT NULL AND original_url != ''" if "original_url" in article_columns else None
+        error_exclude_clause = None
+        error_404_clause = None
+        error_stale_clause = None
+        if "content_error" in article_columns:
+            error_404_clause = (
+                "content_error IN ('http_404','http_410') "
+                "OR content_error LIKE '%%HTTP Error 404%%' "
+                "OR content_error LIKE '%%HTTP Error 410%%'"
+            )
+            error_stale_clause = "content_error = 'stale_older_than_week'"
+            error_exclude_clause = (
+                f"(content_error IS NULL OR NOT ({error_404_clause} OR {error_stale_clause}))"
+            )
         if "has_full_content" in article_columns:
             content_clause = "has_full_content = 0"
         elif "content_text" in article_columns:
@@ -1229,24 +1477,106 @@ def get_dashboard_metrics(conn: Any) -> dict[str, object]:
             where = content_clause
             if url_clause:
                 where = f"{where} AND {url_clause}"
+            if error_exclude_clause:
+                where = f"{where} AND {error_exclude_clause}"
             row = conn.execute(f"SELECT COUNT(*) FROM articles WHERE {where}").fetchone()
             missing_content_count = int(row[0] or 0)
         if "content_error" in article_columns:
+            where = "content_error IS NOT NULL AND content_error != ''"
+            if error_exclude_clause:
+                where = f"{where} AND {error_exclude_clause}"
             row = conn.execute(
-                "SELECT COUNT(*) FROM articles WHERE content_error IS NOT NULL AND content_error != ''"
+                f"SELECT COUNT(*) FROM articles WHERE {where}"
             ).fetchone()
             content_error_count = int(row[0] or 0)
+            if error_404_clause:
+                row = conn.execute(
+                    f"SELECT COUNT(*) FROM articles WHERE {error_404_clause}"
+                ).fetchone()
+                content_404_count = int(row[0] or 0)
+            if error_stale_clause:
+                row = conn.execute(
+                    f"SELECT COUNT(*) FROM articles WHERE {error_stale_clause}"
+                ).fetchone()
+                content_stale_count = int(row[0] or 0)
         if "summary_llm" in article_columns:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM articles WHERE summary_llm IS NULL OR summary_llm = ''"
-            ).fetchone()
+            where = "summary_llm IS NULL OR summary_llm = ''"
+            if error_exclude_clause:
+                where = f"({where}) AND {error_exclude_clause}"
+            row = conn.execute(f"SELECT COUNT(*) FROM articles WHERE {where}").fetchone()
             missing_summary_count = int(row[0] or 0)
+        if "context_llm" in article_columns:
+            clauses = ["(context_llm IS NULL OR context_llm = '')"]
+            content_ready = []
+            if "has_full_content" in article_columns:
+                content_ready.append("has_full_content = 1")
+            if "content_text" in article_columns:
+                content_ready.append("(content_text IS NOT NULL AND content_text != '')")
+            if "extracted_text_path" in article_columns:
+                content_ready.append("(extracted_text_path IS NOT NULL AND extracted_text_path != '')")
+            if content_ready:
+                clauses.append("(" + " OR ".join(content_ready) + ")")
+            where = " AND ".join(clauses)
+            if error_exclude_clause:
+                where = f"({where}) AND {error_exclude_clause}"
+            row = conn.execute(f"SELECT COUNT(*) FROM articles WHERE {where}").fetchone()
+            missing_context_count = int(row[0] or 0)
 
     metrics["articles_missing_content_count"] = missing_content_count
     metrics["articles_with_content_error_count"] = content_error_count
+    metrics["articles_404_count"] = content_404_count
+    metrics["articles_stale_count"] = content_stale_count
     metrics["articles_missing_summary_count"] = missing_summary_count
-    metrics["articles_missing_products_count"] = count_articles_missing_products(conn)
-    metrics["articles_missing_threat_actors_count"] = count_articles_missing_threat_actors(conn)
+    metrics["articles_missing_context_count"] = missing_context_count
+    metrics["articles_missing_products_count"] = 0
+    metrics["articles_missing_threat_actors_count"] = 0
+    if _table_exists(conn, "articles"):
+        cols = _table_columns(conn, "articles")
+        error_exclude_clause = None
+        if "content_error" in cols:
+            error_404_clause = (
+                "content_error IN ('http_404','http_410') "
+                "OR content_error LIKE '%%HTTP Error 404%%' "
+                "OR content_error LIKE '%%HTTP Error 410%%'"
+            )
+            error_stale_clause = "content_error = 'stale_older_than_week'"
+            error_exclude_clause = (
+                f"(content_error IS NULL OR NOT ({error_404_clause} OR {error_stale_clause}))"
+            )
+        if _table_exists(conn, "article_products"):
+            where = "1=1"
+            if error_exclude_clause:
+                where = f"{where} AND {error_exclude_clause}"
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*) FROM (
+                    SELECT a.id
+                    FROM articles a
+                    LEFT JOIN article_products ap ON ap.article_id = a.id
+                    WHERE {where}
+                    GROUP BY a.id
+                    HAVING COUNT(ap.article_id) = 0
+                ) t
+                """
+            ).fetchone()
+            metrics["articles_missing_products_count"] = int(row[0] or 0)
+        if _table_exists(conn, "article_threat_actors"):
+            where = "1=1"
+            if error_exclude_clause:
+                where = f"{where} AND {error_exclude_clause}"
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*) FROM (
+                    SELECT a.id
+                    FROM articles a
+                    LEFT JOIN article_threat_actors ata ON ata.article_id = a.id
+                    WHERE {where}
+                    GROUP BY a.id
+                    HAVING COUNT(ata.article_id) = 0
+                ) t
+                """
+            ).fetchone()
+            metrics["articles_missing_threat_actors_count"] = int(row[0] or 0)
 
 
     cve_missing_desc = 0
@@ -1274,6 +1604,41 @@ def get_dashboard_metrics(conn: Any) -> dict[str, object]:
         cve_missing_products = int(row[0] or 0)
     metrics["cves_missing_products_count"] = cve_missing_products
     metrics["cves_missing_threat_actors_count"] = count_cves_missing_threat_actors(conn)
+    daily_missing_days = 0
+    if _table_exists(conn, "articles"):
+        cols = _table_columns(conn, "articles")
+        if "published_at" in cols or "ingested_at" in cols:
+            if "published_at" in cols and "ingested_at" in cols:
+                date_expr = "DATE(COALESCE(published_at, ingested_at))"
+                where_expr = "COALESCE(published_at, ingested_at) IS NOT NULL"
+            elif "published_at" in cols:
+                date_expr = "DATE(published_at)"
+                where_expr = "published_at IS NOT NULL"
+            else:
+                date_expr = "DATE(ingested_at)"
+                where_expr = "ingested_at IS NOT NULL"
+            if "content_error" in cols:
+                error_404_clause = (
+                    "content_error IN ('http_404','http_410') "
+                    "OR content_error LIKE '%%HTTP Error 404%%' "
+                    "OR content_error LIKE '%%HTTP Error 410%%'"
+                )
+                error_stale_clause = "content_error = 'stale_older_than_week'"
+                where_expr = f"{where_expr} AND NOT ({error_404_clause} OR {error_stale_clause})"
+            cursor = conn.execute(
+                f"""
+                SELECT DISTINCT {date_expr}
+                FROM articles
+                WHERE {where_expr}
+                """
+            )
+            article_days = {str(row[0]) for row in cursor.fetchall() if row and row[0]}
+            brief_days: set[str] = set()
+            if _table_exists(conn, "daily_briefs"):
+                cursor = conn.execute("SELECT brief_day FROM daily_briefs")
+                brief_days = {str(row[0]) for row in cursor.fetchall() if row and row[0]}
+            daily_missing_days = len(article_days - brief_days)
+    metrics["daily_brief_missing_days_count"] = daily_missing_days
     return metrics
 
 
@@ -1283,7 +1648,7 @@ def get_last_job_by_type(conn: Any, job_type: str) -> Job | None:
     row = conn.execute(
         """
         SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
-               finished_at, locked_by, locked_at, error
+               finished_at, locked_by, locked_at, error, priority
         FROM jobs
         WHERE job_type = %s
         ORDER BY requested_at DESC
@@ -1300,7 +1665,7 @@ def get_job(conn: Any, job_id: str) -> Job | None:
     row = conn.execute(
         """
         SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
-               finished_at, locked_by, locked_at, error
+               finished_at, locked_by, locked_at, error, priority
         FROM jobs
         WHERE id = %s
         """,
@@ -1318,7 +1683,7 @@ def list_jobs_by_types_since(
     cursor = conn.execute(
         f"""
         SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
-               finished_at, locked_by, locked_at, error
+               finished_at, locked_by, locked_at, error, priority
         FROM jobs
         WHERE requested_at >= %s AND job_type IN ({placeholders})
         ORDER BY requested_at ASC
@@ -1444,6 +1809,20 @@ def update_job_result(conn: Any, job_id: str, result: dict[str, object]) -> bool
     return cursor.rowcount == 1
 
 
+def touch_job_lock(conn: Any, job_id: str) -> bool:
+    now = utc_now_iso()
+    cursor = conn.execute(
+        """
+        UPDATE jobs
+        SET locked_at = %s
+        WHERE id = %s AND status = 'running'
+        """,
+        (now, job_id),
+    )
+    conn.commit()
+    return cursor.rowcount == 1
+
+
 def cancel_job(conn: Any, job_id: str, reason: str = "canceled_by_admin") -> bool:
     now = utc_now_iso()
     cursor = conn.execute(
@@ -1483,24 +1862,63 @@ def cancel_all_jobs(conn: Any, reason: str = "canceled_by_admin") -> int:
 def cancel_jobs_by_type(
     conn: Any,
     job_type: str,
-    status: str = "queued",
+    status: str | None = "queued",
     reason: str = "canceled_by_admin",
 ) -> int:
     now = utc_now_iso()
+    if status is None:
+        cursor = conn.execute(
+            """
+            UPDATE jobs
+            SET status = 'canceled',
+                finished_at = %s,
+                error = %s,
+                locked_by = NULL,
+                locked_at = NULL
+            WHERE job_type = %s AND status IN ('queued', 'running')
+            """,
+            (now, reason, job_type),
+        )
+    else:
+        cursor = conn.execute(
+            """
+            UPDATE jobs
+            SET status = 'canceled',
+                finished_at = %s,
+                error = %s,
+                locked_by = NULL,
+                locked_at = NULL
+            WHERE job_type = %s AND status = %s
+            """,
+            (now, reason, job_type, status),
+        )
+    conn.commit()
+    return int(cursor.rowcount or 0)
+
+
+def release_job(
+    conn: Any,
+    job_id: str,
+    delay_seconds: int = 0,
+    reason: str = "released_by_worker",
+) -> bool:
+    next_run = utc_now_iso_offset(seconds=delay_seconds)
     cursor = conn.execute(
         """
         UPDATE jobs
-        SET status = 'canceled',
-            finished_at = %s,
-            error = %s,
+        SET status = 'queued',
+            requested_at = %s,
+            started_at = NULL,
+            finished_at = NULL,
             locked_by = NULL,
-            locked_at = NULL
-        WHERE job_type = %s AND status = %s
+            locked_at = NULL,
+            error = %s
+        WHERE id = %s AND status = 'running'
         """,
-        (now, reason, job_type, status),
+        (next_run, reason, job_id),
     )
     conn.commit()
-    return int(cursor.rowcount or 0)
+    return cursor.rowcount == 1
 
 
 def is_job_canceled(conn: Any, job_id: str) -> bool:
@@ -1535,7 +1953,9 @@ def has_pending_job(
 def enqueue_build_site_if_needed(
     conn: Any, reason: str | None = None, debounce_seconds: int = 60
 ) -> str | None:
+    logger = logging.getLogger("sempervigil.jobs")
     if has_pending_job(conn, "build_site"):
+        logger.info("build_site_skip_pending reason=%s", reason or "")
         return None
     now = utc_now_iso()
     last_enqueued = get_setting(conn, "build_site.last_enqueued_at", None)
@@ -1543,10 +1963,22 @@ def enqueue_build_site_if_needed(
         if _parse_iso(last_enqueued) + timedelta(seconds=debounce_seconds) > _parse_iso(
             now
         ):
+            logger.info(
+                "build_site_skip_debounce reason=%s last_enqueued=%s debounce_seconds=%s",
+                reason or "",
+                last_enqueued,
+                debounce_seconds,
+            )
             return None
     payload = {"reason": reason} if reason else None
     job_id = enqueue_job(conn, "build_site", payload, debounce=True)
     set_setting(conn, "build_site.last_enqueued_at", now)
+    logger.info(
+        "build_site_enqueued job_id=%s reason=%s debounce_seconds=%s",
+        job_id,
+        reason or "",
+        debounce_seconds,
+    )
     return job_id
 
 
@@ -2034,7 +2466,7 @@ def claim_next_job(
                     SELECT id
                     FROM jobs
                     WHERE status = 'queued' AND locked_by IS NULL {type_clause}
-                    ORDER BY requested_at ASC
+                    ORDER BY priority DESC, requested_at ASC
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                 )
@@ -2042,7 +2474,7 @@ def claim_next_job(
                 SET status = 'running', started_at = %s, locked_by = %s, locked_at = %s
                 WHERE id IN (SELECT id FROM next_job)
                 RETURNING id, job_type, status, payload_json, result_json, requested_at, started_at,
-                          finished_at, locked_by, locked_at, error
+                          finished_at, locked_by, locked_at, error, priority
                 """,
                 tuple(params + [now, worker_id, now]),
             )
@@ -2074,6 +2506,7 @@ def claim_next_job(
                 id=job.id,
                 job_type=job.job_type,
                 status="running",
+                priority=job.priority,
                 payload=job.payload,
                 result=job.result,
                 requested_at=job.requested_at,
@@ -2141,6 +2574,20 @@ def fail_job(conn: Any, job_id: str, error: str) -> bool:
     return cursor.rowcount == 1
 
 
+def fail_job_force(conn: Any, job_id: str, error: str) -> bool:
+    now = utc_now_iso()
+    cursor = conn.execute(
+        """
+        UPDATE jobs
+        SET status = 'failed', finished_at = %s, error = %s
+        WHERE id = %s AND status != 'succeeded'
+        """,
+        (now, error, job_id),
+    )
+    conn.commit()
+    return cursor.rowcount == 1
+
+
 def requeue_job(
     conn: Any,
     job_id: str,
@@ -2168,18 +2615,36 @@ def requeue_job(
 
 
 def _row_to_source(row: tuple) -> Source:
-    (
-        source_id,
-        name,
-        enabled,
-        base_url,
-        topic_key,
-        default_frequency_minutes,
-        pause_until,
-        paused_reason,
-        robots_notes,
-        overrides_raw,
-    ) = row
+    if len(row) == 12:
+        (
+            source_id,
+            name,
+            enabled,
+            base_url,
+            topic_key,
+            default_frequency_minutes,
+            kind,
+            url,
+            pause_until,
+            paused_reason,
+            robots_notes,
+            overrides_raw,
+        ) = row
+    else:
+        (
+            source_id,
+            name,
+            enabled,
+            base_url,
+            topic_key,
+            default_frequency_minutes,
+            pause_until,
+            paused_reason,
+            robots_notes,
+            overrides_raw,
+        ) = row
+        kind = None
+        url = None
     overrides = None
     if overrides_raw is not None:
         if isinstance(overrides_raw, dict):
@@ -2200,6 +2665,8 @@ def _row_to_source(row: tuple) -> Source:
         paused_reason=paused_reason,
         robots_notes=robots_notes,
         overrides=overrides,
+        kind=kind,
+        url=url,
     )
 
 
@@ -2245,6 +2712,7 @@ def _row_to_job(row: tuple) -> Job:
         locked_by,
         locked_at,
         error,
+        priority,
     ) = row
     try:
         payload = json.loads(payload_json) if payload_json else {}
@@ -2258,6 +2726,7 @@ def _row_to_job(row: tuple) -> Job:
         id=job_id,
         job_type=job_type,
         status=status,
+        priority=int(priority or 0),
         payload=payload,
         result=result,
         requested_at=requested_at,
@@ -2279,6 +2748,22 @@ def _has_pending_job(conn: Any, job_type: str) -> bool:
         (job_type,),
     )
     return cursor.fetchone() is not None
+
+
+def _get_pending_job_id_with_payload(
+    conn: Any, job_type: str, payload_json: str
+) -> str | None:
+    cursor = conn.execute(
+        """
+        SELECT id FROM jobs
+        WHERE job_type = %s AND status IN ('queued', 'running') AND payload_json = %s
+        ORDER BY requested_at DESC
+        LIMIT 1
+        """,
+        (job_type, payload_json),
+    )
+    row = cursor.fetchone()
+    return row[0] if row else None
 
 
 def _get_latest_job_id(conn: Any, job_type: str) -> str:
@@ -2309,12 +2794,20 @@ def _get_article_id(conn: Any, source_id: str, stable_id: str) -> int | None:
 
 
 def _brief_day_from(value: str) -> str:
+    tz_name = os.environ.get("SV_APP_TIMEZONE") or "America/New_York"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = timezone.utc
     if value.endswith("Z"):
         value = value.replace("Z", "+00:00")
     try:
-        return datetime.fromisoformat(value).date().isoformat()
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(tz).date().isoformat()
     except ValueError:
-        return utc_now_iso().split("T")[0]
+        return datetime.now(tz).date().isoformat()
 
 
 def get_article_by_id(conn: Any, article_id: int) -> dict[str, object] | None:
@@ -2340,6 +2833,10 @@ def get_article_by_id(conn: Any, article_id: int) -> dict[str, object] | None:
         "summary_model",
         "summary_generated_at",
         "summary_error",
+        "context_llm",
+        "context_model",
+        "context_generated_at",
+        "context_error",
         "brief_day",
         "has_full_content",
         "extracted_text_path",
@@ -2388,6 +2885,10 @@ def get_article_by_id(conn: Any, article_id: int) -> dict[str, object] | None:
         "summary_model": article.get("summary_model"),
         "summary_generated_at": article.get("summary_generated_at"),
         "summary_error": article.get("summary_error"),
+        "context_llm": article.get("context_llm"),
+        "context_model": article.get("context_model"),
+        "context_generated_at": article.get("context_generated_at"),
+        "context_error": article.get("context_error"),
         "brief_day": article.get("brief_day"),
         "has_full_content": has_full_content,
         "meta_json": article.get("meta_json"),
@@ -2434,7 +2935,7 @@ def list_article_ids_missing_content(conn: Any, source_id: str) -> list[int]:
     return [int(row[0]) for row in cursor.fetchall()]
 
 
-def list_article_ids_missing_content_all(conn: Any) -> list[int]:
+def list_article_ids_missing_content_all(conn: Any, limit: int | None = None) -> list[int]:
     if not _table_exists(conn, "articles"):
         return []
     columns = _table_columns(conn, "articles")
@@ -2453,9 +2954,21 @@ def list_article_ids_missing_content_all(conn: Any) -> list[int]:
         clauses.append("(content_text IS NULL OR content_text = '')")
     elif "extracted_text_path" in columns:
         clauses.append("(extracted_text_path IS NULL OR extracted_text_path = '')")
+    if "content_error" in columns:
+        error_404_clause = (
+            "content_error IN ('http_404','http_410') "
+            "OR content_error LIKE '%%HTTP Error 404%%' "
+            "OR content_error LIKE '%%HTTP Error 410%%'"
+        )
+        error_stale_clause = "content_error = 'stale_older_than_week'"
+        clauses.append(f"(content_error IS NULL OR NOT ({error_404_clause} OR {error_stale_clause}))")
     where_sql = " AND ".join(clauses) if clauses else "1=1"
+    limit_sql = ""
+    if limit is not None:
+        limit_sql = " LIMIT %s"
+        params.append(int(limit))
     cursor = conn.execute(
-        f"SELECT id FROM articles WHERE {where_sql} ORDER BY ingested_at DESC",
+        f"SELECT id FROM articles WHERE {where_sql} ORDER BY ingested_at DESC{limit_sql}",
         params,
     )
     return [int(row[0]) for row in cursor.fetchall()]
@@ -2477,6 +2990,39 @@ def list_article_ids_ready_for_summary_all(conn: Any) -> list[int]:
     where_sql = " AND ".join(clauses)
     cursor = conn.execute(
         f"SELECT id FROM articles WHERE {where_sql} ORDER BY ingested_at DESC"
+    )
+    return [int(row[0]) for row in cursor.fetchall()]
+
+
+def list_article_ids_ready_for_context_all(conn: Any, limit: int = 200) -> list[int]:
+    if not _table_exists(conn, "articles"):
+        return []
+    columns = _table_columns(conn, "articles")
+    if "context_llm" not in columns:
+        return []
+    clauses: list[str] = ["(context_llm IS NULL OR context_llm = '')"]
+    content_ready = []
+    if "has_full_content" in columns:
+        content_ready.append("has_full_content = 1")
+    if "content_text" in columns:
+        content_ready.append("(content_text IS NOT NULL AND content_text != '')")
+    if "extracted_text_path" in columns:
+        content_ready.append("(extracted_text_path IS NOT NULL AND extracted_text_path != '')")
+    if not content_ready:
+        return []
+    clauses.append("(" + " OR ".join(content_ready) + ")")
+    if "content_error" in columns:
+        error_404_clause = (
+            "content_error IN ('http_404','http_410') "
+            "OR content_error LIKE '%%HTTP Error 404%%' "
+            "OR content_error LIKE '%%HTTP Error 410%%'"
+        )
+        error_stale_clause = "content_error = 'stale_older_than_week'"
+        clauses.append(f"(content_error IS NULL OR NOT ({error_404_clause} OR {error_stale_clause}))")
+    where_sql = " AND ".join(clauses)
+    cursor = conn.execute(
+        f"SELECT id FROM articles WHERE {where_sql} ORDER BY ingested_at DESC LIMIT %s",
+        (int(limit),),
     )
     return [int(row[0]) for row in cursor.fetchall()]
 
@@ -2514,6 +3060,45 @@ def list_article_ids_missing_summary(conn: Any, source_id: str) -> list[int]:
         ORDER BY ingested_at DESC
         """,
         (source_id,),
+    )
+    return [int(row[0]) for row in cursor.fetchall()]
+
+
+def list_article_ids_missing_context_pack(conn: Any, limit: int = 200) -> list[int]:
+    if not _table_exists(conn, "articles"):
+        return []
+    columns = _table_columns(conn, "articles")
+    if "context_llm" not in columns:
+        return []
+    clauses: list[str] = ["(context_llm IS NULL OR context_llm = '')"]
+    content_ready = []
+    if "has_full_content" in columns:
+        content_ready.append("has_full_content = 1")
+    if "content_text" in columns:
+        content_ready.append("(content_text IS NOT NULL AND content_text != '')")
+    if "extracted_text_path" in columns:
+        content_ready.append("(extracted_text_path IS NOT NULL AND extracted_text_path != '')")
+    if content_ready:
+        clauses.append("(" + " OR ".join(content_ready) + ")")
+    elif "summary_llm" in columns:
+        clauses.append("(summary_llm IS NOT NULL AND summary_llm != '')")
+    if "content_error" in columns:
+        error_404_clause = (
+            "content_error IN ('http_404','http_410') "
+            "OR content_error LIKE '%%HTTP Error 404%%' "
+            "OR content_error LIKE '%%HTTP Error 410%%'"
+        )
+        error_stale_clause = "content_error = 'stale_older_than_week'"
+        clauses.append(f"(content_error IS NULL OR NOT ({error_404_clause} OR {error_stale_clause}))")
+    where_sql = " AND ".join(clauses)
+    cursor = conn.execute(
+        f"""
+        SELECT id FROM articles
+        WHERE {where_sql}
+        ORDER BY ingested_at DESC
+        LIMIT %s
+        """,
+        (int(limit),),
     )
     return [int(row[0]) for row in cursor.fetchall()]
 
@@ -5228,9 +5813,11 @@ def search_articles(
     query: str | None,
     source_id: str | None,
     has_summary: bool | None,
+    has_context: bool | None,
     missing: str | None,
     content_state: str | None,
     content_error: bool | None,
+    content_error_kind: str | None,
     summary_error: bool | None,
     needs: str | None,
     after: str | None,
@@ -5270,6 +5857,9 @@ def search_articles(
     summary_missing_clause = None
     if "summary_llm" in columns:
         summary_missing_clause = "(a.summary_llm IS NULL OR a.summary_llm = '')"
+    context_missing_clause = None
+    if "context_llm" in columns:
+        context_missing_clause = "(a.context_llm IS NULL OR a.context_llm = '')"
     if has_summary is True:
         if "summary_llm" in columns:
             where.append("a.summary_llm IS NOT NULL")
@@ -5278,6 +5868,14 @@ def search_articles(
     if has_summary is False:
         if "summary_llm" in columns:
             where.append("a.summary_llm IS NULL")
+    if has_context is True:
+        if "context_llm" in columns:
+            where.append("a.context_llm IS NOT NULL")
+        else:
+            return [], 0
+    if has_context is False:
+        if "context_llm" in columns:
+            where.append("a.context_llm IS NULL")
     if missing == "content":
         if content_missing_clause:
             where.append(content_missing_clause)
@@ -5302,15 +5900,42 @@ def search_articles(
             where.append(summary_missing_clause)
         else:
             return [], 0
+    if missing == "context":
+        if context_missing_clause:
+            where.append(context_missing_clause)
+        else:
+            return [], 0
     if missing == "products":
         if not _table_exists(conn, "article_products"):
             return [], 0
         where.append("NOT EXISTS (SELECT 1 FROM article_products ap WHERE ap.article_id = a.id)")
+    if missing == "threat_actors":
+        if not _table_exists(conn, "article_threat_actors"):
+            return [], 0
+        where.append("NOT EXISTS (SELECT 1 FROM article_threat_actors at WHERE at.article_id = a.id)")
     if content_error:
         if "content_error" in columns:
             where.append("(a.content_error IS NOT NULL AND a.content_error != '')")
         else:
             return [], 0
+    if content_error_kind:
+        if "content_error" not in columns:
+            return [], 0
+        kind = content_error_kind.strip().lower()
+        error_404_clause = (
+            "a.content_error IN ('http_404','http_410') "
+            "OR a.content_error LIKE '%%HTTP Error 404%%' "
+            "OR a.content_error LIKE '%%HTTP Error 410%%'"
+        )
+        error_stale_clause = "a.content_error = 'stale_older_than_week'"
+        if kind in ("404", "410", "404/410"):
+            where.append(f"({error_404_clause})")
+        elif kind in ("stale", "stale_older_than_week"):
+            where.append(f"({error_stale_clause})")
+        elif kind == "other":
+            where.append(
+                f"(a.content_error IS NOT NULL AND a.content_error != '' AND NOT ({error_404_clause} OR {error_stale_clause}))"
+            )
     if summary_error:
         if "summary_error" in columns:
             where.append("(a.summary_error IS NOT NULL AND a.summary_error != '')")
@@ -5333,6 +5958,16 @@ def search_articles(
                 where.append(f"({summary_missing_clause}) AND NOT ({content_missing_clause})")
             elif summary_missing_clause:
                 where.append(summary_missing_clause)
+            else:
+                return [], 0
+        elif needs == "context":
+            if context_missing_clause:
+                if "content_text" in columns:
+                    where.append(
+                        f"({context_missing_clause}) AND (a.content_text IS NOT NULL AND a.content_text != '')"
+                    )
+                else:
+                    return [], 0
             else:
                 return [], 0
         elif needs == "publish":
@@ -6605,6 +7240,34 @@ def update_article_summary(
     conn.commit()
 
 
+def update_article_context_pack(
+    conn: Any,
+    article_id: int,
+    *,
+    context_llm: str | None,
+    context_model: str | None,
+    context_generated_at: str | None,
+    context_error: str | None,
+) -> None:
+    conn.execute(
+        """
+        UPDATE articles
+        SET context_llm = %s, context_model = %s, context_generated_at = %s,
+            context_error = %s, updated_at = %s
+        WHERE id = %s
+        """,
+        (
+            context_llm,
+            context_model,
+            context_generated_at,
+            context_error,
+            utc_now_iso(),
+            article_id,
+        ),
+    )
+    conn.commit()
+
+
 def _insert_article_tags(conn: Any, article_id: int, tags: list[str]) -> None:
     if not tags:
         return
@@ -6625,6 +7288,8 @@ def _source_from_dict(source_dict: dict[str, object]) -> Source:
     name = source_dict.get("name") or source_id
     enabled = source_dict.get("enabled", True)
     base_url = source_dict.get("base_url") or source_dict.get("url")
+    kind = source_dict.get("kind")
+    url = source_dict.get("url") or base_url
     topic_key = source_dict.get("topic_key")
     default_frequency_minutes = source_dict.get("default_frequency_minutes", 60)
     pause_until = source_dict.get("pause_until")
@@ -6650,6 +7315,8 @@ def _source_from_dict(source_dict: dict[str, object]) -> Source:
         pause_until=str(pause_until) if pause_until else None,
         paused_reason=str(paused_reason) if paused_reason else None,
         robots_notes=str(robots_notes) if robots_notes else None,
+        kind=str(kind) if kind else None,
+        url=str(url) if url else None,
     )
 
 

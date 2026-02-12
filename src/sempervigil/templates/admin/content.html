@@ -18,10 +18,17 @@
         <option value="1">Has summary</option>
         <option value="0">No summary</option>
       </select>
+      <select id="content-has-context">
+        <option value="">Any context pack</option>
+        <option value="1">Has context pack</option>
+        <option value="0">No context pack</option>
+      </select>
       <select id="content-missing">
         <option value="">Missing field</option>
         <option value="summary">Missing summary</option>
+        <option value="context">Missing context pack</option>
         <option value="products">Missing product/vendor</option>
+        <option value="threat_actors">Missing threat actors</option>
       </select>
       <select id="content-state">
         <option value="">Any content state</option>
@@ -45,6 +52,12 @@
           <input type="checkbox" id="content-content-error">
           Content error
         </label>
+        <select id="content-error-kind">
+          <option value="">Any error</option>
+          <option value="404">404/410</option>
+          <option value="stale">Stale (>1 week)</option>
+          <option value="other">Other errors</option>
+        </select>
         <label class="inline-check">
           <input type="checkbox" id="content-summary-error">
           Summary error
@@ -53,6 +66,7 @@
           <option value="">Pipeline state</option>
           <option value="fetch">Needs fetch</option>
           <option value="summarize">Needs summarize</option>
+          <option value="context">Needs context pack</option>
           <option value="publish">Ready to publish</option>
           <option value="attention">Needs attention</option>
         </select>

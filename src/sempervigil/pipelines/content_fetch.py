@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import urllib.error
 import urllib.request
 from typing import Any
 
@@ -18,18 +19,81 @@ def fetch_article_content(
     timeout_seconds: int,
     user_agent: str,
     logger: logging.Logger,
+    source_id: str | None = None,
+    source_name: str | None = None,
     overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     request = urllib.request.Request(url, headers={"User-Agent": user_agent})
+    fetch_cfg = normalize_source_overrides(overrides or {}).get("fetch", {})
+    use_vpn = bool(fetch_cfg.get("use_vpn", True))
     try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        with _open_request(request, timeout_seconds, use_vpn=use_vpn) as response:
+            status_code = response.getcode()
             raw = response.read()
+        log_event(
+            logger,
+            logging.INFO,
+            "content_fetch_done",
+            url=url,
+            status_code=status_code,
+            vpn_used=use_vpn,
+            source_id=source_id,
+            source_name=source_name,
+        )
+    except urllib.error.HTTPError as exc:
+        status_code = exc.code
+        snippet = ""
+        try:
+            snippet = (exc.read() or b"").decode("utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            snippet = ""
+        log_event(
+            logger,
+            logging.WARNING,
+            "content_fetch_failed",
+            url=url,
+            status_code=status_code,
+            vpn_used=use_vpn,
+            source_id=source_id,
+            source_name=source_name,
+            error=str(exc),
+        )
+        if status_code == 403:
+            log_event(
+                logger,
+                logging.WARNING,
+                "content_fetch_forbidden",
+                url=url,
+                status_code=status_code,
+                vpn_used=use_vpn,
+                source_id=source_id,
+                source_name=source_name,
+                body_snippet=(snippet or "")[:200],
+            )
+        raise
     except Exception as exc:  # noqa: BLE001
-        log_event(logger, logging.WARNING, "content_fetch_failed", url=url, error=str(exc))
+        log_event(
+            logger,
+            logging.WARNING,
+            "content_fetch_failed",
+            url=url,
+            status_code=None,
+            vpn_used=use_vpn,
+            source_id=source_id,
+            source_name=source_name,
+            error=str(exc),
+        )
         raise
     html = raw.decode("utf-8", errors="replace")
     extracted = extract_content_from_html(html, overrides=overrides, logger=logger)
     return {"content_text": extracted["content_text"], "content_html": html, "method": extracted["method"]}
+
+
+def _open_request(request: urllib.request.Request, timeout_seconds: int, *, use_vpn: bool):
+    if use_vpn:
+        return urllib.request.urlopen(request, timeout=timeout_seconds)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    return opener.open(request, timeout=timeout_seconds)
 
 
 def extract_content_from_html(

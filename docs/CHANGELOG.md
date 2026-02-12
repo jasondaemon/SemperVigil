@@ -12,6 +12,36 @@ All structural changes (schema/query/pipeline/job types/routing/build) must be r
 
 ---
 
+- Date: 2026-02-12
+- Summary: Hardened RSS fetch/probe with HTTP/2 curl + Range support and per‑source overrides; fixed tactic execution ordering and self‑heal for missing tactics; expanded article exports with summary bullets and updated site templates to render them; moved logs to `/log` runtime path.
+- Files touched:
+  - src/sempervigil/http_fetch.py
+  - src/sempervigil/admin.py
+  - src/sempervigil/ingest.py
+  - src/sempervigil/source_overrides.py
+  - src/sempervigil/services/sources_service.py
+  - src/sempervigil/storage.py
+  - src/sempervigil/worker.py
+  - site-src/layouts/partials/home/test-front.html
+  - site-src/layouts/products/list.html
+  - site-src/layouts/vendors/list.html
+  - site-src/layouts/threats/list.html
+  - site-src/layouts/product/single.html
+  - site-src/layouts/vendor/single.html
+  - site-src/layouts/threat/single.html
+  - site-src/assets/css/custom.css
+  - tests/test_http_fetch.py
+  - tests/test_ingest_self_heal.py
+- DB impact (tables/columns):
+  - None (runtime behavior only; no migrations).
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Ensure `/log` is writable by containers.
+  - Rebuild data files and Hugo output after deploy.
+
+---
+
 - Date: 2026-02-01
 - Summary: Enforced normalized vendor/product + threat actor storage; added strict LLM prompt/schema definitions and Threats admin UI.
 - Files touched:
@@ -298,7 +328,7 @@ All structural changes (schema/query/pipeline/job types/routing/build) must be r
 ---
 
 - Date: 2026-02-01
-- Summary: Fixed daily summary enqueue guard to use get_setting default argument to prevent worker crash.
+- Summary: Fixed daily brief enqueue guard to use get_setting default argument to prevent worker crash.
 - Files touched:
   - src/sempervigil/worker.py
 - DB impact (tables/columns):
@@ -505,3 +535,290 @@ All structural changes (schema/query/pipeline/job types/routing/build) must be r
   - None.
 - Manual operator steps:
   - None.
+
+---
+
+- Date: 2026-02-01
+- Summary: Added threat actor Hugo pages and published threat index data for the site menu.
+- Files touched:
+  - src/sempervigil/worker.py
+  - site-src/layouts/threats/list.html
+  - site-src/layouts/threat/single.html
+  - site-src/static/js/vendor_product.js
+  - site-src/config/_default/menus.en.toml
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Rebuild the site to render /threats and /threat/<slug> pages.
+
+---
+
+- Date: 2026-02-01
+- Summary: Read data/products.json and data/threats.json via readFile + transform.Unmarshal to avoid data dir shadowing.
+- Files touched:
+  - site-src/layouts/products/list.html
+  - site-src/layouts/threats/list.html
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Rebuild the site to apply list page fixes.
+
+---
+
+- Date: 2026-02-01
+- Summary: Fixed threat index writer string escaping syntax error.
+- Files touched:
+  - src/sempervigil/worker.py
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Restart admin/worker services.
+
+---
+
+- Date: 2026-02-01
+- Summary: Added Events section index to make /events/ menu link resolve.
+- Files touched:
+  - site-src/content/events/_index.md
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Rebuild the site to render /events/.
+
+---
+
+- Date: 2026-02-01
+- Summary: Lowered Threats word-cloud threshold to include items with >1 links so the page is populated.
+- Files touched:
+  - site-src/layouts/threats/list.html
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Rebuild the site to refresh /threats/.
+
+---
+
+- Date: 2026-02-01
+- Summary: Include all threats (total_count >= 1) in the /threats/ word cloud.
+- Files touched:
+  - site-src/layouts/threats/list.html
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Rebuild the site to refresh /threats/.
+
+---
+
+- Date: 2026-02-02
+- Summary: Write article JSON + enqueue build after LLM summary so summaries appear without new ingest.
+- Files touched:
+  - src/sempervigil/worker.py
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Restart workers to pick up updated summarization behavior.
+
+---
+
+- Date: 2026-02-02
+- Summary: Only rewrite article JSON + enqueue build after summary when the article is in today's feed.
+- Files touched:
+  - src/sempervigil/worker.py
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Restart workers to pick up updated summarization behavior.
+
+---
+
+- Date: 2026-02-02
+- Summary: Sort homepage recent CVEs by published_at (fallback last_modified_at) to match publication date ordering.
+- Files touched:
+  - src/sempervigil/worker.py
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Rebuild the site to refresh CVE ordering on the homepage.
+
+---
+
+- Date: 2026-02-02
+- Summary: Fixed Sources UI modal open/close handling so Add Source works; overrides remain accessible in Edit panel.
+- Files touched:
+  - src/sempervigil/static/admin/admin.js
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Hard refresh the Sources page to load updated JS.
+
+---
+
+- Date: 2026-02-02
+- Summary: Rebuild article JSON + enqueue build when an article is suppressed or deleted so it is removed from the site.
+- Files touched:
+  - src/sempervigil/admin.py
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Restart admin service to load updated handlers.
+
+---
+
+- Date: 2026-02-02
+- Summary: Enhanced Source Test to honor overrides and report discovery/extraction details with RSS/HTML warnings.
+- Files touched:
+  - src/sempervigil/admin.py
+  - src/sempervigil/static/admin/admin.js
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Hard refresh Sources page to load updated JS.
+
+---
+
+- Date: 2026-02-02
+- Summary: Preserve article titles on content fetch and backfill missing titles from HTML metadata (JSON-LD/og:title/title).
+- Files touched:
+  - src/sempervigil/worker.py
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Re-run fetch_article_content for affected articles to backfill titles.
+
+---
+
+- Date: 2026-02-02
+- Summary: Add LLM timeout config and stop infinite retries by failing timeout jobs (optional bounded retries).
+- Files touched:
+  - src/sempervigil/config.py
+  - src/sempervigil/llm/router.py
+  - src/sempervigil/worker.py
+  - .env.example
+  - docs/README.md
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Restart worker_llm to load new timeout settings.
+
+---
+
+- Date: 2026-02-02
+- Summary: LLM timeout is now provider-configured (admin) rather than env; removed SV_LLM_TIMEOUT_SECONDS usage.
+- Files touched:
+  - src/sempervigil/llm/router.py
+  - src/sempervigil/config.py
+  - .env.example
+  - docs/README.md
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Set provider timeout_s in Admin > AI Providers.
+
+---
+
+- Date: 2026-02-02
+- Summary: Show provider timeout/retries in AI Providers table and populate edit form fields correctly.
+- Files touched:
+  - src/sempervigil/templates/admin/ai.html
+  - src/sempervigil/static/admin/admin.js
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Hard refresh Admin AI page to load updated JS.
+
+---
+
+- Date: 2026-02-02
+- Summary: Split log tail service selector into worker_fetch/worker_llm and scope event/job filters to the selected service.
+- Files touched:
+  - src/sempervigil/admin.py
+  - src/sempervigil/templates/admin/dashboard.html
+  - src/sempervigil/static/admin/admin.js
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Hard refresh the Dashboard to load updated JS.
+
+---
+
+- Date: 2026-02-02
+- Summary: Prevent LLM jobs from being re-claimed mid-run by extending job lock timeout based on provider timeout.
+- Files touched:
+  - src/sempervigil/worker.py
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Restart worker_llm to apply updated lock timeout logic.
+
+---
+
+- Date: 2026-02-02
+- Summary: Count job completions/failures since reset using finished_at so dashboard reflects active processing.
+- Files touched:
+  - src/sempervigil/storage.py
+- DB impact (tables/columns):
+  - None.
+- Migration notes:
+  - None.
+- Manual operator steps:
+  - Refresh the Dashboard metrics panel.
+
+---
+
+- Date: 2026-02-02
+- Summary: Implement topic-first Daily Brief pipeline stages, DB persistence, and Hugo JSON output; remove unused pipeline stages.
+- Files touched:
+  - src/sempervigil/worker.py
+  - src/sempervigil/pipelines/daily_brief.py
+  - src/sempervigil/llm/router.py
+  - src/sempervigil/llm/__init__.py
+  - src/sempervigil/services/ai_service.py
+  - src/sempervigil/storage.py
+  - src/sempervigil/migrations_pg.py
+  - src/sempervigil/admin.py
+  - site-src/layouts/daily/single.html
+  - docs/ARCHITECTURE.md
+- DB impact (tables/columns):
+  - Add table: daily_briefs
+  - Add schemas for Daily Brief stages (llm_schemas upserts)
+- Migration notes:
+  - New migration: pg_daily_briefs_014
+- Manual operator steps:
+  - Run migrations by restarting worker/admin.
+  - Configure the four Daily Brief stages in Admin > AI Config.

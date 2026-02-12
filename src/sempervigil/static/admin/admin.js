@@ -217,24 +217,34 @@ function wireDashboard() {
       {
         label: "Articles missing content",
         value: data.articles_missing_content_count || 0,
-        link: "/ui/content?type=article&missing=content",
+        link: "/ui/content?type=article&content_state=missing",
         action: "missing_content",
       },
       {
         label: "Articles pending fetch",
         value: data.articles_pending_fetch || 0,
-        link: "/ui/jobs",
+        link: "/ui/content?type=article&needs=fetch",
       },
       {
         label: "Articles with content error",
         value: data.articles_with_content_error_count || 0,
-        link: "/ui/content?type=article&content_error=1",
+        link: "/ui/content?type=article&content_error=1&content_error_kind=other",
         action: "content_error",
+      },
+      {
+        label: "Articles 404/410",
+        value: data.articles_404_count || 0,
+        link: "/ui/content?type=article&content_error=1&content_error_kind=404",
+      },
+      {
+        label: "Articles stale (>1 week)",
+        value: data.articles_stale_count || 0,
+        link: "/ui/content?type=article&content_error=1&content_error_kind=stale",
       },
       {
         label: "Articles pending summarize",
         value: data.articles_pending_summarize || 0,
-        link: "/ui/jobs",
+        link: "/ui/content?type=article&needs=summarize",
       },
       {
         label: "Articles missing summary",
@@ -243,8 +253,19 @@ function wireDashboard() {
         action: "missing_summary",
       },
       {
+        label: "Articles missing context pack",
+        value: data.articles_missing_context_count || 0,
+        link: "/ui/content?type=article&missing=context",
+        action: "missing_context",
+      },
+      {
         label: "Articles pending publish",
         value: data.articles_pending_publish || 0,
+        link: "/ui/content?type=article&needs=publish",
+      },
+      {
+        label: "Days missing daily brief",
+        value: data.daily_brief_missing_days_count || 0,
         link: "/ui/jobs",
       },
       {
@@ -290,14 +311,16 @@ function wireDashboard() {
     ];
     items.forEach((item) => {
       const card = document.createElement("div");
-      card.className = "card";
+      card.className = "pipeline-row";
       const hasAction = Boolean(item.action);
       const actionLabel = "Queue";
       const limitSelect =
         item.action === "cve_products" ||
         item.action === "article_products" ||
         item.action === "article_threats" ||
-        item.action === "cve_threats"
+        item.action === "cve_threats" ||
+        item.action === "missing_context" ||
+        item.action === "missing_content"
           ? `<label class="inline-select">Limit
                <select class="dashboard-limit" data-kind="${item.action}">
                  <option value="50">50</option>
@@ -307,15 +330,15 @@ function wireDashboard() {
              </label>`
           : "";
       card.innerHTML = `
-        <div class="card-title">${item.label}</div>
-        <div class="card-metric">
-          <div class="card-value"><a href="${item.link}">${item.value}</a></div>
-          ${hasAction ? `<div class="card-metric-actions">
-            <button class="btn tiny secondary dashboard-queue" data-kind="${item.action}">${actionLabel}</button>
-            ${limitSelect}
-          </div>` : ""}
+        <div class="pipeline-title">${item.label}</div>
+        <div class="pipeline-value"><a href="${item.link}">${item.value}</a></div>
+        <div class="pipeline-action">
+          ${hasAction ? `<button class="btn tiny secondary dashboard-queue" data-kind="${item.action}">${actionLabel}</button>` : ""}
         </div>
-        ${hasAction ? `<div class="card-note" data-kind="${item.action}"></div>` : ""}
+        <div class="pipeline-limit">
+          ${hasAction ? `${limitSelect}` : ""}
+        </div>
+        ${hasAction ? `<div class="pipeline-note" data-kind="${item.action}"></div>` : ""}
       `;
       backlog.appendChild(card);
     });
@@ -510,28 +533,32 @@ function wireLogs() {
   let selectedEvents = null;
   let selectedJobs = null;
   let buildMode = "";
-  const knownEvents = [
-    "job_claimed",
-    "job_succeeded",
-    "job_failed",
-    "build_claimed",
-    "build_succeeded",
-    "build_failed",
-    "builder_once_start",
-    "builder_once_done",
-    "ingest_due_sources_enqueued",
-    "ingest_counts",
-    "source_parsed",
-    "article_markdown_written",
-    "events_purge_start",
-    "events_purge_done",
-    "cve_missing_description_queued",
-    "cve_missing_products_queued",
-    "cve_sync_start",
-    "cve_sync_done",
-    "event_queued",
-    "job_enqueued",
-  ];
+  const workerLlmJobTypes = new Set([
+    "summarize_article_llm",
+    "summarize_article_context_llm",
+    "cve_enrich_llm",
+    "article_enrich_products",
+    "article_enrich_threat_actors",
+    "cve_enrich_threat_actors",
+    "derive_events_from_articles",
+    "enrich_event_summary_llm",
+    "build_daily_brief",
+    "article_threat_actors_backfill",
+    "cve_threat_actors_backfill",
+  ]);
+  const workerFetchJobTypes = new Set([
+    "ingest_due_sources",
+    "ingest_source",
+    "fetch_article_content",
+    "cve_sync",
+    "build_daily_brief",
+    "source_acquire",
+    "rebuild_vendor_products",
+    "article_products_backfill",
+    "derive_events_from_articles",
+    "enrich_event_from_web",
+    "promote_event_web_source_to_article",
+  ]);
   const params = new URLSearchParams(window.location.search);
   if (params.get("logs") === "1") {
     document.body.classList.add("logs-standalone");
@@ -548,6 +575,35 @@ function wireLogs() {
       event: eventMatch ? eventMatch[1] : "",
       jobType: jobMatch ? jobMatch[1] : "",
     };
+  }
+  function normalizeTimezone(tz) {
+    if (!tz) return "America/New_York";
+    if (tz.toUpperCase() === "EST") return "America/New_York";
+    if (tz.toUpperCase() === "EDT") return "America/New_York";
+    return tz;
+  }
+  function formatLogLineLocal(line) {
+    if (!line || line.startsWith("# ")) return line;
+    const match = line.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})([.,](\d{1,6}))?\s(.*)$/);
+    if (!match) return line;
+    const [, datePart, timePart, , fracRaw, rest] = match;
+    const ms = fracRaw ? fracRaw.slice(0, 3).padEnd(3, "0") : "000";
+    const iso = `${datePart}T${timePart}.${ms}Z`;
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return line;
+    const tz = normalizeTimezone(document.body.dataset.timezone || "");
+    const fmt = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+    const localStamp = fmt.format(date);
+    return `${localStamp}.${ms} ${rest}`;
   }
   function buildFilterList(container, items, prefix, selected) {
     container.innerHTML = "";
@@ -578,18 +634,39 @@ function wireLogs() {
       container.appendChild(label);
     });
   }
-  let jobTypeUniverse = null;
-  async function loadJobTypeUniverse() {
-    if (jobTypeUniverse) {
-      return;
+  function filterLinesByService(lines, service) {
+    if (service === "build_hugo") {
+      return lines;
     }
-    try {
-      const data = await apiFetch("/admin/api/dashboard/metrics");
-      const types = Array.isArray(data.job_types) ? data.job_types : [];
-      jobTypeUniverse = types.map((value) => ({ value, count: 0 }));
-    } catch (err) {
-      jobTypeUniverse = [];
+    if (service === "openai_prompts") {
+      return lines;
     }
+    if (service === "worker_llm" || service === "worker_openai") {
+      return lines.filter((line) => {
+        const parsed = parseLine(line);
+        if (parsed.jobType) {
+          return workerLlmJobTypes.has(parsed.jobType);
+        }
+        return line.includes("stage=");
+      });
+    }
+    if (service === "worker_fetch") {
+      return lines.filter((line) => {
+        const parsed = parseLine(line);
+        if (parsed.jobType) {
+          return workerFetchJobTypes.has(parsed.jobType);
+        }
+        return (
+          line.includes("source_id=") ||
+          line.includes("source_name=") ||
+          line.includes("article_id=") ||
+          line.includes("fetch_article") ||
+          line.includes("content_fetch") ||
+          line.includes("content_fetched")
+        );
+      });
+    }
+    return lines;
   }
   function collectValues(lines) {
     const eventCounts = new Map();
@@ -601,11 +678,6 @@ function wireLogs() {
       }
       if (parsed.jobType) {
         jobCounts.set(parsed.jobType, (jobCounts.get(parsed.jobType) || 0) + 1);
-      }
-    });
-    knownEvents.forEach((evt) => {
-      if (!eventCounts.has(evt)) {
-        eventCounts.set(evt, 0);
       }
     });
     const events = [...eventCounts.entries()]
@@ -637,45 +709,55 @@ function wireLogs() {
     selectedJobs = getCheckedValues(jobList);
     const allowedEvents = selectedEvents;
     const allowedJobs = selectedJobs;
-    const filtered = rawLines.filter((line) => {
+    const baseLines = filterLinesByService(rawLines, serviceSelect.value);
+    const filtered = baseLines.filter((line) => {
       const parsed = parseLine(line);
       const eventOk = !allowedEvents || allowedEvents.size === 0 || !parsed.event || allowedEvents.has(parsed.event);
       const jobOk = !allowedJobs || allowedJobs.size === 0 || !parsed.jobType || allowedJobs.has(parsed.jobType);
       return eventOk && jobOk;
     });
+    const displayLines = filtered.map((line) => formatLogLineLocal(line));
     const shouldPin = pinToggle ? pinToggle.checked : true;
     const wasPinned =
       output.scrollHeight <= output.clientHeight ||
       output.scrollTop + output.clientHeight >= output.scrollHeight - 4;
-    output.textContent = filtered.join("\n");
+    output.textContent = displayLines.join("\n");
     if (shouldPin || wasPinned) {
       output.scrollTop = output.scrollHeight;
     }
   }
   async function loadLogs() {
-    await loadJobTypeUniverse();
     const service = serviceSelect.value;
     const lines = linesSelect.value;
-    if (service === "builder" && buildMode) {
+    if (service === "build_hugo") {
+      const data = await apiFetch(`/admin/api/logs/tail?service=build_hugo&lines=${lines}`);
+      const header = data.log_path ? `# ${data.log_path}\n` : "";
+      rawLines = [];
+      if (header) {
+        rawLines.push(header.trimEnd());
+      }
+      rawLines = rawLines.concat(
+        (data.text || "").split("\n").filter((line) => line.trim() !== "")
+      );
+    } else if (service === "builder" && buildMode) {
       const data = await apiFetch(
         `/admin/api/logs/builds/latest?stream=${buildMode}&lines=${lines}`
       );
       const header = data.log_path ? `# ${data.log_path}\n` : "";
-      output.textContent = `${header}${data.text || ""}`;
-      rawLines = (data.text || "").split("\n").filter((line) => line.trim() !== "");
+      rawLines = [];
+      if (header) {
+        rawLines.push(header.trimEnd());
+      }
+      rawLines = rawLines.concat(
+        (data.text || "").split("\n").filter((line) => line.trim() !== "")
+      );
     } else {
       const data = await apiFetch(`/admin/api/logs/tail?service=${service}&lines=${lines}`);
       rawLines = (data.text || "").split("\n").filter((line) => line.trim() !== "");
     }
-    const { events, jobs } = collectValues(rawLines);
-    let jobListItems = jobs;
-    if (jobTypeUniverse && jobTypeUniverse.length) {
-      const merged = new Map(jobTypeUniverse.map((item) => [item.value, item]));
-      jobs.forEach((item) => {
-        merged.set(item.value, item);
-      });
-      jobListItems = Array.from(merged.values()).sort((a, b) => a.value.localeCompare(b.value));
-    }
+    const filteredLines = filterLinesByService(rawLines, service);
+    const { events, jobs } = collectValues(filteredLines);
+    const jobListItems = jobs;
     if (eventList && events.length) {
       buildFilterList(eventList, events, "logs-event", selectedEvents);
     }
@@ -1083,31 +1165,25 @@ function wireEnqueueButtons() {
       }
     });
   });
-  document.querySelectorAll(".brief-today").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      try {
-        await apiFetch("/admin/briefs/build", {
-          method: "POST",
-          body: JSON.stringify({}),
-        });
-        showToast("Brief job enqueued");
-      } catch (err) {
-        alert(err);
-      }
-    });
-  });
-  const dailyBtn = document.getElementById("daily-summary-build");
-  if (dailyBtn) {
-    dailyBtn.addEventListener("click", async () => {
-      const dateInput = document.getElementById("daily-summary-date");
+  const briefBtn = document.getElementById("daily-brief-build");
+  if (briefBtn) {
+    const dateInput = document.getElementById("daily-brief-date");
+    if (dateInput && !dateInput.value) {
+      const today = new Date();
+      const yyyy = String(today.getFullYear());
+      const mm = String(today.getMonth() + 1).padStart(2, "0");
+      const dd = String(today.getDate()).padStart(2, "0");
+      dateInput.value = `${yyyy}-${mm}-${dd}`;
+    }
+    briefBtn.addEventListener("click", async () => {
       const dateValue = dateInput ? dateInput.value : "";
       const payload = dateValue ? { date: dateValue } : {};
       try {
-        const result = await apiFetch("/admin/api/daily_summary/build", {
+        const result = await apiFetch("/admin/api/daily_brief/build", {
           method: "POST",
           body: JSON.stringify(payload),
         });
-        showToast(`Daily summary queued: ${result.job_id}`);
+        showToast(`Daily brief queued: ${result.job_id}`);
       } catch (err) {
         alert(err);
       }
@@ -1141,12 +1217,14 @@ function wireSources() {
         strip_patterns: [],
         allow_fallback_to_default: true,
       },
+      fetch: { use_vpn: true },
     };
     if (!raw || typeof raw !== "object") {
       return base;
     }
     const discovery = raw.discovery && typeof raw.discovery === "object" ? raw.discovery : {};
     const content = raw.content && typeof raw.content === "object" ? raw.content : {};
+    const fetch = raw.fetch && typeof raw.fetch === "object" ? raw.fetch : {};
     return {
       discovery: {
         mode: discovery.mode || base.discovery.mode,
@@ -1172,6 +1250,10 @@ function wireSources() {
             ? base.content.allow_fallback_to_default
             : !!content.allow_fallback_to_default,
       },
+      fetch: {
+        use_vpn:
+          fetch.use_vpn === undefined ? base.fetch.use_vpn : !!fetch.use_vpn,
+      },
     };
   }
   function listToText(value) {
@@ -1195,6 +1277,7 @@ function wireSources() {
     }
     const d = overrides.discovery || {};
     const c = overrides.content || {};
+    const f = overrides.fetch || {};
     const discoveryDefault =
       (d.mode || "default") === "default" && !d.allowlist_regex && !d.blocklist_regex;
     const contentDefault =
@@ -1204,7 +1287,8 @@ function wireSources() {
       (!c.exclude_selectors || c.exclude_selectors.length === 0) &&
       (!c.strip_patterns || c.strip_patterns.length === 0) &&
       (c.allow_fallback_to_default === undefined || c.allow_fallback_to_default === true);
-    return discoveryDefault && contentDefault;
+    const fetchDefault = f.use_vpn === undefined || f.use_vpn === true;
+    return discoveryDefault && contentDefault && fetchDefault;
   }
   function resetForm() {
     nameField.value = "";
@@ -1212,6 +1296,18 @@ function wireSources() {
     urlField.value = "";
     intervalField.value = "60";
     tagsField.value = "";
+  }
+  if (addOpen && addModal) {
+    addOpen.addEventListener("click", () => {
+      addModal.style.display = "block";
+      resetForm();
+      nameField.focus();
+    });
+  }
+  if (addClose && addModal) {
+    addClose.addEventListener("click", () => {
+      addModal.style.display = "none";
+    });
   }
   resetBtn.addEventListener("click", resetForm);
   function renderSourcesTable(sources) {
@@ -1230,6 +1326,7 @@ function wireSources() {
       const overrides = normalizeOverrides(source.overrides);
       const discovery = overrides.discovery;
       const content = overrides.content;
+      const fetchCfg = overrides.fetch;
       const acquiring = source.acquire_status === "queued" || source.acquire_status === "running";
       const acquireLabel = acquiring ? `Acquire (${source.acquire_status})` : "Acquire";
       const newCount = source.new_count || 0;
@@ -1315,9 +1412,9 @@ function wireSources() {
                 <label>Discovery mode
                   <select name="override-discovery-mode">
                     <option value="default" ${discovery.mode === "default" ? "selected" : ""}>default</option>
-                    <option value="rss_only" ${discovery.mode === "rss_only" ? "selected" : ""}>rss_only</option>
                   </select>
                 </label>
+                <div class="muted help-text">RSS sources ignore discovery mode; allow/blocklist only.</div>
                 <label>Discovery allowlist regex
                   <input type="text" name="override-discovery-allowlist" value="${esc(
                     discovery.allowlist_regex || ""
@@ -1355,6 +1452,11 @@ function wireSources() {
                   <input type="checkbox" name="override-content-fallback" ${
                     content.allow_fallback_to_default ? "checked" : ""
                   }> Allow fallback to default
+                </label>
+                <label class="checkbox">
+                  <input type="checkbox" name="override-fetch-use-vpn" ${
+                    fetchCfg.use_vpn ? "checked" : ""
+                  }> Use VPN proxy for content fetch
                 </label>
               </div>
               <div class="override-test">
@@ -1490,6 +1592,9 @@ function wireSources() {
               'input[name="override-content-fallback"]'
             ).checked,
           },
+          fetch: {
+            use_vpn: !!formEl.querySelector('input[name="override-fetch-use-vpn"]').checked,
+          },
         };
         const payload = {
           name: formEl.querySelector('input[name="name"]').value.trim(),
@@ -1607,12 +1712,42 @@ function wireSources() {
         );
         try {
           const result = await apiFetch(`/sources/${sourceId}/test`, { method: "POST" });
-          const summary = `status=${result.status} http=${result.http_status || ""} found=${result.found_count} accepted=${result.accepted_count}`;
+          const tactic = result.discovery?.used_tactic || "unknown";
+          const mode = result.discovery?.mode || "default";
+          const warning = result.discovery?.warning ? ` warning=${result.discovery.warning}` : "";
+          const summary = `status=${result.status} http=${result.http_status || ""} found=${result.found_count} accepted=${result.accepted_count} tactic=${tactic} mode=${mode}${warning}`;
           const items = (result.items || [])
             .map((item) => `- ${item.title || ""} ${item.url || ""}`)
             .join("\n");
+          const reasons = (result.reject_reasons || [])
+            .map((item) => `- ${item.reason}: ${item.count}`)
+            .join("\n");
+          const samples = (result.extraction_samples || [])
+            .map((item) => {
+              const status = item.error ? `error=${item.error}` : `chars=${item.char_count} min=${item.min_chars} pass=${item.passed_min_chars} method=${item.method}`;
+              const title = item.title ? ` title="${item.title}"` : "";
+              return `- ${item.url}${title} ${status}`;
+            })
+            .join("\n");
+          const detailParts = [];
+          if (result.discovery?.feed_url) {
+            detailParts.push(`feed_url: ${result.discovery.feed_url}`);
+          }
+          if (result.discovery?.rss_probe) {
+            const probe = result.discovery.rss_probe;
+            detailParts.push(`rss_probe: content_type=${probe.content_type || ""} looks_like_rss=${probe.looks_like_rss} looks_like_html=${probe.looks_like_html}`);
+          }
+          if (reasons) {
+            detailParts.push("rejected_reasons:\n" + reasons);
+          }
+          if (samples) {
+            detailParts.push("extraction_samples:\n" + samples);
+          }
+          if (items) {
+            detailParts.push("preview_items:\n" + items);
+          }
           outputRow.querySelector(".test-summary").textContent = summary;
-          outputRow.querySelector(".test-raw").textContent = items || "No items";
+          outputRow.querySelector(".test-raw").textContent = detailParts.join("\n\n") || "No details";
           outputRow.style.display = "table-row";
         } catch (err) {
           alert(err);
@@ -1724,7 +1859,7 @@ function wireJobs() {
     "article_products_backfill",
     "article_threat_actors_backfill",
     "enrich_event_summary_llm",
-    "build_daily_summary",
+    "build_daily_brief",
     "source_acquire",
     "smoke_test",
     "cve_enrich_threat_actors",
@@ -2276,6 +2411,8 @@ function wireAiProviders() {
       nameField.value = row.querySelector(".provider-name").textContent.trim();
       typeField.value = row.querySelector(".provider-type").textContent.trim();
       baseField.value = row.querySelector(".provider-base-url").textContent.trim();
+      timeoutField.value = row.dataset.timeout || row.querySelector(".provider-timeout")?.textContent.trim() || "30";
+      retriesField.value = row.dataset.retries || row.querySelector(".provider-retries")?.textContent.trim() || "2";
     });
   });
   document.querySelectorAll(".toggle-provider").forEach((checkbox) => {
@@ -2750,6 +2887,51 @@ function wireCveSearch() {
   const error = document.getElementById("cve-error");
   const pageSize = 50;
   let currentPage = 1;
+  let cveSort = { index: null, dir: "asc" };
+  function getCveSortValue(cell, index) {
+    if (!cell) return "";
+    const text = cell.textContent?.trim() || "";
+    if (index === 1 || index === 2) {
+      const parsed = Date.parse(text);
+      return Number.isNaN(parsed) ? text.toLowerCase() : parsed;
+    }
+    if (index === 4) {
+      const num = parseFloat(text);
+      return Number.isNaN(num) ? text.toLowerCase() : num;
+    }
+    return text.toLowerCase();
+  }
+  function applyCveSort() {
+    if (!tbody || cveSort.index === null) return;
+    const rows = Array.from(tbody.querySelectorAll("tr"));
+    rows.sort((a, b) => {
+      const aCell = a.children[cveSort.index];
+      const bCell = b.children[cveSort.index];
+      const av = getCveSortValue(aCell, cveSort.index);
+      const bv = getCveSortValue(bCell, cveSort.index);
+      if (av < bv) return cveSort.dir === "asc" ? -1 : 1;
+      if (av > bv) return cveSort.dir === "asc" ? 1 : -1;
+      return 0;
+    });
+    rows.forEach((row) => tbody.appendChild(row));
+  }
+  function setupCveSort() {
+    const headers = table.querySelectorAll("thead th");
+    headers.forEach((th, index) => {
+      th.classList.add("sortable");
+      th.addEventListener("click", () => {
+        if (cveSort.index === index) {
+          cveSort.dir = cveSort.dir === "asc" ? "desc" : "asc";
+        } else {
+          cveSort.index = index;
+          cveSort.dir = "asc";
+        }
+        headers.forEach((h) => h.classList.remove("sorted-asc", "sorted-desc"));
+        th.classList.add(cveSort.dir === "asc" ? "sorted-asc" : "sorted-desc");
+        applyCveSort();
+      });
+    });
+  }
   async function load(page) {
     currentPage = page;
     if (error) {
@@ -2807,6 +2989,7 @@ function wireCveSearch() {
       `;
       tbody.appendChild(row);
     });
+    applyCveSort();
     renderPager(pager, data.total, data.page, data.page_size, load);
   }
   tbody.addEventListener("click", async (event) => {
@@ -2848,6 +3031,7 @@ function wireCveSearch() {
       error.style.display = "block";
     }
   });
+  setupCveSort();
 }
 function wireCveDetail() {
   const container = document.getElementById("cve-detail");
@@ -3165,6 +3349,74 @@ function wireCveSettings() {
     error.style.display = "block";
   });
 }
+
+function wireScheduleSettings() {
+  const form = document.getElementById("schedule-settings-form");
+  if (!form) {
+    return;
+  }
+  const error = document.getElementById("schedule-settings-error");
+  const note = document.getElementById("schedule-settings-note");
+  async function load() {
+    const data = await apiFetch("/admin/api/schedules/settings");
+    const settings = data.settings || {};
+    document.getElementById("schedule-timezone").value = settings.timezone || "";
+    const tasks = settings.tasks || {};
+    const brief = tasks.daily_brief || {};
+    const podcast = tasks.podcast || {};
+    document.getElementById("schedule-brief-enabled").checked = brief.enabled ?? false;
+    document.getElementById("schedule-brief-time").value = brief.time || "07:30";
+    document.getElementById("schedule-podcast-enabled").checked = podcast.enabled ?? false;
+    document.getElementById("schedule-podcast-time").value = podcast.time || "08:00";
+    if (note) {
+      const last = brief.last_run ? `Daily brief last run: ${brief.last_run}` : "";
+      note.textContent = last;
+    }
+  }
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    error.style.display = "none";
+    const settings = {
+      timezone: document.getElementById("schedule-timezone").value.trim() || null,
+      tasks: {
+        daily_brief: {
+          enabled: document.getElementById("schedule-brief-enabled").checked,
+          time: document.getElementById("schedule-brief-time").value || "07:30",
+        },
+        podcast: {
+          enabled: document.getElementById("schedule-podcast-enabled").checked,
+          time: document.getElementById("schedule-podcast-time").value || "08:00",
+        },
+      },
+    };
+    try {
+      await apiFetch("/admin/api/schedules/settings", {
+        method: "PUT",
+        body: JSON.stringify({ settings }),
+      });
+      showToast("Schedule saved");
+      load();
+    } catch (err) {
+      error.textContent = err.message || "Save failed";
+      error.style.display = "block";
+    }
+  });
+  const runBrief = document.getElementById("schedule-brief-run");
+  if (runBrief) {
+    runBrief.addEventListener("click", async () => {
+      try {
+        await apiFetch("/admin/api/daily_brief/build", { method: "POST", body: JSON.stringify({}) });
+        showToast("Daily brief enqueued");
+      } catch (err) {
+        showToast(err.message || String(err));
+      }
+    });
+  }
+  load().catch((err) => {
+    error.textContent = err.message || "Load failed";
+    error.style.display = "block";
+  });
+}
 function wireContentSearch() {
   const form = document.getElementById("content-search-form");
   const table = document.getElementById("content-table");
@@ -3180,12 +3432,59 @@ function wireContentSearch() {
   const missingField = document.getElementById("content-missing");
   const contentStateField = document.getElementById("content-state");
   const contentErrorField = document.getElementById("content-content-error");
+  const contentErrorKindField = document.getElementById("content-error-kind");
   const summaryErrorField = document.getElementById("content-summary-error");
   const needsField = document.getElementById("content-needs");
   const watchlistEnabled = form.dataset.watchlistEnabled === "true";
   const watchlistOnlyField = document.getElementById("content-watchlist-only");
   let pageSize = parseInt(document.getElementById("content-page-size").value, 10);
   let currentPage = 1;
+  let contentSort = { index: null, dir: "asc" };
+  function getSortValue(cell, index) {
+    if (!cell) return "";
+    const tsEl = cell.querySelector("[data-ts]");
+    if (tsEl && tsEl.dataset.ts) {
+      const parsed = Date.parse(tsEl.dataset.ts);
+      return Number.isNaN(parsed) ? 0 : parsed;
+    }
+    const text = cell.textContent?.trim() || "";
+    if (index === 0) {
+      const idVal = parseInt(text.replace(/[^\d]/g, ""), 10);
+      return Number.isNaN(idVal) ? text.toLowerCase() : idVal;
+    }
+    return text.toLowerCase();
+  }
+  function applyContentSort() {
+    if (!tbody || contentSort.index === null) return;
+    const rows = Array.from(tbody.querySelectorAll("tr"));
+    rows.sort((a, b) => {
+      const aCell = a.children[contentSort.index];
+      const bCell = b.children[contentSort.index];
+      const av = getSortValue(aCell, contentSort.index);
+      const bv = getSortValue(bCell, contentSort.index);
+      if (av < bv) return contentSort.dir === "asc" ? -1 : 1;
+      if (av > bv) return contentSort.dir === "asc" ? 1 : -1;
+      return 0;
+    });
+    rows.forEach((row) => tbody.appendChild(row));
+  }
+  function setupContentSort() {
+    const headers = table.querySelectorAll("thead th");
+    headers.forEach((th, index) => {
+      th.classList.add("sortable");
+      th.addEventListener("click", () => {
+        if (contentSort.index === index) {
+          contentSort.dir = contentSort.dir === "asc" ? "desc" : "asc";
+        } else {
+          contentSort.index = index;
+          contentSort.dir = "asc";
+        }
+        headers.forEach((h) => h.classList.remove("sorted-asc", "sorted-desc"));
+        th.classList.add(contentSort.dir === "asc" ? "sorted-asc" : "sorted-desc");
+        applyContentSort();
+      });
+    });
+  }
   let selectedTags = new Set();
   function setError(message) {
     if (!error) {
@@ -3313,12 +3612,14 @@ function wireContentSearch() {
     setValue("content-type", "type");
     setValue("content-source", "source_id");
     setValue("content-has-summary", "has_summary");
+    setValue("content-has-context", "has_context");
     setValue("content-tags", "tags");
     setValue("content-after", "after");
     setValue("content-before", "before");
     setValue("content-missing", "missing");
     setValue("content-state", "content_state");
     setValue("content-needs", "needs");
+    setValue("content-error-kind", "content_error_kind");
     if (contentErrorField && params.get("content_error") === "1") {
       contentErrorField.checked = true;
     }
@@ -3346,6 +3647,7 @@ function wireContentSearch() {
     const type = typeField ? typeField.value : "article";
     const source = document.getElementById("content-source").value;
     const hasSummary = document.getElementById("content-has-summary").value;
+    const hasContext = document.getElementById("content-has-context").value;
     const tags = document.getElementById("content-tags").value.trim();
         const after = document.getElementById("content-after").value;
     const before = document.getElementById("content-before").value;
@@ -3354,11 +3656,13 @@ function wireContentSearch() {
     const contentState = contentStateField ? contentStateField.value : "";
     const needs = needsField ? needsField.value : "";
     const contentError = contentErrorField && contentErrorField.checked;
+    const contentErrorKind = contentErrorKindField ? contentErrorKindField.value : "";
     const summaryError = summaryErrorField && summaryErrorField.checked;
     if (query) params.set("query", query);
     if (type) params.set("type", type);
     if (source) params.set("source_id", source);
     if (hasSummary) params.set("has_summary", hasSummary);
+    if (hasContext) params.set("has_context", hasContext);
     if (tags) params.set("tags", tags);
     if (after) params.set("after", after);
     if (before) params.set("before", before);
@@ -3366,6 +3670,7 @@ function wireContentSearch() {
     if (contentState) params.set("content_state", contentState);
     if (needs) params.set("needs", needs);
     if (contentError) params.set("content_error", "1");
+    if (contentErrorKind) params.set("content_error_kind", contentErrorKind);
     if (summaryError) params.set("summary_error", "1");
     if (watchlistOnly) params.set("watchlist_hit", "true");
     params.set("page", String(page));
@@ -3409,6 +3714,7 @@ function wireContentSearch() {
                 <button type="button" class="action-summarize" data-article-id="${item.id}" ${
                   hasContent ? "" : "disabled"
                 }>Generate summary</button>
+                <button type="button" class="action-context-pack" data-article-id="${item.id}">Generate context pack</button>
                 <button type="button" class="action-publish" data-article-id="${item.id}">Publish markdown</button>
                 <button type="button" class="action-derive-event" data-article-id="${item.id}">Derive event</button>
                 <button type="button" class="action-suppress" data-article-id="${item.id}" data-suppressed="${item.suppressed ? "1" : "0"}">${item.suppressed ? "Unsuppress" : "Suppress"}</button>
@@ -3443,6 +3749,7 @@ function wireContentSearch() {
       tbody.appendChild(row);
     });
     applyTimestampFormatting(tbody);
+    applyContentSort();
     renderPager(data.total, data.page, data.page_size);
   }
   document.getElementById("content-page-size").addEventListener("change", () => {
@@ -3491,6 +3798,11 @@ function wireContentSearch() {
       if (target.classList.contains("action-summarize")) {
         const articleId = target.dataset.articleId;
         const result = await apiFetch(`/admin/api/articles/${articleId}/summarize`, { method: "POST" });
+        showToast(`${result.status}: ${result.job_id || ""}`.trim());
+      }
+      if (target.classList.contains("action-context-pack")) {
+        const articleId = target.dataset.articleId;
+        const result = await apiFetch(`/admin/api/articles/${articleId}/context_pack`, { method: "POST" });
         showToast(`${result.status}: ${result.job_id || ""}`.trim());
       }
       if (target.classList.contains("action-publish")) {
@@ -3558,6 +3870,7 @@ function wireContentSearch() {
     load(1).catch((err) => setError(err.message || String(err)));
   });
   load(currentPage).catch((err) => setError(err.message || String(err)));
+  setupContentSort();
 }
 function wireContentArticle() {
   const container = document.getElementById("article-detail");
@@ -3572,9 +3885,14 @@ function wireContentArticle() {
       const content = item.content_text || "";
       const htmlExcerpt = item.content_html_excerpt || "";
       const error = item.content_error || "";
+      const contextRaw = item.context_llm || "";
+      const contextModel = item.context_model || "";
+      const contextGeneratedAt = item.context_generated_at || "";
+      const contextError = item.context_error || "";
       const threatActors = item.threat_actors || [];
       let summaryBlock = "";
       let rawJsonBlock = "";
+      let contextBlock = "";
       if (summaryRaw) {
         try {
           const parsed = JSON.parse(summaryRaw);
@@ -3603,6 +3921,50 @@ function wireContentArticle() {
         const fallback = legacySummary || "No summary available.";
         summaryBlock = `<pre class="mono wrap-pre">${esc(fallback)}</pre>`;
       }
+      if (contextRaw) {
+        try {
+          const parsed = JSON.parse(contextRaw);
+          if (parsed && typeof parsed === "object") {
+            if (Array.isArray(parsed.facts) && parsed.facts.length) {
+              contextBlock += `<h4>Facts</h4><ul>${parsed.facts
+                .map((fact) => `<li>${esc(fact)}</li>`)
+                .join("")}</ul>`;
+            }
+            if (parsed.entities && typeof parsed.entities === "object") {
+              const ent = parsed.entities;
+              const parts = [];
+              const pushList = (label, values) => {
+                if (Array.isArray(values) && values.length) {
+                  parts.push(`<div><strong>${esc(label)}:</strong> ${esc(values.join(", "))}</div>`);
+                }
+              };
+              pushList("Orgs", ent.orgs);
+              pushList("People", ent.people);
+              pushList("Products", ent.products);
+              pushList("Vendors", ent.vendors);
+              pushList("Threat Actors", ent.threat_actors);
+              pushList("Countries", ent.countries);
+              if (parts.length) {
+                contextBlock += `<h4>Entities</h4>${parts.join("")}`;
+              }
+            }
+            if (Array.isArray(parsed.cves) && parsed.cves.length) {
+              contextBlock += `<h4>CVEs</h4><p>${esc(parsed.cves.join(", "))}</p>`;
+            }
+            if (Array.isArray(parsed.iocs) && parsed.iocs.length) {
+              contextBlock += `<h4>IOCs</h4><p>${esc(parsed.iocs.join(", "))}</p>`;
+            }
+            contextBlock += `
+              <details>
+                <summary>Raw Context JSON</summary>
+                <pre class="mono wrap-pre">${esc(JSON.stringify(parsed, null, 2))}</pre>
+              </details>
+            `;
+          }
+        } catch (err) {
+          contextBlock = `<pre class="mono wrap-pre">${esc(contextRaw)}</pre>`;
+        }
+      }
       container.innerHTML = `
         <div class="kv">
           <div class="${item.suppressed ? "is-suppressed" : ""}"><strong>${esc(item.title || "")}</strong></div>
@@ -3611,10 +3973,11 @@ function wireContentArticle() {
           <div>Ingested: ${esc(formatTimestamp(item.ingested_at))}</div>
           <div><a href="${esc(item.original_url || "")}" target="_blank" rel="noopener">Open URL</a></div>
           <div>Suppressed: ${item.suppressed ? "yes" : "no"}</div>
-          <div class="actions">
-            <button class="btn small" id="article-suppress-toggle">${item.suppressed ? "Unsuppress" : "Suppress"}</button>
-            <button class="btn small secondary" id="article-publish-markdown">Publish markdown</button>
-          </div>
+        <div class="actions">
+          <button class="btn small" id="article-suppress-toggle">${item.suppressed ? "Unsuppress" : "Suppress"}</button>
+          <button class="btn small secondary" id="article-context-pack">Generate context pack</button>
+          <button class="btn small secondary" id="article-publish-markdown">Publish markdown</button>
+        </div>
         </div>
         <h3>Products & Vendors</h3>
         ${
@@ -3647,6 +4010,14 @@ function wireContentArticle() {
         <h3>Summary</h3>
         ${summaryBlock}
         ${rawJsonBlock}
+        <h3>Context Pack</h3>
+        ${
+          contextRaw
+            ? `<p class="muted">Model: ${esc(contextModel || "unknown")} · Generated: ${esc(
+                formatTimestamp(contextGeneratedAt)
+              )}${contextError ? ` · Error: ${esc(contextError)}` : ""}</p>${contextBlock}`
+            : `<p class="muted">No context pack available.</p>`
+        }
         <h3>Content</h3>
         <pre class="mono wrap-pre">${esc(content || "No extracted content available.")}</pre>
         ${htmlExcerpt ? `<h3>HTML Excerpt</h3><pre class="mono wrap-pre">${esc(htmlExcerpt)}</pre>` : ""}
@@ -3660,11 +4031,22 @@ function wireContentArticle() {
       `;
       const saveBtn = document.getElementById("article-content-save");
       const publishBtn = document.getElementById("article-publish-markdown");
+      const contextBtn = document.getElementById("article-context-pack");
       if (publishBtn) {
         publishBtn.addEventListener("click", async () => {
           try {
             const resp = await apiFetch(`/admin/api/articles/${articleId}/publish`, { method: "POST" });
             toast(`Publish queued (${resp.job_id || "ok"})`, "success");
+          } catch (err) {
+            toast(err.message || String(err), "error");
+          }
+        });
+      }
+      if (contextBtn) {
+        contextBtn.addEventListener("click", async () => {
+          try {
+            const resp = await apiFetch(`/admin/api/articles/${articleId}/context_pack`, { method: "POST" });
+            toast(`Context pack queued (${resp.job_id || "ok"})`, "success");
           } catch (err) {
             toast(err.message || String(err), "error");
           }
@@ -3818,6 +4200,352 @@ function wireThreatsList() {
       }
     });
   }
+}
+
+function wireBriefsList() {
+  const table = document.getElementById("briefs-table");
+  const tbody = document.querySelector("#briefs-table tbody");
+  const pager = document.getElementById("briefs-pager");
+  const form = document.getElementById("briefs-search-form");
+  const cancelRunning = document.getElementById("briefs-cancel-running");
+  const cancelRestart = document.getElementById("briefs-cancel-restart");
+  const error = document.getElementById("briefs-error");
+  if (!table || !tbody || !form) {
+    return;
+  }
+  let page = 1;
+  let pageSize = 50;
+  function renderPager(total, pageSizeValue) {
+    if (!pager) {
+      return;
+    }
+    pager.innerHTML = "";
+    if (!total) {
+      return;
+    }
+    const totalPages = Math.ceil(total / pageSizeValue);
+    if (totalPages <= 1) {
+      return;
+    }
+    const prev = document.createElement("button");
+    prev.className = "btn small";
+    prev.textContent = "Prev";
+    prev.disabled = page <= 1;
+    prev.addEventListener("click", () => {
+      page = Math.max(1, page - 1);
+      load(page);
+    });
+    pager.appendChild(prev);
+    const info = document.createElement("span");
+    info.className = "pager-info";
+    info.textContent = `Page ${page} of ${totalPages}`;
+    pager.appendChild(info);
+    const next = document.createElement("button");
+    next.className = "btn small";
+    next.textContent = "Next";
+    next.disabled = page >= totalPages;
+    next.addEventListener("click", () => {
+      page = Math.min(totalPages, page + 1);
+      load(page);
+    });
+    pager.appendChild(next);
+  }
+  async function load(nextPage) {
+    page = nextPage || 1;
+    pageSize = parseInt(document.getElementById("briefs-page-size").value, 10) || 50;
+    const params = new URLSearchParams();
+    params.set("page", String(page));
+    params.set("page_size", String(pageSize));
+    const data = await apiFetch(`/admin/api/briefs?${params.toString()}`);
+    tbody.innerHTML = "";
+    const items = data.items || [];
+    if (!items.length) {
+      const row = document.createElement("tr");
+      row.innerHTML = `<td colspan="9" class="muted">No daily briefs found.</td>`;
+      tbody.appendChild(row);
+      renderPager(data.total || 0, pageSize);
+      return;
+    }
+    items.forEach((item) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td><a href="/ui/briefs/${encodeURIComponent(item.brief_day)}">${esc(item.brief_day)}</a></td>
+        <td>${esc(formatTimestamp(item.generated_at || item.updated_at))}</td>
+        <td>${item.article_count ?? "-"}</td>
+        <td>${item.topic_count ?? 0}</td>
+        <td>${item.family_count ?? 0}</td>
+        <td>${item.url_count ?? 0}</td>
+        <td>${item.tldr_count ?? 0}</td>
+        <td>${esc(item.profile_id || "")}</td>
+        <td>${esc(formatTimestamp(item.updated_at))}</td>
+      `;
+      tbody.appendChild(row);
+    });
+    renderPager(data.total || 0, pageSize);
+  }
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (error) {
+      error.style.display = "none";
+    }
+    load(1).catch((err) => {
+      if (error) {
+        error.textContent = err.message || String(err);
+        error.style.display = "block";
+      }
+    });
+  });
+  load(page).catch((err) => {
+    if (error) {
+      error.textContent = err.message || String(err);
+      error.style.display = "block";
+    }
+  });
+  if (cancelRunning) {
+    cancelRunning.addEventListener("click", async () => {
+      try {
+        const data = await apiFetch("/admin/api/briefs/cancel-running", { method: "POST" });
+        showToast(`Canceled ${data.canceled || 0} running brief job(s)`);
+      } catch (err) {
+        showToast(err.message || String(err), "error");
+      }
+    });
+  }
+  if (cancelRestart) {
+    cancelRestart.addEventListener("click", async () => {
+      try {
+        const data = await apiFetch("/admin/api/briefs/cancel-running-restart", { method: "POST" });
+        const canceled = data.canceled || 0;
+        const cmd = data.restart_command || "docker compose restart worker_llm";
+        showToast(`Canceled ${canceled} brief job(s). Run: ${cmd}`, "success");
+      } catch (err) {
+        showToast(err.message || String(err), "error");
+      }
+    });
+  }
+}
+
+function wireBriefDetail() {
+  const container = document.querySelector("[data-brief-day]");
+  if (!container) {
+    return;
+  }
+  const day = container.getAttribute("data-brief-day");
+  const error = document.getElementById("brief-detail-error");
+  const meta = document.getElementById("brief-meta");
+  const tldr = document.getElementById("brief-tldr");
+  const technicalSynthesis = document.getElementById("brief-technical-synthesis");
+  const actions = document.getElementById("brief-actions");
+  const podcastScript = document.getElementById("brief-podcast-script");
+  const nistBreakdown = document.getElementById("brief-nist-breakdown");
+  const citations = document.getElementById("brief-citations");
+  const lowValue = document.getElementById("brief-low-value");
+  const metaBlock = document.getElementById("brief-meta-json");
+  const clusterRaw = document.getElementById("brief-cluster-raw");
+  const summarizeRaw = document.getElementById("brief-summarize-raw");
+  const nistRaw = document.getElementById("brief-nist-raw");
+  const overallRaw = document.getElementById("brief-overall-raw");
+  if (!day) {
+    return;
+  }
+
+  const renderList = (items, className = "muted") => {
+    if (!items || !items.length) {
+      return `<div class="${className}">None</div>`;
+    }
+    return `<ul>${items.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>`;
+  };
+
+  const linkifyCitations = (text) => {
+    if (!text) return "";
+    return esc(text).replace(/\((\d+)\)/g, '<a href="#cite-$1">($1)</a>');
+  };
+  apiFetch(`/admin/api/briefs/${encodeURIComponent(day)}`)
+    .then((data) => {
+      if (meta) {
+        const generatedAt = formatTimestamp(data.meta?.generated_at || data.updated_at);
+        meta.innerHTML = `
+          <div class="meta-row">
+            <span class="meta-label">Generated:</span> ${esc(generatedAt)}
+            <span class="meta-label">Articles:</span> ${data.meta?.article_count ?? "-"}
+            <span class="meta-label">Topics:</span> ${data.meta?.topic_count ?? "-"}
+            <span class="meta-label">Families:</span> ${data.meta?.family_count ?? "-"}
+            <span class="meta-label">Citations:</span> ${data.meta?.citation_count ?? "-"}
+          </div>
+        `;
+      }
+      if (tldr) {
+        tldr.innerHTML = "";
+        const items = Array.isArray(data.tldr) ? data.tldr : [];
+        if (!items.length) {
+          tldr.innerHTML = `<li class="muted">No TLDR items recorded.</li>`;
+        } else {
+          items.forEach((item) => {
+            const li = document.createElement("li");
+            if (typeof item === "string") {
+              li.innerHTML = linkifyCitations(item);
+            } else {
+              li.innerHTML = linkifyCitations(item.text || "");
+            }
+            tldr.appendChild(li);
+          });
+        }
+      }
+      if (technicalSynthesis) {
+        const text =
+          typeof data.technical_synthesis === "string"
+            ? data.technical_synthesis
+            : data.technical_synthesis?.text || "";
+        if (!text) {
+          technicalSynthesis.innerHTML = `<p class="muted">No technical synthesis recorded.</p>`;
+        } else {
+          technicalSynthesis.innerHTML = text
+            .split("\n\n")
+            .map((p) => (p ? `<p>${linkifyCitations(p)}</p>` : ""))
+            .join("");
+        }
+      }
+      if (actions) {
+        actions.innerHTML = "";
+        const items = Array.isArray(data.actions) ? data.actions : [];
+        if (!items.length) {
+          actions.innerHTML = `<li class="muted">No actions recorded.</li>`;
+        } else {
+          items.forEach((item) => {
+            if (typeof item === "string") {
+              const li = document.createElement("li");
+              li.innerHTML = linkifyCitations(item);
+              actions.appendChild(li);
+              return;
+            }
+            const priority = item.priority ? `<strong>${esc(item.priority)}</strong> ` : "";
+            const horizon = item.time_horizon ? ` <span class="muted">${esc(item.time_horizon)}</span>` : "";
+            const actionText = item.action || "";
+            const why = item.why ? ` — ${esc(item.why)}` : "";
+            const li = document.createElement("li");
+            li.innerHTML = `${priority}${linkifyCitations(actionText)}${why}${horizon}`;
+            actions.appendChild(li);
+          });
+        }
+      }
+      if (podcastScript) {
+        const script = data.podcast_script || "";
+        if (!script) {
+          podcastScript.innerHTML = `<p class="muted">No podcast script recorded.</p>`;
+        } else {
+          podcastScript.innerHTML = script
+            .split("\n\n")
+            .map((p) => (p ? `<p>${esc(p)}</p>` : ""))
+            .join("");
+        }
+      }
+      if (nistBreakdown) {
+        const nistSection = nistBreakdown.closest("section");
+        nistBreakdown.innerHTML = "";
+        const items = Array.isArray(data.families) ? data.families : [];
+        if (!items.length) {
+          if (nistSection) {
+            nistSection.style.display = "none";
+          }
+        } else {
+          if (nistSection) {
+            nistSection.style.display = "";
+          }
+          items.forEach((item) => {
+            const block = document.createElement("div");
+            block.className = "brief-nist-block";
+            const title = esc(item.family_title || item.family_id || "");
+            const summary = item.summary ? linkifyCitations(item.summary) : "";
+            const subtopics = Array.isArray(item.subtopics) ? item.subtopics : [];
+            const subtopicsHtml = subtopics
+              .map((sub) => {
+                const subTitle = esc(sub.title || "");
+                const severity = sub.severity ? `<span class="pill">${esc(sub.severity)}</span>` : "";
+                const narrative = sub.narrative ? linkifyCitations(sub.narrative) : "";
+                return `
+                  <div class="brief-nist-subtopic">
+                    <div class="brief-nist-subtopic-header">${subTitle} ${severity}</div>
+                    ${narrative ? `<div class="brief-nist-subtopic-body">${narrative}</div>` : ""}
+                  </div>
+                `;
+              })
+              .join("");
+            block.innerHTML = `
+              <div class="brief-nist-header">${esc(item.family_id || "")}${title ? ` — ${title}` : ""}</div>
+              ${summary ? `<div class="brief-nist-body">${summary}</div>` : ""}
+              ${subtopicsHtml}
+            `;
+            nistBreakdown.appendChild(block);
+          });
+        }
+      }
+      if (citations) {
+        citations.innerHTML = "";
+        const items = Array.isArray(data.citations) ? data.citations : [];
+        if (!items.length) {
+          citations.innerHTML = `<li class="muted">No citations recorded.</li>`;
+        } else {
+          items.forEach((item) => {
+            const li = document.createElement("li");
+            const title = item.title || item.url || "";
+            const sourceName = item.source_name || "";
+            const summary = item.summary || "";
+            li.id = `cite-${item.id}`;
+            li.innerHTML = `
+              <span class="muted">(${esc(item.id)})</span>
+              <a href="${esc(item.url || "")}" target="_blank" rel="noopener">${esc(title)}</a>
+              ${sourceName ? ` <span class="muted">— ${esc(sourceName)}</span>` : ""}
+              ${summary ? `<details class="inline-details"><summary>Summary</summary><span>${esc(summary)}</span></details>` : ""}
+            `;
+            citations.appendChild(li);
+          });
+        }
+      }
+      if (lowValue) {
+        lowValue.innerHTML = "";
+        const items = Array.isArray(data.low_value) ? data.low_value : [];
+        if (!items.length) {
+          lowValue.innerHTML = `<li class="muted">No low-value items recorded.</li>`;
+        } else {
+          items.forEach((item) => {
+            const li = document.createElement("li");
+            if (typeof item === "number" || typeof item === "string") {
+              li.innerHTML = `Citation ${esc(String(item))}`;
+            } else {
+              const reason = item.reason ? ` — ${esc(item.reason)}` : "";
+              li.innerHTML = `Citation ${esc(String(item.citation_id || ""))}${reason}`;
+            }
+            lowValue.appendChild(li);
+          });
+        }
+      }
+      if (metaBlock) {
+        const metaItems = data.meta || {};
+        const entries = Object.entries(metaItems).filter(([key]) => !key.endsWith("_raw"));
+        if (entries.length) {
+          metaBlock.innerHTML = entries
+            .map(([key, value]) => {
+              if (value && typeof value === "object") {
+                return `<div><strong>${esc(key)}:</strong> <pre class="mono">${esc(JSON.stringify(value, null, 2))}</pre></div>`;
+              }
+              return `<div><strong>${esc(key)}:</strong> ${esc(String(value))}</div>`;
+            })
+            .join("");
+        } else {
+          metaBlock.innerHTML = `<p class="muted">No meta recorded.</p>`;
+        }
+      }
+      if (clusterRaw) clusterRaw.textContent = JSON.stringify(data.meta?.cluster_raw || {}, null, 2);
+      if (summarizeRaw) summarizeRaw.textContent = JSON.stringify(data.meta?.summarize_raw || {}, null, 2);
+      if (nistRaw) nistRaw.textContent = JSON.stringify(data.meta?.nist_raw || {}, null, 2);
+      if (overallRaw) overallRaw.textContent = JSON.stringify(data.meta?.overall_raw || {}, null, 2);
+    })
+    .catch((err) => {
+      if (error) {
+        error.textContent = err.message || String(err);
+        error.style.display = "block";
+      }
+    });
 }
 
 function wireThreatDetail() {
@@ -5069,7 +5797,7 @@ async function wireAnalytics() {
           return;
         }
         try {
-          await apiFetch("/admin/briefs/build", {
+          await apiFetch("/admin/api/daily_brief/build", {
             method: "POST",
             body: JSON.stringify({ date: dateField.value }),
           });
@@ -5151,10 +5879,84 @@ function wireAiTest() {
   });
   loadRuns().catch((err) => console.error(err));
 }
+function wireUtilities() {
+  const checkBtn = document.getElementById("utilities-pipeline-check");
+  const refreshBtn = document.getElementById("utilities-metrics-refresh");
+  const rebuildVendorBtn = document.getElementById("utilities-rebuild-vendor-products");
+  const resetCountersBtn = document.getElementById("utilities-reset-counters");
+  const cancelBriefBtn = document.getElementById("utilities-cancel-daily-brief");
+  const cancelRestartBriefBtn = document.getElementById("utilities-cancel-daily-brief-restart");
+  if (checkBtn) {
+    checkBtn.addEventListener("click", async () => {
+      try {
+        await apiFetch("/admin/api/dashboard/metrics");
+        showToast("Pipeline check complete", "success");
+      } catch (err) {
+        showToast(err.message || String(err), "error");
+      }
+    });
+  }
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", async () => {
+      try {
+        await apiFetch("/admin/api/dashboard/metrics");
+        showToast("Pipeline metrics refreshed", "success");
+      } catch (err) {
+        showToast(err.message || String(err), "error");
+      }
+    });
+  }
+  if (rebuildVendorBtn) {
+    rebuildVendorBtn.addEventListener("click", async () => {
+      try {
+        const payload = await apiFetch("/admin/api/dashboard/rebuild_vendor_products", { method: "POST" });
+        if (payload && payload.status === "queued") {
+          showToast(`Vendor/product rebuild queued (${payload.job_id})`, "success");
+        } else {
+          showToast("Vendor/product rebuild queued", "success");
+        }
+      } catch (err) {
+        showToast(err.message || String(err), "error");
+      }
+    });
+  }
+  if (resetCountersBtn) {
+    resetCountersBtn.addEventListener("click", async () => {
+      try {
+        const payload = await apiFetch("/admin/api/dashboard/reset_failures", { method: "POST" });
+        const since = payload && payload.counts_since ? formatTimestamp(payload.counts_since) : null;
+        showToast(since ? `Counters reset (${since})` : "Counters reset", "success");
+      } catch (err) {
+        showToast(err.message || String(err), "error");
+      }
+    });
+  }
+  if (cancelBriefBtn) {
+    cancelBriefBtn.addEventListener("click", async () => {
+      try {
+        await apiFetch("/admin/api/briefs/cancel-running", { method: "POST" });
+        showToast("Running daily brief canceled", "success");
+      } catch (err) {
+        showToast(err.message || String(err), "error");
+      }
+    });
+  }
+  if (cancelRestartBriefBtn) {
+    cancelRestartBriefBtn.addEventListener("click", async () => {
+      try {
+        await apiFetch("/admin/api/briefs/cancel-running-restart", { method: "POST" });
+        showToast("Daily brief cancel/restart queued", "success");
+      } catch (err) {
+        showToast(err.message || String(err), "error");
+      }
+    });
+  }
+}
 document.addEventListener("DOMContentLoaded", () => {
   wireNavDropdowns();
   wireEnqueueButtons();
   wireDashboard();
+  wireUtilities();
   wireSources();
   wireJobs();
   wireLogin();
@@ -5172,10 +5974,13 @@ document.addEventListener("DOMContentLoaded", () => {
   wireCveSearch();
   wireCveDetail();
   wireCveSettings();
+  wireScheduleSettings();
   wireContentSearch();
   wireContentArticle();
   wireThreatsList();
   wireThreatDetail();
+  wireBriefsList();
+  wireBriefDetail();
   wireEvents();
   wireEventDetail();
   wireProducts();

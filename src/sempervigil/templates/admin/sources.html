@@ -90,6 +90,7 @@
               {% set overrides = source.overrides or {} %}
               {% set discovery = overrides.get("discovery", {}) %}
               {% set content = overrides.get("content", {}) %}
+              {% set fetch_cfg = overrides.get("fetch", {}) %}
               <div class="grid">
                 <label>Source ID<input type="text" value="{{ source.id }}" readonly></label>
               <label>Name<input type="text" name="name" value="{{ source.name }}"></label>
@@ -110,9 +111,9 @@
                   <label>Discovery mode
                     <select name="override-discovery-mode">
                       <option value="default" {% if discovery.get("mode") == "default" or not discovery.get("mode") %}selected{% endif %}>default</option>
-                      <option value="rss_only" {% if discovery.get("mode") == "rss_only" %}selected{% endif %}>rss_only</option>
                     </select>
                   </label>
+                  <div class="muted help-text">RSS sources ignore discovery mode; allow/blocklist only.</div>
                   <label>Discovery allowlist regex
                     <input type="text" name="override-discovery-allowlist" value="{{ discovery.get('allowlist_regex','') }}">
                   </label>
@@ -142,6 +143,9 @@
                   </label>
                   <label class="checkbox">
                     <input type="checkbox" name="override-content-fallback" {% if content.get("allow_fallback_to_default", true) %}checked{% endif %}> Allow fallback to default
+                  </label>
+                  <label class="checkbox">
+                    <input type="checkbox" name="override-fetch-use-vpn" {% if fetch_cfg.get("use_vpn", true) %}checked{% endif %}> Use VPN proxy for content fetch
                   </label>
                 </div>
                 <div class="override-test">

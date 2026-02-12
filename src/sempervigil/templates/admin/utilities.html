@@ -1,0 +1,38 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "system" %}
+{% set nav_subactive = "utilities" %}
+{% block content %}
+  <section class="panel">
+    <div class="panel-header">
+      <h2>System Utilities</h2>
+    </div>
+    <div class="stack">
+      <div class="panel">
+        <h3>Pipeline</h3>
+        <div class="actions">
+          <button class="btn secondary" id="utilities-pipeline-check" type="button">Run Pipeline Check</button>
+          <button class="btn secondary" id="utilities-metrics-refresh" type="button">Refresh Pipeline Metrics</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Indexes</h3>
+        <div class="actions">
+          <button class="btn secondary" id="utilities-rebuild-vendor-products" type="button">Rebuild Vendor/Product Indexes</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Job Counters</h3>
+        <div class="actions">
+          <button class="btn secondary" id="utilities-reset-counters" type="button">Reset Job Counters</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Daily Brief</h3>
+        <div class="actions">
+          <button class="btn secondary" id="utilities-cancel-daily-brief" type="button">Cancel Running Daily Brief</button>
+          <button class="btn secondary" id="utilities-cancel-daily-brief-restart" type="button">Cancel + Restart Daily Brief</button>
+        </div>
+      </div>
+    </div>
+  </section>
+{% endblock %}

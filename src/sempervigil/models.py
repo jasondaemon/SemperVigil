@@ -32,6 +32,8 @@ class Source:
     paused_reason: str | None
     robots_notes: str | None
     overrides: dict[str, object] | None = None
+    kind: str | None = None
+    url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,7 @@ class Job:
     id: str
     job_type: str
     status: str
+    priority: int
     payload: dict[str, object]
     result: dict[str, object] | None
     requested_at: str

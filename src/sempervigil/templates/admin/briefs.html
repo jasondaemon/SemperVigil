@@ -1,0 +1,39 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "content" %}
+{% set nav_subactive = "briefs" %}
+{% block content %}
+  <section class="panel">
+    <h2>Daily Briefs</h2>
+    <form id="briefs-search-form" class="filters">
+      <select id="briefs-page-size">
+        <option value="25">25</option>
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+      </select>
+      <button class="btn secondary" id="briefs-cancel-running" type="button">Cancel Running Brief</button>
+      <button class="btn danger" id="briefs-cancel-restart" type="button">Cancel + Restart LLM Worker</button>
+      <button class="btn" type="submit">Refresh</button>
+    </form>
+    <p class="error" id="briefs-error" style="display:none;"></p>
+  </section>
+
+  <section class="panel">
+    <table id="briefs-table" class="table-compact">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Generated</th>
+          <th>Articles</th>
+          <th>Topics</th>
+          <th>Families</th>
+          <th>URLs</th>
+          <th>TLDR</th>
+          <th>Profile</th>
+          <th>Updated</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div class="pager" id="briefs-pager"></div>
+  </section>
+{% endblock %}

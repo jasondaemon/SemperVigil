@@ -1,4 +1,4 @@
-# SemperVigil — Current Context (2026-01-30)
+# SemperVigil — Current Context (2026-02-12)
 
 This doc is the **single source of truth** for the current running state, operational behavior, and known pitfalls.
 Use it first when starting a new chat or debugging issues.
@@ -10,7 +10,7 @@ Use it first when starting a new chat or debugging issues.
 - **Postgres**: `sempervigil-db` (internal).
 - **Admin API/UI**: `sempervigil-admin` on port `SV_ADMIN_PORT` (default 8001).
 - **Workers**:
-  - `worker_fetch` (ingest, fetch, cve_sync, derive events, build_daily_summary, web enrich)
+  - `worker_fetch` (ingest, fetch, cve_sync, derive events, build_daily_brief, web enrich)
   - `worker_llm` (summarize_article_llm, cve_enrich_llm, enrich_event_summary_llm)
 - **Builder**:
   - `builder` (one-shot, profile `build`)
@@ -20,7 +20,8 @@ Use it first when starting a new chat or debugging issues.
 Key volumes (NFS):
 - `/nfs/sempervigil/site-src` -> Hugo source
 - `/nfs/sempervigil/site-public` -> Hugo output
-- `/nfs/sempervigil/data` -> DB data + logs
+- `/nfs/sempervigil/data` -> runtime data (articles, CVEs, reports)
+- `/nfs/sempervigil/log` -> logs (admin/worker/build)
 
 The same share is mounted as:
 - `/Volumes/docker/sempervigil` on macOS (SMB)
@@ -47,15 +48,17 @@ If builds are too frequent or CPU-pegged, verify both values in `.env`.
   - `data/articles/recent.json`
   - `data/cves/today.json`
   - `data/cves/recent.json`
-- Daily summaries stored in `site-src/data/daily/YYYY-MM-DD.json` + content stub at `site-src/content/daily/YYYY-MM-DD.md`.
+- Daily briefs stored in `site-src/data/briefs/YYYY-MM-DD.json` + content stub at `site-src/content/briefs/YYYY-MM-DD.md`.
 
 **Homepage rendering**: `site-src/layouts/partials/home/custom.html` (Blowfish theme override).
+**Current homepage**: `site-src/layouts/partials/home/test-front.html` (single-column news feed + yesterday brief tabs).
 
 ---
 
 ## Article + CVE Data Export
 
 - Articles include tags, products, and optional `nist_family`.
+- Article export now includes `summary_bullets` for list/search rendering.
 - CVEs include `product_title`, severity, and a list of products.
 - Product pages are generated under `site-src/data/products/` and `site-src/content/products/`.
 
@@ -84,6 +87,10 @@ If Hugo fails on product pages due to title escaping, see `_write_product_data_f
 
 3) **Stale builds / no changes**
    - If `builder_scheduler` runs but output doesn’t change, confirm a build job exists and that Hugo succeeded.
+
+4) **RSS probe/fetch timeouts (Sophos‑style feeds)**
+   - RSS probe and ingest support curl HTTP/2 fetcher with Range prefixing.
+   - Per‑source overrides can force `http_fetcher=curl` or `python_then_curl`.
 
 4) **DB host resolution**
    - Builder must run on `svnet` to reach `db`.
@@ -114,7 +121,7 @@ If Hugo fails on product pages due to title escaping, see `_write_product_data_f
 
 ## Worker Roles (Allowed Types)
 
-- worker_fetch: ingest, fetch, cve_sync, derive_events, build_daily_summary, web enrich
+- worker_fetch: ingest, fetch, cve_sync, derive_events, build_daily_brief, web enrich
 - worker_llm: summarize_article_llm, cve_enrich_llm, enrich_event_summary_llm
 
 Keep `SV_WORKER_ONLY_TYPES` aligned with actual job types.

@@ -23,6 +23,12 @@ These rules are invariant unless explicitly approved and logged in `docs/CHANGEL
 - **Topical tags** must be stored ONLY in `article_tags` (tag_type = topical).
   They must never include `vendor:*` or `product:*`.
 - **Build pipeline** remains the portable compose pipeline (no hardcoded `/nfs`).
+ - **Daily Briefs** are topic-first and JSON-driven. The pipeline must use Pipeline Routing stages only:
+   - `daily_brief_cluster_topics`
+   - `daily_brief_summarize_topics`
+   - `daily_brief_map_nist_families`
+   - `daily_brief_overall_synthesis`
+   No hardcoded prompts inside job handlers.
   Do not change build scripts in this task.
 
 ---
@@ -129,6 +135,8 @@ Stateless acquisition workers that pull fetch jobs from Postgres.
 Retrieve external content (RSS, HTML, feeds).
 Write raw content and metadata back to Postgres.
 Designed for horizontal scaling.
+Fetchers support HTTP/2 curl with Range prefixing for RSS endpoints that
+stall under Python HTTP stacks; per-source overrides can force fetcher/timeout.
 
 #### VPN
 Outbound-only network path used exclusively by `worker-fetch`.
@@ -353,6 +361,20 @@ No automatic LLM calls for scraping.
 ## 8.1 Source Overrides (Per-Source)
 
 Overrides let us tune discovery + content extraction for problematic sources without changing the global pipeline.
+
+### 6.4 Daily Brief (Topic-First)
+Daily Briefs are generated from **today’s accepted articles** and clustered into topics.
+The brief is synthesized from topics (not raw per-article summaries) and grouped by
+NIST 800-53 families. Output is written to Hugo JSON data files at:
+`site-src/data/briefs/YYYY-MM-DD.json`.
+
+Pipeline stages (via Admin > AI Config) are the **only** control plane for prompts:
+- `daily_brief_cluster_topics`
+- `daily_brief_summarize_topics`
+- `daily_brief_map_nist_families`
+- `daily_brief_overall_synthesis`
+
+The brief renderer reads from `site.Data.briefs[day]` and does not use per-article markdown.
 If overrides are unset, behavior is unchanged.
 
 Stored in `sources.overrides` (JSONB) with this schema:

@@ -89,7 +89,8 @@ echo "⚙️  Starting admin + workers + web..."
 docker compose up -d \
   --scale worker_fetch=2 \
   --scale worker_llm=1 \
-  admin worker_fetch worker_llm web
+  --scale worker_openai=1 \
+  admin worker_fetch worker_llm worker_openai web
 
 # --- start builder scheduler (always-on) ---
 echo "🏗️  Starting builder scheduler..."

@@ -21,6 +21,7 @@ class AppConfig:
 @dataclass(frozen=True)
 class PathsConfig:
     data_dir: str
+    logs_dir: str
     output_dir: str
     run_reports_dir: str
 
@@ -125,10 +126,11 @@ class Config:
 DEFAULT_CONFIG: dict[str, Any] = {
     "app": {
         "name": "SemperVigil",
-        "timezone": "UTC",
+        "timezone": "America/New_York",
     },
     "paths": {
         "data_dir": "/data",
+        "logs_dir": "/log",
         "output_dir": "/site/content/posts",
         "run_reports_dir": "/data/reports",
     },
@@ -179,6 +181,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "llm": {
         "enabled": False,
+        "max_timeout_retries": 0,
     },
     "per_source_tweaks": {
         "date_parsing": {
@@ -200,6 +203,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 CONFIG_KEY = "config.runtime"
 CVE_SETTINGS_KEY = "cve.settings"
 EVENTS_SETTINGS_KEY = "events.settings"
+SCHEDULE_SETTINGS_KEY = "schedule.settings"
 
 DEFAULT_CVE_SETTINGS: dict[str, Any] = {
     "enabled": True,
@@ -224,6 +228,14 @@ DEFAULT_EVENTS_SETTINGS: dict[str, Any] = {
     "min_shared_products_to_merge": 1,
     "product_burst_window_hours": 24,
     "product_burst_min_high_critical": 3,
+}
+
+DEFAULT_SCHEDULE_SETTINGS: dict[str, Any] = {
+    "timezone": None,
+    "tasks": {
+        "daily_brief": {"enabled": False, "time": "07:30", "last_run": None},
+        "podcast": {"enabled": False, "time": "08:00", "last_run": None},
+    },
 }
 
 
@@ -300,6 +312,16 @@ def bootstrap_events_settings(conn) -> dict[str, Any]:
     return cfg
 
 
+def bootstrap_schedule_settings(conn) -> dict[str, Any]:
+    cfg = get_setting(conn, SCHEDULE_SETTINGS_KEY, None)
+    if cfg is None:
+        set_setting(conn, SCHEDULE_SETTINGS_KEY, _deep_copy(DEFAULT_SCHEDULE_SETTINGS))
+        cfg = get_setting(conn, SCHEDULE_SETTINGS_KEY, None)
+    if not isinstance(cfg, dict):
+        raise ConfigError("schedule.settings must be a JSON object")
+    return cfg
+
+
 def get_cve_settings(conn) -> dict[str, Any]:
     cfg = bootstrap_cve_settings(conn)
     errors = validate_cve_settings(cfg)
@@ -316,6 +338,14 @@ def get_events_settings(conn) -> dict[str, Any]:
     return cfg
 
 
+def get_schedule_settings(conn) -> dict[str, Any]:
+    cfg = bootstrap_schedule_settings(conn)
+    errors = validate_schedule_settings(cfg)
+    if errors:
+        raise ConfigError("Invalid schedule.settings: " + "; ".join(errors))
+    return cfg
+
+
 def set_cve_settings(conn, cfg: dict[str, Any]) -> None:
     errors = validate_cve_settings(cfg)
     if errors:
@@ -328,6 +358,13 @@ def set_events_settings(conn, cfg: dict[str, Any]) -> None:
     if errors:
         raise ConfigError("Invalid events.settings: " + "; ".join(errors))
     set_setting(conn, EVENTS_SETTINGS_KEY, _deep_copy(cfg))
+
+
+def set_schedule_settings(conn, cfg: dict[str, Any]) -> None:
+    errors = validate_schedule_settings(cfg)
+    if errors:
+        raise ConfigError("Invalid schedule.settings: " + "; ".join(errors))
+    set_setting(conn, SCHEDULE_SETTINGS_KEY, _deep_copy(cfg))
 
 
 def validate_cve_settings(cfg: dict[str, Any]) -> list[str]:
@@ -397,6 +434,41 @@ def validate_events_settings(cfg: dict[str, Any]) -> list[str]:
             errors.append(f"events.settings.{key} must be an integer")
     return errors
 
+
+def validate_schedule_settings(cfg: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(cfg, dict):
+        return ["schedule.settings must be a JSON object"]
+    if "timezone" in cfg and cfg["timezone"] is not None and not isinstance(cfg["timezone"], str):
+        errors.append("schedule.settings.timezone must be a string or null")
+    tasks = cfg.get("tasks")
+    if not isinstance(tasks, dict):
+        errors.append("schedule.settings.tasks must be an object")
+        return errors
+    for key, task in tasks.items():
+        if not isinstance(task, dict):
+            errors.append(f"schedule.settings.tasks.{key} must be an object")
+            continue
+        enabled = task.get("enabled")
+        if enabled is not None and not isinstance(enabled, bool):
+            errors.append(f"schedule.settings.tasks.{key}.enabled must be a boolean")
+        time_val = task.get("time")
+        if not isinstance(time_val, str):
+            errors.append(f"schedule.settings.tasks.{key}.time must be a string")
+        else:
+            parts = time_val.split(":")
+            if len(parts) != 2 or not all(p.isdigit() for p in parts):
+                errors.append(f"schedule.settings.tasks.{key}.time must be HH:MM")
+            else:
+                hour = int(parts[0])
+                minute = int(parts[1])
+                if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+                    errors.append(f"schedule.settings.tasks.{key}.time must be HH:MM")
+        last_run = task.get("last_run")
+        if last_run is not None and not isinstance(last_run, str):
+            errors.append(f"schedule.settings.tasks.{key}.last_run must be a string or null")
+    return errors
+
 def load_runtime_config(conn) -> Config:
     cfg = get_runtime_config(conn)
     config = _build_config(cfg)
@@ -411,6 +483,7 @@ def _apply_hugo_path_overrides(config: Config) -> Config:
     json_index_path = os.path.join(source_dir, "static", "sempervigil", "index.json")
     paths = PathsConfig(
         data_dir=config.paths.data_dir,
+        logs_dir=config.paths.logs_dir,
         output_dir=output_dir,
         run_reports_dir=config.paths.run_reports_dir,
     )
@@ -522,6 +595,7 @@ def _build_config(cfg: dict[str, Any]) -> Config:
     scope_cfg = cfg.get("scope") or {}
     personalization_cfg = cfg.get("personalization") or {}
     tweaks_cfg = cfg.get("per_source_tweaks") or {}
+    llm_cfg = dict(cfg.get("llm") or {})
 
     app = AppConfig(
         name=str(app_cfg.get("name")),
@@ -530,6 +604,7 @@ def _build_config(cfg: dict[str, Any]) -> Config:
 
     paths = PathsConfig(
         data_dir=str(paths_cfg.get("data_dir")),
+        logs_dir=str(paths_cfg.get("logs_dir")),
         output_dir=str(paths_cfg.get("output_dir")),
         run_reports_dir=str(paths_cfg.get("run_reports_dir")),
     )
@@ -594,6 +669,10 @@ def _build_config(cfg: dict[str, Any]) -> Config:
         rss_private_token=personalization_cfg.get("rss_private_token"),
     )
 
+    env_llm_retries = os.getenv("SV_LLM_MAX_TIMEOUT_RETRIES")
+    if env_llm_retries is not None and str(env_llm_retries).strip() != "":
+        llm_cfg["max_timeout_retries"] = int(env_llm_retries)
+
     url_norm_cfg = tweaks_cfg.get("url_normalization") or {}
     date_parsing_cfg = tweaks_cfg.get("date_parsing") or {}
 
@@ -622,7 +701,7 @@ def _build_config(cfg: dict[str, Any]) -> Config:
         cve=cve,
         scope=scope,
         personalization=personalization,
-        llm=dict(cfg.get("llm") or {}),
+        llm=llm_cfg,
         per_source_tweaks=per_source_tweaks,
     )
 

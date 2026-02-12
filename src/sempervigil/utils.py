@@ -11,6 +11,8 @@ import os
 import re
 import unicodedata
 from datetime import date, datetime, timezone, timedelta
+import time
+from zoneinfo import ZoneInfo
 from enum import Enum
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -19,7 +21,9 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import UUID, uuid4
 
 
-def log_event(logger: logging.Logger, level: int, event: str, **fields: Any) -> None:
+def log_event(logger: logging.Logger | None, level: int, event: str, **fields: Any) -> None:
+    if logger is None:
+        return
     parts = [f"event={event}"]
     hide_source_id = bool(fields.get("source_name"))
     for key, value in fields.items():
@@ -66,7 +70,7 @@ def _maybe_add_file_handler(level_name: str) -> None:
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     handler = RotatingFileHandler(log_path, maxBytes=max_bytes, backupCount=backup_count)
     handler.setLevel(getattr(logging, level_name, logging.INFO))
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    handler.setFormatter(_log_formatter())
     root.addHandler(handler)
 
 
@@ -79,8 +83,25 @@ def _ensure_stdout_handler(level_name: str) -> None:
             root.removeHandler(handler)
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(getattr(logging, level_name, logging.INFO))
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    handler.setFormatter(_log_formatter())
     root.addHandler(handler)
+
+
+def _log_formatter() -> logging.Formatter:
+    tz_name = os.environ.get("SV_LOG_TZ", "America/New_York")
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    try:
+        zone = ZoneInfo(tz_name)
+    except Exception:
+        zone = None
+
+    def _converter(timestamp: float) -> time.struct_time:
+        if zone is None:
+            return time.localtime(timestamp)
+        return datetime.fromtimestamp(timestamp, tz=zone).timetuple()
+
+    formatter.converter = _converter  # type: ignore[assignment]
+    return formatter
 
 
 def json_dumps(value: Any) -> str:

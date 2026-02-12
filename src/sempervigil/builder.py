@@ -62,12 +62,35 @@ def _last_successful_build_at(conn) -> datetime | None:
         return None
 
 
-def _build_log_paths(data_dir: str, job_id: str) -> dict[str, Path]:
-    logs_dir = Path(data_dir) / "logs" / "builds"
+def _truncate_log_file(path: Path, max_bytes: int) -> None:
+    if max_bytes <= 0 or not path.exists():
+        return
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return
+    if size <= max_bytes:
+        return
+    keep_bytes = max(1, max_bytes // 2)
+    try:
+        with path.open("rb") as handle:
+            handle.seek(-min(size, keep_bytes), os.SEEK_END)
+            data = handle.read()
+        with path.open("wb") as handle:
+            handle.write(data)
+    except OSError:
+        return
+
+
+def _build_log_paths(logs_dir: str, job_id: str) -> dict[str, Path]:
+    logs_dir = Path(logs_dir)
     logs_dir.mkdir(parents=True, exist_ok=True)
+    log_path = logs_dir / "hugo-build.log"
+    max_bytes = int(os.getenv("SV_HUGO_BUILD_LOG_MAX_BYTES", "5242880"))
+    _truncate_log_file(log_path, max_bytes)
     return {
-        "stdout": logs_dir / f"{job_id}.stdout.log",
-        "stderr": logs_dir / f"{job_id}.stderr.log",
+        "stdout": log_path,
+        "stderr": log_path,
     }
 
 
@@ -78,13 +101,11 @@ def _run_hugo_until_done(
     stdout_path = log_paths["stdout"]
     stderr_path = log_paths["stderr"]
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
-    with stdout_path.open("a", encoding="utf-8") as stdout_file, stderr_path.open(
-        "a", encoding="utf-8"
-    ) as stderr_file:
+    with stdout_path.open("a", encoding="utf-8") as log_file:
         proc = subprocess.Popen(
             cmd,
-            stdout=stdout_file,
-            stderr=stderr_file,
+            stdout=log_file,
+            stderr=log_file,
             text=True,
         )
     canceled = False
@@ -179,7 +200,7 @@ def run_once(builder_id: str) -> int:
         return 1
 
     set_umask_from_env()
-    ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir))
+    ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir, config.paths.logs_dir))
     source_dir = os.environ.get("SV_HUGO_SOURCE_DIR")
     if not source_dir:
         try:
@@ -222,7 +243,7 @@ def run_once(builder_id: str) -> int:
                 log_event(logger, logging.INFO, "builder_once_done", builder_id=builder_id)
                 return 0
 
-    log_paths = _build_log_paths(config.paths.data_dir, job.id)
+    log_paths = _build_log_paths(config.paths.logs_dir, job.id)
     log_event(
         logger,
         logging.INFO,

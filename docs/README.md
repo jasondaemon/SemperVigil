@@ -239,6 +239,8 @@ docker compose --profile search up -d searxng
 
 LLM summarization (LiteLLM OpenAI-compatible):
 - Set `SV_LLM_BASE_URL`, `SV_LLM_API_KEY`, `SV_LLM_MODEL`
+- Optional timeout retry control:
+  - `SV_LLM_MAX_TIMEOUT_RETRIES` (default 0 = fail immediately)
 - Summaries are generated via the `summarize_article_llm` job
 - Full content fetching is controlled by:
   - `SV_FETCH_FULL_CONTENT=1`
@@ -262,6 +264,7 @@ Outputs are written to:
 - Article lists (JSON): `${SV_SITE_SRC_DIR}/data/articles/`
 - JSON index (if enabled): `${SV_SITE_SRC_DIR}/static/sempervigil/index.json`
 - Site output: `${SV_SITE_PUBLIC_DIR}` (nginx serves this)
+- Logs: `/nfs/sempervigil/log` (admin/worker/hugo build logs)
 
 ---
 

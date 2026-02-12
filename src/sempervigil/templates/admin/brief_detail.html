@@ -1,0 +1,67 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "content" %}
+{% set nav_subactive = "briefs" %}
+{% block content %}
+  <section class="panel" data-brief-day="{{ brief_day }}">
+    <div class="panel-header">
+      <h2>Daily Brief – {{ brief_day }}</h2>
+      <a class="btn small secondary" href="/ui/briefs">Back to Daily Briefs</a>
+    </div>
+    <div class="brief-meta" id="brief-meta"></div>
+    <p class="error" id="brief-detail-error" style="display:none;"></p>
+  </section>
+
+  <section class="panel">
+    <h3>TLDR (Headlines)</h3>
+    <ul id="brief-tldr"></ul>
+  </section>
+
+  <section class="panel">
+    <h3>Technical Synthesis</h3>
+    <div id="brief-technical-synthesis"></div>
+  </section>
+
+  <section class="panel">
+    <h3>Actions</h3>
+    <ul id="brief-actions"></ul>
+  </section>
+
+  <section class="panel">
+    <h3>Podcast Script</h3>
+    <div id="brief-podcast-script"></div>
+  </section>
+
+  <section class="panel">
+    <h3>Full Summary (NIST Families)</h3>
+    <div id="brief-nist-breakdown"></div>
+  </section>
+
+  <section class="panel">
+    <h3>Citations</h3>
+    <ol id="brief-citations"></ol>
+  </section>
+
+  <section class="panel">
+    <h3>Low-Value / Contextual Items</h3>
+    <ul id="brief-low-value"></ul>
+  </section>
+
+  <section class="panel">
+    <h3>Meta</h3>
+    <div id="brief-meta-json"></div>
+  </section>
+
+  <section class="panel">
+    <details class="json-block">
+      <summary>Debug: Raw JSON</summary>
+      <h4>Cluster Raw</h4>
+      <pre id="brief-cluster-raw"></pre>
+      <h4>Summarize Raw</h4>
+      <pre id="brief-summarize-raw"></pre>
+      <h4>NIST Raw</h4>
+      <pre id="brief-nist-raw"></pre>
+      <h4>Overall Raw</h4>
+      <pre id="brief-overall-raw"></pre>
+    </details>
+  </section>
+{% endblock %}

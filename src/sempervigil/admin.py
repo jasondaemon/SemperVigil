@@ -4,6 +4,8 @@ import json
 import logging
 import os
 import time
+import threading
+import urllib.request
 from typing import Any
 from pathlib import Path
 
@@ -15,25 +17,39 @@ try:
 except Exception:  # noqa: BLE001
     ProxyHeadersMiddleware = None
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pydantic import BaseModel
 
 from .config import (
     ConfigError,
     bootstrap_cve_settings,
     bootstrap_events_settings,
+    bootstrap_schedule_settings,
     bootstrap_runtime_config,
     apply_runtime_config_patch,
     get_cve_settings,
+    get_schedule_settings,
     get_runtime_config,
     is_article_markdown_enabled,
     load_runtime_config,
     set_cve_settings,
+    set_schedule_settings,
     set_runtime_config,
 )
 from .admin_ui import TEMPLATES, ui_router
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .utils import utc_now_iso
-from .worker import WORKER_JOB_TYPES, _site_root_from_output_dir, _write_vendor_product_indexes
+from .worker import (
+    WORKER_JOB_TYPES,
+    _site_root_from_output_dir,
+    _write_vendor_product_indexes,
+    _write_article_data_files,
+    enqueue_build_site_if_needed,
+)
+from .http_fetch import fetch_prefix
+from .source_overrides import get_http_fetch_settings, normalize_source_overrides
+from .pipelines.content_fetch import fetch_article_content
+from bs4 import BeautifulSoup
 from .storage import (
     enqueue_job,
     get_source_run_streaks,
@@ -78,6 +94,7 @@ from .storage import (
     get_pending_article_job_id,
     get_pending_cve_job_id,
     get_pending_job_id_for_cve,
+    list_tactics,
     list_article_tags,
     list_article_ids_missing_summary,
     list_article_ids_missing_content,
@@ -85,6 +102,8 @@ from .storage import (
     list_article_ids_missing_products,
     list_article_ids_ready_for_summary,
     list_article_ids_ready_for_summary_all,
+    list_article_ids_ready_for_context_all,
+    list_article_ids_missing_context_pack,
     list_article_ids_with_content_error_all,
     list_articles_per_day,
     list_events,
@@ -117,6 +136,8 @@ from .storage import (
     list_cve_ids_missing_description,
     list_cve_ids_missing_products,
     list_cve_vendor_products,
+    list_daily_briefs,
+    get_daily_brief,
     search_articles,
     search_cves,
     create_event,
@@ -179,10 +200,105 @@ from .llm import STAGE_NAMES, test_model, test_profile, test_provider
 from .utils import configure_logging, log_event, utc_now_iso, utc_now_iso_offset
 
 _LOG_SERVICES = {
-    "admin": "/data/logs/admin.log",
-    "worker": "/data/logs/worker.log",
-    "builder": "/data/logs/builder.log",
+    "admin": "admin.log",
+    "worker": "worker.log",
+    "worker_llm": "worker.log",
+    "worker_fetch": "worker.log",
+    "worker_openai": "worker_openai.log",
+    "openai_prompts": "openai_http.log",
+    "builder": "builder.log",
+    "build_hugo": "",
 }
+
+_SCHEDULE_JOB_TYPES = {
+    "daily_brief": "build_daily_brief",
+}
+_scheduler_thread: threading.Thread | None = None
+_scheduler_stop = threading.Event()
+
+
+def _parse_hhmm(value: str) -> tuple[int, int] | None:
+    if not isinstance(value, str):
+        return None
+    parts = value.strip().split(":")
+    if len(parts) != 2 or not all(p.isdigit() for p in parts):
+        return None
+    hour = int(parts[0])
+    minute = int(parts[1])
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        return None
+    return hour, minute
+
+
+def _resolve_timezone(conn) -> timezone:
+    try:
+        cfg = get_schedule_settings(conn)
+        tz = cfg.get("timezone")
+        if tz:
+            return ZoneInfo(str(tz))
+    except Exception:
+        pass
+    try:
+        runtime = get_runtime_config(conn)
+        app_cfg = runtime.get("app") or {}
+        tz = app_cfg.get("timezone")
+        if tz:
+            return ZoneInfo(str(tz))
+    except Exception:
+        pass
+    return timezone.utc
+
+
+def _scheduler_loop() -> None:
+    logger = logging.getLogger("sempervigil.admin")
+    while not _scheduler_stop.is_set():
+        try:
+            conn = init_db()
+            cfg = get_schedule_settings(conn)
+            tasks = cfg.get("tasks") or {}
+            tzinfo = _resolve_timezone(conn)
+            now = datetime.now(tzinfo)
+            today = now.date().isoformat()
+            dirty = False
+            for task_key, task in tasks.items():
+                if not isinstance(task, dict):
+                    continue
+                if not task.get("enabled"):
+                    continue
+                job_type = _SCHEDULE_JOB_TYPES.get(task_key)
+                if not job_type:
+                    continue
+                time_val = task.get("time") or ""
+                parsed = _parse_hhmm(str(time_val))
+                if not parsed:
+                    continue
+                hour, minute = parsed
+                run_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if now < run_time:
+                    continue
+                last_run = task.get("last_run")
+                if last_run == today:
+                    continue
+                if has_pending_job(conn, job_type):
+                    task["last_run"] = today
+                    dirty = True
+                    continue
+                job_id = enqueue_job(conn, job_type, payload=None, debounce=True, dedupe=True)
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "scheduled_job_enqueued",
+                    job_id=job_id,
+                    job_type=job_type,
+                    schedule_key=task_key,
+                )
+                task["last_run"] = today
+                dirty = True
+            if dirty:
+                set_schedule_settings(conn, cfg)
+        except Exception as exc:  # noqa: BLE001
+            log_event(logger, logging.ERROR, "schedule_loop_error", error=str(exc))
+        _scheduler_stop.wait(30)
 
 
 def _read_log_tail(path: str, max_lines: int, max_bytes: int) -> str:
@@ -199,6 +315,26 @@ def _read_log_tail(path: str, max_lines: int, max_bytes: int) -> str:
         return ""
     lines = data.splitlines()
     return "\n".join(lines[-max_lines:])
+
+
+def _latest_hugo_build_log_path() -> str | None:
+    conn = _get_conn()
+    config = load_runtime_config(conn)
+    log_path = Path(config.paths.logs_dir) / "hugo-build.log"
+    if not log_path.exists():
+        return None
+    return str(log_path)
+
+
+def _format_log_header(path: str | None) -> str:
+    if not path:
+        return ""
+    try:
+        p = Path(path)
+        mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc).isoformat()
+    except Exception:
+        mtime = "unknown"
+    return f"# {path} (mtime={mtime})\n"
 
 
 def _parse_iso(value: str) -> datetime:
@@ -383,7 +519,21 @@ def logs_tail(service: str, lines: int = 200) -> dict[str, object]:
     if service_key not in _LOG_SERVICES:
         raise HTTPException(status_code=400, detail="invalid_service")
     line_limit = max(1, min(int(lines or 200), 500))
+    if service_key == "build_hugo":
+        log_path = _latest_hugo_build_log_path()
+        text = _read_log_tail(log_path, line_limit, max_bytes=400_000) if log_path else ""
+        header = _format_log_header(log_path)
+        return {
+            "service": service_key,
+            "lines": line_limit,
+            "text": f"{header}{text}" if text else header,
+            "log_path": log_path,
+        }
+    conn = _get_conn()
+    config = load_runtime_config(conn)
     path = _LOG_SERVICES[service_key]
+    if path and not os.path.isabs(path):
+        path = str(Path(config.paths.logs_dir) / path)
     text = _read_log_tail(path, line_limit, max_bytes=200_000)
     return {"service": service_key, "lines": line_limit, "text": text}
 
@@ -395,6 +545,7 @@ def logs_latest_build(stream: str = "stdout", lines: int = 200) -> dict[str, obj
         raise HTTPException(status_code=400, detail="invalid_stream")
     line_limit = max(1, min(int(lines or 200), 500))
     conn = _get_conn()
+    config = load_runtime_config(conn)
     last_build = get_last_job_by_type(conn, "build_site")
     log_path = None
     if last_build and isinstance(last_build.result, dict):
@@ -403,7 +554,7 @@ def logs_latest_build(stream: str = "stdout", lines: int = 200) -> dict[str, obj
         if isinstance(value, str) and value:
             log_path = value
     if not log_path:
-        logs_dir = Path("/data/logs/builds")
+        logs_dir = Path(config.paths.logs_dir) / "builds"
         if not logs_dir.exists():
             return {"stream": service_key, "lines": line_limit, "text": "", "log_path": None}
         suffix = f".{service_key}.log"
@@ -481,20 +632,60 @@ def cve_settings_get() -> dict[str, object]:
     settings["last_run_at"] = last_sync
     return {"settings": settings}
 
+
+@app.get("/admin/api/schedules/settings", dependencies=[Depends(_require_admin_token)])
+def schedule_settings_get() -> dict[str, object]:
+    conn = _get_conn()
+    try:
+        settings = get_schedule_settings(conn)
+    except ConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"settings": settings}
+
+
+@app.put("/admin/api/schedules/settings", dependencies=[Depends(_require_admin_token)])
+def schedule_settings_put(payload: dict[str, object]) -> dict[str, object]:
+    conn = _get_conn()
+    settings = payload.get("settings")
+    if not isinstance(settings, dict):
+        raise HTTPException(status_code=400, detail="settings_required")
+    try:
+        current = get_schedule_settings(conn)
+    except ConfigError:
+        current = {}
+    current_tasks = (current.get("tasks") or {}) if isinstance(current, dict) else {}
+    new_tasks = settings.get("tasks")
+    if isinstance(new_tasks, dict):
+        for key, task in new_tasks.items():
+            if not isinstance(task, dict):
+                continue
+            if "last_run" not in task and isinstance(current_tasks.get(key), dict):
+                last_run = current_tasks[key].get("last_run")
+                if last_run:
+                    task["last_run"] = last_run
+    try:
+        set_schedule_settings(conn, settings)
+    except ConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "ok"}
+
 @app.post("/admin/api/dashboard/queue_missing", dependencies=[Depends(_require_admin_token)])
 def dashboard_queue_missing(payload: dict[str, object]) -> dict[str, object]:
     conn = _get_conn()
     kind = str(payload.get("kind") or "").strip()
+    limit = None
+    if payload and isinstance(payload.get("limit"), int):
+        limit = int(payload["limit"])
     queued = 0
     skipped = 0
     if kind == "missing_content":
-        article_ids = list_article_ids_missing_content_all(conn)
+        article_ids = list_article_ids_missing_content_all(conn, limit=limit)
         for article_id in article_ids:
             existing = get_pending_article_job_id(conn, "fetch_article_content", int(article_id))
             if existing:
                 skipped += 1
                 continue
-            enqueue_job(conn, "fetch_article_content", {"article_id": int(article_id)})
+            enqueue_job(conn, "fetch_article_content", {"article_id": int(article_id)}, dedupe=True)
             queued += 1
         return {"status": "queued", "queued": queued, "skipped": skipped}
     if kind == "content_error":
@@ -504,7 +695,7 @@ def dashboard_queue_missing(payload: dict[str, object]) -> dict[str, object]:
             if existing:
                 skipped += 1
                 continue
-            enqueue_job(conn, "fetch_article_content", {"article_id": int(article_id)})
+            enqueue_job(conn, "fetch_article_content", {"article_id": int(article_id)}, dedupe=True)
             queued += 1
         return {"status": "queued", "queued": queued, "skipped": skipped}
     if kind == "missing_summary":
@@ -519,9 +710,25 @@ def dashboard_queue_missing(payload: dict[str, object]) -> dict[str, object]:
                 continue
             payload = {"article_id": int(article_id)}
             payload["profile_id"] = profile.get("id")
-            enqueue_job(conn, "summarize_article_llm", payload)
+            enqueue_job(conn, "summarize_article_llm", payload, dedupe=True)
             queued += 1
         return {"status": "queued", "queued": queued, "skipped": skipped}
+    if kind == "missing_context":
+        profile, reason = get_active_profile_for_stage(conn, "article_context_pack")
+        if not profile:
+            return {"status": "disabled", "message": f"Context pack disabled: {reason}"}
+        limit = int(payload.get("limit") or 200)
+        article_ids = list_article_ids_missing_context_pack(conn, limit=limit)
+        for article_id in article_ids:
+            existing = get_pending_article_job_id(conn, "summarize_article_context_llm", int(article_id))
+            if existing:
+                skipped += 1
+                continue
+            payload = {"article_id": int(article_id)}
+            payload["profile_id"] = profile.get("id")
+            enqueue_job(conn, "summarize_article_context_llm", payload, dedupe=True)
+            queued += 1
+        return {"status": "queued", "queued": queued, "skipped": skipped, "total": len(article_ids)}
     if kind == "cve_description":
         limit = int(payload.get("limit") or 500)
         cve_ids = list_cve_ids_missing_description(conn, limit=limit)
@@ -530,7 +737,7 @@ def dashboard_queue_missing(payload: dict[str, object]) -> dict[str, object]:
             if existing:
                 skipped += 1
                 continue
-            enqueue_job(conn, "cve_sync", {"cve_id": cve_id})
+            enqueue_job(conn, "cve_sync", {"cve_id": cve_id}, dedupe=True)
             queued += 1
         log_event(
             logging.getLogger("sempervigil.cve"),
@@ -553,7 +760,7 @@ def dashboard_queue_missing(payload: dict[str, object]) -> dict[str, object]:
             if existing:
                 skipped += 1
                 continue
-            enqueue_job(conn, "cve_enrich_llm", {"cve_id": cve_id, "profile_id": profile.get("id")})
+            enqueue_job(conn, "cve_enrich_llm", {"cve_id": cve_id, "profile_id": profile.get("id")}, dedupe=True)
             queued += 1
         log_event(
             logging.getLogger("sempervigil.cve"),
@@ -779,10 +986,20 @@ def _startup() -> None:
         config = load_runtime_config(conn)
         bootstrap_cve_settings(conn)
         bootstrap_events_settings(conn)
+        bootstrap_schedule_settings(conn)
     except ConfigError:
         return
     set_umask_from_env()
-    ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir))
+    ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir, config.paths.logs_dir))
+    global _scheduler_thread
+    if os.environ.get("SV_SCHEDULER_ENABLED", "1") != "0" and _scheduler_thread is None:
+        _scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True)
+        _scheduler_thread.start()
+
+
+@app.on_event("shutdown")
+def _shutdown() -> None:
+    _scheduler_stop.set()
 
 
 @app.post("/jobs/enqueue")
@@ -795,7 +1012,7 @@ def enqueue(job: JobRequest, _: None = Depends(_require_admin_token)) -> dict[st
         if last and last.status in {"queued", "running"}:
             return {"status": "already_queued", "job_id": last.id}
         return {"status": "already_queued"}
-    job_id = enqueue_job(conn, job.job_type, payload, debounce=True)
+    job_id = enqueue_job(conn, job.job_type, payload, debounce=True, dedupe=True)
     log_event(
         logger,
         logging.INFO,
@@ -848,6 +1065,42 @@ def cancel_all_jobs_api(request: Request) -> dict[str, object]:
         canceled=canceled,
     )
     return {"status": "ok", "canceled": canceled}
+
+
+@app.post("/admin/api/briefs/cancel-running", dependencies=[Depends(_require_admin_token)])
+def cancel_running_daily_brief() -> dict[str, object]:
+    conn = _get_conn()
+    canceled = cancel_jobs_by_type(
+        conn, "build_daily_brief", status=None, reason="canceled_by_admin"
+    )
+    logger = logging.getLogger("sempervigil.admin")
+    log_event(
+        logger,
+        logging.INFO,
+        "daily_brief_cancel_running",
+        canceled=canceled,
+    )
+    return {"status": "ok", "canceled": canceled}
+
+
+@app.post("/admin/api/briefs/cancel-running-restart", dependencies=[Depends(_require_admin_token)])
+def cancel_running_daily_brief_restart() -> dict[str, object]:
+    conn = _get_conn()
+    canceled = cancel_jobs_by_type(
+        conn, "build_daily_brief", status=None, reason="canceled_by_admin"
+    )
+    logger = logging.getLogger("sempervigil.admin")
+    log_event(
+        logger,
+        logging.INFO,
+        "daily_brief_cancel_running_restart",
+        canceled=canceled,
+    )
+    return {
+        "status": "ok",
+        "canceled": canceled,
+        "restart_command": "docker compose restart worker_llm",
+    }
 
 
 @app.get("/admin/api/debug/overview", dependencies=[Depends(_require_admin_token)])
@@ -1049,7 +1302,9 @@ def debug_products_smoke(payload: ProductsSmokeRequest) -> dict[str, object]:
         status=claimed.status,
         locked_by=claimed.locked_by,
     )
-    if not matches_worker(claimed.locked_by, ["worker-llm", "worker_llm"]):
+    if not matches_worker(
+        claimed.locked_by, ["worker-llm", "worker_llm", "worker-openai", "worker_openai"]
+    ):
         add_step(
             "enrich_worker_check",
             "warning",
@@ -1183,10 +1438,7 @@ class ProfileTestRequest(BaseModel):
 
 class DailyBriefRequest(BaseModel):
     date: str | None = None
-
-
-class DailySummaryRequest(BaseModel):
-    date: str | None = None
+    profile_id: str | None = None
 
 
 class AiTestRequest(BaseModel):
@@ -1312,6 +1564,17 @@ def sources_test(
     source = get_source(conn, source_id)
     if not source:
         raise HTTPException(status_code=404, detail="source_not_found")
+    overrides = normalize_source_overrides(
+        source.get("overrides"),
+        logger=logging.getLogger("sempervigil.admin"),
+        source_id=str(source.get("id") or ""),
+        source_name=str(source.get("name") or ""),
+    )
+    discovery_cfg = overrides.get("discovery", {}) if isinstance(overrides, dict) else {}
+    content_cfg = overrides.get("content", {}) if isinstance(overrides, dict) else {}
+    fetcher, fetch_timeout_seconds, fetch_headers = get_http_fetch_settings(
+        overrides, config.ingest.http.timeout_seconds
+    )
     result = process_source(
         source=source_to_model(source),
         config=config,
@@ -1332,12 +1595,160 @@ def sources_test(
                 "reasons": decision.reasons,
             }
         )
+    notes = result.notes or []
+    used_tactic = None
+    for note in notes:
+        if note.get("status") == "ok":
+            used_tactic = note.get("tactic_type")
+            break
+    tactics = list_tactics(conn, source_id)
+    tactic_map = {t.tactic_type: t for t in tactics}
+    feed_url = None
+    if used_tactic and used_tactic in tactic_map:
+        feed_url = tactic_map[used_tactic].config.get("feed_url")
+    if source.get("kind") == "rss" and source.get("base_url"):
+        if used_tactic != "rss" or not feed_url:
+            feed_url = source.get("base_url")
+
+    rss_warning = None
+    rss_probe = None
+    raw_mode = None
+    raw_overrides = source.get("overrides")
+    if isinstance(raw_overrides, dict):
+        raw_disc = raw_overrides.get("discovery")
+        if isinstance(raw_disc, dict):
+            raw_mode = raw_disc.get("mode")
+    elif isinstance(raw_overrides, str):
+        try:
+            parsed_raw = json.loads(raw_overrides)
+        except json.JSONDecodeError:
+            parsed_raw = None
+        if isinstance(parsed_raw, dict):
+            raw_disc = parsed_raw.get("discovery")
+            if isinstance(raw_disc, dict):
+                raw_mode = raw_disc.get("mode")
+    if feed_url and (source.get("kind") == "rss" or raw_mode == "rss_only"):
+        try:
+            request_headers = {"User-Agent": config.ingest.http.user_agent}
+            request_headers.update(fetch_headers)
+            (
+                status_code,
+                final_url,
+                headers_dict,
+                prefix_bytes,
+                fetcher_used,
+            ) = fetch_prefix(
+                feed_url,
+                headers=request_headers,
+                timeout_seconds=fetch_timeout_seconds,
+                max_bytes=8192,
+                fetcher=fetcher,
+            )
+            prefix_bytes = prefix_bytes.lstrip()
+            prefix_text = prefix_bytes.decode("utf-8", errors="ignore")
+            prefix_lc = prefix_text.lower()
+            looks_like_rss = ("<rss" in prefix_lc) or ("<feed" in prefix_lc) or ("<rdf" in prefix_lc)
+            looks_like_html = ("<!doctype html" in prefix_lc[:512]) or ("<html" in prefix_lc[:1024])
+            if looks_like_rss:
+                looks_like_html = False
+            rss_probe = {
+                "content_type": headers_dict.get("content-type", ""),
+                "looks_like_rss": looks_like_rss,
+                "looks_like_html": looks_like_html,
+                "sniff_prefix": prefix_text[:240],
+                "status_code": status_code,
+                "final_url": final_url,
+                "prefix_len": len(prefix_bytes),
+                "fetcher_used": fetcher_used,
+                "error": None,
+            }
+            if looks_like_html and not looks_like_rss:
+                if raw_mode == "rss_only":
+                    rss_warning = (
+                        "rss_only enabled: feed URL appears to be HTML (not RSS). "
+                        "No fallback performed."
+                    )
+                else:
+                    rss_warning = "RSS source URL appears to be HTML (not RSS)."
+        except Exception as exc:  # noqa: BLE001
+            rss_warning = f"rss_only probe failed: {exc}"
+            rss_probe = {
+                "content_type": "",
+                "looks_like_rss": False,
+                "looks_like_html": False,
+                "sniff_prefix": "",
+                "status_code": None,
+                "final_url": None,
+                "prefix_len": 0,
+                "fetcher_used": fetcher,
+                "error": str(exc),
+            }
+
+    reason_counts: dict[str, int] = {}
+    for decision in result.decisions:
+        if decision.decision == "ACCEPT":
+            continue
+        for reason in decision.reasons:
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    top_reasons = sorted(reason_counts.items(), key=lambda item: item[1], reverse=True)[:8]
+    reject_reasons = [{"reason": reason, "count": count} for reason, count in top_reasons]
+
+    accepted_urls = [
+        decision.normalized_url or decision.original_url
+        for decision in result.decisions
+        if decision.decision == "ACCEPT" and (decision.normalized_url or decision.original_url)
+    ]
+    samples = []
+    min_chars = int(content_cfg.get("min_chars") or 800)
+    for url in accepted_urls[:3]:
+        sample = {"url": url}
+        try:
+            extracted = fetch_article_content(
+                url,
+                timeout_seconds=config.ingest.http.timeout_seconds,
+                user_agent=config.ingest.http.user_agent,
+                logger=logging.getLogger("sempervigil.admin"),
+                source_id=str(source.get("id") or ""),
+                source_name=str(source.get("name") or ""),
+                overrides=source.get("overrides"),
+            )
+            content_text = str(extracted.get("content_text") or "")
+            html = str(extracted.get("content_html") or "")
+            title = ""
+            if html:
+                try:
+                    soup = BeautifulSoup(html, "html.parser")
+                    title = (soup.title.string or "").strip() if soup.title else ""
+                except Exception:
+                    title = ""
+            sample.update(
+                {
+                    "title": title,
+                    "method": extracted.get("method") or "default",
+                    "char_count": len(content_text),
+                    "min_chars": min_chars,
+                    "passed_min_chars": len(content_text) >= min_chars,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            sample.update({"error": str(exc)})
+        samples.append(sample)
     return {
         "status": result.status,
         "http_status": result.http_status,
         "error": result.error,
         "found_count": result.found_count,
         "accepted_count": result.accepted_count,
+        "discovery": {
+            "mode": discovery_cfg.get("mode") or "default",
+            "used_tactic": used_tactic,
+            "tactics": notes,
+            "feed_url": feed_url,
+            "rss_probe": rss_probe,
+            "warning": rss_warning,
+        },
+        "reject_reasons": reject_reasons,
+        "extraction_samples": samples,
         "items": preview,
     }
 
@@ -1363,6 +1774,8 @@ def sources_test_override(source_id: str, payload: SourceOverrideTestRequest) ->
         timeout_seconds=config.ingest.http.timeout_seconds,
         user_agent=config.ingest.http.user_agent,
         logger=logging.getLogger("sempervigil.admin"),
+        source_id=str(source.get("id") or ""),
+        source_name=str(source.get("name") or ""),
         overrides=source.get("overrides"),
     )
     content_text = str(result.get("content_text") or "")
@@ -1410,7 +1823,7 @@ def sources_summarize_missing(source_id: str) -> dict[str, object]:
             continue
         payload = {"article_id": int(article_id), "source_id": source_id}
         payload["profile_id"] = profile.get("id")
-        enqueue_job(conn, "summarize_article_llm", payload)
+        enqueue_job(conn, "summarize_article_llm", payload, dedupe=True)
         queued += 1
     return {"status": "queued", "queued": queued, "skipped": skipped}
 
@@ -1442,7 +1855,7 @@ def sources_fetch_missing(source_id: str) -> dict[str, object]:
             continue
         payload = {"article_id": int(article_id), "source_id": source_id}
         payload["original_url"] = url
-        enqueue_job(conn, "fetch_article_content", payload)
+        enqueue_job(conn, "fetch_article_content", payload, dedupe=True)
         queued += 1
     return {"status": "queued", "queued": queued, "skipped": skipped}
 
@@ -1591,6 +2004,25 @@ def api_threat_detail(actor_key: str) -> dict[str, object]:
     detail = get_threat_actor_detail(conn, actor_key)
     if not detail:
         raise HTTPException(status_code=404, detail="threat_actor_not_found")
+    return detail
+
+
+@app.get("/admin/api/briefs", dependencies=[Depends(_require_admin_token)])
+def api_briefs(
+    page: int = 1,
+    page_size: int = 50,
+) -> dict[str, object]:
+    conn = _get_conn()
+    items, total = list_daily_briefs(conn, page=page, page_size=page_size)
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@app.get("/admin/api/briefs/{day}", dependencies=[Depends(_require_admin_token)])
+def api_brief_detail(day: str) -> dict[str, object]:
+    conn = _get_conn()
+    detail = get_daily_brief(conn, day)
+    if not detail:
+        raise HTTPException(status_code=404, detail="daily_brief_not_found")
     return detail
 
 
@@ -2075,9 +2507,11 @@ def api_content_search(
     type: str | None = None,
     source_id: str | None = None,
     has_summary: bool | None = None,
+    has_context: bool | None = None,
     missing: str | None = None,
     content_state: str | None = None,
     content_error: bool | None = None,
+    content_error_kind: str | None = None,
     summary_error: bool | None = None,
     needs: str | None = None,
     watchlist_hit: bool | None = None,
@@ -2104,9 +2538,11 @@ def api_content_search(
             query=query,
             source_id=source_id,
             has_summary=has_summary,
+            has_context=has_context,
             missing=missing,
             content_state=content_state,
             content_error=content_error,
+            content_error_kind=content_error_kind,
             summary_error=summary_error,
             needs=needs,
             after=after,
@@ -2223,6 +2659,27 @@ def api_article_summarize(article_id: int) -> dict[str, object]:
     return {"status": "queued", "job_id": job_id}
 
 
+@app.post("/admin/api/articles/{article_id}/context_pack", dependencies=[Depends(_require_admin_token)])
+def api_article_context_pack(article_id: int) -> dict[str, object]:
+    conn = _get_conn()
+    article = get_article_by_id(conn, int(article_id))
+    if not article:
+        raise HTTPException(status_code=404, detail="article_not_found")
+    profile, reason = get_active_profile_for_stage(conn, "article_context_pack")
+    if not profile:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Context pack disabled: {reason}",
+        )
+    existing = get_pending_article_job_id(conn, "summarize_article_context_llm", int(article_id))
+    if existing:
+        return {"status": "already_queued", "job_id": existing}
+    payload = {"article_id": int(article_id), "source_id": article.get("source_id")}
+    payload["profile_id"] = profile.get("id")
+    job_id = enqueue_job(conn, "summarize_article_context_llm", payload)
+    return {"status": "queued", "job_id": job_id}
+
+
 @app.post("/admin/api/articles/{article_id}/publish", dependencies=[Depends(_require_admin_token)])
 def api_article_publish(article_id: int) -> dict[str, object]:
     if not is_article_markdown_enabled():
@@ -2293,6 +2750,13 @@ def api_article_suppress(article_id: int, payload: dict | None = Body(None)) -> 
                 current = False
         suppressed = not current
     result = update_article_suppressed(conn, article_id, bool(suppressed), reason if isinstance(reason, str) else None)
+    config = load_runtime_config(conn)
+    _write_article_data_files(conn, config, logging.getLogger("admin"))
+    enqueue_build_site_if_needed(
+        conn,
+        reason="article_suppressed",
+        debounce_seconds=config.jobs.build_debounce_seconds,
+    )
     return {"status": "ok", **result}
 
 @app.delete("/admin/api/articles/{article_id}", dependencies=[Depends(_require_admin_token)])
@@ -2303,6 +2767,13 @@ def api_article_delete(article_id: int):
     conn.execute("DELETE FROM article_products WHERE article_id = %s", (article_id,))
     conn.execute("DELETE FROM articles WHERE id = %s", (article_id,))
     conn.commit()
+    config = load_runtime_config(conn)
+    _write_article_data_files(conn, config, logging.getLogger("admin"))
+    enqueue_build_site_if_needed(
+        conn,
+        reason="article_deleted",
+        debounce_seconds=config.jobs.build_debounce_seconds,
+    )
     return {"status": "deleted", "article_id": article_id}
 
 
@@ -2443,8 +2914,8 @@ def api_clear_events(payload: ClearRequest, request: Request) -> dict[str, objec
 
 
 
-def _setup_logging() -> None:
-    configure_logging("sempervigil.admin")
+def _setup_logging() -> logging.Logger:
+    return configure_logging("sempervigil.admin")
 
 
 _setup_logging()
@@ -2473,6 +2944,8 @@ def source_to_model(source: dict[str, object]):
         paused_reason=source.get("paused_reason"),
         robots_notes=None,
         overrides=source.get("overrides"),
+        kind=source.get("kind"),
+        url=source.get("url"),
     )
 
 
@@ -2772,7 +3245,14 @@ def ai_pipeline_set(payload: PipelineStageRequest) -> dict[str, str]:
 @ai_router.post("/clear-queued")
 def ai_clear_queued() -> dict[str, object]:
     conn = _get_conn()
-    stage_map = {"summarize_article": "summarize_article_llm"}
+    stage_map = {
+        "summarize_article": "summarize_article_llm",
+        "article_enrich_products": "article_enrich_products",
+        "cve_enrich_products": "cve_enrich_llm",
+        "article_enrich_threat_actors": "article_enrich_threat_actors",
+        "cve_enrich_threat_actors": "cve_enrich_threat_actors",
+        "daily_brief_overall_synthesis": "build_daily_brief",
+    }
     cleared = 0
     stage_results: dict[str, object] = {}
     for stage_name, job_type in stage_map.items():
@@ -2803,26 +3283,39 @@ app.include_router(ui_router(_require_admin_token), prefix="/ui")
 app.include_router(ai_router)
 
 
-@app.post("/admin/briefs/build")
-def build_brief(payload: DailyBriefRequest, _: None = Depends(_require_admin_token)) -> dict[str, str]:
-    conn = _get_conn()
-    job_id = enqueue_job(
-        conn,
-        "build_daily_brief",
-        {"date": payload.date} if payload.date else {},
-    )
-    return {"job_id": job_id}
+def _enqueue_daily_brief(conn, payload: DailyBriefRequest) -> dict[str, str]:
+    request_payload: dict[str, object] = {}
+    date_value = payload.date
+    if not date_value:
+        try:
+            config = load_runtime_config(conn)
+            tz_name = config.app.timezone or "UTC"
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = timezone.utc
+        date_value = datetime.now(tz).strftime("%Y-%m-%d")
+    if date_value:
+        try:
+            datetime.strptime(date_value, "%Y-%m-%d")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid_date") from exc
+        request_payload["date"] = date_value
+    if payload.profile_id:
+        request_payload["profile_id"] = payload.profile_id
+    job_id = enqueue_job(conn, "build_daily_brief", request_payload)
+    return {"job_id": job_id, "date": date_value or ""}
 
-@app.post("/admin/api/daily_summary/build")
-def build_daily_summary(payload: DailySummaryRequest, _: None = Depends(_require_admin_token)) -> dict[str, str]:
+
+@app.post("/admin/api/daily_brief/build", dependencies=[Depends(_require_admin_token)])
+def build_daily_brief(payload: DailyBriefRequest) -> dict[str, str]:
     conn = _get_conn()
-    job_id = enqueue_job(
-        conn,
-        "build_daily_summary",
-        {"date": payload.date} if payload.date else {},
-        debounce=True,
-    )
-    return {"job_id": job_id}
+    return _enqueue_daily_brief(conn, payload)
+
+
+@app.post("/admin/briefs/build", dependencies=[Depends(_require_admin_token)])
+def build_brief(payload: DailyBriefRequest) -> dict[str, str]:
+    conn = _get_conn()
+    return _enqueue_daily_brief(conn, payload)
 
 
 

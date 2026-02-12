@@ -21,8 +21,20 @@ DEFAULT_CONTENT = {
     "allow_fallback_to_default": True,
 }
 
+DEFAULT_FETCH = {
+    "use_vpn": True,
+    "http_fetcher": "python_then_curl",
+    "http_timeout_seconds": None,
+    "http_headers": {},
+}
 
-def normalize_source_overrides(raw: Any) -> dict[str, Any]:
+
+def normalize_source_overrides(
+    raw: Any,
+    logger: logging.Logger | None = None,
+    source_id: str | None = None,
+    source_name: str | None = None,
+) -> dict[str, Any]:
     data: dict[str, Any] = {}
     if isinstance(raw, dict):
         data = raw
@@ -37,10 +49,13 @@ def normalize_source_overrides(raw: Any) -> dict[str, Any]:
                 data = parsed
     discovery_raw = data.get("discovery") if isinstance(data.get("discovery"), dict) else {}
     content_raw = data.get("content") if isinstance(data.get("content"), dict) else {}
+    fetch_raw = data.get("fetch") if isinstance(data.get("fetch"), dict) else {}
 
     discovery = {
         **DEFAULT_DISCOVERY,
-        "mode": str(discovery_raw.get("mode") or DEFAULT_DISCOVERY["mode"]),
+        "mode": normalize_discovery_mode(
+            discovery_raw.get("mode"), logger=logger, source_id=source_id, source_name=source_name
+        ),
         "allowlist_regex": _normalize_optional_str(discovery_raw.get("allowlist_regex")),
         "blocklist_regex": _normalize_optional_str(discovery_raw.get("blocklist_regex")),
     }
@@ -55,7 +70,60 @@ def normalize_source_overrides(raw: Any) -> dict[str, Any]:
             content_raw.get("allow_fallback_to_default"), DEFAULT_CONTENT["allow_fallback_to_default"]
         ),
     }
-    return {"discovery": discovery, "content": content}
+    fetch = {
+        **DEFAULT_FETCH,
+        "use_vpn": _normalize_bool(fetch_raw.get("use_vpn"), DEFAULT_FETCH["use_vpn"]),
+        "http_fetcher": _normalize_fetcher(fetch_raw.get("http_fetcher")),
+        "http_timeout_seconds": _normalize_optional_int(fetch_raw.get("http_timeout_seconds")),
+        "http_headers": _normalize_dict(fetch_raw.get("http_headers")),
+    }
+    return {"discovery": discovery, "content": content, "fetch": fetch}
+
+
+def get_http_fetch_settings(
+    overrides: dict[str, Any] | None,
+    default_timeout_seconds: int,
+) -> tuple[str, int, dict[str, str]]:
+    fetch_cfg = overrides.get("fetch", {}) if isinstance(overrides, dict) else {}
+    fetcher = fetch_cfg.get("http_fetcher") if isinstance(fetch_cfg, dict) else None
+    timeout = fetch_cfg.get("http_timeout_seconds") if isinstance(fetch_cfg, dict) else None
+    headers = fetch_cfg.get("http_headers") if isinstance(fetch_cfg, dict) else None
+    fetcher = _normalize_fetcher(fetcher)
+    timeout_seconds = _normalize_optional_int(timeout)
+    if timeout_seconds is None:
+        timeout_seconds = default_timeout_seconds
+    headers_dict = _normalize_dict(headers)
+    return fetcher, timeout_seconds, headers_dict
+
+
+def normalize_discovery_mode(
+    mode: Any,
+    logger: logging.Logger | None = None,
+    source_id: str | None = None,
+    source_name: str | None = None,
+) -> str:
+    raw = str(mode).strip() if mode is not None else ""
+    if not raw:
+        return DEFAULT_DISCOVERY["mode"]
+    if raw == "rss_only":
+        if logger:
+            logger.warning(
+                "legacy_discovery_mode source_id=%s source_name=%s mode=%s",
+                source_id,
+                source_name,
+                raw,
+            )
+        return DEFAULT_DISCOVERY["mode"]
+    if raw not in {"default"}:
+        if logger:
+            logger.warning(
+                "unknown_discovery_mode source_id=%s source_name=%s mode=%s",
+                source_id,
+                source_name,
+                raw,
+            )
+        return DEFAULT_DISCOVERY["mode"]
+    return raw
 
 
 def compile_pattern(pattern: str | None, logger: logging.Logger | None, field: str) -> re.Pattern | None:
@@ -110,6 +178,13 @@ def _normalize_int(value: Any, default: int) -> int:
         return default
 
 
+def _normalize_optional_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _normalize_bool(value: Any, default: bool) -> bool:
     if value is None:
         return default
@@ -118,3 +193,16 @@ def _normalize_bool(value: Any, default: bool) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "y", "on"}
     return bool(value)
+
+
+def _normalize_fetcher(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"python", "curl", "python_then_curl"}:
+        return raw
+    return DEFAULT_FETCH["http_fetcher"]
+
+
+def _normalize_dict(value: Any) -> dict[str, str]:
+    if isinstance(value, dict):
+        return {str(k): str(v) for k, v in value.items()}
+    return {}

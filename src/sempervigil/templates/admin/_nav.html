@@ -12,6 +12,7 @@
         <div class="dropdown-menu">
           <a class="dropdown-item {% if subactive == 'events' %}active{% endif %}" href="/ui/events">Events</a>
           <a class="dropdown-item {% if subactive == 'content' %}active{% endif %}" href="/ui/content">Articles</a>
+          <a class="dropdown-item {% if subactive == 'briefs' %}active{% endif %}" href="/ui/briefs">Daily Briefs</a>
           <a class="dropdown-item {% if subactive == 'products' %}active{% endif %}" href="/ui/products">Products</a>
           <a class="dropdown-item {% if subactive == 'threats' %}active{% endif %}" href="/ui/threats">Threats</a>
           <a class="dropdown-item {% if subactive == 'cves' %}active{% endif %}" href="/ui/cves">CVEs</a>
@@ -24,6 +25,8 @@
         <div class="dropdown-menu">
           <a class="dropdown-item {% if subactive == 'sources' %}active{% endif %}" href="/ui/sources">Sources</a>
           <a class="dropdown-item {% if subactive == 'jobs' %}active{% endif %}" href="/ui/jobs">Jobs</a>
+          <a class="dropdown-item {% if subactive == 'schedules' %}active{% endif %}" href="/ui/system/schedules">Schedules</a>
+          <a class="dropdown-item {% if subactive == 'utilities' %}active{% endif %}" href="/ui/system/utilities">Utilities</a>
           <a class="dropdown-item {% if subactive == 'personalization' %}active{% endif %}" href="/ui/personalization">Personalization</a>
           {% if watchlist_enabled %}
           <a class="dropdown-item {% if subactive == 'watchlist' %}active{% endif %}" href="/ui/watchlist">Watchlist</a>

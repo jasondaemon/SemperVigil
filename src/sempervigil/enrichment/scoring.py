@@ -118,7 +118,7 @@ def score_web_result(event: dict[str, object], result: dict[str, object]) -> tup
             reasons["cve_match"] = 8
 
     penalties = {
-        "daily summary": -10,
+        "daily brief": -10,
         "weekly roundup": -10,
         "newsletter": -10,
         "top 10": -8,

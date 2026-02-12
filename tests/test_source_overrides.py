@@ -4,7 +4,7 @@ import logging
 import re
 
 from sempervigil.pipelines.content_fetch import extract_content_from_html
-from sempervigil.source_overrides import should_allow_url
+from sempervigil.source_overrides import normalize_source_overrides, should_allow_url
 
 
 def test_override_allowlist_blocklist() -> None:
@@ -37,3 +37,13 @@ def test_jsonld_articlebody_extraction() -> None:
     )
     assert result["method"].startswith("jsonld_articlebody")
     assert "Hello world body." in result["content_text"]
+
+
+def test_discovery_mode_rss_only_defaults() -> None:
+    overrides = normalize_source_overrides({"discovery": {"mode": "rss_only"}})
+    assert overrides["discovery"]["mode"] == "default"
+
+
+def test_discovery_mode_unknown_defaults() -> None:
+    overrides = normalize_source_overrides({"discovery": {"mode": "typo_value"}})
+    assert overrides["discovery"]["mode"] == "default"

@@ -638,6 +638,7 @@ def get_active_profile_for_stage(
         "article_enrich_threat_actors",
         "cve_enrich_threat_actors",
         "derive_events_from_articles",
+        "daily_brief_overall_synthesis",
     }
     routing = {row["stage_name"]: row["profile_id"] for row in list_pipeline_routing(conn)}
     profile_id = routing.get(stage_name)

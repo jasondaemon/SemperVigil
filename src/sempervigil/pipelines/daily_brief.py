@@ -8,46 +8,39 @@ from ..utils import atomic_write_json, atomic_write_text
 
 def write_daily_brief(
     *,
-    base_content_dir: str,
-    base_static_dir: str,
+    base_site_dir: str,
     day: str,
-    items: list[dict[str, Any]],
+    payload: dict[str, Any],
+    data_root: str | None = None,
+    content_root: str | None = None,
 ) -> dict[str, str]:
-    content_dir = Path(base_content_dir) / "briefs"
-    static_dir = Path(base_static_dir) / "briefs"
+    data_dir = (
+        Path(data_root) / "briefs"
+        if data_root
+        else Path(base_site_dir) / "data" / "briefs"
+    )
+    data_dir.mkdir(parents=True, exist_ok=True)
+    json_path = data_dir / f"{day}.json"
+    atomic_write_json(json_path, payload, indent=2)
+    content_dir = (
+        Path(content_root) / "briefs"
+        if content_root
+        else Path(base_site_dir) / "content" / "briefs"
+    )
     content_dir.mkdir(parents=True, exist_ok=True)
-    static_dir.mkdir(parents=True, exist_ok=True)
-
     md_path = content_dir / f"{day}.md"
-    json_path = static_dir / f"{day}.json"
-
-    lines = [
-        "---",
-        f"title: Daily Brief {day}",
-        f"date: {day}",
-        "draft: false",
-        "---",
-        "",
-        "## Top stories",
-        "",
-    ]
-    for item in items:
-        summary = item["summary_data"].get("summary", "").strip()
-        bullets = item["summary_data"].get("bullets", [])
-        why = item["summary_data"].get("why", "").strip()
-        lines.append(f"### {item['title']}")
-        lines.append(f"- Source: {item['source_id']}")
-        lines.append(f"- Link: {item['original_url']}")
-        if summary:
-            lines.append(f"- Summary: {summary}")
-        if why:
-            lines.append(f"- Why it matters: {why}")
-        if bullets:
-            lines.append("- Key points:")
-            for bullet in bullets:
-                lines.append(f"  - {bullet}")
-        lines.append("")
-
-    atomic_write_text(md_path, "\n".join(lines))
-    atomic_write_json(json_path, items, indent=2)
-    return {"markdown_path": str(md_path), "json_path": str(json_path)}
+    if not md_path.exists():
+        atomic_write_text(
+            md_path,
+            "\n".join(
+                [
+                    "---",
+                    f'title: "Daily Brief – {day}"',
+                    f"date: {day}",
+                    "type: briefs",
+                    "---",
+                    "",
+                ]
+            ),
+        )
+    return {"json_path": str(json_path), "content_path": str(md_path)}

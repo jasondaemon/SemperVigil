@@ -16,12 +16,12 @@ def ensure_runtime_dirs(paths: Iterable[str]) -> None:
         _ensure_dir(Path(path))
 
 
-def build_default_paths(data_dir: str, output_dir: str) -> list[str]:
+def build_default_paths(data_dir: str, output_dir: str, logs_dir: str) -> list[str]:
     site_src_dir = os.environ.get("SV_HUGO_SOURCE_DIR", "/site-src")
     site_public_dir = os.environ.get("SV_HUGO_OUTPUT_DIR", "/site")
     paths = [
         data_dir,
-        os.path.join(data_dir, "logs"),
+        logs_dir,
         site_src_dir,
         site_public_dir,
         os.path.join(site_src_dir, "static", "sempervigil"),

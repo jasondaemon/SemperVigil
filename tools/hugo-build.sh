@@ -8,15 +8,56 @@ OUTPUT_DIR="${SV_HUGO_OUTPUT_DIR:-/site}"
 CACHE_DIR="${SV_HUGO_CACHE_DIR:-/tmp/hugo_cache}"
 MODULES_DIR="${SV_HUGO_MODULES_DIR:-/tmp/hugo_modules}"
 SYNC_TEMPLATES="${SV_SYNC_SITE_TEMPLATES:-0}"
-LOG_DIR="${SV_LOG_DIR:-/data/logs/builds}"
+LOG_DIR="${SV_LOG_DIR:-/log}"
+LOG_FILE="${SV_HUGO_LOG_FILE:-${LOG_DIR}/hugo-build.log}"
+MAX_LOG_BYTES="${SV_HUGO_BUILD_LOG_MAX_BYTES:-5242880}"
 LOCK_FILE="${SV_HUGO_LOCK_FILE:-/data/hugo-build.lock}"
 LOCK_DIR="${SV_HUGO_LOCK_DIR:-/data/hugo-build.lockdir}"
 RESOURCE_BASE="${SV_HUGO_RESOURCE_BASE:-/data/hugo_resources}"
 BUILD_CONFIG_DIR="${SV_HUGO_BUILD_CONFIG_DIR:-/data/hugo_build_configs}"
+RELEASES_DIR="${OUTPUT_DIR}/releases"
+CURRENT_LINK="${OUTPUT_DIR}/current"
+STANDBY_DIR="${OUTPUT_DIR}/standby"
+KEEP_RELEASES="${SV_HUGO_KEEP_RELEASES:-3}"
 
 mkdir -p "$LOG_DIR"
+mkdir -p "$(dirname "$LOG_FILE")"
 mkdir -p "$RESOURCE_BASE"
 mkdir -p "$BUILD_CONFIG_DIR"
+mkdir -p "$RELEASES_DIR"
+mkdir -p "$STANDBY_DIR"
+
+if [ ! -f "${STANDBY_DIR}/index.html" ]; then
+  cat > "${STANDBY_DIR}/index.html" <<'EOF'
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="refresh" content="8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Stand By…</title>
+    <style>
+      body { font-family: system-ui, sans-serif; background:#0f172a; color:#e2e8f0; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; }
+      .card { max-width:520px; padding:24px 28px; border:1px solid rgba(148,163,184,.25); border-radius:16px; background:rgba(15,23,42,.6); }
+      h1 { margin:0 0 8px; font-size:20px; }
+      p { margin:6px 0; color:#94a3b8; }
+      .time { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color:#cbd5f5; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Stand By… More news is rendering</h1>
+      <p>This page will refresh automatically in a few seconds.</p>
+      <p class="time">Building…</p>
+    </div>
+  </body>
+</html>
+EOF
+fi
+
+if [ ! -L "$CURRENT_LINK" ] && [ ! -d "$CURRENT_LINK" ]; then
+  ln -s "standby" "$CURRENT_LINK"
+fi
 
 if [ ! -f "${SOURCE_DIR}/hugo.toml" ] && [ ! -d "${SOURCE_DIR}/config" ] && [ ! -d "${SOURCE_DIR}/config/_default" ]; then
   if [ -d "/repo/site" ]; then
@@ -79,11 +120,24 @@ attempt=1
 max_attempts=3
 success=0
 
+if [ -f "$LOG_FILE" ] && [ "$MAX_LOG_BYTES" -gt 0 ]; then
+  log_size="$(wc -c < "$LOG_FILE" 2>/dev/null || echo 0)"
+  if [ "$log_size" -gt "$MAX_LOG_BYTES" ]; then
+    keep_bytes=$((MAX_LOG_BYTES / 2))
+    if [ "$keep_bytes" -lt 1 ]; then
+      keep_bytes=1
+    fi
+    tail -c "$keep_bytes" "$LOG_FILE" > "${LOG_FILE}.tmp" 2>/dev/null || true
+    mv -f "${LOG_FILE}.tmp" "$LOG_FILE"
+  fi
+fi
+
 while [ $attempt -le $max_attempts ]; do
   ts="$(date -u +%Y%m%d%H%M%S)"
   resource_dir="${RESOURCE_BASE}/${ts}.$$"
   mkdir -p "$resource_dir"
-  log_file="${LOG_DIR}/hugo-build-${ts}-attempt${attempt}.log"
+  release_dir="${RELEASES_DIR}/${ts}"
+  mkdir -p "$release_dir"
   build_config="${BUILD_CONFIG_DIR}/hugo-build-${ts}.$$-attempt${attempt}.toml"
   printf 'resourceDir = "%s"\n' "$resource_dir" >"$build_config"
 
@@ -139,17 +193,33 @@ while [ $attempt -le $max_attempts ]; do
     config_value="$build_config"
   fi
 
+  log_file="$LOG_FILE"
   echo "Hugo build attempt ${attempt}/${max_attempts} (log: ${log_file})"
   {
     echo "Hugo version:"
     hugo version
+    echo "Build start: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } >"$log_file" 2>&1
   set +e
-  hugo -s "$SOURCE_DIR" -d "$OUTPUT_DIR" --baseURL "${SV_HUGO_BASEURL:-/}" --minify --cleanDestinationDir --logLevel info --cacheDir "$CACHE_DIR" "$config_flag" "$config_value" >>"$log_file" 2>&1
+  hugo -s "$SOURCE_DIR" -d "$release_dir" --baseURL "${SV_HUGO_BASEURL:-/}" --minify --cleanDestinationDir --logLevel info --cacheDir "$CACHE_DIR" "$config_flag" "$config_value" >>"$log_file" 2>&1
   exit_code=$?
   set -e
 
-  if [ $exit_code -eq 0 ] && [ -f "$OUTPUT_DIR/index.html" ]; then
+  if [ $exit_code -eq 0 ] && [ -f "$release_dir/index.html" ]; then
+    buildinfo="${release_dir}/.buildinfo.json"
+    now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '{\"generated_at\":\"%s\",\"release\":\"%s\"}\n' "$now" "$ts" >"$buildinfo"
+    rel_release="releases/${ts}"
+    ln -sfn "$rel_release" "$CURRENT_LINK"
+    if [ -d "$RELEASES_DIR" ]; then
+      count=0
+      for dir in $(ls -1dt "$RELEASES_DIR"/* 2>/dev/null); do
+        count=$((count + 1))
+        if [ $count -gt "$KEEP_RELEASES" ]; then
+          rm -rf "$dir" || true
+        fi
+      done
+    fi
     rm -rf "$resource_dir"
     rm -f "$build_config"
     if [ -n "$temp_config_dir" ]; then
@@ -160,6 +230,7 @@ while [ $attempt -le $max_attempts ]; do
   fi
 
   echo "Hugo build failed (attempt ${attempt}). Log: ${log_file}"
+  rm -rf "$release_dir"
   rm -rf "$resource_dir"
   rm -f "$build_config"
   if [ -n "$temp_config_dir" ]; then
@@ -178,9 +249,9 @@ if [ $success -ne 1 ]; then
 fi
 
 echo "Hugo output:"
-ls -la "$OUTPUT_DIR" || true
+ls -la "$CURRENT_LINK" || true
 
-if [ ! -f "$OUTPUT_DIR/index.html" ]; then
-  echo "error: ${OUTPUT_DIR}/index.html not found"
+if [ ! -f "$CURRENT_LINK/index.html" ]; then
+  echo "error: ${CURRENT_LINK}/index.html not found"
   exit 1
 fi

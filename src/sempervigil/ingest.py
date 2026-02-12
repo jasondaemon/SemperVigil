@@ -14,11 +14,17 @@ import feedparser
 from bs4 import BeautifulSoup
 
 from .config import Config
+from .http_fetch import fetch_bytes
 from .models import Article, Decision, Source, SourceTactic
 from .policy import resolve_policy
-from .source_overrides import compile_pattern, normalize_source_overrides, should_allow_url
+from .source_overrides import (
+    compile_pattern,
+    get_http_fetch_settings,
+    normalize_source_overrides,
+    should_allow_url,
+)
 from .tagger import derive_tags
-from .storage import article_exists, list_tactics
+from .storage import article_exists, list_tactics, list_tactics_for_source, upsert_tactic
 from .utils import extract_published_at, log_event, normalize_url, stable_id_from_url, utc_now_iso
 
 
@@ -198,28 +204,58 @@ def process_source(
     ignore_dedupe: bool = False,
 ) -> SourceResult:
     tactics = list_tactics(conn, source.id)
-    overrides = normalize_source_overrides(source.overrides)
+    overrides = normalize_source_overrides(
+        source.overrides, logger=logger, source_id=source.id, source_name=source.name
+    )
     discovery_cfg = overrides.get("discovery", {})
     allow_re = compile_pattern(discovery_cfg.get("allowlist_regex"), logger, "discovery.allowlist_regex")
     block_re = compile_pattern(discovery_cfg.get("blocklist_regex"), logger, "discovery.blocklist_regex")
-    if discovery_cfg.get("mode") == "rss_only":
-        tactics = [tactic for tactic in tactics if tactic.tactic_type != "html_index"]
     if not tactics:
-        return SourceResult(
-            source_id=source.id,
-            status="error",
-            http_status=None,
-            found_count=0,
-            accepted_count=0,
-            skipped_duplicates=0,
-            skipped_filters=0,
-            skipped_missing_url=0,
-            already_seen_count=0,
-            error="No enabled tactics for source",
-            articles=[],
-            decisions=[],
-            raw_entry=None,
-            notes=[{"tactic_type": "none", "status": "error", "error": "no tactics"}],
+        existing_tactics = list_tactics_for_source(conn, source.id)
+        if not existing_tactics:
+            source_kind = source.kind or "rss"
+            base_url = source.url or source.base_url
+            if base_url:
+                tactic_type = "rss" if source_kind == "rss" else "html_index"
+                config = {"feed_url": base_url}
+                tactic = SourceTactic(
+                    id=None,
+                    source_id=source.id,
+                    tactic_type=tactic_type,
+                    enabled=True,
+                    priority=0,
+                    config=config,
+                    last_success_at=None,
+                    last_error_at=None,
+                    error_streak=0,
+                )
+                upsert_tactic(conn, tactic)
+                tactics = [tactic]
+        if not tactics:
+            return SourceResult(
+                source_id=source.id,
+                status="error",
+                http_status=None,
+                found_count=0,
+                accepted_count=0,
+                skipped_duplicates=0,
+                skipped_filters=0,
+                skipped_missing_url=0,
+                already_seen_count=0,
+                error="No enabled tactics for source",
+                articles=[],
+                decisions=[],
+                raw_entry=None,
+                notes=[{"tactic_type": "none", "status": "error", "error": "no tactics"}],
+            )
+
+    source_kind = getattr(source, "kind", None)
+    if source_kind is None and isinstance(source.overrides, dict):
+        source_kind = source.overrides.get("kind")
+    if source_kind == "rss":
+        tactics = sorted(
+            tactics,
+            key=lambda tactic: 0 if tactic.tactic_type == "rss" else 1,
         )
 
     notes: list[dict[str, Any]] = []
@@ -231,6 +267,7 @@ def process_source(
             config,
             logger,
             conn,
+            overrides,
             discovery_cfg=discovery_cfg,
             allow_re=allow_re,
             block_re=block_re,
@@ -240,7 +277,9 @@ def process_source(
         notes.append(note)
         if result.status == "ok":
             final_result = result
-            break
+            if result.accepted_count > 0:
+                break
+            continue
         final_result = result
 
     if final_result is None:
@@ -256,12 +295,15 @@ def _run_tactic(
     config: Config,
     logger: logging.Logger,
     conn,
+    overrides: dict[str, Any] | None,
     discovery_cfg: dict[str, Any],
     allow_re: re.Pattern | None,
     block_re: re.Pattern | None,
     test_mode: bool,
     ignore_dedupe: bool,
 ) -> tuple[SourceResult, dict[str, Any]]:
+    if overrides is None:
+        overrides = {}
     policy = resolve_policy(tactic.config or {}, logger)
     prefer_entry_summary = bool(policy.get("parse", {}).get("prefer_entry_summary", True))
     dedupe_strategy = policy.get("dedupe", {}).get("strategy")
@@ -300,8 +342,12 @@ def _run_tactic(
         headers = {}
 
     http_cfg = config.ingest.http
+    fetcher, fetch_timeout_seconds, fetch_headers = get_http_fetch_settings(
+        overrides, http_cfg.timeout_seconds
+    )
     request_headers = {"User-Agent": http_cfg.user_agent}
     request_headers.update({str(k): str(v) for k, v in headers.items()})
+    request_headers.update(fetch_headers)
 
     if tactic.tactic_type == "html_index":
         http_status, content, error = _fetch_url(
@@ -485,13 +531,38 @@ def _run_tactic(
             {"tactic_type": tactic.tactic_type, "status": "not_implemented"},
         )
 
-    http_status, content, error = _fetch_url(
-        feed_url,
-        headers=request_headers,
-        timeout=http_cfg.timeout_seconds,
-        max_retries=http_cfg.max_retries,
-        backoff_seconds=http_cfg.backoff_seconds,
-    )
+    if tactic.tactic_type == "rss":
+        try:
+            http_status, _final_url, _headers_dict, content, fetcher_used = fetch_bytes(
+                feed_url,
+                headers=request_headers,
+                timeout_seconds=fetch_timeout_seconds,
+                fetcher=fetcher,
+            )
+        except Exception as exc:  # noqa: BLE001
+            http_status = None
+            content = b""
+            error = str(exc)
+            fetcher_used = fetcher
+        else:
+            error = None
+        if fetcher_used:
+            log_event(
+                logger,
+                logging.DEBUG,
+                "rss_fetcher_used",
+                source_id=source.id,
+                tactic_type=tactic.tactic_type,
+                fetcher_used=fetcher_used,
+            )
+    else:
+        http_status, content, error = _fetch_url(
+            feed_url,
+            headers=request_headers,
+            timeout=http_cfg.timeout_seconds,
+            max_retries=http_cfg.max_retries,
+            backoff_seconds=http_cfg.backoff_seconds,
+        )
 
     if error or not content:
         return (

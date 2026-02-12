@@ -5,6 +5,7 @@ UMASK_VALUE="${SV_UMASK:-002}"
 umask "${UMASK_VALUE}" || umask 002
 
 DATA_DIR="${SV_DATA_DIR:-/data}"
+LOGS_DIR="${SV_LOG_DIR:-/log}"
 SITE_SRC_DIR="${SV_HUGO_SOURCE_DIR:-/site-src}"
 SITE_PUBLIC_DIR="${SV_HUGO_OUTPUT_DIR:-/site}"
 HUGO_CACHE_DIR="${SV_HUGO_CACHE_DIR:-${DATA_DIR}/hugo_cache}"
@@ -14,7 +15,7 @@ SV_GID="${SV_GID:-1000}"
 SV_FIX_SITE_PERMS="${SV_FIX_SITE_PERMS:-1}"
 
 mkdir -p \
-  "${DATA_DIR}/logs" \
+  "${LOGS_DIR}" \
   "${HUGO_CACHE_DIR}" \
   "${HUGO_MODULES_DIR}"
 
@@ -43,6 +44,8 @@ ensure_if_mounted_or_writable "${SITE_SRC_DIR}/data"
 ensure_if_mounted_or_writable "${SITE_SRC_DIR}/data/articles"
 ensure_if_mounted_or_writable "${SITE_SRC_DIR}/data/daily"
 ensure_if_mounted_or_writable "${SITE_PUBLIC_DIR}"
+ensure_if_mounted_or_writable "${SITE_PUBLIC_DIR}/releases"
+ensure_if_mounted_or_writable "${SITE_PUBLIC_DIR}/standby"
 
 fix_perms_tree() {
   target="$1"
@@ -60,6 +63,7 @@ fix_perms_tree() {
 }
 
 fix_perms_tree "${DATA_DIR}"
+fix_perms_tree "${LOGS_DIR}"
 if [ "${SV_FIX_SITE_PERMS}" != "0" ]; then
   fix_perms_tree "${SITE_SRC_DIR}"
   fix_perms_tree "${SITE_PUBLIC_DIR}"
