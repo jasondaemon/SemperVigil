@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 import logging
 import os
@@ -551,6 +552,7 @@ def list_recent_articles(conn: Any, limit: int = 200) -> list[dict[str, object]]
         FROM articles a
         LEFT JOIN sources s ON s.id = a.source_id
         {tag_join}
+        WHERE COALESCE(BTRIM(a.published_at), '') <> ''
         GROUP BY a.id, s.name
         ORDER BY COALESCE(a.published_at, a.ingested_at) DESC
         LIMIT %s
@@ -790,6 +792,58 @@ def set_setting(conn: Any, key: str, value: object) -> None:
         (key, payload, now),
     )
     conn.commit()
+
+
+def increment_setting_counter(conn: Any, key: str, delta: int = 1) -> int:
+    now = utc_now_iso()
+    row = conn.execute(
+        """
+        INSERT INTO settings (key, value, updated_at)
+        VALUES (%s, %s, %s)
+        ON CONFLICT(key) DO UPDATE SET
+            value = (
+                CASE
+                    WHEN settings.value ~ '^-?[0-9]+$' THEN settings.value::bigint
+                    ELSE 0
+                END + EXCLUDED.value::bigint
+            )::text,
+            updated_at = EXCLUDED.updated_at
+        RETURNING value
+        """,
+        (key, str(int(delta)), now),
+    ).fetchone()
+    conn.commit()
+    try:
+        return int(row[0]) if row and row[0] is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def list_settings_with_prefix(
+    conn: Any, prefix: str, limit: int = 1000
+) -> dict[str, object]:
+    cursor = conn.execute(
+        """
+        SELECT key, value
+        FROM settings
+        WHERE key LIKE %s
+        ORDER BY key ASC
+        LIMIT %s
+        """,
+        (f"{prefix}%", int(limit)),
+    )
+    out: dict[str, object] = {}
+    for key, value in cursor.fetchall():
+        if key is None:
+            continue
+        if isinstance(value, str):
+            try:
+                out[str(key)] = json.loads(value)
+                continue
+            except json.JSONDecodeError:
+                pass
+        out[str(key)] = value
+    return out
 
 
 def upsert_cve(
@@ -1399,6 +1453,17 @@ def get_dashboard_metrics(conn: Any) -> dict[str, object]:
         )
         for job_type, status, count in cursor.fetchall():
             job_counts.setdefault(job_type, {})[status] = int(count or 0)
+        inflight = conn.execute(
+            """
+            SELECT job_type, COUNT(*)
+            FROM jobs
+            WHERE started_at IS NOT NULL AND finished_at IS NULL
+            GROUP BY job_type
+            """
+        ).fetchall()
+        for job_type, count in inflight:
+            current = job_counts.setdefault(job_type, {}).get("running", 0)
+            job_counts[job_type]["running"] = max(int(count or 0), int(current or 0))
     metrics["job_counts_by_type_status"] = job_counts
     failures_since = get_setting(conn, "dashboard_failures_since", None)
     counts_since = get_setting(conn, "dashboard_job_counts_since", None) or failures_since
@@ -1465,7 +1530,11 @@ def get_dashboard_metrics(conn: Any) -> dict[str, object]:
             error_exclude_clause = (
                 f"(content_error IS NULL OR NOT ({error_404_clause} OR {error_stale_clause}))"
             )
-        if "has_full_content" in article_columns:
+        if "has_full_content" in article_columns and "content_text" in article_columns:
+            content_clause = "(has_full_content = 0 AND (content_text IS NULL OR content_text = ''))"
+        elif "has_full_content" in article_columns and "extracted_text_path" in article_columns:
+            content_clause = "(has_full_content = 0 AND (extracted_text_path IS NULL OR extracted_text_path = ''))"
+        elif "has_full_content" in article_columns:
             content_clause = "has_full_content = 0"
         elif "content_text" in article_columns:
             content_clause = "(content_text IS NULL OR content_text = '')"
@@ -1604,6 +1673,11 @@ def get_dashboard_metrics(conn: Any) -> dict[str, object]:
         cve_missing_products = int(row[0] or 0)
     metrics["cves_missing_products_count"] = cve_missing_products
     metrics["cves_missing_threat_actors_count"] = count_cves_missing_threat_actors(conn)
+    # Keep dashboard "missing" metrics aligned with actionable queue logic.
+    metrics["articles_missing_products_count"] = count_articles_missing_products(conn)
+    metrics["articles_missing_threat_actors_count"] = count_articles_missing_threat_actors(conn)
+    metrics["cves_missing_products_count"] = len(list_cve_ids_missing_products(conn, limit=None))
+    metrics["cves_missing_threat_actors_count"] = count_cves_missing_threat_actors(conn)
     daily_missing_days = 0
     if _table_exists(conn, "articles"):
         cols = _table_columns(conn, "articles")
@@ -1639,6 +1713,19 @@ def get_dashboard_metrics(conn: Any) -> dict[str, object]:
                 brief_days = {str(row[0]) for row in cursor.fetchall() if row and row[0]}
             daily_missing_days = len(article_days - brief_days)
     metrics["daily_brief_missing_days_count"] = daily_missing_days
+    metrics["events_candidate_count"] = 0
+    if _table_exists(conn, "events"):
+        event_cols = _table_columns(conn, "events")
+        lifecycle_col = "lifecycle" in event_cols
+        candidate_col = "candidate" in event_cols
+        if lifecycle_col:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM events WHERE COALESCE(lifecycle, status, '') = 'candidate'"
+            ).fetchone()
+            metrics["events_candidate_count"] = int(row[0] or 0)
+        elif candidate_col:
+            row = conn.execute("SELECT COUNT(*) FROM events WHERE candidate = 1").fetchone()
+            metrics["events_candidate_count"] = int(row[0] or 0)
     return metrics
 
 
@@ -2004,16 +2091,24 @@ def count_failed_article_jobs(
 ) -> int:
     if not _table_exists(conn, "jobs"):
         return 0
-    pattern = f'%\"article_id\":{article_id}%'
-    cursor = conn.execute(
-        """
-        SELECT COUNT(*) FROM jobs
-        WHERE job_type = %s AND status = 'failed' AND payload_json LIKE %s
-        """,
-        (job_type, pattern),
-    )
-    row = cursor.fetchone()
-    return int(row[0] or 0)
+    patterns = [
+        f'%\"article_id\":{article_id}%',
+        f'%\"article_id\": {article_id}%',
+        f'%\"article_id\":\"{article_id}\"%',
+        f'%\"article_id\": \"{article_id}\"%',
+    ]
+    for pattern in patterns:
+        cursor = conn.execute(
+            """
+            SELECT COUNT(*) FROM jobs
+            WHERE job_type = %s AND status = 'failed' AND payload_json LIKE %s
+            """,
+            (job_type, pattern),
+        )
+        row = cursor.fetchone()
+        if row and row[0]:
+            return int(row[0] or 0)
+    return 0
 
 
 def get_pending_article_job_id(
@@ -2023,7 +2118,9 @@ def get_pending_article_job_id(
         return None
     patterns = [
         f'%\"article_id\":{article_id}%',
+        f'%\"article_id\": {article_id}%',
         f'%\"article_id\":\"{article_id}\"%',
+        f'%\"article_id\": \"{article_id}\"%',
     ]
     for pattern in patterns:
         row = conn.execute(
@@ -2045,7 +2142,9 @@ def get_pending_cve_job_id(conn: Any, cve_id: str) -> str | None:
         return None
     patterns = [
         f'%\"cve_id\":\"{cve_id}\"%',
+        f'%\"cve_id\": \"{cve_id}\"%',
         f'%\"cve_id\":{json.dumps(cve_id)}%',
+        f'%\"cve_id\": {json.dumps(cve_id)}%',
     ]
     for pattern in patterns:
         row = conn.execute(
@@ -2071,7 +2170,9 @@ def get_pending_job_id_for_cve(conn: Any, job_type: str, cve_id: str) -> str | N
         return None
     patterns = [
         f'%"cve_id":"{cve_id}"%',
+        f'%"cve_id": "{cve_id}"%',
         f'%"cve_id":{json.dumps(cve_id)}%',
+        f'%"cve_id": {json.dumps(cve_id)}%',
     ]
     for pattern in patterns:
         row = conn.execute(
@@ -2086,6 +2187,270 @@ def get_pending_job_id_for_cve(conn: Any, job_type: str, cve_id: str) -> str | N
         if row:
             return row[0]
     return None
+
+
+def upsert_cve_kev_entries(
+    conn: Any, entries: list[dict[str, object]], *, sync_at: str
+) -> int:
+    if not entries or not _table_exists(conn, "cve_kev"):
+        return 0
+    count = 0
+    for entry in entries:
+        cve_id = str(entry.get("cve_id") or "").strip()
+        if not cve_id:
+            continue
+        cursor = conn.execute(
+            """
+            INSERT INTO cve_kev (
+                cve_id, added_at, due_date, vendor_project, product, vulnerability_name,
+                short_description, required_action, ransomware_use, notes, raw_json, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (cve_id) DO UPDATE SET
+                added_at = EXCLUDED.added_at,
+                due_date = EXCLUDED.due_date,
+                vendor_project = EXCLUDED.vendor_project,
+                product = EXCLUDED.product,
+                vulnerability_name = EXCLUDED.vulnerability_name,
+                short_description = EXCLUDED.short_description,
+                required_action = EXCLUDED.required_action,
+                ransomware_use = EXCLUDED.ransomware_use,
+                notes = EXCLUDED.notes,
+                raw_json = EXCLUDED.raw_json,
+                updated_at = EXCLUDED.updated_at
+            WHERE cve_kev.added_at IS DISTINCT FROM EXCLUDED.added_at
+               OR cve_kev.due_date IS DISTINCT FROM EXCLUDED.due_date
+               OR cve_kev.vendor_project IS DISTINCT FROM EXCLUDED.vendor_project
+               OR cve_kev.product IS DISTINCT FROM EXCLUDED.product
+               OR cve_kev.vulnerability_name IS DISTINCT FROM EXCLUDED.vulnerability_name
+               OR cve_kev.short_description IS DISTINCT FROM EXCLUDED.short_description
+               OR cve_kev.required_action IS DISTINCT FROM EXCLUDED.required_action
+               OR cve_kev.ransomware_use IS DISTINCT FROM EXCLUDED.ransomware_use
+               OR cve_kev.notes IS DISTINCT FROM EXCLUDED.notes
+               OR cve_kev.raw_json IS DISTINCT FROM EXCLUDED.raw_json
+            """,
+            (
+                cve_id,
+                entry.get("added_at"),
+                entry.get("due_date"),
+                entry.get("vendor_project"),
+                entry.get("product"),
+                entry.get("vulnerability_name"),
+                entry.get("short_description"),
+                entry.get("required_action"),
+                entry.get("ransomware_use"),
+                entry.get("notes"),
+                entry.get("raw_json"),
+                sync_at,
+            ),
+        )
+        count += int(cursor.rowcount or 0)
+    conn.commit()
+    return count
+
+
+def prune_cve_kev_entries(conn: Any, *, sync_at: str) -> int:
+    if not _table_exists(conn, "cve_kev"):
+        return 0
+    cursor = conn.execute(
+        "DELETE FROM cve_kev WHERE updated_at < %s",
+        (sync_at,),
+    )
+    conn.commit()
+    return int(cursor.rowcount or 0)
+
+
+def get_cve_kev(conn: Any, cve_id: str) -> dict[str, object] | None:
+    if not _table_exists(conn, "cve_kev"):
+        return None
+    row = conn.execute(
+        """
+        SELECT cve_id, added_at, due_date, vendor_project, product, vulnerability_name,
+               short_description, required_action, ransomware_use, notes, raw_json, updated_at
+        FROM cve_kev
+        WHERE cve_id = %s
+        """,
+        (cve_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "cve_id": row[0],
+        "added_at": row[1],
+        "due_date": row[2],
+        "vendor_project": row[3],
+        "product": row[4],
+        "vulnerability_name": row[5],
+        "short_description": row[6],
+        "required_action": row[7],
+        "ransomware_use": row[8],
+        "notes": row[9],
+        "raw_json": row[10],
+        "updated_at": row[11],
+    }
+
+
+def get_cve_kev_map(conn: Any, cve_ids: list[str]) -> dict[str, dict[str, object]]:
+    if not cve_ids or not _table_exists(conn, "cve_kev"):
+        return {}
+    cursor = conn.execute(
+        """
+        SELECT cve_id, added_at, due_date, vendor_project, product, vulnerability_name,
+               short_description, required_action, ransomware_use, notes, raw_json, updated_at
+        FROM cve_kev
+        WHERE cve_id = ANY(%s)
+        """,
+        (cve_ids,),
+    )
+    mapping: dict[str, dict[str, object]] = {}
+    for row in cursor.fetchall():
+        mapping[row[0]] = {
+            "cve_id": row[0],
+            "added_at": row[1],
+            "due_date": row[2],
+            "vendor_project": row[3],
+            "product": row[4],
+            "vulnerability_name": row[5],
+            "short_description": row[6],
+            "required_action": row[7],
+            "ransomware_use": row[8],
+            "notes": row[9],
+            "raw_json": row[10],
+            "updated_at": row[11],
+        }
+    return mapping
+
+
+def set_cve_kev_link(
+    conn: Any, cve_id: str, kev_cve_id: str | None, checked_at: str, *, commit: bool = True
+) -> None:
+    if not _table_exists(conn, "cves"):
+        return
+    columns = _table_columns(conn, "cves")
+    if "kev_checked_at" not in columns:
+        return
+    conn.execute(
+        """
+        UPDATE cves
+        SET kev_cve_id = %s,
+            kev_checked_at = %s
+        WHERE cve_id = %s
+        """,
+        (kev_cve_id, checked_at, cve_id),
+    )
+    if commit:
+        conn.commit()
+
+
+def mark_article_products_checked(
+    conn: Any, article_id: int, checked_at: str | None = None, *, commit: bool = True
+) -> None:
+    if not _table_exists(conn, "articles"):
+        return
+    columns = _table_columns(conn, "articles")
+    if "article_products_checked_at" not in columns:
+        return
+    conn.execute(
+        """
+        UPDATE articles
+        SET article_products_checked_at = %s
+        WHERE id = %s
+        """,
+        (checked_at or utc_now_iso(), int(article_id)),
+    )
+    if commit:
+        conn.commit()
+
+
+def mark_article_threat_actors_checked(
+    conn: Any, article_id: int, checked_at: str | None = None, *, commit: bool = True
+) -> None:
+    if not _table_exists(conn, "articles"):
+        return
+    columns = _table_columns(conn, "articles")
+    if "article_threat_actors_checked_at" not in columns:
+        return
+    conn.execute(
+        """
+        UPDATE articles
+        SET article_threat_actors_checked_at = %s
+        WHERE id = %s
+        """,
+        (checked_at or utc_now_iso(), int(article_id)),
+    )
+    if commit:
+        conn.commit()
+
+
+def mark_cve_products_checked(
+    conn: Any, cve_id: str, checked_at: str | None = None, *, commit: bool = True
+) -> None:
+    if not _table_exists(conn, "cves"):
+        return
+    columns = _table_columns(conn, "cves")
+    if "cve_products_checked_at" not in columns:
+        return
+    conn.execute(
+        """
+        UPDATE cves
+        SET cve_products_checked_at = %s
+        WHERE cve_id = %s
+        """,
+        (checked_at or utc_now_iso(), cve_id),
+    )
+    if commit:
+        conn.commit()
+
+
+def mark_cve_threat_actors_checked(
+    conn: Any, cve_id: str, checked_at: str | None = None, *, commit: bool = True
+) -> None:
+    if not _table_exists(conn, "cves"):
+        return
+    columns = _table_columns(conn, "cves")
+    if "cve_threat_actors_checked_at" not in columns:
+        return
+    conn.execute(
+        """
+        UPDATE cves
+        SET cve_threat_actors_checked_at = %s
+        WHERE cve_id = %s
+        """,
+        (checked_at or utc_now_iso(), cve_id),
+    )
+    if commit:
+        conn.commit()
+
+
+def list_cve_ids_needing_kev_check(
+    conn: Any, *, limit: int | None = None, since: str | None = None
+) -> list[str]:
+    if not _table_exists(conn, "cves"):
+        return []
+    columns = _table_columns(conn, "cves")
+    if "kev_checked_at" not in columns:
+        return []
+    where: list[str] = []
+    params: list[object] = []
+    # "Need" is defined as never-checked CVEs (plus optional recency filter).
+    # Re-checks are scheduled explicitly by job payload when needed.
+    where.append("c.kev_checked_at IS NULL")
+    if since:
+        where.append("COALESCE(c.last_modified_at, c.published_at) >= %s")
+        params.append(since)
+    where_sql = " AND ".join(where)
+    if where_sql:
+        where_sql = "WHERE " + where_sql
+    sql = f"""
+        SELECT c.cve_id
+        FROM cves c
+        {where_sql}
+        ORDER BY COALESCE(c.last_modified_at, c.published_at) DESC
+    """
+    if limit:
+        sql += " LIMIT %s"
+        params.append(limit)
+    cursor = conn.execute(sql, tuple(params))
+    return [row[0] for row in cursor.fetchall() if row and row[0]]
 
 
 
@@ -2439,19 +2804,28 @@ def claim_next_job(
         return None
     for _ in range(20):
         with conn.transaction():
+            stale_params: list[object] = []
+            stale_type_clause = ""
+            if allowed_types is not None:
+                stale_placeholders = ",".join(["%s"] * len(allowed_types))
+                stale_type_clause = f" AND job_type IN ({stale_placeholders})"
+                stale_params.extend(allowed_types)
             if lock_timeout_seconds is not None:
                 cutoff = utc_now_iso_offset(seconds=-lock_timeout_seconds)
                 conn.execute(
-                    """
+                    f"""
                     UPDATE jobs
                     SET status = 'queued',
                         locked_by = NULL,
                         locked_at = NULL,
                         started_at = NULL,
                         error = 'stale_lock_requeued'
-                    WHERE status = 'running' AND locked_at IS NOT NULL AND locked_at < %s
+                    WHERE status = 'running'
+                      AND locked_at IS NOT NULL
+                      AND locked_at < %s
+                      {stale_type_clause}
                     """,
-                    (cutoff,),
+                    tuple([cutoff] + stale_params),
                 )
             params: list[object] = []
             type_clause = ""
@@ -2843,7 +3217,7 @@ def get_article_by_id(conn: Any, article_id: int) -> dict[str, object] | None:
         "raw_html_path",
         "meta_json",
         "created_at",
-        "updated_at",
+        "c.updated_at",
     ]
     selected = [name for name in wanted if name in columns]
     if "id" not in selected:
@@ -2921,12 +3295,26 @@ def list_article_ids_missing_content(conn: Any, source_id: str) -> list[int]:
         url_parts.append("(normalized_url IS NOT NULL AND normalized_url != '')")
     if url_parts:
         clauses.append("(" + " OR ".join(url_parts) + ")")
-    if "has_full_content" in columns:
+    if "has_full_content" in columns and "content_text" in columns:
+        clauses.append("(has_full_content = 0 AND (content_text IS NULL OR content_text = ''))")
+    elif "has_full_content" in columns and "extracted_text_path" in columns:
+        clauses.append("(has_full_content = 0 AND (extracted_text_path IS NULL OR extracted_text_path = ''))")
+    elif "has_full_content" in columns:
         clauses.append("has_full_content = 0")
     elif "content_text" in columns:
         clauses.append("(content_text IS NULL OR content_text = '')")
     elif "extracted_text_path" in columns:
         clauses.append("(extracted_text_path IS NULL OR extracted_text_path = '')")
+    if "content_error" in columns:
+        error_terminal_clause = (
+            "content_error IN ('http_404','http_410','stale_older_than_week','max_retries_exceeded') "
+            "OR content_error LIKE '%%HTTP Error 404%%' "
+            "OR content_error LIKE '%%HTTP Error 410%%' "
+            "OR content_error LIKE 'fetch_failed:HTTP Error 30%%' "
+            "OR content_error LIKE 'fetch_failed:HTTP Error 401%%' "
+            "OR content_error LIKE 'fetch_failed:HTTP Error 403%%'"
+        )
+        clauses.append(f"(content_error IS NULL OR NOT ({error_terminal_clause}))")
     where_sql = " AND ".join(clauses)
     cursor = conn.execute(
         f"SELECT id FROM articles WHERE {where_sql} ORDER BY ingested_at DESC",
@@ -2948,20 +3336,26 @@ def list_article_ids_missing_content_all(conn: Any, limit: int | None = None) ->
         url_parts.append("(normalized_url IS NOT NULL AND normalized_url != '')")
     if url_parts:
         clauses.append("(" + " OR ".join(url_parts) + ")")
-    if "has_full_content" in columns:
+    if "has_full_content" in columns and "content_text" in columns:
+        clauses.append("(has_full_content = 0 AND (content_text IS NULL OR content_text = ''))")
+    elif "has_full_content" in columns and "extracted_text_path" in columns:
+        clauses.append("(has_full_content = 0 AND (extracted_text_path IS NULL OR extracted_text_path = ''))")
+    elif "has_full_content" in columns:
         clauses.append("has_full_content = 0")
     elif "content_text" in columns:
         clauses.append("(content_text IS NULL OR content_text = '')")
     elif "extracted_text_path" in columns:
         clauses.append("(extracted_text_path IS NULL OR extracted_text_path = '')")
     if "content_error" in columns:
-        error_404_clause = (
-            "content_error IN ('http_404','http_410') "
+        error_terminal_clause = (
+            "content_error IN ('http_404','http_410','stale_older_than_week','max_retries_exceeded') "
             "OR content_error LIKE '%%HTTP Error 404%%' "
             "OR content_error LIKE '%%HTTP Error 410%%'"
+            "OR content_error LIKE 'fetch_failed:HTTP Error 30%%' "
+            "OR content_error LIKE 'fetch_failed:HTTP Error 401%%' "
+            "OR content_error LIKE 'fetch_failed:HTTP Error 403%%'"
         )
-        error_stale_clause = "content_error = 'stale_older_than_week'"
-        clauses.append(f"(content_error IS NULL OR NOT ({error_404_clause} OR {error_stale_clause}))")
+        clauses.append(f"(content_error IS NULL OR NOT ({error_terminal_clause}))")
     where_sql = " AND ".join(clauses) if clauses else "1=1"
     limit_sql = ""
     if limit is not None:
@@ -3064,7 +3458,7 @@ def list_article_ids_missing_summary(conn: Any, source_id: str) -> list[int]:
     return [int(row[0]) for row in cursor.fetchall()]
 
 
-def list_article_ids_missing_context_pack(conn: Any, limit: int = 200) -> list[int]:
+def list_article_ids_missing_context_pack(conn: Any, limit: int | None = 200) -> list[int]:
     if not _table_exists(conn, "articles"):
         return []
     columns = _table_columns(conn, "articles")
@@ -3091,14 +3485,18 @@ def list_article_ids_missing_context_pack(conn: Any, limit: int = 200) -> list[i
         error_stale_clause = "content_error = 'stale_older_than_week'"
         clauses.append(f"(content_error IS NULL OR NOT ({error_404_clause} OR {error_stale_clause}))")
     where_sql = " AND ".join(clauses)
+    limit_sql = ""
+    params: list[object] = []
+    if limit is not None:
+        limit_sql = " LIMIT %s"
+        params.append(int(limit))
     cursor = conn.execute(
         f"""
         SELECT id FROM articles
         WHERE {where_sql}
-        ORDER BY ingested_at DESC
-        LIMIT %s
+        ORDER BY ingested_at DESC{limit_sql}
         """,
-        (int(limit),),
+        params,
     )
     return [int(row[0]) for row in cursor.fetchall()]
 
@@ -3448,7 +3846,7 @@ def delete_vendor_product_tags(conn: Any) -> int:
         cursor = conn.execute(
             """
             DELETE FROM article_tags
-            WHERE tag LIKE 'vendor:%' OR tag LIKE 'product:%'
+            WHERE tag LIKE 'vendor:%%' OR tag LIKE 'product:%%'
             """,
         )
         removed += int(cursor.rowcount or 0)
@@ -3456,7 +3854,7 @@ def delete_vendor_product_tags(conn: Any) -> int:
         cursor = conn.execute(
             """
             DELETE FROM cve_tags
-            WHERE tag LIKE 'vendor:%' OR tag LIKE 'product:%'
+            WHERE tag LIKE 'vendor:%%' OR tag LIKE 'product:%%'
             """,
         )
         removed += int(cursor.rowcount or 0)
@@ -3742,6 +4140,8 @@ def get_product_cves(
 ) -> tuple[list[dict[str, object]], int]:
     if not _table_exists(conn, "cve_products") or not _table_exists(conn, "cves"):
         return [], 0
+    columns = _table_columns(conn, "cves")
+    has_kev = _table_exists(conn, "cve_kev") and "kev_cve_id" in columns
     where: list[str] = ["cp.product_id = %s"]
     params: list[object] = [product_id]
     if severity_min is not None:
@@ -3764,12 +4164,16 @@ def get_product_cves(
     )
     total = count_cursor.fetchone()[0]
     offset = max(page - 1, 0) * page_size
+    kev_cve_expr = "c.kev_cve_id" if "kev_cve_id" in columns else "NULL"
+    kev_due_expr = "k.due_date" if has_kev else "NULL"
     cursor = conn.execute(
         f"""
         SELECT c.cve_id, c.published_at, c.last_modified_at, preferred_base_score,
-               c.preferred_base_severity, c.description_text
+               c.preferred_base_severity, c.description_text,
+               {kev_cve_expr}, {kev_due_expr}
         FROM cve_products cp
         JOIN cves c ON c.cve_id = cp.cve_id
+        { "LEFT JOIN cve_kev k ON k.cve_id = c.kev_cve_id" if has_kev else "" }
         WHERE {where_sql}
         ORDER BY c.last_modified_at DESC
         LIMIT %s OFFSET %s
@@ -3784,6 +4188,9 @@ def get_product_cves(
             "preferred_base_score": row[3],
             "preferred_base_severity": row[4],
             "summary": (row[5] or "")[:240],
+            "kev_cve_id": row[6],
+            "kev_due_date": row[7],
+            "kev_known_exploited": bool(row[6]),
         }
         for row in cursor.fetchall()
     ]
@@ -3919,12 +4326,24 @@ def list_articles_for_product(
 def count_articles_missing_products(conn: Any) -> int:
     if not _table_exists(conn, "article_products") or not _table_exists(conn, "articles"):
         return 0
+    article_columns = _table_columns(conn, "articles")
+    checked_clause = (
+        "AND a.article_products_checked_at IS NULL"
+        if "article_products_checked_at" in article_columns
+        else ""
+    )
     cursor = conn.execute(
-        """
+        f"""
         SELECT COUNT(*)
-        FROM articles a
-        LEFT JOIN article_products ap ON ap.article_id = a.id
-        WHERE ap.article_id IS NULL
+        FROM (
+            SELECT a.id
+            FROM articles a
+            LEFT JOIN article_products ap ON ap.article_id = a.id
+            WHERE (a.content_text IS NOT NULL AND a.content_text != '')
+            {checked_clause}
+            GROUP BY a.id
+            HAVING COUNT(ap.article_id) = 0
+        ) t
         """
     )
     row = cursor.fetchone()
@@ -3933,12 +4352,24 @@ def count_articles_missing_products(conn: Any) -> int:
 def count_articles_missing_threat_actors(conn: Any) -> int:
     if not (_table_exists(conn, "articles") and _table_exists(conn, "article_threat_actors")):
         return 0
+    article_columns = _table_columns(conn, "articles")
+    checked_clause = (
+        "AND a.article_threat_actors_checked_at IS NULL"
+        if "article_threat_actors_checked_at" in article_columns
+        else ""
+    )
     cursor = conn.execute(
-        """
+        f"""
         SELECT COUNT(*)
-        FROM articles a
-        LEFT JOIN article_threat_actors ata ON ata.article_id = a.id
-        WHERE ata.article_id IS NULL
+        FROM (
+            SELECT a.id
+            FROM articles a
+            LEFT JOIN article_threat_actors ata ON ata.article_id = a.id
+            WHERE (a.content_text IS NOT NULL AND a.content_text != '')
+            {checked_clause}
+            GROUP BY a.id
+            HAVING COUNT(ata.article_id) = 0
+        ) t
         """
     )
     row = cursor.fetchone()
@@ -3947,32 +4378,60 @@ def count_articles_missing_threat_actors(conn: Any) -> int:
 def count_cves_missing_threat_actors(conn: Any) -> int:
     if not (_table_exists(conn, "cves") and _table_exists(conn, "cve_threat_actors")):
         return 0
+    cve_columns = _table_columns(conn, "cves")
+    checked_clause = (
+        "AND c.cve_threat_actors_checked_at IS NULL"
+        if "cve_threat_actors_checked_at" in cve_columns
+        else ""
+    )
     cursor = conn.execute(
-        """
+        f"""
         SELECT COUNT(*)
-        FROM cves c
-        LEFT JOIN cve_threat_actors cta ON cta.cve_id = c.cve_id
-        WHERE cta.cve_id IS NULL
+        FROM (
+            SELECT c.cve_id
+            FROM cves c
+            LEFT JOIN cve_threat_actors cta ON cta.cve_id = c.cve_id
+            WHERE (
+                (c.description_text IS NOT NULL AND c.description_text != '')
+                OR (
+                    c.reference_domains_json IS NOT NULL
+                    AND btrim(c.reference_domains_json) NOT IN ('', '[]', 'null')
+                )
+            )
+            {checked_clause}
+            GROUP BY c.cve_id
+            HAVING COUNT(cta.cve_id) = 0
+        ) t
         """
     )
     row = cursor.fetchone()
     return int(row[0] or 0)
 
 
-def list_article_ids_missing_products(conn: Any, limit: int = 500) -> list[int]:
+def list_article_ids_missing_products(conn: Any, limit: int | None = 500) -> list[int]:
     if not _table_exists(conn, "article_products") or not _table_exists(conn, "articles"):
         return []
-    cursor = conn.execute(
-        """
+    article_columns = _table_columns(conn, "articles")
+    checked_clause = (
+        "AND a.article_products_checked_at IS NULL"
+        if "article_products_checked_at" in article_columns
+        else ""
+    )
+    sql = f"""
         SELECT a.id
         FROM articles a
         LEFT JOIN article_products ap ON ap.article_id = a.id
-        WHERE ap.article_id IS NULL
+        WHERE (a.content_text IS NOT NULL AND a.content_text != '')
+        {checked_clause}
+        GROUP BY a.id
+        HAVING COUNT(ap.article_id) = 0
         ORDER BY COALESCE(a.published_at, a.ingested_at) DESC
-        LIMIT %s
-        """,
-        (limit,),
-    )
+    """
+    params: list[object] = []
+    if limit is not None:
+        sql += " LIMIT %s"
+        params.append(limit)
+    cursor = conn.execute(sql, tuple(params))
     return [int(row[0]) for row in cursor.fetchall()]
 
 
@@ -4063,9 +4522,13 @@ def create_event(
     confidence_tier: str = "watch",
     reasons: list[str] | None = None,
     candidate: bool = False,
+    lifecycle: str | None = None,
     entity: str | None = None,
     incident_date: str | None = None,
     evidence: list[str] | None = None,
+    publish_state: str | None = None,
+    published_at: str | None = None,
+    site_slug: str | None = None,
 ) -> str:
     event_id = f"evt_{uuid.uuid4().hex[:12]}"
     now = utc_now_iso()
@@ -4117,6 +4580,9 @@ def create_event(
     if "candidate" in event_columns:
         cols.append("candidate")
         vals.append(bool(candidate))
+    if "lifecycle" in event_columns:
+        cols.append("lifecycle")
+        vals.append((lifecycle or "").strip() or "candidate")
     if "entity" in event_columns:
         cols.append("entity")
         vals.append(entity)
@@ -4126,6 +4592,15 @@ def create_event(
     if "evidence" in event_columns:
         cols.append("evidence")
         vals.append(json_dumps(evidence or []))
+    if "publish_state" in event_columns:
+        cols.append("publish_state")
+        vals.append((publish_state or "").strip() or "draft")
+    if "published_at" in event_columns:
+        cols.append("published_at")
+        vals.append(published_at)
+    if "site_slug" in event_columns:
+        cols.append("site_slug")
+        vals.append(site_slug)
     placeholders = ", ".join(["%s"] * len(cols))
     conn.execute(
         f"INSERT INTO events ({', '.join(cols)}) VALUES ({placeholders})",
@@ -4153,9 +4628,13 @@ def upsert_event_by_key(
     confidence_tier: str = "watch",
     reasons: list[str] | None = None,
     candidate: bool = False,
+    lifecycle: str | None = None,
     entity: str | None = None,
     incident_date: str | None = None,
     evidence: list[str] | None = None,
+    publish_state: str | None = None,
+    published_at: str | None = None,
+    site_slug: str | None = None,
 ) -> tuple[str, bool]:
     row = conn.execute(
         "SELECT id, visibility FROM events WHERE event_key = %s",
@@ -4208,12 +4687,32 @@ def upsert_event_by_key(
         )
         if candidate is not None and "candidate" in _table_columns(conn, "events"):
             conn.execute("UPDATE events SET candidate = COALESCE(%s, candidate) WHERE id = %s", (bool(candidate), event_id))
+        if lifecycle is not None and "lifecycle" in _table_columns(conn, "events"):
+            conn.execute(
+                "UPDATE events SET lifecycle = COALESCE(%s, lifecycle) WHERE id = %s",
+                ((lifecycle or "").strip() or None, event_id),
+            )
         if entity is not None and "entity" in _table_columns(conn, "events"):
             conn.execute("UPDATE events SET entity = COALESCE(%s, entity) WHERE id = %s", (entity, event_id))
         if incident_date is not None and "incident_date" in _table_columns(conn, "events"):
             conn.execute("UPDATE events SET incident_date = COALESCE(%s, incident_date) WHERE id = %s", (incident_date, event_id))
         if evidence is not None and "evidence" in _table_columns(conn, "events"):
             conn.execute("UPDATE events SET evidence = COALESCE(%s, evidence) WHERE id = %s", (json_dumps(evidence), event_id))
+        if publish_state is not None and "publish_state" in _table_columns(conn, "events"):
+            conn.execute(
+                "UPDATE events SET publish_state = COALESCE(%s, publish_state) WHERE id = %s",
+                ((publish_state or "").strip() or None, event_id),
+            )
+        if published_at is not None and "published_at" in _table_columns(conn, "events"):
+            conn.execute(
+                "UPDATE events SET published_at = COALESCE(%s, published_at) WHERE id = %s",
+                (published_at, event_id),
+            )
+        if site_slug is not None and "site_slug" in _table_columns(conn, "events"):
+            conn.execute(
+                "UPDATE events SET site_slug = COALESCE(%s, site_slug) WHERE id = %s",
+                (site_slug, event_id),
+            )
         conn.commit()
         return event_id, False
     event_id = create_event(
@@ -4234,9 +4733,13 @@ def upsert_event_by_key(
         confidence_tier=confidence_tier,
         reasons=reasons,
         candidate=candidate,
+        lifecycle=lifecycle,
         entity=entity,
         incident_date=incident_date,
         evidence=evidence,
+        publish_state=publish_state,
+        published_at=published_at,
+        site_slug=site_slug,
     )
     return event_id, True
 
@@ -4254,11 +4757,15 @@ def update_event(
     confidence: float | None = None,
     confidence_tier: str | None = None,
     candidate: bool | None = None,
+    lifecycle: str | None = None,
     entity: str | None = None,
     incident_date: str | None = None,
     reasons: list[str] | None = None,
     tags: list[str] | None = None,
     is_event: bool | None = None,
+    publish_state: str | None = None,
+    published_at: str | None = None,
+    site_slug: str | None = None,
 ) -> bool:
     event_columns = _table_columns(conn, "events")
     updates: list[str] = []
@@ -4295,6 +4802,9 @@ def update_event(
     if candidate is not None and "candidate" in event_columns:
         updates.append("candidate = %s")
         params.append(bool(candidate))
+    if lifecycle is not None and "lifecycle" in event_columns:
+        updates.append("lifecycle = %s")
+        params.append((lifecycle or "").strip() or "candidate")
     if entity is not None and "entity" in event_columns:
         updates.append("entity = %s")
         params.append(entity)
@@ -4304,6 +4814,15 @@ def update_event(
     if reasons is not None and "reasons" in event_columns:
         updates.append("reasons = %s")
         params.append(json_dumps(reasons))
+    if publish_state is not None and "publish_state" in event_columns:
+        updates.append("publish_state = %s")
+        params.append((publish_state or "").strip() or "draft")
+    if published_at is not None and "published_at" in event_columns:
+        updates.append("published_at = %s")
+        params.append(published_at)
+    if site_slug is not None and "site_slug" in event_columns:
+        updates.append("site_slug = %s")
+        params.append(site_slug)
 
     if tags is not None or is_event is not None:
         existing = conn.execute(
@@ -4408,6 +4927,96 @@ def link_event_article(conn: Any, event_id: str, article_id: int, added_by: str)
             (now, now, event_id),
         )
     conn.commit()
+    rebuild_event_timeline_from_articles(conn, event_id)
+
+
+def event_publish_readiness(conn: Any, event_id: str) -> dict[str, object]:
+    event = get_event(conn, event_id)
+    if not event:
+        return {"ready": False, "reasons": ["event_not_found"], "article_count": 0, "timeline_count": 0}
+    settings = get_setting(conn, "events.settings", {}) if _table_exists(conn, "settings") else {}
+    if not isinstance(settings, dict):
+        settings = {}
+    min_articles = int(settings.get("publish_min_articles", 2) or 2)
+    min_timeline = int(settings.get("publish_min_timeline_entries", 2) or 2)
+    min_bullets = int(settings.get("publish_min_narrative_bullets", 3) or 3)
+    min_sections = int(settings.get("publish_min_narrative_sections", 2) or 2)
+    min_promoted_sources = int(settings.get("publish_min_promoted_sources", 0) or 0)
+    articles = (event.get("items") or {}).get("articles") or []
+    timeline = event.get("timeline") or []
+    narrative = event.get("narrative") or {}
+    bullets = narrative.get("bullets") if isinstance(narrative, dict) else []
+    sections = narrative.get("sections") if isinstance(narrative, dict) else {}
+    reasons: list[str] = []
+    if len(articles) < min_articles:
+        reasons.append(f"need_at_least_{min_articles}_articles")
+    if len(timeline) < min_timeline:
+        reasons.append(f"need_at_least_{min_timeline}_timeline_entries")
+    if not isinstance(bullets, list) or len(bullets) < min_bullets:
+        reasons.append(f"need_at_least_{min_bullets}_narrative_bullets")
+    section_count = 0
+    if isinstance(sections, dict):
+        for value in sections.values():
+            if not isinstance(value, dict):
+                continue
+            points = value.get("points")
+            if isinstance(points, list) and points:
+                section_count += 1
+    if section_count < min_sections:
+        reasons.append(f"need_at_least_{min_sections}_narrative_sections")
+    promoted_sources = 0
+    if min_promoted_sources > 0 and _table_exists(conn, "event_web_sources"):
+        row = conn.execute(
+            "SELECT COUNT(*) FROM event_web_sources WHERE event_id = %s AND status = 'promoted'",
+            (event_id,),
+        ).fetchone()
+        promoted_sources = int(row[0] or 0) if row else 0
+        if promoted_sources < min_promoted_sources:
+            reasons.append(f"need_at_least_{min_promoted_sources}_promoted_web_sources")
+    if str(event.get("lifecycle") or "").lower() not in {"confirmed", "active", "open"}:
+        reasons.append("lifecycle_not_publishable")
+    return {
+        "ready": len(reasons) == 0,
+        "reasons": reasons,
+        "article_count": len(articles),
+        "timeline_count": len(timeline),
+        "narrative_bullet_count": len(bullets) if isinstance(bullets, list) else 0,
+        "narrative_section_count": section_count,
+        "promoted_source_count": promoted_sources,
+    }
+
+
+def set_event_publish_state(
+    conn: Any,
+    event_id: str,
+    state: str,
+    *,
+    site_slug: str | None = None,
+) -> bool:
+    event_columns = _table_columns(conn, "events")
+    if "publish_state" not in event_columns:
+        return False
+    now = utc_now_iso()
+    normalized = (state or "").strip().lower() or "draft"
+    updates = ["publish_state = %s", "updated_at = %s"]
+    params: list[object] = [normalized, now]
+    if "published_at" in event_columns:
+        if normalized == "published":
+            updates.append("published_at = COALESCE(published_at, %s)")
+            params.append(now)
+        else:
+            updates.append("published_at = NULL")
+    if "site_slug" in event_columns:
+        slug_value = (site_slug or "").strip() or None
+        updates.append("site_slug = COALESCE(%s, site_slug)")
+        params.append(slug_value)
+    params.append(event_id)
+    cursor = conn.execute(
+        f"UPDATE events SET {', '.join(updates)} WHERE id = %s",
+        tuple(params),
+    )
+    conn.commit()
+    return cursor.rowcount == 1
 
 
 def list_event_articles(conn: Any, event_id: str) -> list[dict[str, object]]:
@@ -4452,12 +5061,232 @@ def list_event_articles(conn: Any, event_id: str) -> list[dict[str, object]]:
     return rows
 
 
+def _event_summary_payload(raw: object) -> tuple[str, list[str]]:
+    text = str(raw or "").strip()
+    if not text:
+        return "", []
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return text, []
+    if not isinstance(parsed, dict):
+        return text, []
+    summary = str(parsed.get("summary") or "").strip()
+    bullets_raw = parsed.get("bullets") or parsed.get("key_points") or parsed.get("tldr") or []
+    bullets: list[str] = []
+    if isinstance(bullets_raw, list):
+        bullets = [str(item).strip() for item in bullets_raw if str(item).strip()]
+    return summary or text, bullets
+
+
+def _event_context_payload(raw: object) -> tuple[list[str], list[str]]:
+    text = str(raw or "").strip()
+    if not text:
+        return [], []
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return [], []
+    if not isinstance(parsed, dict):
+        return [], []
+    facts_raw = parsed.get("facts") or []
+    timeline_raw = parsed.get("timeline") or []
+    facts = [str(item).strip() for item in facts_raw if str(item).strip()] if isinstance(facts_raw, list) else []
+    timeline = [str(item).strip() for item in timeline_raw if str(item).strip()] if isinstance(timeline_raw, list) else []
+    return facts[:8], timeline[:8]
+
+
+def _first_sentence(text: str, max_len: int = 260) -> str:
+    clean = str(text or "").strip()
+    if not clean:
+        return ""
+    parts = re.split(r"(?<=[.!?])\s+", clean)
+    first = str(parts[0] if parts else clean).strip()
+    if len(first) > max_len:
+        return first[: max_len - 3].rstrip() + "..."
+    return first
+
+
+def _event_classify_point(line: str) -> str:
+    lower = line.lower()
+    if any(
+        token in lower
+        for token in (
+            "breach",
+            "compromis",
+            "intrusion",
+            "initial access",
+            "attack vector",
+            "unauthorized access",
+            "exfiltrat",
+            "malware",
+            "ransomware",
+        )
+    ):
+        return "breach_compromise"
+    if any(
+        token in lower
+        for token in (
+            "impact",
+            "affected",
+            "records",
+            "customers",
+            "users",
+            "downtime",
+            "disruption",
+            "loss",
+            "stolen",
+        )
+    ):
+        return "impact"
+    if any(
+        token in lower
+        for token in (
+            "contain",
+            "patch",
+            "mitigat",
+            "recover",
+            "restor",
+            "response",
+            "investigat",
+            "notified",
+            "rotated",
+            "disabled",
+        )
+    ):
+        return "response_recovery"
+    if any(
+        token in lower
+        for token in (
+            "lesson",
+            "recommend",
+            "future",
+            "improve",
+            "control",
+            "governance",
+            "postmortem",
+            "after action",
+            "root cause",
+        )
+    ):
+        return "lessons_learned"
+    return "impact"
+
+
+def _append_unique(items: list[str], value: str, *, limit: int) -> None:
+    clean = str(value or "").strip()
+    if not clean:
+        return
+    if len(clean) > 280:
+        clean = clean[:277].rstrip() + "..."
+    key = re.sub(r"\s+", " ", clean.lower())
+    for existing in items:
+        existing_key = re.sub(r"\s+", " ", str(existing).strip().lower())
+        if existing_key == key:
+            return
+    items.append(clean)
+    if len(items) > limit:
+        del items[limit:]
+
+
+def _build_event_narrative_from_articles(
+    article_rows: list[dict[str, object]],
+) -> dict[str, object]:
+    bullets: list[str] = []
+    sections: dict[str, list[str]] = {
+        "breach_compromise": [],
+        "impact": [],
+        "response_recovery": [],
+        "lessons_learned": [],
+    }
+    latest_summary = ""
+    for idx, row in enumerate(article_rows):
+        summary_text = str(row.get("summary_text") or "").strip()
+        summary_bullets = row.get("summary_bullets") or []
+        summary_facts = row.get("summary_facts") or []
+        if idx == 0 and summary_text:
+            latest_summary = _first_sentence(summary_text)
+        if idx == 0 and isinstance(summary_facts, list):
+            first_fact = next((str(item).strip() for item in summary_facts if str(item).strip()), "")
+            if first_fact:
+                latest_summary = first_fact
+        if isinstance(summary_bullets, list):
+            for bullet in summary_bullets:
+                point = str(bullet).strip()
+                if not point:
+                    continue
+                _append_unique(bullets, point, limit=12)
+                bucket = _event_classify_point(point)
+                _append_unique(sections[bucket], point, limit=8)
+        if isinstance(summary_facts, list):
+            for fact in summary_facts:
+                point = str(fact).strip()
+                if not point:
+                    continue
+                _append_unique(bullets, point, limit=12)
+                bucket = _event_classify_point(point)
+                _append_unique(sections[bucket], point, limit=8)
+        if summary_text:
+            # Split on sentence boundaries to get fallback points from prose summaries.
+            parts = re.split(r"(?<=[.!?])\s+", summary_text)
+            for part in parts[:4]:
+                point = str(part).strip().strip('"')
+                if not point:
+                    continue
+                if len(point) > 280:
+                    point = point[:277].rstrip() + "..."
+                _append_unique(bullets, point, limit=12)
+                bucket = _event_classify_point(point)
+                _append_unique(sections[bucket], point, limit=8)
+    if not latest_summary and bullets:
+        latest_summary = bullets[0]
+    narrative_sections = {
+        "breach_compromise": {
+            "title": "Breach and Compromise",
+            "points": sections["breach_compromise"][:4],
+        },
+        "impact": {
+            "title": "Impact",
+            "points": sections["impact"][:4],
+        },
+        "response_recovery": {
+            "title": "Response and Recovery",
+            "points": sections["response_recovery"][:4],
+        },
+        "lessons_learned": {
+            "title": "Lessons Learned",
+            "points": sections["lessons_learned"][:4],
+        },
+    }
+    return {
+        "summary": latest_summary,
+        "bullets": bullets[:10],
+        "sections": narrative_sections,
+    }
+
+
 def update_event_summary_from_articles(conn: Any, event_id: str) -> str | None:
+    event_row = conn.execute(
+        """
+        SELECT summary,
+               COALESCE(is_manual, manual) AS is_manual,
+               meta_json
+        FROM events
+        WHERE id = %s
+        """,
+        (event_id,),
+    ).fetchone()
+    if not event_row:
+        return None
+    existing_summary = str(event_row[0] or "").strip()
+    event_is_manual = bool(event_row[1])
+    current_meta_raw = event_row[2]
     article_cols = _table_columns(conn, "articles")
     summary_llm_col = "a.summary_llm" if "summary_llm" in article_cols else "NULL AS summary_llm"
     summary_col = "a.summary" if "summary" in article_cols else "NULL AS summary"
+    context_col = "a.context_llm" if "context_llm" in article_cols else "NULL AS context_llm"
     content_col = "a.content_text" if "content_text" in article_cols else "NULL AS content_text"
-    select_cols = f"a.title, {summary_llm_col}, {summary_col}, {content_col}"
+    select_cols = f"a.id, a.title, a.published_at, a.original_url, {summary_llm_col}, {summary_col}, {context_col}, {content_col}"
     if _table_exists(conn, "event_articles"):
         cursor = conn.execute(
             f"""
@@ -4482,29 +5311,113 @@ def update_event_summary_from_articles(conn: Any, event_id: str) -> str | None:
             """,
             (event_id,),
         )
-    parts: list[str] = []
-    for title, summary_llm, summary, content_text in cursor.fetchall():
-        body = summary_llm or summary or content_text or ""
-        body = str(body).strip()
-        if not body:
-            continue
-        parts.append(f"{title}: {body}")
-    if not parts:
+    rows: list[dict[str, object]] = []
+    for article_id, title, published_at, url, summary_llm, summary, context_llm, content_text in cursor.fetchall():
+        summary_text, summary_bullets = _event_summary_payload(summary_llm)
+        context_facts, context_timeline = _event_context_payload(context_llm)
+        if not summary_text:
+            # Avoid building event narratives from raw article bodies (often boilerplate/noisy).
+            # Prefer curated article summary fields; if absent, let pipeline fill later.
+            summary_text = str(summary or "").strip()
+        summary_facts = [*context_facts, *context_timeline]
+        rows.append(
+            {
+                "article_id": article_id,
+                "title": title,
+                "published_at": published_at,
+                "url": url,
+                "summary_text": summary_text,
+                "summary_bullets": summary_bullets,
+                "summary_facts": summary_facts,
+            }
+        )
+    timeline = rebuild_event_timeline_from_articles(conn, event_id)
+    narrative = _build_event_narrative_from_articles(rows)
+    summary_text = str(narrative.get("summary") or "").strip()
+    if not summary_text:
         return None
-    summary_text = "\n".join(parts[:10])
+    meta: dict[str, object] = {}
+    if current_meta_raw:
+        try:
+            parsed_meta = json.loads(current_meta_raw)
+            if isinstance(parsed_meta, dict):
+                meta = parsed_meta
+        except Exception:
+            meta = {}
+    # Keep an event-authored summary intact; derived text is tracked separately.
+    if event_is_manual and existing_summary:
+        canonical_summary = existing_summary
+        meta["derived_summary"] = summary_text
+    else:
+        canonical_summary = summary_text
+        if existing_summary:
+            meta["previous_summary"] = existing_summary
+    meta["timeline"] = timeline
+    meta["narrative"] = narrative
     now = utc_now_iso()
     conn.execute(
         """
         UPDATE events
         SET summary = %s,
+            meta_json = %s,
             summary_updated_at = %s,
             updated_at = %s
         WHERE id = %s
         """,
-        (summary_text, now, now, event_id),
+        (canonical_summary, json_dumps(meta), now, now, event_id),
     )
     conn.commit()
-    return summary_text
+    return canonical_summary
+
+
+def update_event_report(
+    conn: Any,
+    event_id: str,
+    report: dict[str, object],
+    *,
+    profile_id: str | None = None,
+    profile_name: str | None = None,
+    model_id: str | None = None,
+    model_name: str | None = None,
+) -> bool:
+    if not _table_exists(conn, "events"):
+        return False
+    row = conn.execute(
+        "SELECT meta_json FROM events WHERE id = %s",
+        (event_id,),
+    ).fetchone()
+    if not row:
+        return False
+    meta: dict[str, object] = {}
+    if row[0]:
+        try:
+            parsed = json.loads(row[0])
+            if isinstance(parsed, dict):
+                meta = parsed
+        except Exception:
+            meta = {}
+    now = utc_now_iso()
+    meta["report"] = report if isinstance(report, dict) else {}
+    meta["report_generated_at"] = now
+    if profile_id:
+        meta["report_profile_id"] = str(profile_id)
+    if profile_name:
+        meta["report_profile_name"] = str(profile_name)
+    if model_id:
+        meta["report_model_id"] = str(model_id)
+    if model_name:
+        meta["report_model_name"] = str(model_name)
+    conn.execute(
+        """
+        UPDATE events
+        SET meta_json = %s,
+            updated_at = %s
+        WHERE id = %s
+        """,
+        (json_dumps(meta), now, event_id),
+    )
+    conn.commit()
+    return True
 
 
 def touch_event(conn: Any, event_id: str, seen_at: str) -> None:
@@ -4772,9 +5685,13 @@ def list_events(
     params: list[object] = []
     columns = _table_columns(conn, "events")
     candidate_select = "candidate" if "candidate" in columns else "NULL AS candidate"
+    lifecycle_select = "lifecycle" if "lifecycle" in columns else "NULL AS lifecycle"
     entity_select = "entity" if "entity" in columns else "NULL AS entity"
     incident_select = "incident_date" if "incident_date" in columns else "NULL AS incident_date"
     evidence_select = "evidence" if "evidence" in columns else "NULL AS evidence"
+    publish_state_select = "publish_state" if "publish_state" in columns else "NULL AS publish_state"
+    published_at_select = "published_at" if "published_at" in columns else "NULL AS published_at"
+    site_slug_select = "site_slug" if "site_slug" in columns else "NULL AS site_slug"
     if not include_suppressed and "visibility" in columns:
         where.append("visibility = 'active'")
     if status:
@@ -4809,7 +5726,8 @@ def list_events(
         f"""
         SELECT id, kind, title, summary, severity, created_at, updated_at,
                first_seen_at, last_seen_at, status, event_key, occurred_at, summary_updated_at, confidence, manual,
-               visibility, confidence_tier, reasons, is_manual, {candidate_select}, {entity_select}, {incident_select}, {evidence_select}
+               visibility, confidence_tier, reasons, is_manual, {candidate_select}, {lifecycle_select}, {entity_select}, {incident_select}, {evidence_select},
+               {publish_state_select}, {published_at_select}, {site_slug_select}
         FROM events
         {where_sql}
         ORDER BY last_seen_at DESC
@@ -4839,9 +5757,13 @@ def list_events(
             "reasons": _ensure_json_list(row[17]),
             "is_manual": bool(row[18]),
             "candidate": bool(row[19]) if row[19] is not None else False,
-            "entity": row[20],
-            "incident_date": row[21],
-            "evidence": _ensure_json_list(row[22]),
+            "lifecycle": row[20],
+            "entity": row[21],
+            "incident_date": row[22],
+            "evidence": _ensure_json_list(row[23]),
+            "publish_state": row[24],
+            "published_at": row[25],
+            "site_slug": row[26],
         }
         for row in cursor.fetchall()
     ]
@@ -4867,9 +5789,13 @@ def list_events_with_counts(
     params: list[object] = []
     columns = _table_columns(conn, "events")
     candidate_select = "e.candidate" if "candidate" in columns else "NULL AS candidate"
+    lifecycle_select = "e.lifecycle" if "lifecycle" in columns else "NULL AS lifecycle"
     entity_select = "e.entity" if "entity" in columns else "NULL AS entity"
     incident_select = "e.incident_date" if "incident_date" in columns else "NULL AS incident_date"
     evidence_select = "e.evidence" if "evidence" in columns else "NULL AS evidence"
+    publish_state_select = "e.publish_state" if "publish_state" in columns else "NULL AS publish_state"
+    published_at_select = "e.published_at" if "published_at" in columns else "NULL AS published_at"
+    site_slug_select = "e.site_slug" if "site_slug" in columns else "NULL AS site_slug"
     if not include_suppressed and "visibility" in columns:
         where.append("e.visibility = 'active'")
     if status:
@@ -4953,7 +5879,8 @@ def list_events_with_counts(
         SELECT e.id, e.kind, e.title, e.summary, e.severity, e.created_at, e.updated_at,
                e.first_seen_at, e.last_seen_at, e.status, e.event_key, e.occurred_at,
                e.summary_updated_at, e.confidence, e.manual, e.visibility, e.confidence_tier, e.reasons, e.is_manual,
-               {candidate_select}, {entity_select}, {incident_select}, {evidence_select},
+               {candidate_select}, {lifecycle_select}, {entity_select}, {incident_select}, {evidence_select},
+               {publish_state_select}, {published_at_select}, {site_slug_select},
                COALESCE(ac.article_count, 0) AS article_count,
                ac.last_article_at,
                ec.cve_ids,
@@ -4992,13 +5919,17 @@ def list_events_with_counts(
                 "reasons": _ensure_json_list(row[17]),
                 "is_manual": bool(row[18]),
                 "candidate": bool(row[19]) if row[19] is not None else False,
-                "entity": row[20],
-                "incident_date": row[21],
-                "evidence": _ensure_json_list(row[22]),
-                "article_count": int(row[23] or 0),
-                "last_article_at": row[24],
-                "cve_ids": row[25].split(",") if row[25] else [],
-                "product_keys": row[26].split(",") if row[26] else [],
+                "lifecycle": row[20],
+                "entity": row[21],
+                "incident_date": row[22],
+                "evidence": _ensure_json_list(row[23]),
+                "publish_state": row[24],
+                "published_at": row[25],
+                "site_slug": row[26],
+                "article_count": int(row[27] or 0),
+                "last_article_at": row[28],
+                "cve_ids": row[29].split(",") if row[29] else [],
+                "product_keys": row[30].split(",") if row[30] else [],
                 "source": "events",
             }
         )
@@ -5049,16 +5980,21 @@ def get_event(conn: Any, event_id: str) -> dict[str, object] | None:
         return None
     columns = _table_columns(conn, "events")
     candidate_select = "candidate" if "candidate" in columns else "NULL AS candidate"
+    lifecycle_select = "lifecycle" if "lifecycle" in columns else "NULL AS lifecycle"
     entity_select = "entity" if "entity" in columns else "NULL AS entity"
     incident_select = "incident_date" if "incident_date" in columns else "NULL AS incident_date"
     evidence_select = "evidence" if "evidence" in columns else "NULL AS evidence"
+    publish_state_select = "publish_state" if "publish_state" in columns else "NULL AS publish_state"
+    published_at_select = "published_at" if "published_at" in columns else "NULL AS published_at"
+    site_slug_select = "site_slug" if "site_slug" in columns else "NULL AS site_slug"
     row = conn.execute(
         f"""
         SELECT id, kind, title, summary, severity, created_at, updated_at,
                first_seen_at, last_seen_at, status, meta_json,
                event_key, occurred_at, summary_updated_at, confidence, manual,
                visibility, confidence_tier, reasons, is_manual,
-               {candidate_select}, {entity_select}, {incident_select}, {evidence_select}
+               {candidate_select}, {lifecycle_select}, {entity_select}, {incident_select}, {evidence_select},
+               {publish_state_select}, {published_at_select}, {site_slug_select}
         FROM events
         WHERE id = %s
         """,
@@ -5089,10 +6025,21 @@ def get_event(conn: Any, event_id: str) -> dict[str, object] | None:
         "reasons": _ensure_json_list(row[18]),
         "is_manual": bool(row[19]),
         "candidate": bool(row[20]) if row[20] is not None else False,
-        "entity": row[21],
-        "incident_date": row[22],
-        "evidence": _ensure_json_list(row[23]),
+        "lifecycle": row[21],
+        "entity": row[22],
+        "incident_date": row[23],
+        "evidence": _ensure_json_list(row[24]),
+        "publish_state": row[25],
+        "published_at": row[26],
+        "site_slug": row[27],
     }
+    timeline = event["meta"].get("timeline")
+    event["timeline"] = timeline if isinstance(timeline, list) else []
+    narrative = event["meta"].get("narrative")
+    event["narrative"] = narrative if isinstance(narrative, dict) else {}
+    report = event["meta"].get("report")
+    event["report"] = report if isinstance(report, dict) else {}
+    event["report_generated_at"] = event["meta"].get("report_generated_at")
     cves_cursor = conn.execute(
         """
         SELECT c.cve_id, c.published_at, preferred_base_score,
@@ -5241,6 +6188,16 @@ def list_event_web_sources(
     )
     rows = []
     for row in cursor.fetchall():
+        score_reasons = row[9]
+        if isinstance(score_reasons, str):
+            score_reasons = json.loads(score_reasons) if score_reasons else {}
+        elif score_reasons is None:
+            score_reasons = {}
+        metadata = row[13]
+        if isinstance(metadata, str):
+            metadata = json.loads(metadata) if metadata else {}
+        elif metadata is None:
+            metadata = {}
         rows.append(
             {
                 "id": row[0],
@@ -5252,14 +6209,122 @@ def list_event_web_sources(
                 "engine": row[6],
                 "category": row[7],
                 "score": row[8],
-                "score_reasons": json.loads(row[9]) if row[9] else {},
+                "score_reasons": score_reasons,
                 "status": row[10],
                 "discovered_at": row[11],
                 "promoted_article_id": row[12],
-                "metadata": json.loads(row[13]) if row[13] else {},
+                "metadata": metadata,
             }
         )
     return rows
+
+
+def get_event_web_source(conn: Any, source_id: str) -> dict[str, object] | None:
+    if not _table_exists(conn, "event_web_sources"):
+        return None
+    row = conn.execute(
+        """
+        SELECT id, event_id, url, title, snippet, domain, published_at, engine, category,
+               score, score_reasons, status, discovered_at, promoted_article_id, metadata
+        FROM event_web_sources
+        WHERE id = %s
+        """,
+        (source_id,),
+    ).fetchone()
+    if not row:
+        return None
+    score_reasons = row[10]
+    if isinstance(score_reasons, str):
+        score_reasons = json.loads(score_reasons) if score_reasons else {}
+    elif score_reasons is None:
+        score_reasons = {}
+    metadata = row[14]
+    if isinstance(metadata, str):
+        metadata = json.loads(metadata) if metadata else {}
+    elif metadata is None:
+        metadata = {}
+    return {
+        "id": row[0],
+        "event_id": row[1],
+        "url": row[2],
+        "title": row[3],
+        "snippet": row[4],
+        "domain": row[5],
+        "published_at": row[6],
+        "engine": row[7],
+        "category": row[8],
+        "score": row[9],
+        "score_reasons": score_reasons,
+        "status": row[11],
+        "discovered_at": row[12],
+        "promoted_article_id": row[13],
+        "metadata": metadata,
+    }
+
+
+def clear_event_web_sources(
+    conn: Any,
+    event_id: str,
+    *,
+    keep_promoted: bool = True,
+) -> int:
+    if not _table_exists(conn, "event_web_sources"):
+        return 0
+    if keep_promoted:
+        cursor = conn.execute(
+            """
+            DELETE FROM event_web_sources
+            WHERE event_id = %s AND promoted_article_id IS NULL
+            RETURNING id
+            """,
+            (event_id,),
+        )
+    else:
+        cursor = conn.execute(
+            """
+            DELETE FROM event_web_sources
+            WHERE event_id = %s
+            RETURNING id
+            """,
+            (event_id,),
+        )
+    deleted = len(cursor.fetchall())
+    conn.commit()
+    return deleted
+
+
+def update_event_web_source_status(
+    conn: Any,
+    source_id: str,
+    status: str,
+    *,
+    metadata_patch: dict[str, object] | None = None,
+) -> None:
+    if not _table_exists(conn, "event_web_sources"):
+        return
+    if metadata_patch:
+        row = conn.execute(
+            "SELECT metadata FROM event_web_sources WHERE id = %s",
+            (source_id,),
+        ).fetchone()
+        metadata = {}
+        if row:
+            existing = row[0]
+            if isinstance(existing, str):
+                metadata = json.loads(existing) if existing else {}
+            elif isinstance(existing, dict):
+                metadata = dict(existing)
+        metadata.update(metadata_patch)
+        conn.execute(
+            "UPDATE event_web_sources SET status = %s, metadata = %s WHERE id = %s",
+            (status, json_dumps(metadata), source_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE event_web_sources SET status = %s WHERE id = %s",
+            (status, source_id),
+        )
+    conn.commit()
 
 
 def upsert_event_web_source(
@@ -5324,11 +6389,55 @@ def upsert_event_web_source(
 
 
 def mark_event_web_source_status(conn: Any, source_id: str, status: str) -> None:
+    update_event_web_source_status(conn, source_id, status)
+
+
+def _normalize_event_web_published_at(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).isoformat()
+    if isinstance(value, (int, float)):
+        number = float(value)
+        if number > 10_000_000_000:
+            number /= 1000.0
+        try:
+            return datetime.fromtimestamp(number, tz=timezone.utc).isoformat()
+        except Exception:  # noqa: BLE001
+            return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if not re.search(r"\b\d{4}\b", text):
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).isoformat()
+    except ValueError:
+        pass
+    try:
+        parsed = parsedate_to_datetime(text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).isoformat()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def update_event_web_source_published_at(conn: Any, source_id: str, published_at: str | None) -> None:
     if not _table_exists(conn, "event_web_sources"):
         return
+    normalized = _normalize_event_web_published_at(published_at)
     conn.execute(
-        "UPDATE event_web_sources SET status = %s WHERE id = %s",
-        (status, source_id),
+        "UPDATE event_web_sources SET published_at = %s WHERE id = %s",
+        (normalized, source_id),
     )
     conn.commit()
 
@@ -5338,7 +6447,7 @@ def promote_event_web_source_to_article(conn: Any, source_id: str) -> int | None
         return None
     row = conn.execute(
         """
-        SELECT event_id, url, title, snippet, domain, promoted_article_id
+        SELECT event_id, url, title, snippet, domain, published_at, promoted_article_id
         FROM event_web_sources
         WHERE id = %s
         """,
@@ -5346,7 +6455,7 @@ def promote_event_web_source_to_article(conn: Any, source_id: str) -> int | None
     ).fetchone()
     if not row:
         return None
-    event_id, url, title, snippet, domain, promoted_article_id = row
+    event_id, url, title, snippet, domain, published_at, promoted_article_id = row
     if promoted_article_id:
         return promoted_article_id
     source_id_value = "web_enrich"
@@ -5372,8 +6481,8 @@ def promote_event_web_source_to_article(conn: Any, source_id: str) -> int | None
         normalized_url=normalize_url(url),
         title=title or url,
         source_id=source_id_value,
-        published_at=None,
-        published_at_source=None,
+        published_at=_normalize_event_web_published_at(published_at),
+        published_at_source="web_search",
         ingested_at=utc_now_iso(),
         summary=snippet or None,
         tags=[],
@@ -5393,6 +6502,88 @@ def promote_event_web_source_to_article(conn: Any, source_id: str) -> int | None
     )
     conn.commit()
     return article_id
+
+
+def rebuild_event_timeline_from_articles(conn: Any, event_id: str) -> list[dict[str, object]]:
+    if not _table_exists(conn, "events"):
+        return []
+    articles = list_event_articles(conn, event_id)
+    if not articles:
+        row = conn.execute("SELECT meta_json FROM events WHERE id = %s", (event_id,)).fetchone()
+        meta = {}
+        if row and row[0]:
+            try:
+                meta = json.loads(row[0])
+            except Exception:
+                meta = {}
+        if isinstance(meta, dict):
+            meta["timeline"] = []
+            conn.execute(
+                "UPDATE events SET meta_json = %s, updated_at = %s WHERE id = %s",
+                (json_dumps(meta), utc_now_iso(), event_id),
+            )
+            conn.commit()
+        return []
+    article_ids = [int(a["article_id"]) for a in articles if a.get("article_id") is not None]
+    snippet_by_id: dict[int, str] = {}
+    facts_by_id: dict[int, list[str]] = {}
+    if article_ids:
+        placeholders = ", ".join(["%s"] * len(article_ids))
+        article_cols = _table_columns(conn, "articles")
+        summary_llm_col = "summary_llm" if "summary_llm" in article_cols else "NULL AS summary_llm"
+        summary_col = "summary" if "summary" in article_cols else "NULL AS summary"
+        context_col = "context_llm" if "context_llm" in article_cols else "NULL AS context_llm"
+        cursor = conn.execute(
+            f"SELECT id, {summary_llm_col}, {summary_col}, {context_col} FROM articles WHERE id IN ({placeholders})",
+            tuple(article_ids),
+        )
+        for article_id, summary_llm, summary, context_llm in cursor.fetchall():
+            parsed_summary, parsed_bullets = _event_summary_payload(summary_llm)
+            context_facts, context_timeline = _event_context_payload(context_llm)
+            text = parsed_summary or str(summary or "").strip()
+            if parsed_bullets:
+                text = f"{text} " + " ".join(parsed_bullets[:2])
+                text = text.strip()
+            if text:
+                snippet_by_id[int(article_id)] = text[:320]
+            facts: list[str] = []
+            for point in [*parsed_bullets[:4], *context_facts[:4], *context_timeline[:3]]:
+                clean = str(point).strip()
+                if not clean or clean in facts:
+                    continue
+                facts.append(clean)
+            if facts:
+                facts_by_id[int(article_id)] = facts[:8]
+    entries: list[dict[str, object]] = []
+    for article in sorted(articles, key=lambda x: str(x.get("published_at") or "")):
+        article_id = int(article.get("article_id") or 0)
+        entries.append(
+            {
+                "date": article.get("published_at"),
+                "article_id": article_id,
+                "title": article.get("title"),
+                "source_name": article.get("source_name"),
+                "url": article.get("url"),
+                "summary": snippet_by_id.get(article_id, ""),
+                "facts": facts_by_id.get(article_id, []),
+            }
+        )
+    row = conn.execute("SELECT meta_json FROM events WHERE id = %s", (event_id,)).fetchone()
+    meta = {}
+    if row and row[0]:
+        try:
+            meta = json.loads(row[0])
+        except Exception:
+            meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+    meta["timeline"] = entries
+    conn.execute(
+        "UPDATE events SET meta_json = %s, updated_at = %s WHERE id = %s",
+        (json_dumps(meta), utc_now_iso(), event_id),
+    )
+    conn.commit()
+    return entries
 
 
 def rebuild_events_from_cves(
@@ -6153,7 +7344,9 @@ def get_cve(conn: Any, cve_id: str) -> dict[str, object] | None:
         "affected_products_json",
         "affected_cpes_json",
         "reference_domains_json",
-        "updated_at",
+        "kev_cve_id",
+        "kev_checked_at",
+        "c.updated_at",
     ]
     selected = [col for col in selected if col in columns]
     if not selected:
@@ -6209,6 +7402,11 @@ def get_cve(conn: Any, cve_id: str) -> dict[str, object] | None:
         "threat_actors": threat_actors,
         "in_scope": bool(scope[0]) if scope else None,
         "scope_reasons": json.loads(scope[1] or "[]") if scope else [],
+        "kev_cve_id": data.get("kev_cve_id"),
+        "kev_checked_at": data.get("kev_checked_at"),
+        "kev": get_cve_kev(conn, cve_id)
+        if _table_exists(conn, "cve_kev") and data.get("kev_cve_id")
+        else None,
         "updated_at": data.get("updated_at"),
     }
 
@@ -6229,6 +7427,7 @@ def search_cves(
     min_cvss: float | None,
     missing_description: bool | None,
     missing_products: bool | None,
+    kev: bool | None,
     after: str | None,
     before: str | None,
     vendor_keywords: list[str] | None,
@@ -6240,12 +7439,13 @@ def search_cves(
 ) -> tuple[list[dict[str, object]], int]:
     columns = _table_columns(conn, "cves") if _table_exists(conn, "cves") else set()
     has_scope = _table_exists(conn, "cve_scope")
+    has_kev = _table_exists(conn, "cve_kev") and "kev_cve_id" in columns
     where: list[str] = []
     params: list[object] = []
     if query:
         like = f"%{query}%"
         where.append(
-            "(c.cve_id LIKE %s OR c.description_text LIKE %s OR LOWER(c.affected_products_json) LIKE %s OR LOWER(c.affected_cpes_json) LIKE %s)"
+            "(cve_id LIKE %s OR description_text LIKE %s OR LOWER(affected_products_json) LIKE %s OR LOWER(affected_cpes_json) LIKE %s)"
         )
         params.extend([like, like, like.lower(), like.lower()])
     if severities:
@@ -6255,64 +7455,68 @@ def search_cves(
         condition_parts = []
         if normalized:
             condition_parts.append(
-                "c.preferred_base_severity IN ({})".format(",".join("%s" for _ in normalized))
+                "preferred_base_severity IN ({})".format(",".join("%s" for _ in normalized))
             )
             params.extend(normalized)
         if include_unknown:
-            condition_parts.append("c.preferred_base_severity IS NULL")
+            condition_parts.append("preferred_base_severity IS NULL")
         if condition_parts:
             where.append("(" + " OR ".join(condition_parts) + ")")
     if min_cvss is not None:
-        where.append("c.preferred_base_score >= %s")
+        where.append("preferred_base_score >= %s")
         params.append(min_cvss)
     if missing_description:
         if "description_text" in columns:
-            where.append("(c.description_text IS NULL OR c.description_text = '')")
+            where.append("(description_text IS NULL OR description_text = '')")
         else:
             return [], 0
     if missing_products:
         if _table_exists(conn, "cve_products"):
-            where.append("NOT EXISTS (SELECT 1 FROM cve_products cp WHERE cp.cve_id = c.cve_id)")
+            where.append("NOT EXISTS (SELECT 1 FROM cve_products cp WHERE cp.cve_id = cve_id)")
         elif "affected_products_json" in columns:
-            where.append("(c.affected_products_json IS NULL OR c.affected_products_json = '' OR c.affected_products_json = '[]')")
+            where.append("(affected_products_json IS NULL OR affected_products_json = '' OR affected_products_json = '[]')")
         else:
             return [], 0
+    if kev is not None:
+        if not has_kev:
+            return [], 0
+        where.append("kev_cve_id IS NOT NULL" if kev else "kev_cve_id IS NULL")
     if after:
-        where.append("c.published_at >= %s")
+        where.append("published_at >= %s")
         params.append(after)
     if before:
-        where.append("c.published_at <= %s")
+        where.append("published_at <= %s")
         params.append(before)
     if vendor_keywords:
         for keyword in vendor_keywords:
             like = f"%{keyword.lower()}%"
             where.append(
-                "(LOWER(c.description_text) LIKE %s OR LOWER(c.affected_products_json) LIKE %s OR LOWER(c.affected_cpes_json) LIKE %s OR LOWER(c.reference_domains_json) LIKE %s)"
+                "(LOWER(description_text) LIKE %s OR LOWER(affected_products_json) LIKE %s OR LOWER(affected_cpes_json) LIKE %s OR LOWER(reference_domains_json) LIKE %s)"
             )
             params.extend([like, like, like, like])
     if product_keywords:
         for keyword in product_keywords:
             like = f"%{keyword.lower()}%"
             where.append(
-                "(LOWER(c.description_text) LIKE %s OR LOWER(c.affected_products_json) LIKE %s OR LOWER(c.affected_cpes_json) LIKE %s OR LOWER(c.reference_domains_json) LIKE %s)"
+                "(LOWER(description_text) LIKE %s OR LOWER(affected_products_json) LIKE %s OR LOWER(affected_cpes_json) LIKE %s OR LOWER(reference_domains_json) LIKE %s)"
             )
             params.extend([like, like, like, like])
     if in_scope and has_scope:
-        where.append("cs.in_scope = 1")
+        where.append("cve_id IN (SELECT cve_id FROM cve_scope WHERE in_scope = 1)")
     elif in_scope and settings:
         filters = settings.get("filters") or {}
         scope_sevs = filters.get("severities") or []
         if scope_sevs:
             where.append(
-                "c.preferred_base_severity IN ({})".format(",".join("%s" for _ in scope_sevs))
+                "preferred_base_severity IN ({})".format(",".join("%s" for _ in scope_sevs))
             )
             params.extend([severity.upper() for severity in scope_sevs])
         min_score = filters.get("min_cvss")
         if min_score is not None:
-            where.append("c.preferred_base_score >= %s")
+            where.append("preferred_base_score >= %s")
             params.append(min_score)
         if filters.get("require_known_score"):
-            where.append("c.preferred_base_score IS NOT NULL")
+            where.append("preferred_base_score IS NOT NULL")
         keyword_filters = (filters.get("vendor_keywords") or []) + (
             filters.get("product_keywords") or []
         )
@@ -6320,13 +7524,13 @@ def search_cves(
             keyword_where = []
             for keyword in keyword_filters:
                 like = f"%{keyword.lower()}%"
-                keyword_where.append("LOWER(c.description_text) LIKE %s")
+                keyword_where.append("LOWER(description_text) LIKE %s")
                 params.append(like)
-                keyword_where.append("LOWER(c.affected_products_json) LIKE %s")
+                keyword_where.append("LOWER(affected_products_json) LIKE %s")
                 params.append(like)
-                keyword_where.append("LOWER(c.affected_cpes_json) LIKE %s")
+                keyword_where.append("LOWER(affected_cpes_json) LIKE %s")
                 params.append(like)
-                keyword_where.append("LOWER(c.reference_domains_json) LIKE %s")
+                keyword_where.append("LOWER(reference_domains_json) LIKE %s")
                 params.append(like)
             where.append("(" + " OR ".join(keyword_where) + ")")
 
@@ -6334,50 +7538,63 @@ def search_cves(
     if where_sql:
         where_sql = "WHERE " + where_sql
 
-    if has_scope:
-        count_cursor = conn.execute(
-            f"SELECT COUNT(1) FROM cves c LEFT JOIN cve_scope cs ON cs.cve_id = c.cve_id {where_sql}",
-            params,
-        )
-    else:
-        count_cursor = conn.execute(f"SELECT COUNT(1) FROM cves c {where_sql}", params)
+    count_cursor = conn.execute(f"SELECT COUNT(1) FROM cves {where_sql}", params)
     total = count_cursor.fetchone()[0]
 
     offset = max(page - 1, 0) * page_size
     selected = [
-        "c.cve_id",
+        "cve_id",
         "published_at",
         "last_modified_at",
-        "c.preferred_cvss_version",
+        "preferred_cvss_version",
         "preferred_base_score",
         "preferred_base_severity",
-        "c.preferred_vector",
+        "preferred_vector",
         "description_text",
         "updated_at",
         "affected_products_json",
         "affected_cpes_json",
         "reference_domains_json",
-        "c.cvss_v31_list_json",
-        "c.cvss_v40_list_json",
+        "cvss_v31_list_json",
+        "cvss_v40_list_json",
+        "kev_cve_id",
+        "kev_checked_at",
     ]
-    if has_scope:
-        selected.append("cs.in_scope")
-        selected.append("cs.reasons_json")
-    selected = [col for col in selected if col.split(".")[-1] in columns or col.startswith("cs.")]
+    selected = [col for col in selected if col in columns]
     cursor = conn.execute(
         f"""
         SELECT {", ".join(selected)}
-        FROM cves c
-        {"LEFT JOIN cve_scope cs ON cs.cve_id = c.cve_id" if has_scope else ""}
+        FROM cves
         {where_sql}
-        ORDER BY c.last_modified_at DESC
+        ORDER BY last_modified_at DESC
         LIMIT %s OFFSET %s
         """,
         [*params, page_size, offset],
     )
     items = []
-    for row in cursor.fetchall():
-        data = dict(zip([col.split(".")[-1] for col in selected], row))
+    rows = cursor.fetchall()
+    data_rows = [dict(zip(selected, row)) for row in rows]
+    cve_ids = [row.get("cve_id") for row in data_rows if row.get("cve_id")]
+    scope_map: dict[str, dict[str, object]] = {}
+    if has_scope and cve_ids:
+        scope_cursor = conn.execute(
+            """
+            SELECT cve_id, in_scope, reasons_json
+            FROM cve_scope
+            WHERE cve_id = ANY(%s)
+            """,
+            (cve_ids,),
+        )
+        for cve_id_val, in_scope_val, reasons_json in scope_cursor.fetchall():
+            scope_map[str(cve_id_val)] = {
+                "in_scope": bool(in_scope_val),
+                "reasons_json": reasons_json,
+            }
+    kev_map = get_cve_kev_map(conn, cve_ids) if has_kev and cve_ids else {}
+    for data in data_rows:
+        cve_id = data.get("cve_id")
+        scope_info = scope_map.get(str(cve_id)) if cve_id else None
+        kev_info = kev_map.get(str(cve_id)) if cve_id else None
         cvss_v31_list_json = data.get("cvss_v31_list_json")
         cvss_v40_list_json = data.get("cvss_v40_list_json")
         items.append(
@@ -6397,8 +7614,13 @@ def search_cves(
                 "cvss_v31_list": json.loads(cvss_v31_list_json) if cvss_v31_list_json else [],
                 "cvss_v40_list": json.loads(cvss_v40_list_json) if cvss_v40_list_json else [],
                 "product_versions": _list_cve_product_versions(conn, data.get("cve_id")),
-                "in_scope": bool(data.get("in_scope")) if has_scope else None,
-                "scope_reasons": json.loads(data.get("reasons_json") or "[]") if has_scope else [],
+                "in_scope": scope_info.get("in_scope") if scope_info else None,
+                "scope_reasons": json.loads(scope_info.get("reasons_json") or "[]") if scope_info else [],
+                "kev_cve_id": data.get("kev_cve_id"),
+                "kev_checked_at": data.get("kev_checked_at"),
+                "kev_due_date": kev_info.get("due_date") if kev_info else None,
+                "kev_added_at": kev_info.get("added_at") if kev_info else None,
+                "kev_ransomware": kev_info.get("ransomware_use") if kev_info else None,
             }
         )
     return items, total
@@ -6641,11 +7863,25 @@ def _cve_vendor_product_norms(conn: Any, cve_id: str) -> list[tuple[str, str]]:
 def list_cve_ids_missing_products(conn: Any, limit: int | None = None) -> list[str]:
     if not _table_exists(conn, "cves"):
         return []
+    cve_columns = _table_columns(conn, "cves")
+    checked_clause = (
+        "AND c.cve_products_checked_at IS NULL"
+        if "cve_products_checked_at" in cve_columns
+        else ""
+    )
     sql = """
     SELECT c.cve_id
     FROM cves c
     LEFT JOIN cve_products cp ON cp.cve_id = c.cve_id
     LEFT JOIN cve_product_versions cpv ON cpv.cve_id = c.cve_id
+    WHERE (
+        (c.description_text IS NOT NULL AND c.description_text != '')
+        OR (
+            c.reference_domains_json IS NOT NULL
+            AND btrim(c.reference_domains_json) NOT IN ('', '[]', 'null')
+        )
+    )
+    """ + checked_clause + """
     GROUP BY c.cve_id
     HAVING COUNT(cp.cve_id) = 0 OR COUNT(cpv.cve_id) = 0
     ORDER BY MAX(c.published_at) DESC
@@ -6903,37 +8139,63 @@ def get_threat_actor_detail(conn: Any, actor_key: str) -> dict[str, object] | No
     }
 
 
-def list_article_ids_missing_threat_actors(conn: Any, limit: int = 200) -> list[int]:
+def list_article_ids_missing_threat_actors(conn: Any, limit: int | None = 200) -> list[int]:
     if not (_table_exists(conn, "articles") and _table_exists(conn, "article_threat_actors")):
         return []
-    cursor = conn.execute(
-        """
+    article_columns = _table_columns(conn, "articles")
+    checked_clause = (
+        "AND a.article_threat_actors_checked_at IS NULL"
+        if "article_threat_actors_checked_at" in article_columns
+        else ""
+    )
+    sql = f"""
         SELECT a.id
         FROM articles a
         LEFT JOIN article_threat_actors ata ON ata.article_id = a.id
-        WHERE ata.article_id IS NULL
+        WHERE (a.content_text IS NOT NULL AND a.content_text != '')
+        {checked_clause}
+        GROUP BY a.id
+        HAVING COUNT(ata.article_id) = 0
         ORDER BY COALESCE(a.published_at, a.ingested_at) DESC
-        LIMIT %s
-        """,
-        (limit,),
-    )
+    """
+    params: list[object] = []
+    if limit is not None:
+        sql += " LIMIT %s"
+        params.append(limit)
+    cursor = conn.execute(sql, tuple(params))
     return [int(row[0]) for row in cursor.fetchall() if row and row[0] is not None]
 
 
-def list_cve_ids_missing_threat_actors(conn: Any, limit: int = 200) -> list[str]:
+def list_cve_ids_missing_threat_actors(conn: Any, limit: int | None = 200) -> list[str]:
     if not (_table_exists(conn, "cves") and _table_exists(conn, "cve_threat_actors")):
         return []
-    cursor = conn.execute(
-        """
+    cve_columns = _table_columns(conn, "cves")
+    checked_clause = (
+        "AND c.cve_threat_actors_checked_at IS NULL"
+        if "cve_threat_actors_checked_at" in cve_columns
+        else ""
+    )
+    sql = f"""
         SELECT c.cve_id
         FROM cves c
         LEFT JOIN cve_threat_actors cta ON cta.cve_id = c.cve_id
-        WHERE cta.cve_id IS NULL
+        WHERE (
+            (c.description_text IS NOT NULL AND c.description_text != '')
+            OR (
+                c.reference_domains_json IS NOT NULL
+                AND btrim(c.reference_domains_json) NOT IN ('', '[]', 'null')
+            )
+        )
+        {checked_clause}
+        GROUP BY c.cve_id
+        HAVING COUNT(cta.cve_id) = 0
         ORDER BY COALESCE(c.published_at, c.last_modified_at) DESC
-        LIMIT %s
-        """,
-        (limit,),
-    )
+    """
+    params: list[object] = []
+    if limit is not None:
+        sql += " LIMIT %s"
+        params.append(limit)
+    cursor = conn.execute(sql, tuple(params))
     return [str(row[0]) for row in cursor.fetchall() if row and row[0]]
 
 
@@ -6971,43 +8233,49 @@ def list_event_ids_for_article(conn: Any, article_id: int) -> list[str]:
     return []
 
 
-def list_article_ids_without_event(conn: Any, limit: int = 200) -> list[int]:
+def list_article_ids_without_event(conn: Any, limit: int | None = 200) -> list[int]:
     if not _table_exists(conn, "articles"):
         return []
     if _table_exists(conn, "event_articles"):
-        cursor = conn.execute(
-            """
+        sql = """
             SELECT a.id
             FROM articles a
             LEFT JOIN event_articles ea ON ea.article_id = a.id
             WHERE ea.article_id IS NULL
+              AND COALESCE(BTRIM(a.content_text), '') <> ''
             ORDER BY a.published_at DESC NULLS LAST
-            LIMIT %s
-            """,
-            (limit,),
-        )
+        """
+        params: list[object] = []
+        if limit is not None:
+            sql += " LIMIT %s"
+            params.append(int(limit))
+        cursor = conn.execute(sql, tuple(params))
     elif _table_exists(conn, "event_items"):
-        cursor = conn.execute(
-            """
+        sql = """
             SELECT a.id
             FROM articles a
             LEFT JOIN event_items ei ON ei.item_type = 'article' AND ei.item_key = CAST(a.id AS TEXT)
             WHERE ei.event_id IS NULL
+              AND COALESCE(BTRIM(a.content_text), '') <> ''
             ORDER BY a.published_at DESC NULLS LAST
-            LIMIT %s
-            """,
-            (limit,),
-        )
+        """
+        params = []
+        if limit is not None:
+            sql += " LIMIT %s"
+            params.append(int(limit))
+        cursor = conn.execute(sql, tuple(params))
     else:
-        cursor = conn.execute(
-            """
+        sql = """
             SELECT id
             FROM articles
+            WHERE COALESCE(BTRIM(content_text), '') <> ''
             ORDER BY published_at DESC NULLS LAST
-            LIMIT %s
-            """,
-            (limit,),
-        )
+        """
+        params = []
+        if limit is not None:
+            sql += " LIMIT %s"
+            params.append(int(limit))
+        cursor = conn.execute(sql, tuple(params))
     return [row[0] for row in cursor.fetchall() if row and row[0] is not None]
 
 

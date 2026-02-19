@@ -232,6 +232,9 @@ def update_source(conn: Any, source_id: str, payload: dict[str, Any]) -> dict[st
 
 def delete_source(conn: Any, source_id: str) -> None:
     conn.execute("DELETE FROM source_tactics WHERE source_id = %s", (source_id,))
+    conn.execute("DELETE FROM source_health_history WHERE source_id = %s", (source_id,))
+    conn.execute("DELETE FROM source_runs WHERE source_id = %s", (source_id,))
+    conn.execute("DELETE FROM health_alerts WHERE source_id = %s", (source_id,))
     conn.execute("DELETE FROM sources WHERE id = %s", (source_id,))
     conn.commit()
 

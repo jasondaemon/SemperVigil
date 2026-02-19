@@ -7,6 +7,7 @@
       <h2>Daily Brief – {{ brief_day }}</h2>
       <a class="btn small secondary" href="/ui/briefs">Back to Daily Briefs</a>
     </div>
+    <div class="brief-status" id="brief-status"></div>
     <div class="brief-meta" id="brief-meta"></div>
     <p class="error" id="brief-detail-error" style="display:none;"></p>
   </section>
@@ -24,6 +25,11 @@
   <section class="panel">
     <h3>Actions</h3>
     <ul id="brief-actions"></ul>
+  </section>
+
+  <section class="panel">
+    <h3>Today&#39;s CVEs</h3>
+    <ul id="brief-daily-cves"></ul>
   </section>
 
   <section class="panel">

@@ -13,11 +13,6 @@
       <div class="card-actions">
         <button class="btn" data-enqueue="ingest_due_sources">Enqueue Ingest Due Sources</button>
         <button class="btn" data-enqueue="build_site">Enqueue Build Site</button>
-        <div class="daily-summary-inline">
-          <label class="inline-label">Daily Brief</label>
-          <input type="date" id="daily-brief-date">
-          <button class="btn secondary" id="daily-brief-build">Build Daily Brief</button>
-        </div>
       </div>
       {% if sources_count == 0 %}
         <a class="btn secondary" href="/ui/sources">Add your first source</a>
@@ -25,26 +20,16 @@
     </div>
   </section>
 
-  <section class="panel" id="dashboard-pipeline">
+  <section class="panel" id="dashboard-job-counts">
     <div class="panel-header">
-      <h2>Pipeline Status</h2>
+      <h2>Job Queue</h2>
       <div class="panel-actions">
-        <a class="btn small secondary" href="/ui/system/utilities">Utilities</a>
+        <label class="checkbox"><input type="checkbox" id="dashboard-auto-catchup"> Auto Catchup</label>
+        <span class="muted" id="dashboard-job-counts-since"></span>
+        <button class="btn small" id="reset-failures" type="button">Reset Counters</button>
       </div>
     </div>
-    <div class="panel" id="dashboard-pipeline-metrics">
-      <div class="pipeline-grid" id="dashboard-backlog"></div>
-    </div>
-    <div class="panel" id="dashboard-job-counts">
-      <div class="panel-header">
-        <h3>Job Queue</h3>
-        <div class="panel-actions">
-          <span class="muted" id="dashboard-job-counts-since"></span>
-          <button class="btn small" id="reset-failures" type="button">Reset Counters</button>
-        </div>
-      </div>
-      <div id="dashboard-job-counts-table"></div>
-    </div>
+    <div id="dashboard-job-counts-table"></div>
   </section>
 
   <section class="panel" id="dashboard-logs">

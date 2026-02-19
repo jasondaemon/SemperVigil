@@ -66,6 +66,7 @@ class IngestConfig:
 class JobsConfig:
     lock_timeout_seconds: int
     build_debounce_seconds: int
+    auto_catchup_enabled: bool
 
 
 @dataclass(frozen=True)
@@ -160,6 +161,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "jobs": {
         "lock_timeout_seconds": 600,
         "build_debounce_seconds": 0,
+        "auto_catchup_enabled": False,
     },
     "cve": {
         "enabled": True,
@@ -182,6 +184,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "llm": {
         "enabled": False,
         "max_timeout_retries": 0,
+        "openai_background_enabled": False,
+        "openai_background_poll_seconds": 2,
+        "openai_background_max_seconds": 3600,
+        "json_response_format_enabled": True,
+        "json_response_format_stages": ["cve_enrich_products"],
     },
     "per_source_tweaks": {
         "date_parsing": {
@@ -228,6 +235,17 @@ DEFAULT_EVENTS_SETTINGS: dict[str, Any] = {
     "min_shared_products_to_merge": 1,
     "product_burst_window_hours": 24,
     "product_burst_min_high_critical": 3,
+    "min_create_confidence": 0.55,
+    "min_confirm_confidence": 0.8,
+    "min_signal_reasons": 1,
+    "allow_cve_only_create": False,
+    "publish_min_articles": 2,
+    "publish_min_timeline_entries": 2,
+    "publish_min_narrative_bullets": 3,
+    "publish_min_narrative_sections": 2,
+    "publish_min_promoted_sources": 0,
+    "enrich_min_articles": 0,
+    "enrich_min_articles_max_results": 12,
 }
 
 DEFAULT_SCHEDULE_SETTINGS: dict[str, Any] = {
@@ -429,9 +447,22 @@ def validate_events_settings(cfg: dict[str, Any]) -> list[str]:
         "min_shared_products_to_merge",
         "product_burst_window_hours",
         "product_burst_min_high_critical",
+        "min_signal_reasons",
+        "publish_min_articles",
+        "publish_min_timeline_entries",
+        "publish_min_narrative_bullets",
+        "publish_min_narrative_sections",
+        "publish_min_promoted_sources",
+        "enrich_min_articles",
+        "enrich_min_articles_max_results",
     ):
         if key in cfg and not isinstance(cfg[key], int):
             errors.append(f"events.settings.{key} must be an integer")
+    for key in ("min_create_confidence", "min_confirm_confidence"):
+        if key in cfg and not isinstance(cfg[key], (int, float)):
+            errors.append(f"events.settings.{key} must be a number")
+    if "allow_cve_only_create" in cfg and not isinstance(cfg["allow_cve_only_create"], bool):
+        errors.append("events.settings.allow_cve_only_create must be a boolean")
     return errors
 
 
@@ -646,6 +677,7 @@ def _build_config(cfg: dict[str, Any]) -> Config:
     jobs = JobsConfig(
         lock_timeout_seconds=int(jobs_cfg.get("lock_timeout_seconds")),
         build_debounce_seconds=int(build_debounce),
+        auto_catchup_enabled=bool(jobs_cfg.get("auto_catchup_enabled")),
     )
 
     cve = CveConfig(

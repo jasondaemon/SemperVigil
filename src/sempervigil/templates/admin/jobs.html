@@ -62,7 +62,15 @@
             </span>
           </td>
           <td>{{ job.job_type }}</td>
-          <td><span class="badge">{{ job.status }}</span></td>
+          <td>
+            <span class="badge">{{ job.status }}</span>
+            {% if job.status in ["queued", "running"] %}
+              <span class="badge warn">pending</span>
+            {% endif %}
+            {% if job.status == "running" %}
+              <span class="badge warn">running</span>
+            {% endif %}
+          </td>
           <td><span data-ts="{{ job.finished_at or job.started_at or job.requested_at }}"></span></td>
           <td class="truncate">{{ job.error or job.result or "" }}</td>
           <td>

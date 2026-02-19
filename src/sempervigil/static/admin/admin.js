@@ -203,148 +203,37 @@ function wireActionMenus(root = document) {
   });
 }
 function wireDashboard() {
-  const backlog = document.getElementById("dashboard-backlog");
+  const jobCountsContainer = document.getElementById("dashboard-job-counts-table");
   const jobsPanel = document.getElementById("dashboard-job-counts");
-  const checkBtn = document.getElementById("dashboard-pipeline-check");
   const queueBanner = document.getElementById("queue-stale-banner");
-  if (!backlog || !jobsPanel) {
+  if (!jobCountsContainer || !jobsPanel) {
     return;
   }
   const staleMinutes = parseInt(document.body.dataset.queueStaleMinutes || "0", 10);
-  function renderBacklog(data) {
-    backlog.innerHTML = "";
-    const items = [
-      {
-        label: "Articles missing content",
-        value: data.articles_missing_content_count || 0,
-        link: "/ui/content?type=article&content_state=missing",
-        action: "missing_content",
-      },
-      {
-        label: "Articles pending fetch",
-        value: data.articles_pending_fetch || 0,
-        link: "/ui/content?type=article&needs=fetch",
-      },
-      {
-        label: "Articles with content error",
-        value: data.articles_with_content_error_count || 0,
-        link: "/ui/content?type=article&content_error=1&content_error_kind=other",
-        action: "content_error",
-      },
-      {
-        label: "Articles 404/410",
-        value: data.articles_404_count || 0,
-        link: "/ui/content?type=article&content_error=1&content_error_kind=404",
-      },
-      {
-        label: "Articles stale (>1 week)",
-        value: data.articles_stale_count || 0,
-        link: "/ui/content?type=article&content_error=1&content_error_kind=stale",
-      },
-      {
-        label: "Articles pending summarize",
-        value: data.articles_pending_summarize || 0,
-        link: "/ui/content?type=article&needs=summarize",
-      },
-      {
-        label: "Articles missing summary",
-        value: data.articles_missing_summary_count || 0,
-        link: "/ui/content?type=article&missing=summary",
-        action: "missing_summary",
-      },
-      {
-        label: "Articles missing context pack",
-        value: data.articles_missing_context_count || 0,
-        link: "/ui/content?type=article&missing=context",
-        action: "missing_context",
-      },
-      {
-        label: "Articles pending publish",
-        value: data.articles_pending_publish || 0,
-        link: "/ui/content?type=article&needs=publish",
-      },
-      {
-        label: "Days missing daily brief",
-        value: data.daily_brief_missing_days_count || 0,
-        link: "/ui/jobs",
-      },
-      {
-        label: "CVEs missing description",
-        value: data.cves_missing_description_count || 0,
-        link: "/ui/cves",
-        action: "cve_description",
-      },
-      {
-        label: "Articles missing product/vendor",
-        value: data.articles_missing_products_count || 0,
-        link: "/ui/content?type=article&missing=products",
-        action: "article_products",
-      },
-      {
-        label: "CVEs missing product/vendor/version",
-        value: data.cves_missing_products_count || 0,
-        link: "/ui/cves",
-        action: "cve_products",
-      },
-      {
-        label: "Articles missing threat actors",
-        value: data.articles_missing_threat_actors_count || 0,
-        link: "/ui/content?type=article&missing=threat_actors",
-        action: "article_threats",
-      },
-      {
-        label: "CVEs missing threat actors",
-        value: data.cves_missing_threat_actors_count || 0,
-        link: "/ui/cves",
-        action: "cve_threats",
-      },
-      {
-        label: "LLM configured",
-        value: data.llm_configured ? "yes" : "no",
-        link: "/ui/ai",
-      },
-      {
-        label: "LLM stages active",
-        value: `${data.llm_stage_active || 0}/${data.llm_stage_total || 0}`,
-        link: "/ui/ai",
-      },
-    ];
-    items.forEach((item) => {
-      const card = document.createElement("div");
-      card.className = "pipeline-row";
-      const hasAction = Boolean(item.action);
-      const actionLabel = "Queue";
-      const limitSelect =
-        item.action === "cve_products" ||
-        item.action === "article_products" ||
-        item.action === "article_threats" ||
-        item.action === "cve_threats" ||
-        item.action === "missing_context" ||
-        item.action === "missing_content"
-          ? `<label class="inline-select">Limit
-               <select class="dashboard-limit" data-kind="${item.action}">
-                 <option value="50">50</option>
-                 <option value="200" selected>200</option>
-                 <option value="500">500</option>
-               </select>
-             </label>`
-          : "";
-      card.innerHTML = `
-        <div class="pipeline-title">${item.label}</div>
-        <div class="pipeline-value"><a href="${item.link}">${item.value}</a></div>
-        <div class="pipeline-action">
-          ${hasAction ? `<button class="btn tiny secondary dashboard-queue" data-kind="${item.action}">${actionLabel}</button>` : ""}
-        </div>
-        <div class="pipeline-limit">
-          ${hasAction ? `${limitSelect}` : ""}
-        </div>
-        ${hasAction ? `<div class="pipeline-note" data-kind="${item.action}"></div>` : ""}
-      `;
-      backlog.appendChild(card);
-    });
+  const autoCatchupToggle = document.getElementById("dashboard-auto-catchup");
+  async function loadAutoCatchupToggle() {
+    if (!autoCatchupToggle) {
+      return;
+    }
+    try {
+      const data = await apiFetch("/admin/config/runtime");
+      const enabled = !!(
+        data &&
+        data.config &&
+        data.config.jobs &&
+        data.config.jobs.auto_catchup_enabled
+      );
+      autoCatchupToggle.checked = enabled;
+    } catch (_err) {
+      autoCatchupToggle.checked = false;
+    }
   }
-  function renderJobCounts(counts, jobTypes, countsSince) {
-    const types = jobTypes && jobTypes.length ? jobTypes : Object.keys(counts).sort();
+  function renderJobCounts(counts, jobTypes, jobGroups, countsSince, queueable) {
+    const allTypes = jobTypes && jobTypes.length ? jobTypes : Object.keys(counts).sort();
+    const fallbackGroups = [
+      { id: "all", title: "Job Queue", job_types: allTypes },
+    ];
+    const groups = Array.isArray(jobGroups) && jobGroups.length ? jobGroups : fallbackGroups;
     const sinceEl = document.getElementById("dashboard-job-counts-since");
     if (sinceEl) {
       if (countsSince) {
@@ -357,51 +246,157 @@ function wireDashboard() {
       <thead>
         <tr>
           <th>Job Type</th>
-          <th>Queued</th>
-          <th>Failed</th>
-          <th>Completed</th>
+          <th>Need</th>
+          <th>Queue</th>
+          <th>Que</th>
+          <th>Run</th>
+          <th>Fail</th>
+          <th>Complete</th>
         </tr>
       </thead>
       <tbody></tbody>
     `;
-    const midpoint = Math.ceil(types.length / 2);
-    const columns = [types.slice(0, midpoint), types.slice(midpoint)];
+    const needsConfig = {
+      fetch_article_content: {
+        link: "/ui/content?type=article&content_state=missing",
+        action: "missing_content",
+        limit: true,
+      },
+      summarize_article_llm: {
+        link: "/ui/content?type=article&missing=summary",
+        action: "missing_summary",
+      },
+      summarize_article_context_llm: {
+        link: "/ui/content?type=article&missing=context",
+        action: "missing_context",
+        limit: true,
+      },
+      article_enrich_products: {
+        link: "/ui/content?type=article&missing=products",
+        action: "article_products",
+        limit: true,
+      },
+      article_enrich_threat_actors: {
+        link: "/ui/content?type=article&missing=threat_actors",
+        action: "article_threats",
+        limit: true,
+      },
+      derive_events_from_articles: {
+        link: "/ui/events",
+        action: "article_events",
+        limit: true,
+      },
+      cve_enrich_llm: {
+        link: "/ui/cves",
+        action: "cve_products",
+        limit: true,
+      },
+      cve_enrich_kev: {
+        link: "/ui/cves",
+        action: "cve_kev",
+        limit: true,
+      },
+      cve_enrich_threat_actors: {
+        link: "/ui/cves",
+        action: "cve_threats",
+        limit: true,
+      },
+      build_daily_brief: {
+        link: "/ui/jobs",
+        action: "daily_brief",
+        date: true,
+      },
+    };
     const wrapper = document.createElement("div");
     wrapper.className = "job-counts-grid";
-    columns.forEach((column) => {
+    groups.forEach((group) => {
+      const groupTypes = Array.isArray(group.job_types)
+        ? group.job_types.filter((type) => allTypes.includes(type))
+        : [];
+      if (!groupTypes.length) {
+        return;
+      }
+      const section = document.createElement("section");
+      section.className = "job-counts-section";
+      const heading = document.createElement("h4");
+      heading.className = "job-counts-heading";
+      heading.textContent = group.title || group.id || "Jobs";
+      section.appendChild(heading);
       const table = document.createElement("table");
       table.className = "table compact job-counts-table";
       table.innerHTML = headerHtml;
       const body = table.querySelector("tbody");
-      column.forEach((jobType) => {
+      groupTypes.forEach((jobType) => {
         const statusMap = counts[jobType] || {};
+        const needsValue =
+          typeof queueable?.[jobType] === "number" ? queueable[jobType] : null;
+        const needsMeta = needsConfig[jobType];
+        const needsLink = needsMeta?.link;
+        const needsText = needsValue === null ? "—" : String(needsValue);
+        const needsHtml = needsLink ? `<a href="${needsLink}">${needsText}</a>` : needsText;
+        let controlHtml = "";
+        if (needsMeta?.action === "daily_brief") {
+          controlHtml = `
+            <span class="job-needs-controls">
+              <input type="date" class="dashboard-brief-date" />
+              <button class="btn tiny secondary dashboard-brief-queue">Queue</button>
+            </span>
+          `;
+        } else if (needsMeta?.action) {
+          const limitSelect = needsMeta.limit
+            ? `<select class="dashboard-limit" data-kind="${needsMeta.action}">
+                 <option value="50">50</option>
+                 <option value="200" selected>200</option>
+                 <option value="500">500</option>
+               </select>`
+            : "";
+          controlHtml = `
+            <span class="job-needs-controls">
+              <button class="btn tiny secondary dashboard-queue" data-kind="${needsMeta.action}">Queue</button>
+              ${limitSelect}
+            </span>
+          `;
+        }
+        const queueHtml = controlHtml || "—";
         const row = document.createElement("tr");
         row.innerHTML = `
           <td>${jobType}</td>
+          <td class="job-needs">
+            <span class="job-needs-value">${needsHtml}</span>
+          </td>
+          <td class="job-queue-cell">${queueHtml}</td>
           <td>${statusMap.queued || 0}</td>
+          <td>${statusMap.running || 0}</td>
           <td>${statusMap.failed || 0}</td>
           <td>${statusMap.succeeded || 0}</td>
         `;
         body.appendChild(row);
       });
-      wrapper.appendChild(table);
+      section.appendChild(table);
+      wrapper.appendChild(section);
     });
-    const container = document.getElementById("dashboard-job-counts-table");
-    if (container) {
-      container.innerHTML = "";
-      container.appendChild(wrapper);
-    } else {
-      jobsPanel.innerHTML = "<h3>Job Queue</h3>";
-      jobsPanel.appendChild(wrapper);
-    }
+    jobCountsContainer.innerHTML = "";
+    jobCountsContainer.appendChild(wrapper);
+    jobCountsContainer.querySelectorAll(".dashboard-brief-date").forEach((input) => {
+      if (input.value) {
+        return;
+      }
+      const today = new Date();
+      today.setDate(today.getDate() - 1);
+      const yyyy = String(today.getFullYear());
+      const mm = String(today.getMonth() + 1).padStart(2, "0");
+      const dd = String(today.getDate()).padStart(2, "0");
+      input.value = `${yyyy}-${mm}-${dd}`;
+    });
   }
   async function loadMetrics() {
     const data = await apiFetch("/admin/api/dashboard/metrics");
-    renderBacklog(data);
     renderJobCounts(
       data.job_counts_by_type_status || {},
       data.job_types || [],
-      data.job_counts_since || null
+      data.job_groups || [],
+      data.job_counts_since || null,
+      data.queueable_by_job_type || {}
     );
   }
   async function loadQueueDiagnostics() {
@@ -427,53 +422,49 @@ function wireDashboard() {
     queueBanner.textContent = `Queued jobs older than ${staleMinutes}m: ${detail}. Hint: No worker claims this job type; check SV_WORKER_ONLY_TYPES.`;
     queueBanner.style.display = "block";
   }
-  backlog.addEventListener("click", async (event) => {
+  jobCountsContainer.addEventListener("click", async (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
       return;
     }
-    if (target.classList.contains("dashboard-refresh")) {
-      loadMetrics().catch((err) => showToast(err.message || String(err)));
-      return;
-    }
     if (target.classList.contains("dashboard-queue")) {
       const kind = target.dataset.kind || "";
-      const limitSelect = backlog.querySelector(`.dashboard-limit[data-kind="${kind}"]`);
+      const limitSelect = jobCountsContainer.querySelector(`.dashboard-limit[data-kind="${kind}"]`);
       const limit = limitSelect ? parseInt(limitSelect.value, 10) : undefined;
-      const note = backlog.querySelector(`.card-note[data-kind="${kind}"]`);
       try {
         const payload = await apiFetch("/admin/api/dashboard/queue_missing", {
           method: "POST",
           body: JSON.stringify({ kind, limit }),
         });
         if (payload.status === "disabled") {
-          const msg = payload.message || "Queue disabled";
-          showToast(msg);
-          if (note) {
-            note.textContent = msg;
-          }
+          showToast(payload.message || "Queue disabled");
         } else if (payload.job_id) {
           showToast(`Queued: ${payload.job_id}`);
         } else {
           showToast(`Queued ${payload.queued || 0} (skipped ${payload.skipped || 0})`);
         }
-        if (note && payload.status !== "disabled") {
-          note.textContent = `Queued ${payload.queued || 0} (skipped ${payload.skipped || 0})`;
-        }
         await loadMetrics();
       } catch (err) {
         showToast(err.message || String(err));
-        if (note) {
-          note.textContent = err.message || String(err);
-        }
+      }
+    }
+    if (target.classList.contains("dashboard-brief-queue")) {
+      const row = target.closest("tr");
+      const dateInput = row ? row.querySelector(".dashboard-brief-date") : null;
+      const dateValue = dateInput ? dateInput.value : "";
+      const payload = dateValue ? { date: dateValue } : {};
+      try {
+        const result = await apiFetch("/admin/api/daily_brief/build", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        showToast(`Daily brief queued: ${result.job_id}`);
+        await loadMetrics();
+      } catch (err) {
+        showToast(err.message || String(err));
       }
     }
   });
-  if (checkBtn) {
-    checkBtn.addEventListener("click", () => {
-      loadMetrics().catch((err) => showToast(err.message || String(err)));
-    });
-  }
   const resetFailuresBtn = document.getElementById("reset-failures");
   if (resetFailuresBtn) {
     resetFailuresBtn.addEventListener("click", async () => {
@@ -502,6 +493,29 @@ function wireDashboard() {
       }
     });
   }
+  if (autoCatchupToggle) {
+    autoCatchupToggle.addEventListener("change", async () => {
+      autoCatchupToggle.disabled = true;
+      try {
+        await apiFetch("/admin/api/config/patch", {
+          method: "PUT",
+          body: JSON.stringify({
+            config: { jobs: { auto_catchup_enabled: !!autoCatchupToggle.checked } },
+          }),
+        });
+        showToast(
+          autoCatchupToggle.checked ? "Auto catchup enabled" : "Auto catchup disabled",
+          "success"
+        );
+      } catch (err) {
+        autoCatchupToggle.checked = !autoCatchupToggle.checked;
+        showToast(err.message || String(err), "error");
+      } finally {
+        autoCatchupToggle.disabled = false;
+      }
+    });
+  }
+  loadAutoCatchupToggle().catch(() => undefined);
   loadMetrics().catch((err) => showToast(err.message || String(err)));
   loadQueueDiagnostics().catch(() => undefined);
   setInterval(() => {
@@ -557,6 +571,7 @@ function wireLogs() {
     "article_products_backfill",
     "derive_events_from_articles",
     "enrich_event_from_web",
+    "validate_event_web_source",
     "promote_event_web_source_to_article",
   ]);
   const params = new URLSearchParams(window.location.search);
@@ -1889,6 +1904,8 @@ function wireJobs() {
     tbody.innerHTML = "";
     jobs.forEach((job) => {
       const canCancel = job.status === "queued" || job.status === "running";
+      const pendingBadge = canCancel ? ' <span class="badge warn">pending</span>' : "";
+      const runningBadge = job.status === "running" ? ' <span class="badge warn">running</span>' : "";
       let resultHtml = "";
       if (job.job_type === "build_site" && job.result) {
         const exitCode = job.result.exit_code ?? "";
@@ -1930,7 +1947,7 @@ function wireJobs() {
       row.innerHTML = `
         <td>${renderShortId(job.id, `/ui/jobs/${job.id}`)}</td>
         <td>${esc(job.job_type)}</td>
-        <td>${statusBadge(job.status)}</td>
+        <td>${statusBadge(job.status)}${pendingBadge}${runningBadge}</td>
         <td>${formatWhen(job)}</td>
         <td>${resultHtml}</td>
         <td>
@@ -2163,6 +2180,9 @@ function wireRuntimeConfig() {
     setValue("filters-allow", (cfg.ingest?.filters?.allow_keywords || []).join("\n"));
     setValue("filters-deny", (cfg.ingest?.filters?.deny_keywords || []).join("\n"));
     setValue("jobs-lock-timeout", cfg.jobs?.lock_timeout_seconds);
+    setValue("llm-openai-background-enabled", cfg.llm?.openai_background_enabled);
+    setValue("llm-openai-background-poll-seconds", cfg.llm?.openai_background_poll_seconds);
+    setValue("llm-openai-background-max-seconds", cfg.llm?.openai_background_max_seconds);
     setValue("cve-enabled", cfg.cve?.enabled);
     setValue("cve-sync-interval", cfg.cve?.sync_interval_minutes);
     setValue("cve-results-per-page", cfg.cve?.results_per_page);
@@ -2230,6 +2250,18 @@ function wireRuntimeConfig() {
       document.getElementById("jobs-lock-timeout").value,
       nextConfig.jobs.lock_timeout_seconds
     );
+    nextConfig.llm = nextConfig.llm || {};
+    nextConfig.llm.openai_background_enabled = document.getElementById(
+      "llm-openai-background-enabled"
+    ).checked;
+    nextConfig.llm.openai_background_poll_seconds = intOr(
+      document.getElementById("llm-openai-background-poll-seconds").value,
+      nextConfig.llm.openai_background_poll_seconds
+    );
+    nextConfig.llm.openai_background_max_seconds = intOr(
+      document.getElementById("llm-openai-background-max-seconds").value,
+      nextConfig.llm.openai_background_max_seconds
+    );
     nextConfig.cve.enabled = document.getElementById("cve-enabled").checked;
     nextConfig.cve.sync_interval_minutes = intOr(
       document.getElementById("cve-sync-interval").value,
@@ -2256,6 +2288,17 @@ function wireRuntimeConfig() {
       nextConfig.llm = parseJsonField(
         document.getElementById("runtime-llm-json").value,
         {}
+      );
+      nextConfig.llm.openai_background_enabled = document.getElementById(
+        "llm-openai-background-enabled"
+      ).checked;
+      nextConfig.llm.openai_background_poll_seconds = intOr(
+        document.getElementById("llm-openai-background-poll-seconds").value,
+        nextConfig.llm.openai_background_poll_seconds
+      );
+      nextConfig.llm.openai_background_max_seconds = intOr(
+        document.getElementById("llm-openai-background-max-seconds").value,
+        nextConfig.llm.openai_background_max_seconds
       );
       nextConfig.per_source_tweaks = parseJsonField(
         document.getElementById("runtime-per-source-json").value,
@@ -2946,18 +2989,20 @@ function wireCveSearch() {
     const before = document.getElementById("cve-before").value;
     const missingDesc = document.getElementById("cve-missing-description").checked;
     const missingProducts = document.getElementById("cve-missing-products").checked;
+    const kevOnly = document.getElementById("cve-kev-only").checked;
     const params = new URLSearchParams();
     if (query) params.set("query", query);
     if (severities.length) params.set("severity", severities.join(","));
     if (after) params.set("after", after);
     if (before) params.set("before", before);
+    if (kevOnly) params.set("kev", "true");
     params.set("page", String(page));
     params.set("page_size", String(pageSize));
     const data = await apiFetch(`/admin/api/cves?${params.toString()}`);
     tbody.innerHTML = "";
     if (!data.items || !data.items.length) {
       const row = document.createElement("tr");
-      row.innerHTML = `<td colspan="4" class="muted">No products found. Run “Backfill from CVEs” or enqueue CVE enrichment.</td>`;
+      row.innerHTML = `<td colspan="9" class="muted">No CVEs found.</td>`;
       tbody.appendChild(row);
       renderPager(pager, data.total, data.page, data.page_size, load);
       return;
@@ -2967,6 +3012,10 @@ function wireCveSearch() {
       const missingDescFlag = !item.summary;
       const hasProducts = (item.affected_products && item.affected_products.length) || (item.product_versions && item.product_versions.length);
       const missingProductsFlag = !hasProducts;
+      const kevDue = item.kev_due_date ? formatDateOnly(item.kev_due_date) : "";
+      const kevPill = item.kev_cve_id
+        ? `<span class="status-pill status-warn" title="${kevDue ? `Due ${esc(kevDue)}` : "Known Exploited Vulnerability"}">KEV</span>`
+        : `<span class="status-pill status-muted">-</span>`;
       const statusPills = [
         missingDescFlag ? '<span class="status-pill status-warn">Missing description</span>' : '<span class="status-pill status-ok">Desc ok</span>',
         missingProductsFlag ? '<span class="status-pill status-warn">Missing products</span>' : '<span class="status-pill status-ok">Products ok</span>',
@@ -2983,6 +3032,7 @@ function wireCveSearch() {
         <td>${esc(formatDateOnly(item.last_modified_at))}</td>
         <td>${item.preferred_base_severity || ""}</td>
         <td>${item.preferred_base_score || ""}</td>
+        <td class="cve-kev">${kevPill}</td>
         <td class="truncate" title="${item.summary || ""}">${item.summary || ""}</td>
         <td class="cve-status">${statusPills}</td>
         <td class="actions">${actions}</td>
@@ -3061,6 +3111,17 @@ function wireCveDetail() {
       const domains = item.reference_domains || [];
       const productVersions = item.product_versions || [];
       const threatActors = item.threat_actors || [];
+      const kev = item.kev || null;
+      const kevDue = kev && kev.due_date ? kev.due_date : "";
+      const kevAdded = kev && kev.added_at ? kev.added_at : "";
+      const kevRansom = kev && kev.ransomware_use ? kev.ransomware_use : "";
+      const kevName = kev && kev.vulnerability_name ? kev.vulnerability_name : "";
+      const kevShort = kev && kev.short_description ? kev.short_description : "";
+      const kevRequired = kev && kev.required_action ? kev.required_action : "";
+      const kevNotes = kev && kev.notes ? kev.notes : "";
+      const kevBadge = kev
+        ? `<div class="status-pill status-warn">KEV${kevDue ? `: Due ${esc(kevDue)}` : ""}</div>`
+        : `<div class="status-pill status-muted">KEV: Not listed</div>`;
       const otherScores = [...v31List, ...v40List]
         .map((entry) => {
           const version = entry.version || "unknown";
@@ -3083,8 +3144,19 @@ function wireCveDetail() {
       }</div>
           <div>Preferred Vector: ${item.preferred_vector || ""}</div>
           <div class="status-pill ${scopeClass}">${scopeBadge}</div>
+          ${kevBadge}
           ${scopeReasons ? `<div class="muted">Reasons: ${scopeReasons}</div>` : ""}
         </div>
+        ${kev ? `<h3>Known Exploited (KEV)</h3>
+        <div class="kv">
+          ${kevName ? `<div>Name: ${esc(kevName)}</div>` : ""}
+          ${kevShort ? `<div>Summary: ${esc(kevShort)}</div>` : ""}
+          ${kevAdded ? `<div>Added: ${esc(kevAdded)}</div>` : ""}
+          ${kevDue ? `<div>Due: ${esc(kevDue)}</div>` : ""}
+          ${kevRansom ? `<div>Ransomware: ${esc(kevRansom)}</div>` : ""}
+          ${kevRequired ? `<div>Required Action: ${esc(kevRequired)}</div>` : ""}
+          ${kevNotes ? `<div>Notes: ${esc(kevNotes)}</div>` : ""}
+        </div>` : ""}
         <h3>CVSS Versions</h3>
         <div class="kv">
           <div>CVSS v3.1: ${
@@ -4332,10 +4404,12 @@ function wireBriefDetail() {
   }
   const day = container.getAttribute("data-brief-day");
   const error = document.getElementById("brief-detail-error");
+  const status = document.getElementById("brief-status");
   const meta = document.getElementById("brief-meta");
   const tldr = document.getElementById("brief-tldr");
   const technicalSynthesis = document.getElementById("brief-technical-synthesis");
   const actions = document.getElementById("brief-actions");
+  const dailyCves = document.getElementById("brief-daily-cves");
   const podcastScript = document.getElementById("brief-podcast-script");
   const nistBreakdown = document.getElementById("brief-nist-breakdown");
   const citations = document.getElementById("brief-citations");
@@ -4349,6 +4423,26 @@ function wireBriefDetail() {
     return;
   }
 
+  const renderStatus = (payload) => {
+    if (!status) {
+      return;
+    }
+    if (!payload || !payload.pending || !payload.job) {
+      status.innerHTML = `<span class="muted">No pending brief job.</span>`;
+      return;
+    }
+    const job = payload.job || {};
+    const started = formatAbsolute(job.started_at || "");
+    const requested = formatAbsolute(job.requested_at || "");
+    const when = started || requested || "";
+    status.innerHTML = `
+      <span class="badge warn">Pending</span>
+      <span class="muted">Status:</span> ${esc(job.status || "unknown")}
+      ${when ? `<span class="muted">Since:</span> ${esc(when)}` : ""}
+      ${job.id ? `<span class="muted">Job:</span> <a href="/ui/jobs/${esc(job.id)}">${esc(shortId(job.id))}</a>` : ""}
+    `;
+  };
+
   const renderList = (items, className = "muted") => {
     if (!items || !items.length) {
       return `<div class="${className}">None</div>`;
@@ -4360,8 +4454,19 @@ function wireBriefDetail() {
     if (!text) return "";
     return esc(text).replace(/\((\d+)\)/g, '<a href="#cite-$1">($1)</a>');
   };
+  apiFetch(`/admin/api/briefs/${encodeURIComponent(day)}/status`)
+    .then((payload) => renderStatus(payload))
+    .catch(() => {
+      if (status) {
+        status.innerHTML = `<span class="muted">Status unavailable.</span>`;
+      }
+    });
+
   apiFetch(`/admin/api/briefs/${encodeURIComponent(day)}`)
     .then((data) => {
+      if (data && data.pending_job) {
+        renderStatus({ pending: true, job: data.pending_job });
+      }
       if (meta) {
         const generatedAt = formatTimestamp(data.meta?.generated_at || data.updated_at);
         meta.innerHTML = `
@@ -4425,6 +4530,43 @@ function wireBriefDetail() {
             const li = document.createElement("li");
             li.innerHTML = `${priority}${linkifyCitations(actionText)}${why}${horizon}`;
             actions.appendChild(li);
+          });
+        }
+      }
+      if (dailyCves) {
+        dailyCves.innerHTML = "";
+        const items = Array.isArray(data.daily_cves) ? data.daily_cves : [];
+        if (!items.length) {
+          dailyCves.innerHTML = `<li class="muted">No CVEs recorded.</li>`;
+        } else {
+          items.forEach((item) => {
+            if (typeof item === "string") {
+              const li = document.createElement("li");
+              li.textContent = item;
+              dailyCves.appendChild(li);
+              return;
+            }
+            const vendor = item.vendor || "Unknown vendor";
+            const product = item.product || "Unknown product";
+            const cveId = item.cve_id || "";
+            const nvdUrl = item.nvd_url || (cveId ? `https://nvd.nist.gov/vuln/detail/${encodeURIComponent(cveId)}` : "");
+            const kevDue = item.kev_due_date ? ` (due ${esc(item.kev_due_date)})` : "";
+            let kevText = "Not KEV";
+            if (item.kev) {
+              if (item.kev_url) {
+                kevText = `<a href="${esc(item.kev_url)}" target="_blank" rel="noopener">KEV${kevDue}</a>`;
+              } else {
+                kevText = `KEV${kevDue}`;
+              }
+            }
+            const cveLink = cveId
+              ? nvdUrl
+                ? `<a href="${esc(nvdUrl)}" target="_blank" rel="noopener">${esc(cveId)}</a>`
+                : esc(cveId)
+              : "CVE";
+            const li = document.createElement("li");
+            li.innerHTML = `${esc(vendor)} — ${esc(product)} — ${cveLink} — ${kevText}`;
+            dailyCves.appendChild(li);
           });
         }
       }
@@ -4612,10 +4754,12 @@ function wireEvents() {
   const createTitle = document.getElementById("event-create-title");
   const createKind = document.getElementById("event-create-kind");
   const createDate = document.getElementById("event-create-date");
+  const createLifecycle = document.getElementById("event-create-lifecycle");
   const createEntity = document.getElementById("event-create-entity");
   const createTier = document.getElementById("event-create-tier");
   const createConfidence = document.getElementById("event-create-confidence");
   const createSummary = document.getElementById("event-create-summary");
+  const createEnrichWeb = document.getElementById("event-create-enrich-web");
   const editModal = document.getElementById("event-edit-modal");
   const editClose = document.getElementById("event-edit-close");
   const editSave = document.getElementById("event-edit-save");
@@ -4691,7 +4835,7 @@ function wireEvents() {
         <td><span class="badge muted">${esc(event.kind || "")}</span></td>
         <td><span class="badge muted">${esc(event.severity || "UNKNOWN")}</span></td>
         <td>${statusBadge(event.status || "")}</td>
-        <td>${event.candidate ? '<span class="badge warn">candidate</span>' : '<span class="badge success">confirmed</span>'}</td>
+        <td>${event.lifecycle ? `<span class="badge ${event.lifecycle === "candidate" ? "warn" : "success"}">${esc(event.lifecycle)}</span>` : (event.candidate ? '<span class="badge warn">candidate</span>' : '<span class="badge success">confirmed</span>')}</td>
         <td>${event.confidence ? event.confidence.toFixed(2) : ""}</td>
         <td class="truncate" title="${esc(event.entity || "")}">${esc(event.entity || "")}</td>
         <td><span data-ts="${esc(event.incident_date || "")}"></span></td>
@@ -4722,13 +4866,16 @@ function wireEvents() {
       const payload = {
         title: createTitle?.value || "",
         kind: createKind?.value || "other",
+        status: createLifecycle?.value || "confirmed",
+        lifecycle: createLifecycle?.value || "confirmed",
         occurred_at: createDate?.value || null,
         entity: createEntity?.value || null,
         confidence_tier: createTier?.value || "watch",
         confidence: createConfidence?.value ? parseFloat(createConfidence.value) : null,
         summary: createSummary?.value || null,
         manual: true,
-        candidate: false,
+        candidate: (createLifecycle?.value || "") === "candidate",
+        run_web_enrich: !!createEnrichWeb?.checked,
       };
       if (!payload.title.trim()) {
         showToast("Title is required");
@@ -4754,7 +4901,7 @@ function wireEvents() {
     editId.value = event.id || "";
     editTitle.value = event.title || "";
     editKind.value = event.kind || "other";
-    editStatus.value = event.status || "open";
+    editStatus.value = event.lifecycle || event.status || "candidate";
     editSeverity.value = event.severity || "UNKNOWN";
     editDate.value = event.incident_date || "";
     editEntity.value = event.entity || "";
@@ -4817,6 +4964,7 @@ function wireEvents() {
         title: editTitle.value || undefined,
         kind: editKind.value || undefined,
         status: editStatus.value || undefined,
+        lifecycle: editStatus.value || undefined,
         severity: editSeverity.value || undefined,
         incident_date: editDate.value || undefined,
         entity: editEntity.value || undefined,
@@ -5017,10 +5165,15 @@ function wireEventDetail() {
   const productsList = document.getElementById("event-products-list");
   const articlesTable = document.getElementById("event-articles-table");
   const webTable = document.getElementById("event-web-sources-table");
+  const reportPanel = document.getElementById("event-report-panel");
   const webError = document.getElementById("event-web-error");
   const webSearchBtn = document.getElementById("event-web-search");
   const webRefreshBtn = document.getElementById("event-web-refresh");
   const webQueryInput = document.getElementById("event-web-query");
+  const webManualUrlInput = document.getElementById("event-web-manual-url");
+  const webManualTitleInput = document.getElementById("event-web-manual-title");
+  const webAddUrlBtn = document.getElementById("event-web-add-url");
+  const webReplace = document.getElementById("event-web-replace");
   const webKeepLow = document.getElementById("event-web-keep-low");
   const webPromote = document.getElementById("event-web-promote");
   const webShowDiscarded = document.getElementById("event-web-show-discarded");
@@ -5084,7 +5237,10 @@ function wireEventDetail() {
   apiFetch(`/admin/api/events/${eventId}`)
     .then((event) => {
       const summaryBtn = document.getElementById("event-summary-refresh");
+      const reportBtn = document.getElementById("event-report-refresh");
       const rederiveBtn = document.getElementById("event-rederive");
+      const publishBtn = document.getElementById("event-publish");
+      const unpublishBtn = document.getElementById("event-unpublish");
       const attachBtn = document.getElementById("event-attach-article");
       const attachInput = document.getElementById("event-attach-article-id");
       const meta = `
@@ -5095,8 +5251,14 @@ function wireEventDetail() {
           <div><strong>ID:</strong> ${event.id}</div>
           <div><strong>Kind:</strong> ${event.kind}</div>
           <div><strong>Status:</strong> ${event.status}</div>
+          <div><strong>Lifecycle:</strong> ${esc(event.lifecycle || event.status || "")}</div>
+          <div><strong>Publish:</strong> ${esc(event.publish_state || "draft")}</div>
+          <div><strong>Published at:</strong> ${esc(formatTimestamp(event.published_at))}</div>
+          <div><strong>Site slug:</strong> ${esc(event.site_slug || event.id || "")}</div>
           <div><strong>Severity:</strong> ${event.severity || "UNKNOWN"}</div>
           <div><strong>Confidence:</strong> ${event.confidence_tier || "watch"} ${event.confidence ? `(${event.confidence.toFixed(2)})` : ""}</div>
+          <div><strong>Narrative bullets:</strong> ${event.narrative && Array.isArray(event.narrative.bullets) ? event.narrative.bullets.length : 0}</div>
+          <div><strong>Timeline entries:</strong> ${Array.isArray(event.timeline) ? event.timeline.length : 0}</div>
           <div><strong>Candidate:</strong> ${event.candidate ? "yes" : "no"}</div>
           <div><strong>Entity:</strong> ${esc(event.entity || "")}</div>
           <div><strong>Incident date:</strong> ${esc(event.incident_date || "")}</div>
@@ -5113,8 +5275,27 @@ function wireEventDetail() {
             const payload = await apiFetch(`/admin/api/events/${eventId}/summary`, {
               method: "POST",
             });
-            showToast(payload.summary ? "Summary rebuilt" : "No summary generated");
+            if (payload.summary) {
+              showToast(
+                `Narrative rebuilt (bullets: ${payload.narrative_bullet_count || 0}, timeline: ${payload.timeline_count || 0})`
+              );
+            } else {
+              showToast("No narrative generated");
+            }
             wireEventDetail();
+          } catch (err) {
+            showToast(err.message || String(err));
+          }
+        });
+      }
+      if (reportBtn) {
+        reportBtn.addEventListener("click", async () => {
+          try {
+            const payload = await apiFetch(`/admin/api/events/${eventId}/report`, {
+              method: "POST",
+            });
+            const jobLabel = payload.job_id ? shortId(payload.job_id) : "";
+            showToast(`Report queued ${jobLabel ? `(${jobLabel})` : ""}`.trim());
           } catch (err) {
             showToast(err.message || String(err));
           }
@@ -5147,6 +5328,39 @@ function wireEventDetail() {
             });
             showToast("Article attached");
             attachInput.value = "";
+            wireEventDetail();
+          } catch (err) {
+            showToast(err.message || String(err));
+          }
+        });
+      }
+      if (publishBtn) {
+        publishBtn.addEventListener("click", async () => {
+          try {
+            const payload = await apiFetch(`/admin/api/events/${eventId}/publish`, {
+              method: "POST",
+              body: JSON.stringify({ publish: true }),
+            });
+            if (payload.status === "blocked") {
+              const reasons = ((payload.readiness && payload.readiness.reasons) || []).join(", ");
+              showToast(`Publish blocked: ${reasons || "not_ready"}`);
+              return;
+            }
+            showToast("Event published");
+            wireEventDetail();
+          } catch (err) {
+            showToast(err.message || String(err));
+          }
+        });
+      }
+      if (unpublishBtn) {
+        unpublishBtn.addEventListener("click", async () => {
+          try {
+            await apiFetch(`/admin/api/events/${eventId}/publish`, {
+              method: "POST",
+              body: JSON.stringify({ publish: false }),
+            });
+            showToast("Event moved to draft");
             wireEventDetail();
           } catch (err) {
             showToast(err.message || String(err));
@@ -5192,13 +5406,98 @@ function wireEventDetail() {
           const link = article.article_id
             ? `/ui/content/articles/${article.article_id}`
             : "";
+          const detachButton = article.article_id
+            ? `<button class="btn small secondary event-detach-article" data-article-id="${article.article_id}">Remove</button>`
+            : "";
           row.innerHTML = `
             <td>${link ? `<a href="${link}">${article.title || ""}</a>` : (article.title || "")}</td>
             <td>${esc(formatTimestamp(article.published_at))}</td>
             <td>${article.url ? `<a href="${article.url}" target="_blank" rel="noopener">Source</a>` : ""}</td>
+            <td>${detachButton}</td>
           `;
           body.appendChild(row);
         });
+      }
+      if (reportPanel) {
+        const report = event.report && typeof event.report === "object" ? event.report : null;
+        const renderList = (items) => {
+          if (!Array.isArray(items) || !items.length) return "";
+          const lis = items.map((item) => `<li>${esc(String(item || ""))}</li>`).join("");
+          return `<ul>${lis}</ul>`;
+        };
+        const renderTimeline = (items) => {
+          if (!Array.isArray(items) || !items.length) return "";
+          const rows = items
+            .map((item) => {
+              const obj = item && typeof item === "object" ? item : {};
+              const date = esc(String(obj.date || obj.published_at || "Unknown date"));
+              const title = esc(String(obj.event || obj.title || obj.summary || ""));
+              const evidence = Array.isArray(obj.evidence) ? obj.evidence : [];
+              const evHtml = evidence.length
+                ? `<ul>${evidence.map((e) => `<li>${esc(String(e || ""))}</li>`).join("")}</ul>`
+                : "";
+              return `<li><strong>${date}</strong>${title ? `: ${title}` : ""}${evHtml}</li>`;
+            })
+            .join("");
+          return `<ul>${rows}</ul>`;
+        };
+        const narrative = event.narrative && typeof event.narrative === "object" ? event.narrative : {};
+        const narrativeSections =
+          narrative.sections && typeof narrative.sections === "object" ? narrative.sections : {};
+        const reportOverview =
+          report && report.overview ? String(report.overview) : String(narrative.summary || "");
+        const reportTimeline =
+          report && Array.isArray(report.timeline) && report.timeline.length
+            ? report.timeline
+            : Array.isArray(event.timeline)
+              ? event.timeline
+              : [];
+        const attribution = report && report.attribution && typeof report.attribution === "object" ? report.attribution : null;
+        const attributionHtml = attribution
+          ? `
+            <h3>Attribution</h3>
+            <ul>
+              <li><strong>Responsible Actor:</strong> ${esc(String(attribution.responsible_actor || "unknown"))}</li>
+              <li><strong>Actor Type:</strong> ${esc(String(attribution.actor_type || "unknown"))}</li>
+              <li><strong>Attribution Confidence:</strong> ${esc(String(attribution.confidence || "unknown"))}</li>
+            </ul>
+            ${renderList(attribution.rationale) ? `<h4>Rationale</h4>${renderList(attribution.rationale)}` : ""}
+            ${renderList(attribution.disputed_claims) ? `<h4>Disputed Claims</h4>${renderList(attribution.disputed_claims)}` : ""}
+          `
+          : "";
+        const sections = [
+          ["breach_compromise", "Breach and Compromise", report ? report.compromise_path : []],
+          ["impact", "Impact", report ? report.impact : []],
+          ["response_recovery", "Response and Recovery", report ? report.response_recovery : []],
+          ["lessons_learned", "Lessons Learned", report ? report.lessons_learned : []],
+          ["compromise_path", "Compromise Path", report ? report.compromise_path : []],
+          ["investigation_findings", "Investigation Findings", report ? report.investigation_findings : []],
+          ["legal_regulatory_outcomes", "Legal and Regulatory Outcomes", report ? report.legal_regulatory_outcomes : []],
+          ["confidence_notes", "Confidence Notes", report ? report.confidence_notes : []],
+        ];
+        const sectionHtml = sections
+          .map(([nKey, title, reportItems]) => {
+            const reportList = renderList(reportItems);
+            const narrativeList = renderList(narrativeSections[nKey]);
+            const body = reportList || narrativeList;
+            return body ? `<h3>${title}</h3>${body}` : "";
+          })
+          .join("");
+        const bulletsHtml = renderList(Array.isArray(narrative.bullets) ? narrative.bullets : []);
+        const timelineHtml = renderTimeline(reportTimeline);
+        const hasAnyContent = Boolean(
+          reportOverview || attributionHtml || bulletsHtml || sectionHtml || timelineHtml
+        );
+        reportPanel.innerHTML = hasAnyContent
+          ? `
+            ${report && report.generated_at ? `<div class="muted"><strong>Generated:</strong> ${esc(formatTimestamp(report.generated_at))}</div>` : ""}
+            ${reportOverview ? `<p class="summary">${esc(reportOverview)}</p>` : ""}
+            ${bulletsHtml ? `<h3>Key Points</h3>${bulletsHtml}` : ""}
+            ${attributionHtml}
+            ${sectionHtml}
+            ${timelineHtml ? `<h3>Timeline</h3>${timelineHtml}` : ""}
+          `
+          : `<div class="muted">No report generated yet.</div>`;
       }
       if (webShowDiscarded) {
         webShowDiscarded.addEventListener("change", () => {
@@ -5235,6 +5534,7 @@ function wireEventDetail() {
           try {
             const payload = {
               query: webQueryInput ? webQueryInput.value.trim() : "",
+              replace_existing: webReplace ? webReplace.checked : true,
               keep_low: webKeepLow ? webKeepLow.checked : false,
               promote_on_enrich: webPromote ? webPromote.checked : false,
             };
@@ -5253,6 +5553,32 @@ function wireEventDetail() {
       if (webRefreshBtn) {
         webRefreshBtn.addEventListener("click", () => {
           loadWebSources().catch((err) => setWebError(err.message || String(err)));
+        });
+      }
+      if (webAddUrlBtn) {
+        webAddUrlBtn.addEventListener("click", async () => {
+          const manualUrl = webManualUrlInput ? webManualUrlInput.value.trim() : "";
+          const manualTitle = webManualTitleInput ? webManualTitleInput.value.trim() : "";
+          if (!manualUrl) {
+            setWebError("Enter a URL to add.");
+            return;
+          }
+          try {
+            const result = await apiFetch(`/admin/api/events/${eventId}/web_sources/manual`, {
+              method: "POST",
+              body: JSON.stringify({
+                url: manualUrl,
+                title: manualTitle || null,
+              }),
+            });
+            const jobLabel = result.job_id ? shortId(result.job_id) : "";
+            showToast(`URL queued ${jobLabel ? `(${jobLabel})` : ""}`.trim());
+            if (webManualUrlInput) webManualUrlInput.value = "";
+            if (webManualTitleInput) webManualTitleInput.value = "";
+            loadWebSources().catch((err) => setWebError(err.message || String(err)));
+          } catch (err) {
+            setWebError(err.message || String(err));
+          }
         });
       }
       if (webTable) {
@@ -5560,6 +5886,7 @@ function wireDangerZone() {
   setup("danger-cves", "DELETE_ALL_CVES", "/admin/api/admin/clear/cves", false);
   setup("danger-events", "DELETE_ALL_EVENTS", "/admin/api/admin/clear/events", false);
   setup("danger-all", "DELETE_ALL_CONTENT", "/admin/api/admin/clear/all", true);
+  setup("danger-site-data", "REBUILD_SITE_DATA", "/admin/api/admin/rebuild/site-data", false);
 }
 function wireDebug() {
   const cards = document.getElementById("debug-cards");
@@ -5571,6 +5898,7 @@ function wireDebug() {
   const smoke = document.getElementById("debug-smoke");
   const productsSmoke = document.getElementById("debug-products-smoke");
   const buildNow = document.getElementById("debug-build");
+  const statusGrid = document.getElementById("debug-status");
   const jobsBody = document.querySelector("#debug-jobs-table tbody");
   const buildEl = document.getElementById("debug-build");
   const cveEl = document.getElementById("debug-cve-sync");
@@ -5598,6 +5926,64 @@ function wireDebug() {
       card.className = "stat-card";
       card.innerHTML = `<div class="stat-label">${label}</div><div class="stat-value">${value}</div>`;
       cards.appendChild(card);
+    });
+  }
+  function renderStatus(data) {
+    if (!statusGrid) {
+      return;
+    }
+    statusGrid.innerHTML = "";
+    const status = data.status_metrics || {};
+    const items = [
+      {
+        label: "Articles with content error",
+        value: status.articles_with_content_error_count ?? 0,
+        link: "/ui/content?type=article&content_error=1&content_error_kind=other",
+      },
+      {
+        label: "Articles 404/410",
+        value: status.articles_404_count ?? 0,
+        link: "/ui/content?type=article&content_error=1&content_error_kind=404",
+      },
+      {
+        label: "Articles stale (>1 week)",
+        value: status.articles_stale_count ?? 0,
+        link: "/ui/content?type=article&content_error=1&content_error_kind=stale",
+      },
+      {
+        label: "Articles pending publish",
+        value: status.articles_pending_publish ?? 0,
+        link: "/ui/content?type=article&needs=publish",
+      },
+      {
+        label: "CVEs missing description",
+        value: status.cves_missing_description_count ?? 0,
+        link: "/ui/cves",
+      },
+      {
+        label: "Event candidates",
+        value: status.events_candidate_count ?? 0,
+        link: "/ui/events",
+      },
+      {
+        label: "LLM configured",
+        value: status.llm_configured ? "yes" : "no",
+        link: "/ui/ai",
+      },
+      {
+        label: "LLM stages active",
+        value: `${status.llm_stage_active || 0}/${status.llm_stage_total || 0}`,
+        link: "/ui/ai",
+      },
+    ];
+    items.forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "status-row";
+      row.innerHTML = `
+        <span>${item.label}</span>
+        <span>${item.link ? `<a href="${item.link}">${item.value}</a>` : item.value}</span>
+      `;
+      statusGrid.appendChild(row);
     });
   }
   function renderJobs(rows) {
@@ -5647,6 +6033,7 @@ function wireDebug() {
     }
     const data = await apiFetch("/admin/api/debug/overview");
     renderCards(data);
+    renderStatus(data);
     renderJobs(data.last_jobs || []);
     renderLlmRuns(data.last_llm_runs || []);
     if (buildEl) {

@@ -28,6 +28,7 @@ from .config import (
     bootstrap_runtime_config,
     apply_runtime_config_patch,
     get_cve_settings,
+    get_events_settings,
     get_schedule_settings,
     get_runtime_config,
     is_article_markdown_enabled,
@@ -44,6 +45,7 @@ from .worker import (
     _site_root_from_output_dir,
     _write_vendor_product_indexes,
     _write_article_data_files,
+    _write_sources_data_files,
     enqueue_build_site_if_needed,
 )
 from .http_fetch import fetch_prefix
@@ -90,6 +92,7 @@ from .storage import (
     list_articles_for_product,
     get_setting,
     set_setting,
+    list_settings_with_prefix,
     get_source_stats,
     get_pending_article_job_id,
     get_pending_cve_job_id,
@@ -116,7 +119,10 @@ from .storage import (
     insert_llm_run,
     list_products_for_article,
     get_article_threat_actors,
+    list_article_ids_missing_threat_actors,
+    list_article_ids_without_event,
     list_threat_actors,
+    list_cve_ids_needing_kev_check,
     get_threat_actor_detail,
     list_jobs_by_types_since,
     query_products,
@@ -135,6 +141,7 @@ from .storage import (
     list_cve_ids,
     list_cve_ids_missing_description,
     list_cve_ids_missing_products,
+    list_cve_ids_missing_threat_actors,
     list_cve_vendor_products,
     list_daily_briefs,
     get_daily_brief,
@@ -149,7 +156,11 @@ from .storage import (
     update_event_summary_from_articles,
     normalize_cve_cluster_event_keys,
     mark_event_web_source_status,
+    upsert_event_web_source,
     promote_event_web_source_to_article,
+    rebuild_event_timeline_from_articles,
+    event_publish_readiness,
+    set_event_publish_state,
     has_pending_article_job,
 )
 from .ingest import process_source
@@ -213,6 +224,33 @@ _LOG_SERVICES = {
 _SCHEDULE_JOB_TYPES = {
     "daily_brief": "build_daily_brief",
 }
+_DASHBOARD_LLM_JOB_TYPES = [
+    "summarize_article_llm",
+    "summarize_article_context_llm",
+    "derive_events_from_articles",
+    "article_enrich_products",
+    "article_enrich_threat_actors",
+    "cve_enrich_llm",
+    "cve_enrich_threat_actors",
+    "event_report_llm",
+]
+_DASHBOARD_OPENAI_JOB_TYPES = [
+    "build_daily_brief",
+]
+_DASHBOARD_FETCH_JOB_TYPES = [
+    "fetch_article_content",
+    "cve_sync",
+    "cve_enrich_kev",
+    "events_rebuild",
+    "enrich_event_from_web",
+    "validate_event_web_source",
+    "promote_event_web_source_to_article",
+    "source_acquire",
+    "ingest_due_sources",
+    "ingest_source",
+    "rebuild_vendor_products",
+    "build_site",
+]
 _scheduler_thread: threading.Thread | None = None
 _scheduler_stop = threading.Event()
 
@@ -575,11 +613,121 @@ def logs_latest_build(stream: str = "stdout", lines: int = 200) -> dict[str, obj
 def dashboard_metrics() -> dict[str, object]:
     conn = _get_conn()
     metrics = get_dashboard_metrics(conn)
-    metrics["job_types"] = sorted(set(WORKER_JOB_TYPES + ["build_site"]))
+    visible_job_types = (
+        _DASHBOARD_LLM_JOB_TYPES
+        + _DASHBOARD_OPENAI_JOB_TYPES
+        + _DASHBOARD_FETCH_JOB_TYPES
+    )
+    metrics["job_types"] = visible_job_types
+    metrics["job_groups"] = [
+        {"id": "llm", "title": "LLM Worker", "job_types": _DASHBOARD_LLM_JOB_TYPES},
+        {"id": "openai", "title": "OpenAI Worker", "job_types": _DASHBOARD_OPENAI_JOB_TYPES},
+        {"id": "fetch", "title": "Fetch Worker", "job_types": _DASHBOARD_FETCH_JOB_TYPES},
+    ]
     stage_statuses = list_stage_statuses(conn, STAGE_NAMES)
     metrics["llm_stage_active"] = sum(1 for item in stage_statuses if item["status"] == "active")
     metrics["llm_stage_total"] = len(stage_statuses)
     metrics["llm_configured"] = metrics["llm_stage_active"] > 0
+
+    def _pending_article_ids(job_type: str) -> set[int]:
+        rows = conn.execute(
+            """
+            SELECT payload_json
+            FROM jobs
+            WHERE job_type = %s
+              AND status IN ('queued', 'running')
+              AND payload_json IS NOT NULL
+            """,
+            (job_type,),
+        ).fetchall()
+        ids: set[int] = set()
+        for row in rows:
+            raw = row[0] if row else None
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+            except Exception:
+                continue
+            value = payload.get("article_id") if isinstance(payload, dict) else None
+            if value is None:
+                continue
+            try:
+                ids.add(int(value))
+            except (TypeError, ValueError):
+                continue
+        return ids
+
+    def _pending_cve_ids(job_type: str) -> set[str]:
+        rows = conn.execute(
+            """
+            SELECT payload_json
+            FROM jobs
+            WHERE job_type = %s
+              AND status IN ('queued', 'running')
+              AND payload_json IS NOT NULL
+            """,
+            (job_type,),
+        ).fetchall()
+        ids: set[str] = set()
+        for row in rows:
+            raw = row[0] if row else None
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+            except Exception:
+                continue
+            value = payload.get("cve_id") if isinstance(payload, dict) else None
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                ids.add(text)
+        return ids
+
+    queueable: dict[str, int] = {}
+    missing_content_ids = list_article_ids_missing_content_all(conn, limit=None)
+    pending_fetch = _pending_article_ids("fetch_article_content")
+    queueable["fetch_article_content"] = sum(1 for article_id in missing_content_ids if int(article_id) not in pending_fetch)
+    profile, _reason = get_active_profile_for_stage(conn, "summarize_article")
+    if profile:
+        summary_ids = list_article_ids_ready_for_summary_all(conn)
+        pending_summary = _pending_article_ids("summarize_article_llm")
+        queueable["summarize_article_llm"] = sum(1 for article_id in summary_ids if int(article_id) not in pending_summary)
+    else:
+        queueable["summarize_article_llm"] = 0
+    profile, _reason = get_active_profile_for_stage(conn, "article_context_pack")
+    if profile:
+        context_ids = list_article_ids_missing_context_pack(conn, limit=None)
+        pending_context = _pending_article_ids("summarize_article_context_llm")
+        queueable["summarize_article_context_llm"] = sum(1 for article_id in context_ids if int(article_id) not in pending_context)
+    else:
+        queueable["summarize_article_context_llm"] = 0
+    product_ids = list_article_ids_missing_products(conn, limit=None)
+    pending_products = _pending_article_ids("article_enrich_products")
+    queueable["article_enrich_products"] = sum(1 for article_id in product_ids if int(article_id) not in pending_products)
+    threat_article_ids = list_article_ids_missing_threat_actors(conn, limit=None)
+    pending_article_threats = _pending_article_ids("article_enrich_threat_actors")
+    queueable["article_enrich_threat_actors"] = sum(1 for article_id in threat_article_ids if int(article_id) not in pending_article_threats)
+    event_candidate_ids = list_article_ids_without_event(conn, limit=None)
+    pending_derive_events = _pending_article_ids("derive_events_from_articles")
+    queueable["derive_events_from_articles"] = sum(1 for article_id in event_candidate_ids if int(article_id) not in pending_derive_events)
+    profile, _reason = get_active_profile_for_stage(conn, "cve_enrich_products")
+    if profile:
+        cve_ids = list_cve_ids_missing_products(conn, limit=None)
+        pending_cve_products = _pending_cve_ids("cve_enrich_llm")
+        queueable["cve_enrich_llm"] = sum(1 for cve_id in cve_ids if str(cve_id) not in pending_cve_products)
+    else:
+        queueable["cve_enrich_llm"] = 0
+    kev_ids = list_cve_ids_needing_kev_check(conn, limit=None)
+    pending_kev = _pending_cve_ids("cve_enrich_kev")
+    queueable["cve_enrich_kev"] = sum(1 for cve_id in kev_ids if str(cve_id) not in pending_kev)
+    cve_threat_ids = list_cve_ids_missing_threat_actors(conn, limit=None)
+    pending_cve_threats = _pending_cve_ids("cve_enrich_threat_actors")
+    queueable["cve_enrich_threat_actors"] = sum(1 for cve_id in cve_threat_ids if str(cve_id) not in pending_cve_threats)
+    queueable["build_daily_brief"] = int(metrics.get("daily_brief_missing_days_count") or 0)
+    metrics["queueable_by_job_type"] = queueable
     return metrics
 
 @app.post("/admin/api/dashboard/reset_failures", dependencies=[Depends(_require_admin_token)])
@@ -771,18 +919,79 @@ def dashboard_queue_missing(payload: dict[str, object]) -> dict[str, object]:
             total=len(cve_ids),
         )
         return {"status": "queued", "queued": queued, "skipped": skipped, "total": len(cve_ids)}
+    if kind == "cve_kev":
+        limit = int(payload.get("limit") or 500)
+        cve_ids = list_cve_ids_needing_kev_check(conn, limit=limit)
+        for cve_id in cve_ids:
+            existing = get_pending_job_id_for_cve(conn, "cve_enrich_kev", cve_id)
+            if existing:
+                skipped += 1
+                continue
+            enqueue_job(conn, "cve_enrich_kev", {"cve_id": cve_id}, dedupe=True)
+            queued += 1
+        log_event(
+            logging.getLogger("sempervigil.cve"),
+            logging.INFO,
+            "cve_kev_queued",
+            queued=queued,
+            skipped=skipped,
+            total=len(cve_ids),
+        )
+        return {"status": "queued", "queued": queued, "skipped": skipped, "total": len(cve_ids)}
     if kind == "article_products":
         limit = int(payload.get("limit") or 500)
-        job_id = enqueue_job(conn, "article_products_backfill", {"limit": limit})
-        return {"status": "queued", "job_id": job_id}
+        article_ids = list_article_ids_missing_products(conn, limit=limit)
+        for article_id in article_ids:
+            existing = get_pending_article_job_id(conn, "article_enrich_products", int(article_id))
+            if existing:
+                skipped += 1
+                continue
+            enqueue_job(conn, "article_enrich_products", {"article_id": int(article_id)}, dedupe=True)
+            queued += 1
+        return {"status": "queued", "queued": queued, "skipped": skipped, "total": len(article_ids)}
     if kind == "article_threats":
         limit = int(payload.get("limit") or 200)
-        job_id = enqueue_job(conn, "article_threat_actors_backfill", {"limit": limit})
-        return {"status": "queued", "job_id": job_id}
+        article_ids = list_article_ids_missing_threat_actors(conn, limit=limit)
+        for article_id in article_ids:
+            existing = get_pending_article_job_id(conn, "article_enrich_threat_actors", int(article_id))
+            if existing:
+                skipped += 1
+                continue
+            enqueue_job(
+                conn,
+                "article_enrich_threat_actors",
+                {"article_id": int(article_id)},
+                dedupe=True,
+            )
+            queued += 1
+        return {"status": "queued", "queued": queued, "skipped": skipped, "total": len(article_ids)}
+    if kind == "article_events":
+        limit = int(payload.get("limit") or 200)
+        article_ids = list_article_ids_without_event(conn, limit=limit)
+        for article_id in article_ids:
+            existing = get_pending_article_job_id(conn, "derive_events_from_articles", int(article_id))
+            if existing:
+                skipped += 1
+                continue
+            enqueue_job(
+                conn,
+                "derive_events_from_articles",
+                {"article_id": int(article_id)},
+                dedupe=True,
+            )
+            queued += 1
+        return {"status": "queued", "queued": queued, "skipped": skipped, "total": len(article_ids)}
     if kind == "cve_threats":
         limit = int(payload.get("limit") or 200)
-        job_id = enqueue_job(conn, "cve_threat_actors_backfill", {"limit": limit})
-        return {"status": "queued", "job_id": job_id}
+        cve_ids = list_cve_ids_missing_threat_actors(conn, limit=limit)
+        for cve_id in cve_ids:
+            existing = get_pending_job_id_for_cve(conn, "cve_enrich_threat_actors", cve_id)
+            if existing:
+                skipped += 1
+                continue
+            enqueue_job(conn, "cve_enrich_threat_actors", {"cve_id": cve_id}, dedupe=True)
+            queued += 1
+        return {"status": "queued", "queued": queued, "skipped": skipped, "total": len(cve_ids)}
     raise HTTPException(status_code=400, detail="unknown_kind")
 
 
@@ -1006,6 +1215,9 @@ def _shutdown() -> None:
 def enqueue(job: JobRequest, _: None = Depends(_require_admin_token)) -> dict[str, str]:
     logger = logging.getLogger("sempervigil.admin")
     conn = _get_conn()
+    allowed_job_types = set(WORKER_JOB_TYPES) | {"build_site"}
+    if job.job_type not in allowed_job_types:
+        raise HTTPException(status_code=400, detail="unsupported_job_type")
     payload = {"source_id": job.source_id} if job.source_id else None
     if job.job_type == "build_site" and has_pending_job(conn, "build_site"):
         last = get_last_job_by_type(conn, "build_site")
@@ -1106,6 +1318,10 @@ def cancel_running_daily_brief_restart() -> dict[str, object]:
 @app.get("/admin/api/debug/overview", dependencies=[Depends(_require_admin_token)])
 def debug_overview() -> dict[str, object]:
     conn = _get_conn()
+    pipeline_metrics = get_dashboard_metrics(conn)
+    stage_statuses = list_stage_statuses(conn, STAGE_NAMES)
+    llm_active = sum(1 for item in stage_statuses if item["status"] == "active")
+    llm_total = len(stage_statuses)
     counts = {
         "articles": count_table(conn, "articles"),
         "article_tags": count_table(conn, "article_tags"),
@@ -1149,6 +1365,21 @@ def debug_overview() -> dict[str, object]:
     return {
         "db_schema_version": get_schema_version(conn),
         "counts": counts,
+        "status_metrics": {
+            "articles_with_content_error_count": int(
+                pipeline_metrics.get("articles_with_content_error_count") or 0
+            ),
+            "articles_404_count": int(pipeline_metrics.get("articles_404_count") or 0),
+            "articles_stale_count": int(pipeline_metrics.get("articles_stale_count") or 0),
+            "articles_pending_publish": int(pipeline_metrics.get("articles_pending_publish") or 0),
+            "cves_missing_description_count": int(
+                pipeline_metrics.get("cves_missing_description_count") or 0
+            ),
+            "llm_configured": llm_active > 0,
+            "llm_stage_active": llm_active,
+            "llm_stage_total": llm_total,
+        },
+        "llm_parse_metrics": _build_llm_parse_metrics(conn, "cve_enrich_products"),
         "last_jobs": last_jobs,
         "last_build_job": last_build_job,
         "last_llm_runs": list_llm_runs(conn, limit=10),
@@ -1169,6 +1400,39 @@ def debug_overview() -> dict[str, object]:
         if last_article_ingest
         else None,
     }
+
+
+def _build_llm_parse_metrics(conn, stage: str) -> list[dict[str, object]]:
+    prefix = f"metrics.llm_parse.{stage}."
+    data = list_settings_with_prefix(conn, prefix, limit=5000)
+    grouped: dict[tuple[str, str], dict[str, object]] = {}
+    for key, value in data.items():
+        if not isinstance(key, str):
+            continue
+        suffix = key[len(prefix):] if key.startswith(prefix) else key
+        parts = suffix.split(".")
+        # profile.<id>.model.<id>.<metric>
+        if len(parts) < 5 or parts[0] != "profile" or parts[2] != "model":
+            continue
+        profile_id = parts[1] or "unknown"
+        model_id = ".".join(parts[3:-1]) or "unknown"
+        metric = parts[-1]
+        try:
+            count = int(value)
+        except (TypeError, ValueError):
+            continue
+        bucket = grouped.setdefault(
+            (profile_id, model_id),
+            {"profile_id": profile_id, "model_id": model_id},
+        )
+        bucket[metric] = count
+    rows = list(grouped.values())
+    for row in rows:
+        total = int(row.get("total") or 0)
+        invalid = int(row.get("invalid_json") or 0)
+        row["invalid_json_rate"] = (invalid / total) if total > 0 else 0.0
+    rows.sort(key=lambda r: int(r.get("total") or 0), reverse=True)
+    return rows
 
 
 @app.get("/admin/api/diagnostics/queue", dependencies=[Depends(_require_admin_token)])
@@ -1913,6 +2177,7 @@ def api_cves(
     min_cvss: float | None = None,
     missing_description: bool | None = None,
     missing_products: bool | None = None,
+    kev: bool | None = None,
     after: str | None = None,
     before: str | None = None,
     vendor: str | None = None,
@@ -1934,6 +2199,7 @@ def api_cves(
         min_cvss=min_cvss,
         missing_description=missing_description,
         missing_products=missing_products,
+        kev=kev,
         after=after,
         before=before,
         vendor_keywords=vendor_keywords,
@@ -2023,7 +2289,15 @@ def api_brief_detail(day: str) -> dict[str, object]:
     detail = get_daily_brief(conn, day)
     if not detail:
         raise HTTPException(status_code=404, detail="daily_brief_not_found")
+    detail["pending_job"] = _get_pending_brief_job(conn, day)
     return detail
+
+
+@app.get("/admin/api/briefs/{day}/status", dependencies=[Depends(_require_admin_token)])
+def api_brief_status(day: str) -> dict[str, object]:
+    conn = _get_conn()
+    pending = _get_pending_brief_job(conn, day)
+    return {"pending": bool(pending), "job": pending}
 
 
 @app.get("/admin/api/events", dependencies=[Depends(_require_admin_token)])
@@ -2085,7 +2359,7 @@ def api_events_rebuild(payload: EventsRebuildRequest | None = None) -> dict[str,
 class EventCreateRequest(BaseModel):
     title: str
     kind: str = "other"
-    status: str = "open"
+    status: str = "confirmed"
     occurred_at: str | None = None
     summary: str | None = None
     event_key: str | None = None
@@ -2095,11 +2369,16 @@ class EventCreateRequest(BaseModel):
     confidence_tier: str = "watch"
     reasons: list[str] | None = None
     candidate: bool = False
+    lifecycle: str | None = None
     entity: str | None = None
     incident_date: str | None = None
     evidence: list[str] | None = None
     tags: list[str] | None = None
     is_event: bool | None = None
+    run_web_enrich: bool = False
+    web_query: str | None = None
+    web_max_results: int | None = None
+    web_promote_on_enrich: bool = False
 
 class EventUpdateRequest(BaseModel):
     title: str | None = None
@@ -2111,10 +2390,14 @@ class EventUpdateRequest(BaseModel):
     confidence: float | None = None
     confidence_tier: str | None = None
     candidate: bool | None = None
+    lifecycle: str | None = None
     entity: str | None = None
     incident_date: str | None = None
     tags: list[str] | None = None
     is_event: bool | None = None
+    publish_state: str | None = None
+    published_at: str | None = None
+    site_slug: str | None = None
 
 
 
@@ -2126,6 +2409,7 @@ def api_event_create(payload: EventCreateRequest) -> dict[str, object]:
     if not event_key:
         bucket = (payload.occurred_at or now)[:10]
         event_key = f"evt:{normalize_name(payload.title)}:{bucket}"
+    lifecycle = (payload.lifecycle or "").strip() or ("candidate" if payload.candidate else payload.status)
     event_id, _ = upsert_event_by_key(
         conn,
         event_key=event_key,
@@ -2142,14 +2426,47 @@ def api_event_create(payload: EventCreateRequest) -> dict[str, object]:
         confidence_tier=payload.confidence_tier,
         reasons=payload.reasons,
         candidate=payload.candidate,
+        lifecycle=lifecycle,
         entity=payload.entity,
         incident_date=payload.incident_date,
         evidence=payload.evidence,
     )
     if payload.tags is not None or payload.is_event is not None:
         update_event(conn, event_id, tags=payload.tags, is_event=payload.is_event)
+    enrich_job_id = None
+    if payload.run_web_enrich:
+        data: dict[str, object] = {"event_id": event_id}
+        if payload.web_query:
+            data["query"] = payload.web_query
+        if payload.web_max_results:
+            data["max_results"] = int(payload.web_max_results)
+        if payload.web_promote_on_enrich:
+            data["promote_on_enrich"] = True
+        enrich_job_id = enqueue_job(conn, "enrich_event_from_web", data, debounce=True)
+    else:
+        try:
+            event_cfg = get_events_settings(conn)
+        except Exception:
+            event_cfg = {}
+        min_articles = int(event_cfg.get("enrich_min_articles", 0) or 0) if isinstance(event_cfg, dict) else 0
+        if min_articles > 0:
+            event = get_event(conn, event_id)
+            article_count = len(((event or {}).get("items") or {}).get("articles") or [])
+            if article_count < min_articles:
+                max_results = int(event_cfg.get("enrich_min_articles_max_results", 12) or 12)
+                enrich_job_id = enqueue_job(
+                    conn,
+                    "enrich_event_from_web",
+                    {"event_id": event_id, "max_results": max_results, "replace_existing": False},
+                    debounce=True,
+                    dedupe=True,
+                )
     event = get_event(conn, event_id)
-    return event or {"id": event_id}
+    response = event or {"id": event_id}
+    if enrich_job_id:
+        response = dict(response)
+        response["enrich_job_id"] = enrich_job_id
+    return response
 
 
 @app.put("/admin/api/events/{event_id}", dependencies=[Depends(_require_admin_token)])
@@ -2158,7 +2475,7 @@ def api_event_update(event_id: str, payload: EventUpdateRequest) -> dict[str, ob
     data = payload.model_dump(exclude_none=True)
     if not data:
         return get_event(conn, event_id) or {"id": event_id}
-    update_event(conn, event_id, data)
+    update_event(conn, event_id, **data)
     event = get_event(conn, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="event_not_found")
@@ -2192,6 +2509,7 @@ def api_event_attach_article(
         raise HTTPException(status_code=404, detail="article_not_found")
     link_event_article(conn, event_id, payload.article_id, payload.added_by or "manual")
     update_event_summary_from_articles(conn, event_id)
+    enqueue_job(conn, "event_report_llm", {"event_id": event_id}, dedupe=True)
     event = get_event(conn, event_id)
     return event or {"id": event_id}
 
@@ -2203,7 +2521,30 @@ def api_event_attach_article(
 def api_event_summary_rebuild(event_id: str) -> dict[str, object]:
     conn = _get_conn()
     summary = update_event_summary_from_articles(conn, event_id)
-    return {"event_id": event_id, "summary": summary}
+    enqueue_job(conn, "event_report_llm", {"event_id": event_id}, dedupe=True)
+    event = get_event(conn, event_id)
+    narrative = event.get("narrative") if isinstance(event, dict) else {}
+    bullets = narrative.get("bullets") if isinstance(narrative, dict) else []
+    timeline = event.get("timeline") if isinstance(event, dict) else []
+    return {
+        "event_id": event_id,
+        "summary": summary,
+        "narrative_bullet_count": len(bullets) if isinstance(bullets, list) else 0,
+        "timeline_count": len(timeline) if isinstance(timeline, list) else 0,
+    }
+
+
+@app.post(
+    "/admin/api/events/{event_id}/report",
+    dependencies=[Depends(_require_admin_token)],
+)
+def api_event_report_rebuild(event_id: str) -> dict[str, object]:
+    conn = _get_conn()
+    event = get_event(conn, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="event_not_found")
+    job_id = enqueue_job(conn, "event_report_llm", {"event_id": event_id}, dedupe=True)
+    return {"event_id": event_id, "job_id": job_id}
 
 @app.post(
     "/admin/api/events/{event_id}/articles/detach",
@@ -2217,11 +2558,64 @@ def api_event_detach_article(event_id: str, payload: EventAttachArticleRequest) 
             (event_id, payload.article_id),
         )
         conn.commit()
+        rebuild_event_timeline_from_articles(conn, event_id)
         update_event_summary_from_articles(conn, event_id)
     except Exception:
         pass
     event = get_event(conn, event_id)
     return event or {"id": event_id}
+
+
+class EventPublishRequest(BaseModel):
+    publish: bool = True
+    force: bool = False
+    site_slug: str | None = None
+
+
+@app.post(
+    "/admin/api/events/{event_id}/publish",
+    dependencies=[Depends(_require_admin_token)],
+)
+def api_event_publish(event_id: str, payload: EventPublishRequest | None = None) -> dict[str, object]:
+    conn = _get_conn()
+    event = get_event(conn, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="event_not_found")
+    data = payload or EventPublishRequest()
+    if data.publish:
+        rebuild_event_timeline_from_articles(conn, event_id)
+        readiness = event_publish_readiness(conn, event_id)
+        if not readiness.get("ready") and not data.force:
+            return {
+                "status": "blocked",
+                "event_id": event_id,
+                "readiness": readiness,
+            }
+        slug_value = (data.site_slug or "").strip()
+        if not slug_value:
+            slug_value = event.get("site_slug") or event_id
+        ok = set_event_publish_state(
+            conn,
+            event_id,
+            "published",
+            site_slug=slug_value,
+        )
+        if not ok:
+            raise HTTPException(status_code=409, detail="publish_state_not_supported")
+    else:
+        readiness = event_publish_readiness(conn, event_id)
+        ok = set_event_publish_state(conn, event_id, "draft", site_slug=data.site_slug)
+        if not ok:
+            raise HTTPException(status_code=409, detail="publish_state_not_supported")
+    enqueue_job(conn, "events_rebuild", None, debounce=True)
+    enqueue_build_site_if_needed(conn, reason="event_publish_state", debounce_seconds=45)
+    updated = get_event(conn, event_id)
+    return {
+        "status": "ok",
+        "event_id": event_id,
+        "publish_state": updated.get("publish_state") if updated else None,
+        "readiness": readiness,
+    }
 
 @app.post(
     "/admin/api/events/{event_id}/rederive",
@@ -2267,6 +2661,15 @@ class EventEnrichWebRequest(BaseModel):
     max_results: int | None = None
     promote_on_enrich: bool = False
     keep_low: bool = False
+    replace_existing: bool = True
+
+
+class EventManualWebSourceRequest(BaseModel):
+    url: str
+    title: str | None = None
+    snippet: str | None = None
+    published_at: str | None = None
+    score: int | None = None
 
 
 @app.post(
@@ -2286,6 +2689,49 @@ def api_event_enrich_web(
     data["event_id"] = event_id
     job_id = enqueue_job(conn, "enrich_event_from_web", data, debounce=True)
     return {"status": "queued", "job_id": job_id}
+
+
+@app.post(
+    "/admin/api/events/{event_id}/web_sources/manual",
+    dependencies=[Depends(_require_admin_token)],
+)
+def api_event_web_source_manual_add(
+    event_id: str, payload: EventManualWebSourceRequest
+) -> dict[str, object]:
+    conn = _get_conn()
+    event = get_event(conn, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="event_not_found")
+    url = (payload.url or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url_required")
+    score = int(payload.score if payload.score is not None else 100)
+    result = {
+        "url": url,
+        "title": payload.title,
+        "snippet": payload.snippet,
+        "published_at": payload.published_at,
+        "engine": "manual",
+        "category": "manual_add",
+        "metadata": {"manual_add": True},
+    }
+    source_id = upsert_event_web_source(
+        conn,
+        event_id,
+        result,
+        score,
+        {"manual_add": score},
+    )
+    if not source_id:
+        raise HTTPException(status_code=400, detail="manual_source_rejected")
+    job_id = enqueue_job(
+        conn,
+        "validate_event_web_source",
+        {"event_id": event_id, "source_id": source_id},
+        debounce=False,
+        dedupe=True,
+    )
+    return {"status": "queued", "source_id": source_id, "job_id": job_id}
 
 
 @app.get(
@@ -2577,6 +3023,7 @@ def api_content_search(
             min_cvss=min_cvss,
             missing_description=md,
             missing_products=mp,
+            kev=None,
             after=after,
             before=before,
             vendor_keywords=vendor_keywords,
@@ -2912,6 +3359,34 @@ def api_clear_events(payload: ClearRequest, request: Request) -> dict[str, objec
     )
     return {"status": "ok", "stats": stats}
 
+@app.post("/admin/api/admin/rebuild/site-data", dependencies=[Depends(_require_admin_token)])
+def api_rebuild_site_data(payload: ClearRequest, request: Request) -> dict[str, object]:
+    if payload.confirm != "REBUILD_SITE_DATA":
+        raise HTTPException(status_code=400, detail="confirm_required")
+    conn = _get_conn()
+    config = load_runtime_config(conn)
+    logger = logging.getLogger("sempervigil.admin")
+    article_stats = _write_article_data_files(conn, config, logger)
+    site_root = _site_root_from_output_dir(config.paths.output_dir)
+    tz_name = config.app.timezone or "UTC"
+    vendor_stats = _write_vendor_product_indexes(conn, site_root, tz_name, logger)
+    data_root = getattr(config.paths, "data_dir", None) or str(Path(site_root) / "data")
+    sources_stats = _write_sources_data_files(conn, data_root, logger)
+    log_event(
+        logger,
+        logging.WARNING,
+        "admin_rebuild_site_data",
+        client=request.client.host if request.client else "unknown",
+    )
+    return {
+        "status": "ok",
+        "stats": {
+            "articles": article_stats,
+            "vendor_product": vendor_stats,
+            "sources": sources_stats,
+        },
+    }
+
 
 
 def _setup_logging() -> logging.Logger:
@@ -2953,6 +3428,32 @@ def _get_conn() -> Any:
     conn = init_db()
     bootstrap_runtime_config(conn)
     return conn
+
+
+def _get_pending_brief_job(conn: Any, day: str) -> dict[str, object] | None:
+    if not day:
+        return None
+    pattern = f'%\"date\":\"{day}\"%'
+    row = conn.execute(
+        """
+        SELECT id, status, requested_at, started_at
+        FROM jobs
+        WHERE job_type = 'build_daily_brief'
+          AND status IN ('queued', 'running')
+          AND payload_json LIKE %s
+        ORDER BY requested_at DESC
+        LIMIT 1
+        """,
+        (pattern,),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "status": row[1],
+        "requested_at": row[2],
+        "started_at": row[3],
+    }
 
 
 def _watchlist_enabled(conn: Any) -> bool:
@@ -3252,6 +3753,7 @@ def ai_clear_queued() -> dict[str, object]:
         "article_enrich_threat_actors": "article_enrich_threat_actors",
         "cve_enrich_threat_actors": "cve_enrich_threat_actors",
         "daily_brief_overall_synthesis": "build_daily_brief",
+        "event_report_llm": "event_report_llm",
     }
     cleared = 0
     stage_results: dict[str, object] = {}

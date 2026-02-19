@@ -5,6 +5,8 @@ import logging
 import re
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 from bs4 import BeautifulSoup
@@ -86,7 +88,14 @@ def fetch_article_content(
         raise
     html = raw.decode("utf-8", errors="replace")
     extracted = extract_content_from_html(html, overrides=overrides, logger=logger)
-    return {"content_text": extracted["content_text"], "content_html": html, "method": extracted["method"]}
+    published_at, published_at_source = extract_published_at_from_html(html)
+    return {
+        "content_text": extracted["content_text"],
+        "content_html": html,
+        "method": extracted["method"],
+        "published_at": published_at,
+        "published_at_source": published_at_source,
+    }
 
 
 def _open_request(request: urllib.request.Request, timeout_seconds: int, *, use_vpn: bool):
@@ -257,3 +266,116 @@ def _strip_patterns(text: str, patterns: list[str]) -> str:
 
 def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _normalize_published_candidate(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+        if number > 10_000_000_000:
+            number /= 1000.0
+        try:
+            return datetime.fromtimestamp(number, tz=timezone.utc).isoformat()
+        except Exception:  # noqa: BLE001
+            return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if not re.search(r"\b\d{4}\b", text):
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).isoformat()
+    except ValueError:
+        pass
+    try:
+        parsed = parsedate_to_datetime(text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).isoformat()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _find_jsonld_dates(payload: Any) -> list[str]:
+    dates: list[str] = []
+    if isinstance(payload, list):
+        for item in payload:
+            dates.extend(_find_jsonld_dates(item))
+        return dates
+    if isinstance(payload, dict):
+        for key in ("datePublished", "dateCreated", "dateModified", "uploadDate"):
+            value = payload.get(key)
+            if value is not None:
+                dates.append(str(value))
+        graph = payload.get("@graph")
+        if graph is not None:
+            dates.extend(_find_jsonld_dates(graph))
+        for value in payload.values():
+            if isinstance(value, (dict, list)):
+                dates.extend(_find_jsonld_dates(value))
+    return dates
+
+
+def extract_published_at_from_html(html: str) -> tuple[str | None, str | None]:
+    soup = BeautifulSoup(html, "html.parser")
+    for script in soup.find_all("script", type=re.compile(r"application/ld\\+json", re.I)):
+        raw = script.string or script.get_text()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except Exception:  # noqa: BLE001
+            continue
+        for candidate in _find_jsonld_dates(payload):
+            normalized = _normalize_published_candidate(candidate)
+            if normalized:
+                return normalized, "html_jsonld"
+
+    meta_fields = [
+        ("property", "article:published_time"),
+        ("property", "og:published_time"),
+        ("name", "pubdate"),
+        ("name", "publishdate"),
+        ("name", "date"),
+        ("name", "datePublished"),
+        ("name", "dc.date"),
+        ("name", "article:published_time"),
+        ("itemprop", "datePublished"),
+        ("itemprop", "dateModified"),
+    ]
+    for attr, name in meta_fields:
+        node = soup.find("meta", attrs={attr: name})
+        if not node:
+            continue
+        candidate = node.get("content") or node.get("value")
+        normalized = _normalize_published_candidate(candidate)
+        if normalized:
+            return normalized, f"html_meta_{name}"
+
+    for node in soup.find_all("time"):
+        candidate = node.get("datetime") or node.get_text(" ", strip=True)
+        normalized = _normalize_published_candidate(candidate)
+        if normalized:
+            return normalized, "html_time"
+
+    # Fallback for JS blobs where datePublished is embedded but not valid JSON.
+    regex_candidates = [
+        r'"datePublished"\s*:\s*"([^"]+)"',
+        r'"dateModified"\s*:\s*"([^"]+)"',
+        r'"published_time"\s*:\s*"([^"]+)"',
+        r'"publishDate"\s*:\s*"([^"]+)"',
+    ]
+    for pattern in regex_candidates:
+        match = re.search(pattern, html, re.IGNORECASE)
+        if not match:
+            continue
+        normalized = _normalize_published_candidate(match.group(1))
+        if normalized:
+            return normalized, "html_regex"
+    return None, None

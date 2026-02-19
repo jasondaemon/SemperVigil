@@ -32,6 +32,7 @@ from .config import (
 from .ingest import process_source
 from .models import Article, Job
 from .cve_sync import CveSyncConfig, isoformat_utc, sync_cves, sync_cve_id
+from .kev_sync import ensure_kev_cache
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .publish import write_article_markdown, write_events_index, write_events_markdown, write_json_index
 from .signals import build_cve_evidence, extract_cve_ids
@@ -63,6 +64,7 @@ from .storage import (
     list_sources,
     get_setting,
     set_setting,
+    increment_setting_counter,
     get_article_id,
     get_article_by_id,
     get_article_tags,
@@ -92,6 +94,7 @@ from .storage import (
     list_product_keys_for_cve,
     list_article_cve_ids,
     list_event_ids_for_article,
+    list_event_articles,
     list_article_ids_without_event,
     link_event_article,
     get_source_run_streaks,
@@ -103,21 +106,32 @@ from .storage import (
     update_article_context_pack,
     update_job_result,
     list_article_ids_missing_content,
+    list_article_ids_missing_content_all,
     list_article_ids_missing_summary,
     list_article_ids_missing_context_pack,
+    list_article_ids_ready_for_summary_all,
     list_products_for_article,
     list_article_ids_for_source_since,
     compute_watchlist_hits,
     try_acquire_lease,
     release_lease,
     update_event_summary_from_articles,
+    update_event_report,
+    update_event,
     list_event_web_sources,
+    clear_event_web_sources,
+    get_event_web_source,
     list_recent_articles,
     list_event_keys_for_articles,
     list_article_cve_tags,
     count_products_for_article,
     infer_article_products_from_cves,
     list_article_ids_missing_products,
+    list_cves_for_day,
+    list_cve_ids_needing_kev_check,
+    get_cve_kev,
+    get_cve_kev_map,
+    set_cve_kev_link,
     list_articles_for_product,
     list_products_with_article_counts,
     get_product,
@@ -126,6 +140,8 @@ from .storage import (
     get_product_display_by_key,
     list_cve_vendor_products,
     upsert_event_web_source,
+    update_event_web_source_status,
+    update_event_web_source_published_at,
     mark_event_web_source_status,
     promote_event_web_source_to_article,
     link_cve_products_from_items,
@@ -143,7 +159,12 @@ from .storage import (
     get_threat_actor_id_by_key,
     list_article_ids_missing_threat_actors,
     list_cve_ids_missing_threat_actors,
+    mark_article_products_checked,
+    mark_article_threat_actors_checked,
+    mark_cve_products_checked,
+    mark_cve_threat_actors_checked,
     get_pending_job_id_for_cve,
+    list_queued_job_stats,
     search_cves,
     _table_exists,
     column_exists,
@@ -166,6 +187,7 @@ WORKER_JOB_TYPES = [
     "ingest_due_sources",
     "test_source",
     "cve_sync",
+    "cve_enrich_kev",
     "cve_enrich_llm",
     "cve_enrich_threat_actors",
     "article_enrich_products",
@@ -181,17 +203,34 @@ WORKER_JOB_TYPES = [
     "write_article_markdown",
     "derive_events_from_articles",
     "enrich_event_from_web",
+    "validate_event_web_source",
     "promote_event_web_source_to_article",
     "enrich_event_summary_llm",
+    "event_report_llm",
     "source_acquire",
     "rebuild_vendor_products",
     "smoke_test",
 ]
+
+_AUTO_CATCHUP_JOB_TYPES = {
+    "fetch_article_content",
+    "summarize_article_llm",
+    "summarize_article_context_llm",
+    "derive_events_from_articles",
+    "article_enrich_products",
+    "article_enrich_threat_actors",
+    "cve_enrich_kev",
+    "cve_enrich_llm",
+    "cve_enrich_threat_actors",
+}
+_AUTO_CATCHUP_BATCH_LIMIT = 200
+_AUTO_CATCHUP_LEASE = "auto_catchup_enqueue"
 HANDLED_JOB_TYPES = {
     "ingest_source",
     "ingest_due_sources",
     "test_source",
     "cve_sync",
+    "cve_enrich_kev",
     "cve_enrich_llm",
     "cve_enrich_threat_actors",
     "article_enrich_products",
@@ -207,8 +246,10 @@ HANDLED_JOB_TYPES = {
     "write_article_markdown",
     "derive_events_from_articles",
     "enrich_event_from_web",
+    "validate_event_web_source",
     "promote_event_web_source_to_article",
     "enrich_event_summary_llm",
+    "event_report_llm",
     "source_acquire",
     "rebuild_vendor_products",
     "smoke_test",
@@ -267,6 +308,13 @@ def _site_root_from_output_dir(output_dir: str) -> str:
     return str(output_path.parent)
 
 
+def _cve_page_url(cve_id: str | None) -> str:
+    cve = str(cve_id or "").strip()
+    if not cve:
+        return ""
+    return f"/cves/{slugify(cve)}/"
+
+
 def _format_human_ts(value: str | None, tz_name: str) -> str:
     if not value:
         return ""
@@ -315,6 +363,7 @@ _LLM_JOB_TYPES = {
     "cve_enrich_threat_actors",
     "derive_events_from_articles",
     "enrich_event_summary_llm",
+    "event_report_llm",
     "build_daily_brief",
 }
 
@@ -365,6 +414,21 @@ def _llm_profile_labels(conn, profile: dict[str, object] | None) -> dict[str, ob
     }
 
 
+def _record_llm_parse_metric(
+    conn,
+    *,
+    stage: str,
+    profile: dict[str, object] | None,
+    outcome: str,
+) -> None:
+    labels = _llm_profile_labels(conn, profile)
+    profile_id = str(labels.get("profile_id") or "unknown")
+    model_id = str(labels.get("model_id") or "unknown")
+    prefix = f"metrics.llm_parse.{stage}.profile.{profile_id}.model.{model_id}"
+    increment_setting_counter(conn, f"{prefix}.total", 1)
+    increment_setting_counter(conn, f"{prefix}.{outcome}", 1)
+
+
 def _coerce_profile(value: object) -> dict[str, object] | None:
     if isinstance(value, tuple):
         value = value[0] if value else None
@@ -386,6 +450,7 @@ def _resolve_profile_ids_for_job(conn, job) -> list[str]:
         "cve_enrich_threat_actors": ["cve_enrich_threat_actors"],
         "derive_events_from_articles": ["derive_events_from_articles"],
         "enrich_event_summary_llm": ["enrich_event_summary_llm"],
+        "event_report_llm": ["event_report_llm", "enrich_event_summary_llm", "summarize_article"],
         "build_daily_brief": ["daily_brief_overall_synthesis"],
     }
     stages = stage_map.get(job.job_type, [])
@@ -556,7 +621,8 @@ def _write_article_data_files(conn, config, logger: logging.Logger) -> dict[str,
     data_dir = Path(data_root) / "articles"
     data_dir.mkdir(parents=True, exist_ok=True)
     min_items = 20
-    recent_rows = list_recent_articles(conn, limit=200)
+    feed_recent_limit = max(200, int(os.environ.get("SV_FEED_RECENT_LIMIT", "2000") or 2000))
+    recent_rows = list_recent_articles(conn, limit=feed_recent_limit)
     if not recent_rows:
         (data_dir / "today.json").write_text("[]", encoding="utf-8")
         (data_dir / "recent.json").write_text("[]", encoding="utf-8")
@@ -675,14 +741,29 @@ def _write_article_data_files(conn, config, logger: logging.Logger) -> dict[str,
         threat_actors = (
             get_article_threat_actors(conn, article_id) if article_id else []
         )
+        source_id = str(row.get("source_id") or "").strip()
+        source_icon = "/img/source-default-news.svg"
+        if source_id and (Path(site_root) / "static" / "img" / f"{source_id}.png").exists():
+            source_icon = f"/img/{source_id}.png"
+        published_epoch = int(parsed.timestamp()) if parsed else 0
+        time_label = ""
+        human_ts = _format_human_ts(published_at, tz_name)
+        if " · " in human_ts:
+            try:
+                time_label = human_ts.split(" · ", 1)[1].strip()
+            except Exception:
+                time_label = ""
         items.append(
             {
                 "id": row.get("id"),
                 "title": row.get("title") or "",
                 "source": row.get("source_name") or "",
-                "source_id": row.get("source_id") or "",
+                "source_id": source_id,
+                "source_icon": source_icon,
                 "published_at_iso": published_at or "",
-                "published_at_human": _format_human_ts(published_at, tz_name),
+                "published_at_human": human_ts,
+                "published_epoch": published_epoch,
+                "time_label": time_label,
                 "url": row.get("original_url") or "",
                 "summary": summary_text,
                 "summary_bullets": summary_bullets,
@@ -773,20 +854,38 @@ def _write_article_data_files(conn, config, logger: logging.Logger) -> dict[str,
         if len(desc) > 220:
             desc = desc[:217].rstrip() + "..."
         published_at = cve.get("published_at") or cve.get("last_modified_at") or ""
+        parsed_published = _parse_ts(str(published_at)) if published_at else None
+        published_epoch = int(parsed_published.timestamp()) if parsed_published else 0
+        human_ts = _format_human_ts(published_at, tz_name)
+        time_label = ""
+        if " · " in human_ts:
+            try:
+                time_label = human_ts.split(" · ", 1)[1].strip()
+            except Exception:
+                time_label = ""
         threat_actors = get_cve_threat_actors(conn, str(cve_id)) if cve_id else []
+        kev = get_cve_kev(conn, str(cve_id)) if cve_id else None
+        kev_due_date = kev.get("due_date") if kev else ""
+        cve_url = _cve_page_url(str(cve_id) if cve_id else "")
         return {
             "cve_id": cve_id,
             "product_title": product_title,
             "published_at_iso": published_at,
-            "published_at_human": _format_human_ts(published_at, tz_name),
+            "published_at_human": human_ts,
+            "published_epoch": published_epoch,
+            "time_label": time_label,
             "summary": desc,
             "base_score": cve.get("preferred_base_score"),
             "severity": severity or "",
+            "url": cve_url,
+            "nvd_url": f"https://nvd.nist.gov/vuln/detail/{cve_id}" if cve_id else "",
             "products": product_labels,
             "product_items": product_items,
             "vendors": vendors,
             "vendor_products": vendor_products,
             "threat_actors": threat_actors,
+            "kev_due_date": kev_due_date,
+            "kev_known_exploited": bool(kev),
         }
 
     for cve in cves_today:
@@ -803,6 +902,7 @@ def _write_article_data_files(conn, config, logger: logging.Logger) -> dict[str,
         min_cvss=None,
         missing_description=None,
         missing_products=None,
+        kev=None,
         after=None,
         before=None,
         vendor_keywords=None,
@@ -839,8 +939,88 @@ def _write_article_data_files(conn, config, logger: logging.Logger) -> dict[str,
 
     (cve_dir / "today.json").write_text(json.dumps(cve_items, indent=2), encoding="utf-8")
     (cve_dir / "recent.json").write_text(json.dumps(recent_cve_items[: max(min_items, len(cve_items))], indent=2), encoding="utf-8")
+
+    # Build per-day front-page feed JSON for client-side day pagination.
+    # Write under static so Hugo publishes it to /feed/...
+    feed_dir = Path(site_root) / "static" / "feed"
+    feed_days_dir = feed_dir / "days"
+    feed_days_dir.mkdir(parents=True, exist_ok=True)
+    for old in feed_days_dir.glob("*.json"):
+        try:
+            old.unlink()
+        except Exception:
+            pass
+
+    feed_entries: list[dict[str, object]] = []
+    for article in items:
+        feed_entries.append(
+            {
+                "kind": "article",
+                "published_epoch": int(article.get("published_epoch") or 0),
+                "published_at_iso": article.get("published_at_iso") or "",
+                "published_at_human": article.get("published_at_human") or "",
+                "time_label": article.get("time_label") or "",
+                "title": article.get("title") or "",
+                "url": article.get("url") or "",
+                "source": article.get("source") or "",
+                "source_id": article.get("source_id") or "",
+                "source_icon": article.get("source_icon") or "/img/source-default-news.svg",
+                "summary": article.get("summary") or "",
+                "summary_bullets": article.get("summary_bullets") or [],
+                "tags": article.get("tags") or [],
+                "products": article.get("products") or [],
+            }
+        )
+    for cve in recent_cve_items:
+        feed_entries.append(
+            {
+                "kind": "cve",
+                "published_epoch": int(cve.get("published_epoch") or 0),
+                "published_at_iso": cve.get("published_at_iso") or "",
+                "published_at_human": cve.get("published_at_human") or "",
+                "time_label": cve.get("time_label") or "",
+                "cve_id": cve.get("cve_id") or "",
+                "url": cve.get("url") or "",
+                "severity": cve.get("severity") or "",
+                "product_title": cve.get("product_title") or "",
+                "summary": cve.get("summary") or "",
+                "products": cve.get("products") or [],
+            }
+        )
+
+    feed_entries = [e for e in feed_entries if int(e.get("published_epoch") or 0) > 0]
+    feed_entries.sort(key=lambda e: int(e.get("published_epoch") or 0), reverse=True)
+    day_buckets: dict[str, list[dict[str, object]]] = {}
+    for entry in feed_entries:
+        epoch = int(entry.get("published_epoch") or 0)
+        if epoch <= 0:
+            continue
+        day_key = datetime.fromtimestamp(epoch, tz).date().isoformat()
+        day_buckets.setdefault(day_key, []).append(entry)
+
+    day_keys = sorted(day_buckets.keys(), reverse=True)
+    for day_key in day_keys:
+        day_items = day_buckets.get(day_key, [])
+        payload = {
+            "day": day_key,
+            "items": day_items,
+            "counts": {
+                "article": sum(1 for i in day_items if str(i.get("kind")) == "article"),
+                "cve": sum(1 for i in day_items if str(i.get("kind")) == "cve"),
+            },
+        }
+        (feed_days_dir / f"{day_key}.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    feed_index = {
+        "days": day_keys,
+        "latest_day": day_keys[0] if day_keys else "",
+        "oldest_day": day_keys[-1] if day_keys else "",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    (feed_dir / "index.json").write_text(json.dumps(feed_index, indent=2), encoding="utf-8")
     _write_product_data_files(conn, site_root, tz_name, logger)
     _write_sources_data_files(conn, data_root, logger)
+    _write_cve_pages(conn, site_root, tz_name, logger)
     log_event(
         logger,
         logging.INFO,
@@ -916,6 +1096,17 @@ def _yaml_escape_title(value: str) -> str:
     cleaned = (value or "").replace("\\", "")
     cleaned = cleaned.replace("'", "''")
     return f"'{cleaned}'"
+
+
+def _yaml_escape_value(value: object) -> str:
+    if value is None:
+        return "''"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    text = str(value)
+    return _yaml_escape_title(text)
 
 
 def _clean_entity_name(value: object) -> str:
@@ -999,11 +1190,19 @@ def _ensure_section_index(path: Path, title: str, type_name: str) -> None:
     atomic_write_text(path, payload, encoding="utf-8")
 
 
+def _purge_generated_entity_content(site_root: str, folders: tuple[str, ...]) -> None:
+    content_dir = Path(site_root) / "content"
+    for folder in folders:
+        target_dir = content_dir / folder
+        if not target_dir.exists():
+            continue
+        for md_path in target_dir.glob("*.md"):
+            md_path.unlink()
+
+
 def _write_product_data_files(conn, site_root: str, tz_name: str, logger: logging.Logger) -> dict[str, int]:
     data_dir = Path(site_root) / "data" / "products"
     data_dir.mkdir(parents=True, exist_ok=True)
-    content_dir = Path(site_root) / "content" / "products"
-    content_dir.mkdir(parents=True, exist_ok=True)
     index_path = data_dir / "index.json"
 
     def _safe_key(product_key: str) -> str:
@@ -1084,6 +1283,8 @@ def _write_product_data_files(conn, site_root: str, tz_name: str, logger: loggin
                     "severity": cve.get("preferred_base_severity") or "",
                     "score": cve.get("preferred_base_score"),
                     "summary": cve.get("summary") or "",
+                    "kev_due_date": cve.get("kev_due_date") or "",
+                    "kev_known_exploited": bool(cve.get("kev_known_exploited")),
                 }
             )
         data_path = data_dir / f"{safe_key}.json"
@@ -1101,28 +1302,7 @@ def _write_product_data_files(conn, site_root: str, tz_name: str, logger: loggin
             ),
             encoding="utf-8",
         )
-        md_path = content_dir / f"{safe_key}.md"
-        if not md_path.exists():
-            title = f"{product.get('vendor_name') or ''} {product.get('product_name') or ''}".strip()
-            title_yaml = _yaml_escape_title(title)
-            md_path.write_text(
-                "\n".join(
-                    [
-                        "---",
-                        f"title: {title_yaml}",
-                        f"date: {utc_now_iso().split('T')[0]}",
-                        "type: products",
-                        f"product_key: {product_key}",
-                        f"safe_key: {safe_key}",
-                        "---",
-                        "",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-
     index_path.write_text(json.dumps(index_items, indent=2), encoding="utf-8")
-    _ensure_section_index(content_dir / "_index.md", "Products", "products")
     _write_vendor_product_indexes(conn, site_root, tz_name, logger)
     _write_threat_indexes(conn, site_root, tz_name, logger)
     return {"products": len(index_items)}
@@ -1422,17 +1602,21 @@ def _write_vendor_product_indexes(
                             {"slug": product_slug, "display_name": meta["product_name"]}
                         )
                         seen_product.add(product_slug)
+                kev = get_cve_kev(conn, cve_id)
                 cve_meta[cve_id] = {
                     "cve_id": cve_id,
                     "severity": (row[3] or "").strip(),
                     "published_at_iso": published_at,
                     "published_at_human": _format_human_ts(published_at, tz_name),
                     "summary": summary,
-                    "url": f"https://nvd.nist.gov/vuln/detail/{cve_id}",
+                    "url": _cve_page_url(cve_id),
+                    "nvd_url": f"https://nvd.nist.gov/vuln/detail/{cve_id}",
                     "vendors": vendors,
                     "product_items": products,
                     "versions": versions_by_cve.get(cve_id, []),
                     "threat_actors": get_cve_threat_actors(conn, cve_id),
+                    "kev_due_date": kev.get("due_date") if kev else "",
+                    "kev_known_exploited": bool(kev),
                 }
 
     vendors_index: list[dict[str, object]] = []
@@ -1440,6 +1624,11 @@ def _write_vendor_product_indexes(
     for vendor_slug, vendor_name in vendor_display_by_slug.items():
         article_ids = sorted(vendor_article_ids.get(vendor_slug, set()))
         cve_ids = sorted(vendor_cve_ids.get(vendor_slug, set()))
+        article_count = len(article_ids)
+        cve_count = len(cve_ids)
+        total_count = article_count + cve_count
+        if total_count == 0:
+            continue
         products_for_vendor = sorted(
             {
                 meta["product_slug"]
@@ -1449,15 +1638,13 @@ def _write_vendor_product_indexes(
         )
         article_items = [article_meta.get(aid) for aid in article_ids if aid in article_meta]
         cve_items = [cve_meta.get(cid) for cid in cve_ids if cid in cve_meta]
-        article_count = len(article_ids)
-        cve_count = len(cve_ids)
         vendors_index.append(
             {
                 "slug": vendor_slug,
                 "display_name": vendor_name,
                 "article_count": article_count,
                 "cve_count": cve_count,
-                "total_count": article_count + cve_count,
+                "total_count": total_count,
             }
         )
         vendor_map[vendor_slug] = {
@@ -1465,7 +1652,7 @@ def _write_vendor_product_indexes(
             "display_name": vendor_name,
             "article_count": article_count,
             "cve_count": cve_count,
-            "total_count": article_count + cve_count,
+            "total_count": total_count,
             "products": products_for_vendor,
             "articles": article_ids,
             "cves": cve_ids,
@@ -1473,8 +1660,9 @@ def _write_vendor_product_indexes(
             "cve_items": cve_items,
         }
 
+    filtered_products = [p for p in products_index if int(p.get("total_count") or 0) > 0]
     product_map: dict[str, dict[str, object]] = {}
-    for product in products_index:
+    for product in filtered_products:
         product_slug = str(product.get("slug") or "")
         if not product_slug:
             continue
@@ -1501,80 +1689,277 @@ def _write_vendor_product_indexes(
         }
 
     vendors_index.sort(key=lambda item: item.get("total_count", 0), reverse=True)
-    products_index.sort(key=lambda item: item.get("total_count", 0), reverse=True)
+    filtered_products.sort(key=lambda item: item.get("total_count", 0), reverse=True)
 
     atomic_write_json(vendors_path, vendors_index, indent=2)
-    atomic_write_json(products_path, products_index, indent=2)
+    atomic_write_json(products_path, filtered_products, indent=2)
     atomic_write_json(vendor_map_path, vendor_map, indent=2)
     atomic_write_json(product_map_path, product_map, indent=2)
 
-    content_dir = Path(site_root) / "content"
-    vendors_dir = content_dir / "vendors"
-    vendors_dir.mkdir(parents=True, exist_ok=True)
-    if not (vendors_dir / "_index.md").exists():
-        atomic_write_text(
-            vendors_dir / "_index.md",
-            "\n".join(
-                [
-                    "---",
-                    'title: "Vendors"',
-                    f"date: {utc_now_iso().split('T')[0]}",
-                    "type: vendors",
-                    "---",
-                    "",
-                ]
-            ),
-        )
-
-    vendor_dir = content_dir / "vendor"
-    vendor_dir.mkdir(parents=True, exist_ok=True)
-    for vendor_slug, vendor_name in vendor_display_by_slug.items():
-        md_path = vendor_dir / f"{vendor_slug}.md"
-        if md_path.exists():
-            continue
-        title_yaml = _yaml_escape_title(vendor_name)
-        atomic_write_text(
-            md_path,
-            "\n".join(
-                [
-                    "---",
-                    f"title: {title_yaml}",
-                    f"date: {utc_now_iso().split('T')[0]}",
-                    "type: vendor",
-                    f"vendor_slug: {vendor_slug}",
-                    "---",
-                    "",
-                ]
-            ),
-        )
-
-    product_dir = content_dir / "product"
-    product_dir.mkdir(parents=True, exist_ok=True)
-    for product in products_index:
-        product_slug = str(product.get("slug") or "")
-        product_name = str(product.get("display_name") or "")
-        if not product_slug or not product_name:
-            continue
-        md_path = product_dir / f"{product_slug}.md"
-        if md_path.exists():
-            continue
-        title_yaml = _yaml_escape_title(product_name)
-        atomic_write_text(
-            md_path,
-            "\n".join(
-                [
-                    "---",
-                    f"title: {title_yaml}",
-                    f"date: {utc_now_iso().split('T')[0]}",
-                    "type: product",
-                    f"product_slug: {product_slug}",
-                    "---",
-                    "",
-                ]
-            ),
-        )
+    # Entity pages are deprecated in favor of /entities search. Keep only JSON data.
+    _purge_generated_entity_content(site_root, ("vendor", "vendors", "product", "products"))
 
     return {"vendors": len(vendors_index), "products": len(products_index)}
+
+
+def _write_cve_pages(conn, site_root: str, tz_name: str, logger: logging.Logger) -> dict[str, int]:
+    if not _table_exists(conn, "cves"):
+        return {"cves": 0}
+    select_cols = [
+        "cve_id",
+        "published_at",
+        "last_modified_at",
+        "preferred_base_score",
+        "preferred_base_severity",
+        "preferred_vector",
+        "description_text",
+        "updated_at",
+    ]
+    select_cols = [col for col in select_cols if column_exists(conn, "cves", col)]
+    if "cve_id" not in select_cols:
+        return {"cves": 0}
+
+    cursor = conn.execute(
+        f"SELECT {', '.join(select_cols)} FROM cves ORDER BY last_modified_at DESC"
+    )
+    rows = cursor.fetchall()
+    data_rows = [dict(zip(select_cols, row)) for row in rows]
+    cve_ids = [str(row.get("cve_id") or "") for row in data_rows if row.get("cve_id")]
+    if not cve_ids:
+        return {"cves": 0}
+
+    vendor_map: dict[str, list[dict[str, str]]] = {}
+    product_map: dict[str, list[dict[str, str]]] = {}
+    vendor_product_map: dict[str, list[dict[str, str]]] = {}
+    if _table_exists(conn, "cve_products") and _table_exists(conn, "products") and _table_exists(conn, "vendors"):
+        cursor = conn.execute(
+            """
+            SELECT cp.cve_id, v.display_name, p.display_name
+            FROM cve_products cp
+            JOIN products p ON p.id = cp.product_id
+            JOIN vendors v ON v.id = p.vendor_id
+            """
+        )
+        for cve_id, vendor_name, product_name in cursor.fetchall():
+            cve_id = str(cve_id or "")
+            vendor_name = _clean_entity_name(vendor_name)
+            product_name = _clean_entity_name(product_name)
+            if not cve_id or not vendor_name or not product_name:
+                continue
+            vendor_slug = slugify(vendor_name)
+            product_slug = slugify(f"{vendor_name} {product_name}")
+            vendor_product_map.setdefault(cve_id, []).append(
+                {
+                    "vendor": vendor_name,
+                    "product": product_name,
+                    "vendor_slug": vendor_slug,
+                    "product_slug": product_slug,
+                }
+            )
+            vendor_list = vendor_map.setdefault(cve_id, [])
+            if not any(item["slug"] == vendor_slug for item in vendor_list):
+                vendor_list.append({"slug": vendor_slug, "display_name": vendor_name})
+            product_list = product_map.setdefault(cve_id, [])
+            if not any(item["slug"] == product_slug for item in product_list):
+                product_list.append({"slug": product_slug, "display_name": product_name})
+
+    version_map: dict[str, list[str]] = {}
+    if _table_exists(conn, "cve_product_versions") and _table_exists(conn, "products") and _table_exists(conn, "vendors"):
+        cursor = conn.execute(
+            """
+            SELECT cpv.cve_id, v.display_name, p.display_name, cpv.version
+            FROM cve_product_versions cpv
+            JOIN products p ON p.id = cpv.product_id
+            JOIN vendors v ON v.id = p.vendor_id
+            """
+        )
+        for cve_id, vendor_name, product_name, version in cursor.fetchall():
+            cve_id = str(cve_id or "")
+            vendor_name = _clean_entity_name(vendor_name)
+            product_name = _clean_entity_name(product_name)
+            if not cve_id or not vendor_name or not product_name or not version:
+                continue
+            version_map.setdefault(cve_id, []).append(f"{vendor_name}:{product_name}:{version}")
+
+    article_map: dict[str, list[dict[str, object]]] = {}
+    if _table_exists(conn, "article_cves") and _table_exists(conn, "articles"):
+        article_columns: set[str] = set()
+        if column_exists(conn, "articles", "summary_llm"):
+            article_columns.add("summary_llm")
+        cursor = conn.execute(
+            """
+            SELECT ac.cve_id, a.id, a.title, s.name, a.original_url, a.published_at, a.ingested_at, a.summary_llm
+            FROM article_cves ac
+            JOIN articles a ON a.id = ac.article_id
+            LEFT JOIN sources s ON s.id = a.source_id
+            ORDER BY a.published_at DESC NULLS LAST, a.ingested_at DESC NULLS LAST
+            """
+        )
+        for row in cursor.fetchall():
+            cve_id = str(row[0] or "")
+            if not cve_id:
+                continue
+            items = article_map.setdefault(cve_id, [])
+            if len(items) >= 50:
+                continue
+            published_at = row[5] or row[6] or ""
+            summary_payload = _summary_payload_from_llm(row[7]) if "summary_llm" in article_columns else {}
+            summary = (
+                str(summary_payload.get("summary") or "").strip()
+                if summary_payload
+                else _summary_from_llm(row[7]) if "summary_llm" in article_columns else ""
+            )
+            if len(summary) > 240:
+                summary = summary[:237].rstrip() + "..."
+            items.append(
+                {
+                    "id": int(row[1]),
+                    "title": row[2] or "",
+                    "source": row[3] or "",
+                    "url": row[4] or "",
+                    "published_at": published_at,
+                    "published_at_human": _format_human_ts(published_at, tz_name),
+                    "summary": summary,
+                }
+            )
+
+    kev_map = get_cve_kev_map(conn, cve_ids) if cve_ids else {}
+
+    content_dir = Path(site_root) / "content"
+    cves_dir = content_dir / "cves"
+    cves_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_section_index(cves_dir / "_index.md", "CVEs", "cves")
+
+    keep = set(cve_ids)
+    for md_path in cves_dir.glob("*.md"):
+        if md_path.name == "_index.md":
+            continue
+        if md_path.stem not in keep:
+            md_path.unlink()
+
+    for row in data_rows:
+        cve_id = str(row.get("cve_id") or "")
+        if not cve_id:
+            continue
+        published_at = row.get("published_at") or ""
+        last_modified_at = row.get("last_modified_at") or ""
+        updated_at = row.get("updated_at") or ""
+        preferred_base_score = row.get("preferred_base_score")
+        preferred_base_severity = (row.get("preferred_base_severity") or "").strip()
+        preferred_vector = (row.get("preferred_vector") or "").strip()
+        description = (row.get("description_text") or "").strip()
+        summary = description
+        if len(summary) > 320:
+            summary = summary[:317].rstrip() + "..."
+
+        date_value = published_at or last_modified_at or updated_at or utc_now_iso()
+        parsed_date = _parse_ts(str(date_value)) if date_value else None
+        date_string = (parsed_date or datetime.now(timezone.utc)).date().isoformat()
+
+        vendors = vendor_map.get(cve_id, [])
+        products = product_map.get(cve_id, [])
+        vendor_products = vendor_product_map.get(cve_id, [])
+        versions = version_map.get(cve_id, [])
+        articles = article_map.get(cve_id, [])
+        kev = kev_map.get(cve_id)
+        nvd_url = f"https://nvd.nist.gov/vuln/detail/{cve_id}"
+        kev_url = (
+            "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+            if kev
+            else ""
+        )
+
+        lines = [
+            "---",
+            f"title: {_yaml_escape_title(cve_id)}",
+            f"date: {date_string}",
+            "type: cves",
+            f"url: {_yaml_escape_value(_cve_page_url(cve_id))}",
+            "aliases:",
+            f"  - {_yaml_escape_value(f'/cves/{cve_id}/')}",
+            f"cve_id: {_yaml_escape_value(cve_id)}",
+            f"published_at: {_yaml_escape_value(published_at)}",
+            f"last_modified_at: {_yaml_escape_value(last_modified_at)}",
+            f"severity: {_yaml_escape_value(preferred_base_severity)}",
+            f"base_score: {_yaml_escape_value(preferred_base_score)}",
+            f"vector: {_yaml_escape_value(preferred_vector)}",
+            f"summary: {_yaml_escape_value(summary)}",
+            f"nvd_url: {_yaml_escape_value(nvd_url)}",
+        ]
+
+        if description:
+            lines.append("description: |")
+            for line in description.splitlines():
+                lines.append(f"  {line}")
+        else:
+            lines.append("description: ''")
+
+        if vendors:
+            lines.append("vendors:")
+            for item in vendors:
+                lines.append(f"  - slug: {_yaml_escape_value(item.get('slug'))}")
+                lines.append(f"    display_name: {_yaml_escape_value(item.get('display_name'))}")
+        else:
+            lines.append("vendors: []")
+
+        if products:
+            lines.append("products:")
+            for item in products:
+                lines.append(f"  - slug: {_yaml_escape_value(item.get('slug'))}")
+                lines.append(f"    display_name: {_yaml_escape_value(item.get('display_name'))}")
+        else:
+            lines.append("products: []")
+
+        if vendor_products:
+            lines.append("vendor_products:")
+            for item in vendor_products:
+                lines.append(f"  - vendor: {_yaml_escape_value(item.get('vendor'))}")
+                lines.append(f"    product: {_yaml_escape_value(item.get('product'))}")
+                lines.append(f"    vendor_slug: {_yaml_escape_value(item.get('vendor_slug'))}")
+                lines.append(f"    product_slug: {_yaml_escape_value(item.get('product_slug'))}")
+        else:
+            lines.append("vendor_products: []")
+
+        if versions:
+            lines.append("product_versions:")
+            for value in versions:
+                lines.append(f"  - {_yaml_escape_value(value)}")
+        else:
+            lines.append("product_versions: []")
+
+        if kev:
+            lines.append("kev:")
+            lines.append("  known_exploited: true")
+            lines.append(f"  due_date: {_yaml_escape_value(kev.get('due_date'))}")
+            lines.append(f"  added_at: {_yaml_escape_value(kev.get('added_at'))}")
+            lines.append(f"  vendor_project: {_yaml_escape_value(kev.get('vendor_project'))}")
+            lines.append(f"  product: {_yaml_escape_value(kev.get('product'))}")
+            lines.append(f"  vulnerability_name: {_yaml_escape_value(kev.get('vulnerability_name'))}")
+            lines.append(f"  short_description: {_yaml_escape_value(kev.get('short_description'))}")
+            lines.append(f"  required_action: {_yaml_escape_value(kev.get('required_action'))}")
+            lines.append(f"  ransomware_use: {_yaml_escape_value(kev.get('ransomware_use'))}")
+            lines.append(f"  notes: {_yaml_escape_value(kev.get('notes'))}")
+            lines.append(f"  cisa_url: {_yaml_escape_value(kev_url)}")
+        else:
+            lines.append("kev: {}")
+
+        if articles:
+            lines.append("articles:")
+            for item in articles:
+                lines.append(f"  - title: {_yaml_escape_value(item.get('title'))}")
+                lines.append(f"    url: {_yaml_escape_value(item.get('url'))}")
+                lines.append(f"    source: {_yaml_escape_value(item.get('source'))}")
+                lines.append(f"    published_at: {_yaml_escape_value(item.get('published_at'))}")
+                lines.append(f"    published_at_human: {_yaml_escape_value(item.get('published_at_human'))}")
+                lines.append(f"    summary: {_yaml_escape_value(item.get('summary'))}")
+        else:
+            lines.append("articles: []")
+
+        lines.extend(["---", ""])
+        md_path = cves_dir / f"{cve_id}.md"
+        atomic_write_text(md_path, "\n".join(lines), encoding="utf-8")
+
+    return {"cves": len(cve_ids)}
 
 
 def _write_threat_indexes(
@@ -1764,36 +2149,8 @@ def _write_threat_indexes(
     atomic_write_json(threats_path, threat_index, indent=2)
     atomic_write_json(threat_map_path, threat_map, indent=2)
 
-    content_dir = Path(site_root) / "content"
-    threats_dir = content_dir / "threats"
-    threats_dir.mkdir(parents=True, exist_ok=True)
-    _ensure_section_index(threats_dir / "_index.md", "Threats", "threats")
-
-    threat_dir = content_dir / "threat"
-    threat_dir.mkdir(parents=True, exist_ok=True)
-    for item in threat_index:
-        actor_key = str(item.get("slug") or "")
-        display_name = str(item.get("display_name") or "")
-        if not actor_key or not display_name:
-            continue
-        md_path = threat_dir / f"{actor_key}.md"
-        if md_path.exists():
-            continue
-        title_yaml = _yaml_escape_title(display_name)
-        atomic_write_text(
-            md_path,
-            "\n".join(
-                [
-                    "---",
-                    f"title: {title_yaml}",
-                    f"date: {utc_now_iso().split('T')[0]}",
-                    "type: threat",
-                    f"threat_slug: {actor_key}",
-                    "---",
-                    "",
-                ]
-            ),
-        )
+    # Threat pages are deprecated in favor of /entities search. Keep only JSON data.
+    _purge_generated_entity_content(site_root, ("threat", "threats"))
 
     return {"threats": len(threat_index)}
 
@@ -1863,6 +2220,48 @@ def _get_today_articles_for_brief(
             }
         )
     return articles
+
+
+def _get_daily_cves_for_brief(
+    conn,
+    day: str,
+    *,
+    limit: int = 60,
+) -> list[dict[str, object]]:
+    rows = list_cves_for_day(conn, day, limit=limit)
+    if not rows:
+        return []
+    items: list[dict[str, object]] = []
+    for row in rows:
+        cve_id = str(row.get("cve_id") or "").strip()
+        if not cve_id:
+            continue
+        vendor = ""
+        product = ""
+        vp_items = list_cve_vendor_products(conn, cve_id)
+        if vp_items:
+            vendor = str(vp_items[0].get("vendor_display") or "").strip()
+            product = str(vp_items[0].get("product_display") or "").strip()
+        kev = get_cve_kev(conn, cve_id) or None
+        kev_status = bool(kev)
+        kev_url = "https://www.cisa.gov/known-exploited-vulnerabilities-catalog" if kev_status else ""
+        if not vendor and kev:
+            vendor = str(kev.get("vendor_project") or "").strip()
+        if not product and kev:
+            product = str(kev.get("product") or "").strip()
+        items.append(
+            {
+                "cve_id": cve_id,
+                "vendor": vendor,
+                "product": product,
+                "url": _cve_page_url(cve_id),
+                "nvd_url": f"https://nvd.nist.gov/vuln/detail/{cve_id}",
+                "kev": kev_status,
+                "kev_url": kev_url,
+                "kev_due_date": kev.get("due_date") if kev else "",
+            }
+        )
+    return items
 
 
 def _ensure_articles_mapped_to_topics(
@@ -3024,6 +3423,7 @@ def run_once(worker_id: str, allowed_types: list[str] | None = None) -> int:
     if _should_tick_ingest_due(allowed_types):
         _maybe_enqueue_ingest_due_sources(conn, logger)
     _maybe_enqueue_cve_sync(conn, logger)
+    _maybe_enqueue_auto_catchup(conn, config, logger, worker_id, allowed_types)
     claim_types = WORKER_JOB_TYPES if allowed_types is None else allowed_types
     if not is_article_markdown_enabled() and allowed_types:
         if "write_article_markdown" not in claim_types:
@@ -3045,30 +3445,10 @@ def run_once(worker_id: str, allowed_types: list[str] | None = None) -> int:
                 release_job(
                     conn, job.id, delay_seconds=15, reason="provider_scope_non_openai"
                 )
-                log_event(
-                    logger,
-                    logging.INFO,
-                    "job_released_provider_scope",
-                    job_id=job.id,
-                    job_type=job.job_type,
-                    scope=provider_scope,
-                    uses_openai=uses_openai,
-                    released=True,
-                )
                 continue
             if provider_scope == "non_openai" and uses_openai:
                 release_job(
                     conn, job.id, delay_seconds=15, reason="provider_scope_openai_only"
-                )
-                log_event(
-                    logger,
-                    logging.INFO,
-                    "job_released_provider_scope",
-                    job_id=job.id,
-                    job_type=job.job_type,
-                    scope=provider_scope,
-                    uses_openai=uses_openai,
-                    released=True,
                 )
                 continue
         return _process_claimed_job(conn, config, job, logger)
@@ -3144,7 +3524,9 @@ def _process_claimed_job(conn, config, job, logger: logging.Logger) -> int:
             attempts = int((job.payload or {}).get("attempt", 0))
             backoff = [300, 900]
             max_attempts = len(backoff)
-            fail_job(conn, job.id, str(exc))
+            failed = fail_job(conn, job.id, str(exc))
+            if not failed:
+                fail_job_force(conn, job.id, str(exc))
             fields = _job_context_fields(conn, job)
             log_event(
                 logger,
@@ -3180,7 +3562,9 @@ def _process_claimed_job(conn, config, job, logger: logging.Logger) -> int:
                     **fields,
                 )
             return 1
-        fail_job(conn, job.id, str(exc))
+        failed = fail_job(conn, job.id, str(exc))
+        if not failed:
+            fail_job_force(conn, job.id, str(exc))
         fields = _job_context_fields(conn, job)
         log_event(
             logger,
@@ -3264,6 +3648,7 @@ def run_loop(
                 if _should_tick_ingest_due(allowed_types):
                     _maybe_enqueue_ingest_due_sources(conn, logger)
                 _maybe_enqueue_cve_sync(conn, logger)
+                _maybe_enqueue_auto_catchup(conn, config, logger, worker_id, allowed_types)
                 lock_timeout = _llm_lock_timeout_seconds(conn, config, WORKER_JOB_TYPES if allowed_types is None else allowed_types)
                 job = claim_next_job(
                     conn,
@@ -3598,16 +3983,6 @@ def _handle_write_article_markdown(
         progress=progress,
     )
     _write_article_data_files(conn, config, logger)
-    article_id = payload.get("article_id")
-    if article_id is not None:
-        try:
-            article_id_int = int(article_id)
-        except ( TypeError, ValueError):
-            article_id_int = None
-        if article_id_int is not None and not has_pending_article_job(
-            conn, "derive_events_from_articles", article_id_int
-        ):
-            enqueue_job(conn, "derive_events_from_articles", {"article_id": article_id_int})
     if batch_id and batch_total:
         counts = get_batch_job_counts(conn, batch_id)
         remaining = counts["queued"] + counts["running"] - 1
@@ -3930,16 +4305,13 @@ def _handle_summarize_article_llm(
         cve_ids = list_article_cve_ids(conn, int(article_id))
         if cve_ids:
             infer_article_products_from_cves(conn, int(article_id), cve_ids)
+        for event_id in list_event_ids_for_article(conn, int(article_id)):
+            event_id_text = str(event_id)
+            update_event_summary_from_articles(conn, event_id_text)
+            enqueue_job(conn, "event_report_llm", {"event_id": event_id_text}, dedupe=True)
         _maybe_enqueue_article_product_enrich(conn, int(article_id), article["source_id"], logger)
         _maybe_enqueue_context_pack(conn, int(article_id), article["source_id"], logger)
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
-        if _is_article_in_today_feed(conn, config, int(article_id), logger):
-            _write_article_data_files(conn, config, logger)
-            enqueue_build_site_if_needed(
-                conn,
-                reason="article_summary_written_today",
-                debounce_seconds=config.jobs.build_debounce_seconds,
-            )
         return {"ok": True, "summary": summary_text, "profile_id": profile.get("id")}
     except Exception as exc:  # noqa: BLE001
         insert_llm_run(
@@ -4099,6 +4471,16 @@ def _handle_summarize_article_context_llm(
             ok=True,
             error=None,
         )
+        for event_id in list_event_ids_for_article(conn, int(article_id)):
+            event_id_text = str(event_id)
+            update_event_summary_from_articles(conn, event_id_text)
+            enqueue_job(conn, "event_report_llm", {"event_id": event_id_text}, dedupe=True)
+        # Event derivation now runs after context pack completion so classification can use
+        # article context rather than markdown write timing.
+        if not list_event_ids_for_article(conn, int(article_id)) and not has_pending_article_job(
+            conn, "derive_events_from_articles", int(article_id)
+        ):
+            enqueue_job(conn, "derive_events_from_articles", {"article_id": int(article_id)})
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         return {"ok": True, "article_id": article_id, "profile_id": profile.get("id")}
     except Exception as exc:  # noqa: BLE001
@@ -4469,6 +4851,7 @@ def _handle_build_daily_brief(
         nist_breakdown = _dedupe_nist_citation_assignments(nist_breakdown)
     _format_technical_synthesis(technical_synthesis)
     _ensure_min_technical_synthesis(technical_synthesis, nist_breakdown)
+    daily_cves = _get_daily_cves_for_brief(conn, day, limit=60)
     brief_payload = {
         "meta": {
             "brief_day": day,
@@ -4497,6 +4880,7 @@ def _handle_build_daily_brief(
         "actions": actions,
         "families": nist_breakdown,
         "low_value": low_value,
+        "daily_cves": daily_cves,
         "podcast_script": podcast_script,
         "citations": citations,
     }
@@ -4696,13 +5080,123 @@ def _normalize_entity(value: str) -> str:
     return value.strip()
 
 
+_EVENT_TYPE_MAP = {
+    "breach": "breach",
+    "data_breach": "breach",
+    "data_leak": "breach",
+    "data_exposure": "breach",
+    "ransomware": "ransomware",
+    "compromise": "compromise",
+    "intrusion": "compromise",
+    "service_compromise": "compromise",
+    "active_exploitation": "exploit_in_the_wild",
+    "exploit_in_the_wild": "exploit_in_the_wild",
+    "ddos": "outage",
+    "outage": "outage",
+    "major_outage_security_related": "outage",
+}
+
+_STRICT_EVENT_TYPES = {"breach", "ransomware", "compromise", "exploit_in_the_wild", "outage"}
+
+
+def _normalize_event_type(value: str) -> str:
+    if not value:
+        return ""
+    normalized = normalize_name(value)
+    return _EVENT_TYPE_MAP.get(normalized, "")
+
+
+def _extract_compromise_scope(text: str) -> str | None:
+    lowered = text.lower()
+    scope_cues = [
+        "data stolen",
+        "customer data",
+        "pii",
+        "credentials",
+        "accessed",
+        "exfiltrated",
+        "encrypted",
+        "systems impacted",
+        "service disruption",
+        "outage",
+        "ransomware",
+    ]
+    for cue in scope_cues:
+        if cue in lowered:
+            return cue
+    return None
+
+
+def _is_primary_source(article: dict[str, object]) -> bool:
+    source_name = str(article.get("source_name") or "").lower()
+    url_value = str(article.get("original_url") or article.get("normalized_url") or "").lower()
+    primary_name_cues = (
+        "cisa",
+        "fbi",
+        "cert",
+        "nvd",
+        "us-cert",
+        "ics-cert",
+        "security advisory",
+        "incident disclosure",
+    )
+    if any(cue in source_name for cue in primary_name_cues):
+        return True
+    # Only treat clearly authoritative disclosure domains as primary.
+    primary_domain_cues = (
+        "nvd.nist.gov",
+        "cisa.gov",
+        "fbi.gov",
+        "cert.org",
+        "msrc.microsoft.com",
+    )
+    return any(cue in url_value for cue in primary_domain_cues)
+
+
+def _maybe_promote_event_lifecycle(
+    conn,
+    event_id: str,
+    article: dict[str, object],
+    *,
+    min_confirm_confidence: float = 0.8,
+) -> str:
+    linked = list_event_articles(conn, event_id)
+    distinct_sources = {
+        str(item.get("source_id") or "").strip()
+        for item in linked
+        if str(item.get("source_id") or "").strip()
+    }
+    # Auto-confirm only after three distinct sources have reported the event.
+    if len(distinct_sources) >= 3:
+        update_event(conn, event_id, candidate=False, lifecycle="confirmed", status="confirmed")
+        return "confirmed"
+    update_event(conn, event_id, candidate=True, lifecycle="candidate", status="candidate")
+    return "candidate"
+
+
+def _is_generic_event_entity(entity: str) -> bool:
+    value = normalize_name(entity or "").replace("_", " ").strip()
+    if not value:
+        return True
+    if value.startswith(("multiple ", "various ", "many ", "several ", "unknown ")):
+        return True
+    generic_terms = {
+        "multiple", "various", "many", "several", "users", "customers", "victims",
+        "organizations", "companies", "devices", "systems", "endpoints", "people",
+        "individuals", "accounts", "applications", "apps", "servers", "networks",
+    }
+    tokens = set(value.split())
+    return bool(tokens & generic_terms)
+
+
 def _non_event_reason(text: str) -> str | None:
     lowered = text.lower()
     non_event = [
         "survey", "report", "research", "study", "analysis", "trends", "insights",
         "guide", "how to", "best practices", "prevention", "tips", "webinar",
         "podcast", "weekly", "monthly", "roundup", "forecast", "prediction",
-        "statistics", "benchmark", "whitepaper",
+        "statistics", "benchmark", "whitepaper", "proof of concept", "poc",
+        "new malware", "malware found", "researchers discovered",
     ]
     for cue in non_event:
         if cue in lowered:
@@ -4749,22 +5243,16 @@ def _derive_event_kind(text: str) -> str:
         return "breach"
     if any(word in lowered for word in ( "compromise", "intrusion")):
         return "compromise"
-    if any(word in lowered for word in ( "campaign", "operation", "apt", "espionage")):
-        return "campaign"
     if any(word in lowered for word in ( "exploited in the wild", "actively exploited", "in the wild")):
         return "exploit_in_the_wild"
-    if any(word in lowered for word in ( "exploit", "exploited", "zero-day", "0day", "poc")):
-        return "exploit"
-    if any(word in lowered for word in ( "advisory", "security update", "patch")):
-        return "advisory"
-    if any(word in lowered for word in ( "vulnerability disclosure", "disclosure")):
-        return "vuln_disclosure"
+    if any(word in lowered for word in ( "outage", "service disruption", "service unavailable", "denial of service")):
+        return "outage"
     return "other"
 
 
 def _derive_confidence_tier(text: str) -> str:
     lowered = text.lower()
-    confirmed = ( "confirmed", "official", "cisa", "fbi", "patched", "fixed")
+    confirmed = ("confirmed", "official", "cisa", "fbi", "disclosed", "filing")
     likely = ( "likely", "suspected", "reportedly", "investigating", "possible")
     if any(word in lowered for word in confirmed):
         return "confirmed"
@@ -4810,6 +5298,23 @@ def _derive_confidence(text: str) -> tuple[float, bool, list[str]]:
 
 
 
+def _event_admission_policy(conn) -> dict[str, object]:
+    settings = get_events_settings(conn)
+    min_create_conf = float(settings.get("min_create_confidence", 0.55) or 0.55)
+    min_confirm_conf = float(settings.get("min_confirm_confidence", 0.8) or 0.8)
+    min_signal_reasons = int(settings.get("min_signal_reasons", 1) or 1)
+    allow_cve_only_create = bool(settings.get("allow_cve_only_create", False))
+    min_create_conf = max(0.0, min(1.0, min_create_conf))
+    min_confirm_conf = max(0.0, min(1.0, min_confirm_conf))
+    min_signal_reasons = max(0, min_signal_reasons)
+    return {
+        "min_create_confidence": min_create_conf,
+        "min_confirm_confidence": min_confirm_conf,
+        "min_signal_reasons": min_signal_reasons,
+        "allow_cve_only_create": allow_cve_only_create,
+    }
+
+
 def _event_kind_label(kind: str) -> str:
     labels = {
         "breach": "Breach disclosed",
@@ -4827,24 +5332,43 @@ def _event_kind_label(kind: str) -> str:
     return labels.get(kind, kind.title() if kind else "Event")
 
 
+def _maybe_queue_event_research(conn, event_id: str) -> bool:
+    try:
+        settings = get_events_settings(conn)
+    except Exception:
+        return False
+    min_articles = int(settings.get("enrich_min_articles", 0) or 0)
+    if min_articles <= 0:
+        return False
+    article_count = len(list_event_articles(conn, event_id))
+    if article_count >= min_articles:
+        return False
+    max_results = int(settings.get("enrich_min_articles_max_results", 12) or 12)
+    enqueue_job(
+        conn,
+        "enrich_event_from_web",
+        {"event_id": event_id, "max_results": max_results, "replace_existing": False},
+        debounce=True,
+        dedupe=True,
+    )
+    return True
+
+
 def _handle_derive_events_from_articles(
     conn, config, payload: dict[str, object], logger: logging.Logger
 ) -> dict[str, object]:
     article_id = payload.get("article_id")
     if article_id is None:
-        limit = int(payload.get("limit") or 100) if payload else 100
-        article_ids = list_article_ids_without_event(conn, limit=limit)
-        linked = 0
-        skipped = 0
-        for item_id in article_ids:
-            result = _handle_derive_events_from_articles(
-                conn, config, {"article_id": int(item_id)}, logger
-            )
-            if result.get("status") == "linked":
-                linked += 1
-            else:
-                skipped += 1
-        return {"status": "batch", "linked": linked, "skipped": skipped, "total": len(article_ids)}
+        # Keep each claimed derive job small and predictable: process one article.
+        # This avoids long-running "batch" claims that make queue progress look stalled.
+        article_ids = list_article_ids_without_event(conn, limit=1)
+        if not article_ids:
+            return {"status": "skipped", "reason": "no_candidates"}
+        item_id = int(article_ids[0])
+        result = _handle_derive_events_from_articles(
+            conn, config, {"article_id": item_id}, logger
+        )
+        return {"status": "single", "article_id": item_id, "result": result}
     if list_event_ids_for_article(conn, article_id):
         return {"status": "skipped", "reason": "already_linked"}
     article = get_article_by_id(conn, article_id)
@@ -4856,6 +5380,9 @@ def _handle_derive_events_from_articles(
     combined = " ".join(part for part in ( title, summary, content) if part).strip()
     if not combined:
         return {"status": "skipped", "reason": "no_content"}
+    policy = _event_admission_policy(conn)
+    cve_ids = list_article_cve_ids(conn, article_id)
+    is_primary_source = _is_primary_source(article)
     profile, reason = get_active_profile_for_stage(conn, "derive_events_from_articles")
     if profile:
         if not content:
@@ -4877,7 +5404,7 @@ def _handle_derive_events_from_articles(
             "\n".join(input_lines).strip(),
             logger,
             profile_id=profile["id"],
-            context={"stage": "derive_events_from_articles", "job_type": job.job_type},
+            context={"stage": "derive_events_from_articles", "job_type": "derive_events_from_articles"},
         )
         parsed, error_reason = _parse_event_classification(result if isinstance(result, dict) else {})
         if error_reason:
@@ -4893,22 +5420,50 @@ def _handle_derive_events_from_articles(
                 return {"status": "skipped", "reason": "llm_non_event"}
             event_type_raw = str(parsed.get("event_type") or "").strip()
             victim_raw = str(parsed.get("victim") or "").strip()
-            kind = normalize_name(event_type_raw) if event_type_raw else ""
+            kind = _normalize_event_type(event_type_raw)
             entity = _normalize_entity(victim_raw)
-            if not kind or not entity:
-                return {"status": "skipped", "reason": "llm_missing_fields"}
-            bucket = (article.get("published_at") or article.get("ingested_at") or "")[:10] or utc_now_iso()[:10]
-            kind_label = _event_kind_label(kind)
             headline = str(parsed.get("headline") or "").strip()
             summary_text = str(parsed.get("summary") or "").strip() or None
+            llm_scope = str(parsed.get("what_compromised") or "").strip()
+            scope = llm_scope or _extract_compromise_scope(" ".join([headline, summary_text or "", combined]))
+            if not kind or kind not in _STRICT_EVENT_TYPES:
+                return {"status": "skipped", "reason": "llm_non_incident_type"}
+            if not entity:
+                return {"status": "skipped", "reason": "llm_missing_entity"}
+            if not scope:
+                return {"status": "skipped", "reason": "llm_missing_scope"}
+            parsed_incident_date = str(parsed.get("incident_date") or "").strip()
+            if parsed_incident_date.lower() in {"unknown", "n/a", "none", "null"}:
+                parsed_incident_date = ""
+            bucket = parsed_incident_date or (article.get("published_at") or article.get("ingested_at") or "")[:10] or utc_now_iso()[:10]
+            kind_label = _event_kind_label(kind)
             event_title = headline or f"{entity} — {kind_label} — {bucket}"
-            event_key = f"event:{kind}:{_slugify(str(entity))}:{bucket}"
+            event_key = f"event:{kind}:{_slugify(str(entity))}"
             confidence = float(parsed.get("confidence") or 0) / 100.0
-            confidence_tier = "watch"
-            if confidence >= 0.85:
-                confidence_tier = "confirmed"
-            elif confidence >= 0.65:
-                confidence_tier = "likely"
+            confidence_tier = _derive_confidence_tier(" ".join([headline, summary_text or "", combined]))
+            _, qualifier_reasons = _has_event_qualifier(
+                " ".join([headline, summary_text or "", combined]),
+                entity,
+            )
+            if len(qualifier_reasons) < int(policy["min_signal_reasons"]):
+                return {"status": "skipped", "reason": "llm_insufficient_signals"}
+            if _is_generic_event_entity(entity):
+                return {"status": "skipped", "reason": "llm_generic_entity"}
+            if kind in {"breach", "compromise", "ransomware"} and not any(
+                reason.startswith("victim:") for reason in qualifier_reasons
+            ):
+                return {"status": "skipped", "reason": "llm_missing_victim_signal"}
+            llm_non_event = _non_event_reason(" ".join([headline, summary_text or "", combined]))
+            if llm_non_event and not any(reason.startswith(("victim:", "law:")) for reason in qualifier_reasons):
+                return {"status": "skipped", "reason": "llm_non_incident", "detail": llm_non_event}
+            if (
+                confidence < float(policy["min_create_confidence"])
+                and not is_primary_source
+                and not (bool(policy["allow_cve_only_create"]) and bool(cve_ids))
+            ):
+                return {"status": "skipped", "reason": "llm_low_confidence"}
+            candidate = True
+            status = "candidate"
             event_id, _ = upsert_event_by_key(
                 conn,
                 event_key=event_key,
@@ -4918,17 +5473,18 @@ def _handle_derive_events_from_articles(
                 first_seen_at=article.get("published_at") or article.get("ingested_at") or utc_now_iso(),
                 last_seen_at=utc_now_iso(),
                 summary=summary_text,
-                status="open",
                 meta={"seed_article_id": article_id},
                 manual=False,
                 visibility="active",
                 confidence=confidence,
                 confidence_tier=confidence_tier,
-                candidate=True,
+                candidate=candidate,
+                lifecycle=status,
                 entity=entity,
                 incident_date=bucket,
-                evidence=["llm:derive_events_from_articles"],
-                reasons=["llm:derive_events_from_articles"],
+                evidence=["llm:derive_events_from_articles", f"scope:{scope}"],
+                reasons=["llm:derive_events_from_articles", f"scope:{scope}"] + qualifier_reasons,
+                status=status,
             )
             log_event(
                 logger,
@@ -4942,23 +5498,33 @@ def _handle_derive_events_from_articles(
                 reasons=["llm"],
             )
             link_event_article(conn, event_id, article_id, "llm")
-            for cve_id in list_article_cve_ids(conn, article_id):
+            lifecycle = _maybe_promote_event_lifecycle(
+                conn,
+                event_id,
+                article,
+                min_confirm_confidence=float(policy["min_confirm_confidence"]),
+            )
+            for cve_id in cve_ids:
                 upsert_event_item(conn, event_id, "cve", cve_id)
                 for product_key in list_product_keys_for_cve(conn, cve_id):
                     upsert_event_item(conn, event_id, "product", product_key)
             update_event_summary_from_articles(conn, event_id)
+            enqueue_job(conn, "event_report_llm", {"event_id": event_id}, dedupe=True)
+            _maybe_queue_event_research(conn, event_id)
             return {
                 "status": "linked",
                 "event_id": event_id,
-                "cves": len(list_article_cve_ids(conn, article_id)),
+                "cves": len(cve_ids),
                 "source": "llm",
+                "lifecycle": lifecycle,
             }
     kind = _derive_event_kind(combined)
-    confidence, candidate, evidence = _derive_confidence(combined)
+    confidence, _, evidence = _derive_confidence(combined)
+    if kind not in _STRICT_EVENT_TYPES:
+        return {"status": "skipped", "reason": "non_incident_kind"}
     incident_date = _extract_incident_date(combined) or ( article.get("published_at") or "")[:10] or None
-    cve_ids = list_article_cve_ids(conn, article_id)
     entity = _normalize_entity(_extract_event_entity(title))
-    if not entity and kind in {"exploit", "advisory", "vuln_disclosure"}:
+    if not entity and kind == "exploit_in_the_wild":
         for cve_id in cve_ids:
             product_keys = list_product_keys_for_cve(conn, cve_id)
             if product_keys:
@@ -4972,26 +5538,38 @@ def _handle_derive_events_from_articles(
         reason.startswith(("incident:", "exploit:", "law:", "victim:"))
         for reason in qualifier_reasons
     )
+    if len(qualifier_reasons) < int(policy["min_signal_reasons"]):
+        return {"status": "skipped", "reason": "insufficient_signals"}
     if non_event and not strong_signal:
         return {"status": "skipped", "reason": "non_incident", "detail": non_event}
     if not strong_signal:
         return {"status": "skipped", "reason": "no_incident_signal"}
     if not entity:
         return {"status": "skipped", "reason": "entity_missing"}
-    if kind in {"advisory", "vuln_disclosure"} and not any(
-        reason.startswith(("incident:", "exploit:", "law:", "victim:"))
-        for reason in qualifier_reasons
+    if _is_generic_event_entity(entity):
+        return {"status": "skipped", "reason": "entity_generic"}
+    if kind in {"breach", "compromise", "ransomware"} and not any(
+        reason.startswith("victim:") for reason in qualifier_reasons
     ):
-        return {"status": "skipped", "reason": "advisory_without_incident"}
-    if kind in {"advisory", "vuln_disclosure"} and ( confidence or 0) < 0.6:
-        if cve_ids and not any(word in combined.lower() for word in ( "breach", "ransomware", "compromise", "intrusion", "campaign", "exploited in the wild")):
-            return {"status": "skipped", "reason": "cve_only_suppressed"}
+        return {"status": "skipped", "reason": "missing_victim_signal"}
+    scope = _extract_compromise_scope(combined)
+    if not scope:
+        return {"status": "skipped", "reason": "scope_missing"}
+    if (
+        confidence < float(policy["min_create_confidence"])
+        and not is_primary_source
+        and not (bool(policy["allow_cve_only_create"]) and bool(cve_ids))
+    ):
+        return {"status": "skipped", "reason": "low_confidence"}
     bucket = incident_date or ( article.get("published_at") or article.get("ingested_at") or "")[:10]
     bucket = bucket or utc_now_iso()[:10]
     kind_label = _event_kind_label(kind)
     event_title = f"{entity} — {kind_label} — {bucket}"
-    event_key = f"event:{kind}:{_slugify(str(entity))}:{bucket}"
+    event_key = f"event:{kind}:{_slugify(str(entity))}"
     confidence_tier = _derive_confidence_tier(combined)
+    candidate = True
+    lifecycle = "candidate"
+    status = "candidate"
     event_id, _ = upsert_event_by_key(
         conn,
         event_key=event_key,
@@ -5000,17 +5578,18 @@ def _handle_derive_events_from_articles(
         severity="UNKNOWN",
         first_seen_at=article.get("published_at") or article.get("ingested_at") or utc_now_iso(),
         last_seen_at=utc_now_iso(),
-        status="open",
         meta={"seed_article_id": article_id},
         manual=False,
         visibility="active",
         confidence=confidence,
         confidence_tier=confidence_tier,
         candidate=candidate,
+        lifecycle=lifecycle,
         entity=entity,
         incident_date=bucket,
-        evidence=evidence + qualifier_reasons,
-        reasons=["derived:article"] + qualifier_reasons,
+        evidence=evidence + qualifier_reasons + [f"scope:{scope}"],
+        reasons=["derived:article"] + qualifier_reasons + [f"scope:{scope}"],
+        status=status,
     )
     log_event(
         logger,
@@ -5025,15 +5604,23 @@ def _handle_derive_events_from_articles(
         reasons=evidence + qualifier_reasons,
     )
     link_event_article(conn, event_id, article_id, "auto")
+    lifecycle = _maybe_promote_event_lifecycle(
+        conn,
+        event_id,
+        article,
+        min_confirm_confidence=float(policy["min_confirm_confidence"]),
+    )
     for cve_id in cve_ids:
         upsert_event_item(conn, event_id, "cve", cve_id)
         for product_key in list_product_keys_for_cve(conn, cve_id):
             upsert_event_item(conn, event_id, "product", product_key)
     update_event_summary_from_articles(conn, event_id)
+    enqueue_job(conn, "event_report_llm", {"event_id": event_id}, dedupe=True)
     return {
         "status": "linked",
         "event_id": event_id,
         "cves": len(cve_ids),
+        "lifecycle": lifecycle,
     }
 
 
@@ -5054,7 +5641,11 @@ def _handle_enrich_event_from_web(
     engines = os.getenv("SV_SEARXNG_ENGINES")
     keep_low = bool(payload.get("keep_low", False))
     promote_on_enrich = bool(payload.get("promote_on_enrich", False))
-    min_score = int(os.getenv("SV_ENRICH_MIN_SCORE", "10"))
+    replace_existing = bool(payload.get("replace_existing", False))
+    min_score = int(os.getenv("SV_ENRICH_MIN_SCORE", "20"))
+    auto_fetch_enabled = os.getenv("SV_EVENT_ENRICH_AUTO_FETCH", "0").strip().lower() in {"1", "true", "yes"}
+    auto_fetch_min_score = int(os.getenv("SV_EVENT_ENRICH_AUTO_FETCH_MIN_SCORE", "25"))
+    auto_fetch_max = max(1, int(os.getenv("SV_EVENT_ENRICH_AUTO_FETCH_MAX_PER_RUN", "5")))
     try:
         results = searxng_search(
             query,
@@ -5076,6 +5667,8 @@ def _handle_enrich_event_from_web(
         raise
     saved = 0
     promoted = 0
+    promoted_queued = 0
+    auto_queued = 0
     scored_results: list[tuple[int, dict[str, object], dict[str, int]]] = []
     for item in results:
         url_value = str(item.get("url") or "").strip()
@@ -5084,6 +5677,9 @@ def _handle_enrich_event_from_web(
         item["domain"] = urlparse(url_value).netloc.lower()
         score, reasons = score_web_result(event, item)
         scored_results.append((score, item, reasons))
+    replaced = 0
+    if replace_existing:
+        replaced = clear_event_web_sources(conn, event_id, keep_promoted=True)
     for score, item, reasons in scored_results:
         if score < min_score and not keep_low:
             continue
@@ -5091,15 +5687,190 @@ def _handle_enrich_event_from_web(
         if source_id:
             saved += 1
             if promote_on_enrich:
-                article_id = promote_event_web_source_to_article(conn, source_id)
-                if article_id:
-                    promoted += 1
+                # Route through validation/fetch instead of direct promote so event reports
+                # are built from fetched + summarized article content.
+                enqueue_job(
+                    conn,
+                    "validate_event_web_source",
+                    {"source_id": source_id, "event_id": event_id},
+                    dedupe=True,
+                )
+                promoted_queued += 1
+            elif auto_fetch_enabled and score >= auto_fetch_min_score and auto_queued < auto_fetch_max:
+                enqueue_job(
+                    conn,
+                    "validate_event_web_source",
+                    {"source_id": source_id, "event_id": event_id},
+                    dedupe=True,
+                )
+                auto_queued += 1
     return {
         "event_id": event_id,
         "query": query,
         "results": len(results),
         "saved": saved,
         "promoted": promoted,
+        "promoted_queued": promoted_queued,
+        "auto_queued": auto_queued,
+        "replaced": replaced,
+    }
+
+
+def _handle_validate_event_web_source(
+    conn, config, payload: dict[str, object], logger: logging.Logger
+) -> dict[str, object]:
+    source_id = str(payload.get("source_id") or "").strip()
+    if not source_id:
+        raise ValueError("source_id is required")
+    source = get_event_web_source(conn, source_id)
+    if not source:
+        raise ValueError("event_web_source_not_found")
+    if str(source.get("status") or "") in {"promoted", "discarded"}:
+        return {"status": "skipped", "reason": "terminal_status", "source_id": source_id}
+    event_id = str(source.get("event_id") or payload.get("event_id") or "")
+    event = get_event(conn, event_id)
+    if not event:
+        raise ValueError("event_not_found")
+
+    update_event_web_source_status(conn, source_id, "fetching")
+    url = str(source.get("url") or "").strip()
+    if not url:
+        update_event_web_source_status(
+            conn,
+            source_id,
+            "error",
+            metadata_patch={"validation_error": "missing_url"},
+        )
+        raise ValueError("missing_url")
+
+    try:
+        fetch_result = fetch_article_content(
+            url,
+            timeout_seconds=config.ingest.http.timeout_seconds,
+            user_agent=config.ingest.http.user_agent,
+            logger=logger,
+            source_id="event_web_enrich",
+            source_name="Event Web Enrich",
+            overrides=None,
+        )
+        content_text = str(fetch_result.get("content_text") or "")
+        fetched_published_at = str(fetch_result.get("published_at") or "").strip()
+        if fetched_published_at:
+            update_event_web_source_published_at(conn, source_id, fetched_published_at)
+    except Exception as exc:
+        reject_status = (
+            "discarded"
+            if os.getenv("SV_EVENT_ENRICH_VALIDATE_AUTO_DISCARD", "1").strip().lower()
+            in {"1", "true", "yes"}
+            else "rejected"
+        )
+        update_event_web_source_status(
+            conn,
+            source_id,
+            reject_status,
+            metadata_patch={"validation_error": f"fetch_failed:{exc}"},
+        )
+        return {
+            "source_id": source_id,
+            "event_id": event_id,
+            "status": reject_status,
+            "reason": "fetch_failed",
+            "error": str(exc),
+        }
+
+    update_event_web_source_status(conn, source_id, "validating")
+    try:
+        validation, fallback_reason = _validate_event_source_with_llm(
+            conn,
+            logger,
+            event=event,
+            source=source,
+            content=content_text,
+        )
+    except Exception as exc:
+        validation = _validate_event_source_fallback(event, source, content_text)
+        fallback_reason = f"fallback_llm_error:{exc}"
+    min_confidence = float(os.getenv("SV_EVENT_ENRICH_VALIDATE_MIN_CONFIDENCE", "0.70"))
+    require_llm = os.getenv("SV_EVENT_ENRICH_VALIDATE_REQUIRE_LLM", "0").strip().lower() in {"1", "true", "yes"}
+    validator = str(validation.get("validator") or "")
+    related = bool(validation.get("related"))
+    confidence = float(validation.get("confidence") or 0.0)
+    passes = related and confidence >= min_confidence and (not require_llm or validator == "llm")
+    metadata_patch = {
+        "validation": {
+            "related": related,
+            "confidence": confidence,
+            "validator": validator,
+            "matched_facts": validation.get("matched_facts") or [],
+            "contradictions": validation.get("contradictions") or [],
+            "rationale": validation.get("rationale") or "",
+            "fallback_reason": fallback_reason,
+            "min_confidence": min_confidence,
+            "require_llm": require_llm,
+        }
+    }
+    if not passes:
+        reject_status = "discarded" if os.getenv("SV_EVENT_ENRICH_VALIDATE_AUTO_DISCARD", "1").strip().lower() in {"1", "true", "yes"} else "rejected"
+        update_event_web_source_status(
+            conn,
+            source_id,
+            reject_status,
+            metadata_patch=metadata_patch,
+        )
+        return {
+            "source_id": source_id,
+            "event_id": event_id,
+            "status": reject_status,
+            "related": related,
+            "confidence": confidence,
+            "validator": validator,
+        }
+
+    article_id = promote_event_web_source_to_article(conn, source_id)
+    if not article_id:
+        update_event_web_source_status(
+            conn,
+            source_id,
+            "error",
+            metadata_patch={"validation_error": "promotion_failed", **metadata_patch},
+        )
+        raise ValueError("promotion_failed")
+    update_article_content(
+        conn,
+        int(article_id),
+        content_text=content_text,
+        content_html=None,
+        content_fetched_at=utc_now_iso(),
+        content_error=None,
+        has_full_content=bool(content_text.strip()),
+    )
+    # Push promoted web articles through normal article pipelines so event synthesis has
+    # structured summaries/context instead of raw snippets.
+    enqueue_job(
+        conn,
+        "summarize_article_llm",
+        {"article_id": int(article_id)},
+        dedupe=True,
+    )
+    enqueue_job(
+        conn,
+        "summarize_article_context_llm",
+        {"article_id": int(article_id)},
+        dedupe=True,
+    )
+    update_event_web_source_status(
+        conn,
+        source_id,
+        "promoted",
+        metadata_patch=metadata_patch,
+    )
+    return {
+        "source_id": source_id,
+        "event_id": event_id,
+        "article_id": article_id,
+        "status": "promoted",
+        "validator": validator,
+        "confidence": confidence,
     }
 
 
@@ -5112,6 +5883,24 @@ def _handle_promote_event_web_source(
     article_id = promote_event_web_source_to_article(conn, source_id)
     if not article_id:
         raise ValueError("promotion_failed")
+    enqueue_job(
+        conn,
+        "fetch_article_content",
+        {"article_id": int(article_id)},
+        dedupe=True,
+    )
+    enqueue_job(
+        conn,
+        "summarize_article_llm",
+        {"article_id": int(article_id)},
+        dedupe=True,
+    )
+    enqueue_job(
+        conn,
+        "summarize_article_context_llm",
+        {"article_id": int(article_id)},
+        dedupe=True,
+    )
     return {"source_id": source_id, "article_id": article_id}
 
 
@@ -5124,7 +5913,424 @@ def _handle_enrich_event_summary_llm(
     if not event_id:
         raise ValueError("event_id is required")
     summary = update_event_summary_from_articles(conn, event_id)
+    enqueue_job(conn, "event_report_llm", {"event_id": event_id}, dedupe=True)
     return {"event_id": event_id, "summary": summary}
+
+
+def _event_report_profile(conn) -> tuple[dict[str, object] | None, str]:
+    profile = None
+    reason = "missing_profile"
+    profile, reason = get_active_profile_for_stage(conn, "event_report_llm")
+    if profile:
+        return profile, ""
+    profile, reason = get_active_profile_for_stage(conn, "enrich_event_summary_llm")
+    if profile:
+        return profile, ""
+    profile, reason = get_active_profile_for_stage(conn, "summarize_article")
+    if profile:
+        return profile, ""
+    return None, reason or "missing_profile"
+
+
+def _event_article_summary_parts(summary_llm_raw: object) -> tuple[str, list[str]]:
+    raw = str(summary_llm_raw or "").strip()
+    if not raw:
+        return "", []
+    parsed = _decode_json_from_raw(raw)
+    if not isinstance(parsed, dict):
+        return raw, []
+    summary = str(parsed.get("summary") or "").strip()
+    bullets_raw = parsed.get("bullets") or parsed.get("key_points") or parsed.get("tldr") or []
+    bullets: list[str] = []
+    if isinstance(bullets_raw, list):
+        bullets = [str(item).strip() for item in bullets_raw if str(item).strip()][:8]
+    return summary or raw, bullets
+
+
+def _event_article_context_parts(context_raw: object) -> tuple[list[str], list[str]]:
+    raw = str(context_raw or "").strip()
+    if not raw:
+        return [], []
+    parsed = _decode_json_from_raw(raw)
+    if not isinstance(parsed, dict):
+        return [], []
+    facts_raw = parsed.get("facts") or []
+    timeline_raw = parsed.get("timeline") or []
+    facts = [str(item).strip() for item in facts_raw if str(item).strip()] if isinstance(facts_raw, list) else []
+    timeline = [str(item).strip() for item in timeline_raw if str(item).strip()] if isinstance(timeline_raw, list) else []
+    return facts[:10], timeline[:10]
+
+
+def _build_event_report_input(
+    event: dict[str, object],
+    article_rows: list[dict[str, object]],
+    web_rows: list[dict[str, object]],
+) -> str:
+    event_core = {
+        "id": event.get("id"),
+        "title": event.get("title"),
+        "kind": event.get("kind"),
+        "entity": event.get("entity"),
+        "lifecycle": event.get("lifecycle"),
+        "incident_date": event.get("incident_date"),
+        "first_seen_at": event.get("first_seen_at"),
+        "last_seen_at": event.get("last_seen_at"),
+        "summary": event.get("summary"),
+        "timeline": event.get("timeline") or [],
+        "narrative": event.get("narrative") or {},
+    }
+    expected_schema = {
+        "overview": "string",
+        "attribution": {
+            "responsible_actor": "string",
+            "actor_type": "criminal|nation_state|insider|unknown",
+            "confidence": "high|medium|low|unknown",
+            "rationale": ["string"],
+            "disputed_claims": ["string"],
+        },
+        "timeline": [{"date": "string", "event": "string", "evidence": ["string"]}],
+        "impact": ["string"],
+        "compromise_path": ["string"],
+        "investigation_findings": ["string"],
+        "legal_regulatory_outcomes": ["string"],
+        "response_recovery": ["string"],
+        "lessons_learned": ["string"],
+        "confidence_notes": ["string"],
+    }
+    return (
+        "You are producing a factual incident report for a cybersecurity event. "
+        "Use only supplied evidence. Avoid speculation and avoid filler narrative.\n\n"
+        "Return JSON only with keys exactly:\n"
+        f"{json.dumps(expected_schema, ensure_ascii=True)}\n\n"
+        "Rules:\n"
+        "- Overview: 4-8 sentences with concrete facts and caveats when uncertain.\n"
+        "- Timeline: 5-20 items if evidence allows, sorted oldest to newest.\n"
+        "- Timeline must be incident milestones, not article chronology.\n"
+        "- Do NOT use article publish dates unless the article explicitly states that date as incident activity.\n"
+        "- Each timeline item should describe one concrete action by attacker, victim/org response, investigation step, legal/regulatory step, or recovery outcome.\n"
+        "- Timeline event text must state what happened; avoid phrasing like 'article reported' or 'news said'.\n"
+        "- Each timeline item must include date, event, and evidence list.\n"
+        "- Evidence items should be short fact snippets (not bare URLs).\n"
+        "- Attribution must separate confirmed vs alleged claims.\n"
+        "- If actor identity is unproven, set responsible_actor='unknown' and explain why.\n"
+        "- Prefer actor_type='unknown' over guessing.\n"
+        "- Include investigation findings and legal/regulatory outcomes when supported by evidence.\n"
+        "- Bulleted sections should be fact statements, not recommendations.\n"
+        "- If data is missing, state uncertainty explicitly in confidence_notes.\n\n"
+        f"EVENT:\n{json.dumps(event_core, ensure_ascii=True)}\n\n"
+        f"ARTICLES_EVIDENCE:\n{json.dumps(article_rows, ensure_ascii=True)}\n\n"
+        f"WEB_EVIDENCE:\n{json.dumps(web_rows, ensure_ascii=True)}"
+    )
+
+
+def _normalize_event_timeline_date(value: str) -> tuple[int, str]:
+    text = str(value or "").strip()
+    if not text:
+        return (99991231, "Unknown date")
+    digits = re.findall(r"\d+", text)
+    if len(digits) >= 3:
+        year = digits[0]
+        month = digits[1]
+        day = digits[2]
+        if len(year) == 4 and len(month) <= 2 and len(day) <= 2:
+            y = int(year)
+            m = max(1, min(int(month), 12))
+            d = max(1, min(int(day), 31))
+            return (y * 10000 + m * 100 + d, f"{y:04d}-{m:02d}-{d:02d}")
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return (
+            parsed.year * 10000 + parsed.month * 100 + parsed.day,
+            f"{parsed.year:04d}-{parsed.month:02d}-{parsed.day:02d}",
+        )
+    except ValueError:
+        return (99991231, text[:32])
+
+
+def _is_incident_timeline_event(text: str) -> bool:
+    value = str(text or "").strip()
+    if not value:
+        return False
+    low = value.lower()
+    if "http://" in low or "https://" in low:
+        return False
+    article_markers = ("article", "news", "blog", "coverage", "reported by", "according to")
+    incident_verbs = (
+        "compromis",
+        "breach",
+        "stolen",
+        "exfiltrat",
+        "leak",
+        "ransom",
+        "extort",
+        "investigat",
+        "announc",
+        "confirm",
+        "notify",
+        "disclos",
+        "filed",
+        "sued",
+        "settl",
+        "fine",
+        "penalt",
+        "recover",
+        "restor",
+        "patch",
+        "contain",
+        "eradica",
+        "remediat",
+    )
+    has_article_marker = any(marker in low for marker in article_markers)
+    has_incident_verb = any(verb in low for verb in incident_verbs)
+    if has_article_marker and not has_incident_verb:
+        return False
+    return has_incident_verb or not has_article_marker
+
+
+def _parse_event_report_output(result: dict[str, object], incident_date: str = "") -> dict[str, object]:
+    parsed = result.get("parsed")
+    report: dict[str, object] | None = parsed if isinstance(parsed, dict) else None
+    if report is None:
+        raw = str(result.get("raw") or "").strip()
+        decoded = _decode_json_from_raw(raw) if raw else None
+        if isinstance(decoded, dict):
+            report = decoded
+    if report is None:
+        raw = str(result.get("raw") or "").strip()
+        if not raw:
+            return {}
+        return {
+            "overview": raw[:2000],
+            "attribution": {
+                "responsible_actor": "unknown",
+                "actor_type": "unknown",
+                "confidence": "unknown",
+                "rationale": ["model_output_unstructured"],
+                "disputed_claims": [],
+            },
+            "timeline": [],
+            "impact": [],
+            "compromise_path": [],
+            "investigation_findings": [],
+            "legal_regulatory_outcomes": [],
+            "response_recovery": [],
+            "lessons_learned": [],
+            "confidence_notes": ["model_output_unstructured"],
+        }
+    cleaned: dict[str, object] = {
+        "overview": str(report.get("overview") or "").strip(),
+        "attribution": {
+            "responsible_actor": "unknown",
+            "actor_type": "unknown",
+            "confidence": "unknown",
+            "rationale": [],
+            "disputed_claims": [],
+        },
+        "timeline": [],
+        "impact": [],
+        "compromise_path": [],
+        "investigation_findings": [],
+        "legal_regulatory_outcomes": [],
+        "response_recovery": [],
+        "lessons_learned": [],
+        "confidence_notes": [],
+    }
+    attribution = report.get("attribution")
+    if isinstance(attribution, dict):
+        actor_name = str(attribution.get("responsible_actor") or "").strip()
+        actor_type = str(attribution.get("actor_type") or "").strip().lower()
+        actor_confidence = str(attribution.get("confidence") or "").strip().lower()
+        if actor_name:
+            cleaned["attribution"]["responsible_actor"] = actor_name
+        if actor_type in {"criminal", "nation_state", "insider", "unknown"}:
+            cleaned["attribution"]["actor_type"] = actor_type
+        if actor_confidence in {"high", "medium", "low", "unknown"}:
+            cleaned["attribution"]["confidence"] = actor_confidence
+        rationale = attribution.get("rationale")
+        if isinstance(rationale, list):
+            cleaned["attribution"]["rationale"] = [
+                str(x).strip() for x in rationale if str(x).strip()
+            ][:8]
+        disputed = attribution.get("disputed_claims")
+        if isinstance(disputed, list):
+            cleaned["attribution"]["disputed_claims"] = [
+                str(x).strip() for x in disputed if str(x).strip()
+            ][:8]
+    timeline = report.get("timeline")
+    if isinstance(timeline, list):
+        timeline_rows: list[dict[str, object]] = []
+        seen_events: set[tuple[str, str]] = set()
+        for item in timeline[:30]:
+            if not isinstance(item, dict):
+                continue
+            event_text = str(item.get("event") or item.get("title") or "").strip()
+            if not _is_incident_timeline_event(event_text):
+                continue
+            sort_key, normalized_date = _normalize_event_timeline_date(str(item.get("date") or ""))
+            dedupe_key = (normalized_date.lower(), event_text.lower())
+            if dedupe_key in seen_events:
+                continue
+            seen_events.add(dedupe_key)
+            row = {
+                "date": normalized_date,
+                "event": event_text,
+                "evidence": [],
+                "_sort_key": sort_key,
+            }
+            evidence = item.get("evidence")
+            if isinstance(evidence, list):
+                row["evidence"] = [
+                    str(x).strip()
+                    for x in evidence
+                    if str(x).strip() and "http://" not in str(x).lower() and "https://" not in str(x).lower()
+                ][:6]
+            if row["event"]:
+                timeline_rows.append(row)
+        timeline_rows.sort(key=lambda x: int(x.get("_sort_key", 99991231)))
+        cleaned["timeline"] = [
+            {"date": str(x.get("date") or ""), "event": str(x.get("event") or ""), "evidence": x.get("evidence") or []}
+            for x in timeline_rows
+        ]
+    for key in (
+        "impact",
+        "compromise_path",
+        "investigation_findings",
+        "legal_regulatory_outcomes",
+        "response_recovery",
+        "lessons_learned",
+        "confidence_notes",
+    ):
+        value = report.get(key)
+        if isinstance(value, list):
+            cleaned[key] = [str(x).strip() for x in value if str(x).strip()][:20]
+    if not cleaned["overview"]:
+        tl = cleaned.get("timeline") or []
+        if isinstance(tl, list) and tl:
+            first = tl[0] if isinstance(tl[0], dict) else {}
+            cleaned["overview"] = str(first.get("event") or "").strip()
+    timeline_rows = cleaned.get("timeline")
+    if isinstance(timeline_rows, list) and len(timeline_rows) < 3:
+        incident_sort, incident_norm = _normalize_event_timeline_date(incident_date)
+        if incident_sort >= 99991231:
+            incident_norm = "Unknown date"
+        existing = {
+            str(row.get("event") or "").strip().lower()
+            for row in timeline_rows
+            if isinstance(row, dict)
+        }
+        backfill_rows: list[dict[str, object]] = []
+        section_order = (
+            "compromise_path",
+            "investigation_findings",
+            "response_recovery",
+            "legal_regulatory_outcomes",
+            "lessons_learned",
+        )
+        for key in section_order:
+            values = cleaned.get(key)
+            if not isinstance(values, list):
+                continue
+            for item in values[:3]:
+                text = str(item or "").strip()
+                if not text:
+                    continue
+                if not _is_incident_timeline_event(text):
+                    continue
+                lower = text.lower()
+                if lower in existing:
+                    continue
+                existing.add(lower)
+                backfill_rows.append({"date": incident_norm, "event": text, "evidence": []})
+                if len(backfill_rows) >= 8:
+                    break
+            if len(backfill_rows) >= 8:
+                break
+        if backfill_rows:
+            cleaned["timeline"] = (timeline_rows + backfill_rows)[:12]
+    return cleaned
+
+
+def _handle_event_report_llm(
+    conn, config, payload: dict[str, object], logger: logging.Logger
+) -> dict[str, object]:
+    event_id = str(payload.get("event_id") or "").strip()
+    if not event_id:
+        raise ValueError("event_id is required")
+    event = get_event(conn, event_id)
+    if not event:
+        raise ValueError("event_not_found")
+    articles = ((event.get("items") or {}).get("articles") or [])[:20]
+    article_rows: list[dict[str, object]] = []
+    for item in articles:
+        article_id = item.get("article_id")
+        if not isinstance(article_id, int):
+            continue
+        article = get_article_by_id(conn, article_id)
+        if not article:
+            continue
+        summary_text, bullets = _event_article_summary_parts(article.get("summary_llm"))
+        context_facts, context_timeline = _event_article_context_parts(article.get("context_llm"))
+        article_rows.append(
+            {
+                "article_id": article_id,
+                "title": item.get("title"),
+                "published_at": item.get("published_at"),
+                "url": item.get("url"),
+                "summary": summary_text,
+                "bullets": bullets,
+                "facts": context_facts,
+                "timeline_facts": context_timeline,
+            }
+        )
+    web_rows = list_event_web_sources(conn, event_id, include_discarded=False)
+    web_rows = [
+        {
+            "title": row.get("title"),
+            "domain": row.get("domain"),
+            "published_at": row.get("published_at"),
+            "url": row.get("url"),
+            "snippet": row.get("snippet"),
+            "score": row.get("score"),
+            "status": row.get("status"),
+        }
+        for row in web_rows[:30]
+        if str(row.get("status") or "") == "promoted"
+    ]
+    profile, reason = _event_report_profile(conn)
+    if not profile:
+        return {"status": "skipped", "reason": f"no_profile_routed:{reason}"}
+    input_text = _build_event_report_input(event, article_rows, web_rows)
+    result = run_profile(
+        conn,
+        str(profile["id"]),
+        input_text,
+        logger,
+        context={"stage": "event_report_llm", "job_type": "event_report_llm"},
+    )
+    report = _parse_event_report_output(
+        result if isinstance(result, dict) else {},
+        incident_date=str(event.get("incident_date") or ""),
+    )
+    if not report:
+        return {"status": "skipped", "reason": "empty_report"}
+    report["source_articles"] = len(article_rows)
+    report["source_web_promoted"] = len(web_rows)
+    report["generated_at"] = utc_now_iso()
+    updated = update_event_report(
+        conn,
+        event_id,
+        report,
+        profile_id=str(profile.get("id") or ""),
+        profile_name=str(profile.get("name") or ""),
+        model_id=str(profile.get("primary_model_id") or ""),
+        model_name=str(profile.get("model_name") or ""),
+    )
+    return {
+        "status": "ok" if updated else "skipped",
+        "event_id": event_id,
+        "source_articles": len(article_rows),
+        "source_web_promoted": len(web_rows),
+    }
 
 
 def _handle_source_acquire(conn, config, job, logger: logging.Logger) -> dict[str, object]:
@@ -5143,16 +6349,23 @@ def _handle_source_acquire(conn, config, job, logger: logging.Logger) -> dict[st
     started = time.time()
     result: dict[str, object] = {"source_id": source.id, "counts": {}, "errors": []}
     start_marker = utc_now_iso()
+    worker_types = _parse_only_types(os.environ.get("SV_WORKER_ONLY_TYPES", ""))
+
+    def _claims(job_type: str) -> bool:
+        if worker_types is None:
+            return True
+        return job_type in worker_types
 
     ingest_payload: dict[str, object] = {"source_id": source.id}
     if isinstance(limit, int):
         ingest_payload["limit"] = limit
     ingest_job_id = enqueue_job(conn, "ingest_source", ingest_payload)
     result["ingest_job_id"] = ingest_job_id
-    _run_jobs_inline(
+    _run_jobs_inline_if_allowed(
         conn,
         config,
         logger,
+        required_type="ingest_source",
         allowed_types=["ingest_source"],
         timeout_seconds=timeout_seconds,
     )
@@ -5162,37 +6375,63 @@ def _handle_source_acquire(conn, config, job, logger: logging.Logger) -> dict[st
     missing_content_ids = list_article_ids_missing_content(conn, source.id)
     for article_id in missing_content_ids:
         _maybe_enqueue_fetch(conn, config, article_id, source.id, logger)
-    _run_jobs_inline(
+    _run_jobs_inline_if_allowed(
         conn,
         config,
         logger,
+        required_type="fetch_article_content",
         allowed_types=["fetch_article_content"],
         timeout_seconds=timeout_seconds,
     )
 
-    missing_summary_ids = list_article_ids_missing_summary(conn, source.id)
-    for article_id in missing_summary_ids:
-        _maybe_enqueue_summarize(conn, article_id, source.id, logger)
-        _maybe_enqueue_context_pack(conn, article_id, source.id, logger)
-    _run_jobs_inline(
-        conn,
-        config,
-        logger,
-        allowed_types=["summarize_article_llm"],
-        timeout_seconds=timeout_seconds,
-    )
+    missing_summary_ids: list[int] = []
+    if _claims("summarize_article_llm") or _claims("summarize_article_context_llm"):
+        missing_summary_ids = list_article_ids_missing_summary(conn, source.id)
+        for article_id in missing_summary_ids:
+            if _claims("summarize_article_llm"):
+                _maybe_enqueue_summarize(conn, article_id, source.id, logger)
+            if _claims("summarize_article_context_llm"):
+                _maybe_enqueue_context_pack(conn, article_id, source.id, logger)
+        _run_jobs_inline_if_allowed(
+            conn,
+            config,
+            logger,
+            required_type="summarize_article_llm",
+            allowed_types=["summarize_article_llm"],
+            timeout_seconds=timeout_seconds,
+        )
+    else:
+        log_event(
+            logger,
+            logging.INFO,
+            "source_acquire_stage_skipped",
+            stage="summarize",
+            reason="worker_scope_excludes_stage",
+            source_name=source.name,
+        )
 
-    new_article_ids = list_article_ids_for_source_since(conn, source.id, start_marker)
-    publish_ids = sorted(set(new_article_ids + missing_content_ids + missing_summary_ids))
-    for article_id in publish_ids:
-        _enqueue_write_from_article(conn, config, article_id, source.id)
-    _run_jobs_inline(
-        conn,
-        config,
-        logger,
-        allowed_types=["write_article_markdown"],
-        timeout_seconds=timeout_seconds,
-    )
+    if _claims("write_article_markdown"):
+        new_article_ids = list_article_ids_for_source_since(conn, source.id, start_marker)
+        publish_ids = sorted(set(new_article_ids + missing_content_ids + missing_summary_ids))
+        for article_id in publish_ids:
+            _enqueue_write_from_article(conn, config, article_id, source.id)
+        _run_jobs_inline_if_allowed(
+            conn,
+            config,
+            logger,
+            required_type="write_article_markdown",
+            allowed_types=["write_article_markdown"],
+            timeout_seconds=timeout_seconds,
+        )
+    else:
+        log_event(
+            logger,
+            logging.INFO,
+            "source_acquire_stage_skipped",
+            stage="publish_markdown",
+            reason="worker_scope_excludes_stage",
+            source_name=source.name,
+        )
 
     jobs = list_jobs_by_types_since(
         conn,
@@ -5240,10 +6479,11 @@ def _handle_source_acquire(conn, config, job, logger: logging.Logger) -> dict[st
 
     if also_events:
         events_job_id = enqueue_job(conn, "events_rebuild", None)
-        _run_jobs_inline(
+        _run_jobs_inline_if_allowed(
             conn,
             config,
             logger,
+            required_type="events_rebuild",
             allowed_types=["events_rebuild"],
             timeout_seconds=timeout_seconds,
         )
@@ -5311,6 +6551,34 @@ def _run_jobs_inline(
     log_event(logger, logging.WARNING, "smoke_inline_timeout", timeout_seconds=timeout_seconds)
 
 
+def _run_jobs_inline_if_allowed(
+    conn,
+    config,
+    logger: logging.Logger,
+    *,
+    required_type: str,
+    allowed_types: list[str],
+    timeout_seconds: int,
+) -> None:
+    worker_types = _parse_only_types(os.environ.get("SV_WORKER_ONLY_TYPES", ""))
+    if worker_types is not None and required_type not in worker_types:
+        log_event(
+            logger,
+            logging.INFO,
+            "smoke_inline_skipped",
+            required_type=required_type,
+            reason="not_claimed_by_worker",
+        )
+        return
+    _run_jobs_inline(
+        conn,
+        config,
+        logger,
+        allowed_types=allowed_types,
+        timeout_seconds=timeout_seconds,
+    )
+
+
 def _wait_for_job(conn, job_id: str, timeout_seconds: int) -> Job | None:
     start = time.monotonic()
     while time.monotonic() - start < timeout_seconds:
@@ -5363,6 +6631,7 @@ def _handle_cve_sync(
     if cve_id:
         log_event(logger, logging.INFO, "cve_enrich_start", cve_id=cve_id)
         updated = sync_cve_id(conn, api_key, cve_id)
+        enqueue_job(conn, "cve_enrich_kev", {"cve_id": cve_id}, dedupe=True)
         return {"status": "ok", "cve_id": cve_id, "updated": bool(updated)}
     if mode == "cve_description":
         return _handle_cve_description_fill(conn, api_key, logger)
@@ -5406,7 +6675,46 @@ def _handle_cve_sync(
             reason="cve_sync_updated",
             debounce_seconds=config.jobs.build_debounce_seconds,
         )
+        kev_limit = int(result.get("processed") or 0)
+        kev_limit = min(kev_limit, 2000) if kev_limit else 500
+        enqueue_job(
+            conn,
+            "cve_enrich_kev",
+            {"since": start_iso, "limit": kev_limit},
+            dedupe=True,
+        )
     return result
+
+
+def _handle_cve_enrich_kev(conn, config, job, logger: logging.Logger) -> dict[str, object]:
+    payload = job.payload or {}
+    cve_id = str(payload.get("cve_id") or "").strip()
+    since = str(payload.get("since") or "").strip() or None
+    limit = int(payload.get("limit") or 500)
+    max_age_minutes = int(payload.get("max_age_minutes") or 360)
+    kev_sync = ensure_kev_cache(conn, logger, max_age_minutes=max_age_minutes)
+    if cve_id:
+        cve_ids = [cve_id]
+    else:
+        cve_ids = list_cve_ids_needing_kev_check(conn, limit=limit, since=since)
+    if not cve_ids:
+        return {"status": "skipped", "reason": "no_targets", "kev_sync": kev_sync}
+    kev_map = get_cve_kev_map(conn, cve_ids)
+    now = utc_now_iso()
+    matched = 0
+    for target_id in cve_ids:
+        kev_entry = kev_map.get(target_id)
+        set_cve_kev_link(conn, target_id, target_id if kev_entry else None, now, commit=False)
+        if kev_entry:
+            matched += 1
+    conn.commit()
+    return {
+        "status": "ok",
+        "checked": len(cve_ids),
+        "matched": matched,
+        "missing": len(cve_ids) - matched,
+        "kev_sync": kev_sync,
+    }
 
 
 
@@ -5425,6 +6733,7 @@ def _handle_cve_enrich_llm(
     existing_products = cve.get("affected_products") or []
     existing_versions = cve.get("product_versions") or []
     if not force and existing_products and existing_versions:
+        mark_cve_products_checked(conn, cve_id)
         return {"status": "skipped", "reason": "already_enriched"}
     profile, reason = get_active_profile_for_stage(conn, "cve_enrich_products")
     if not profile:
@@ -5454,11 +6763,19 @@ def _handle_cve_enrich_llm(
     result_dict = result if isinstance(result, dict) else {}
     cleaned, error_reason = _parse_product_items(result_dict, allow_versions=True)
     if error_reason:
+        _record_llm_parse_metric(
+            conn,
+            stage="cve_enrich_products",
+            profile=profile,
+            outcome=str(error_reason),
+        )
         raw = result_dict.get("raw")
         preview = (raw or "").strip()
         if len(preview) > 800:
             preview = preview[:800] + "\n[TRUNCATED]"
         labels = _llm_profile_labels(conn, profile)
+        # Treat parse outcomes as terminal for "need" accounting.
+        mark_cve_products_checked(conn, cve_id)
         if error_reason in {"no_items", "no_valid_items"}:
             log_event(
                 logger,
@@ -5477,10 +6794,18 @@ def _handle_cve_enrich_llm(
                 stage="cve_enrich_products",
                 cve_id=cve_id,
                 reason=error_reason,
+                raw_preview=preview,
                 **labels,
             )
         return {"status": "skipped", "reason": error_reason, "raw_preview": preview}
     stats = link_cve_products_from_items(conn, cve_id=cve_id, items=cleaned, source="llm")
+    _record_llm_parse_metric(
+        conn,
+        stage="cve_enrich_products",
+        profile=profile,
+        outcome="success",
+    )
+    mark_cve_products_checked(conn, cve_id)
     log_event(
         logger,
         logging.INFO,
@@ -5570,6 +6895,76 @@ def _extract_json_payload(raw: str) -> str | None:
     return raw[start : end + 1].strip()
 
 
+def _extract_balanced_json(raw: str) -> str | None:
+    if not raw:
+        return None
+    for i, ch in enumerate(raw):
+        if ch not in "{[":
+            continue
+        stack = [ch]
+        in_string = False
+        escape = False
+        for j in range(i + 1, len(raw)):
+            c = raw[j]
+            if escape:
+                escape = False
+                continue
+            if c == "\\" and in_string:
+                escape = True
+                continue
+            if c == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if c in "{[":
+                stack.append(c)
+                continue
+            if c == "}":
+                if not stack or stack[-1] != "{":
+                    break
+                stack.pop()
+            elif c == "]":
+                if not stack or stack[-1] != "[":
+                    break
+                stack.pop()
+            if not stack:
+                return raw[i : j + 1].strip()
+    return None
+
+
+def _decode_json_from_raw(raw: str) -> object | None:
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    candidates: list[str] = [stripped]
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```[a-zA-Z]*\s*", "", stripped)
+        stripped = re.sub(r"\s*```$", "", stripped)
+        candidates.append(stripped.strip())
+    for block in re.findall(r"```(?:json)?\s*([\s\S]*?)```", raw, flags=re.IGNORECASE):
+        block = block.strip()
+        if block:
+            candidates.append(block)
+    extracted = _extract_json_payload(stripped)
+    if extracted:
+        candidates.append(extracted)
+    balanced = _extract_balanced_json(stripped)
+    if balanced:
+        candidates.append(balanced)
+    seen: set[str] = set()
+    for candidate in candidates:
+        candidate = candidate.strip()
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            return json.loads(candidate)
+        except Exception:
+            continue
+    return None
+
+
 def _parse_product_items(
     result: dict[str, object],
     *,
@@ -5586,35 +6981,16 @@ def _parse_product_items(
         elif parsed.get("product"):
             items = [parsed]
     if not items and isinstance(raw, str):
-        stripped = raw.strip()
-        if stripped.startswith("```"):
-            stripped = re.sub(r"^```[a-zA-Z]*\s*", "", stripped)
-            stripped = re.sub(r"\s*```$", "", stripped)
-        try:
-            parsed_raw = json.loads(stripped)
-            if isinstance(parsed_raw, list):
-                items = [item for item in parsed_raw if isinstance(item, dict)]
-            elif isinstance(parsed_raw, dict):
-                if isinstance(parsed_raw.get("items"), list):
-                    items = [item for item in parsed_raw.get("items") if isinstance(item, dict)]
-                elif parsed_raw.get("product"):
-                    items = [parsed_raw]
-        except Exception:
-            extracted = _extract_json_payload(stripped)
-            if extracted:
-                try:
-                    parsed_raw = json.loads(extracted)
-                    if isinstance(parsed_raw, list):
-                        items = [item for item in parsed_raw if isinstance(item, dict)]
-                    elif isinstance(parsed_raw, dict):
-                        if isinstance(parsed_raw.get("items"), list):
-                            items = [item for item in parsed_raw.get("items") if isinstance(item, dict)]
-                        elif parsed_raw.get("product"):
-                            items = [parsed_raw]
-                except Exception:
-                    return [], "invalid_json"
-            else:
-                return [], "invalid_json"
+        parsed_raw = _decode_json_from_raw(raw)
+        if parsed_raw is None:
+            return [], "invalid_json"
+        if isinstance(parsed_raw, list):
+            items = [item for item in parsed_raw if isinstance(item, dict)]
+        elif isinstance(parsed_raw, dict):
+            if isinstance(parsed_raw.get("items"), list):
+                items = [item for item in parsed_raw.get("items") if isinstance(item, dict)]
+            elif parsed_raw.get("product"):
+                items = [parsed_raw]
     if not items:
         return [], "no_items"
     allowed = {"vendor", "product", "versions"} if allow_versions else {"vendor", "product"}
@@ -5669,7 +7045,16 @@ def _parse_event_classification(
             return None, "invalid_json"
     if data is None:
         return None, "no_items"
-    allowed = {"is_event", "event_type", "victim", "headline", "summary", "confidence"}
+    allowed = {
+        "is_event",
+        "event_type",
+        "victim",
+        "headline",
+        "summary",
+        "confidence",
+        "what_compromised",
+        "incident_date",
+    }
     data = {key: data.get(key) for key in allowed}
     if "is_event" not in data or data.get("is_event") is None:
         return None, "missing_is_event"
@@ -5681,6 +7066,8 @@ def _parse_event_classification(
     victim = str(data.get("victim") or "").strip()
     headline = str(data.get("headline") or "").strip()
     summary = str(data.get("summary") or "").strip()
+    what_compromised = str(data.get("what_compromised") or "").strip()
+    incident_date = str(data.get("incident_date") or "").strip()
     confidence = data.get("confidence")
     if isinstance(confidence, str) and confidence.strip().isdigit():
         confidence = int(confidence.strip())
@@ -5695,20 +7082,171 @@ def _parse_event_classification(
             "victim": "",
             "headline": "",
             "summary": "",
+            "what_compromised": "",
+            "incident_date": "",
             "confidence": confidence,
         }, None
     if not event_type or event_type.lower() in {"unknown", "n/a", "none", "null"}:
         return None, "missing_event_type"
     if not victim or victim.lower() in {"unknown", "n/a", "none", "null"}:
         return None, "missing_victim"
+    if not what_compromised or what_compromised.lower() in {"unknown", "n/a", "none", "null"}:
+        return None, "missing_what_compromised"
     return {
         "is_event": True,
         "event_type": event_type,
         "victim": victim,
         "headline": headline,
         "summary": summary,
+        "what_compromised": what_compromised,
+        "incident_date": incident_date,
         "confidence": confidence,
     }, None
+
+
+def _parse_event_web_validation(
+    result: dict[str, object],
+) -> tuple[dict[str, object] | None, str | None]:
+    parsed = result.get("parsed")
+    raw = result.get("raw")
+    data: dict[str, object] | None = None
+    if isinstance(parsed, dict):
+        data = parsed
+    if data is None and isinstance(raw, str):
+        parsed_raw = _decode_json_from_raw(raw)
+        if isinstance(parsed_raw, dict):
+            data = parsed_raw
+    if data is None:
+        return None, "invalid_json"
+    related = data.get("related")
+    if isinstance(related, str):
+        related = related.strip().lower() in {"1", "true", "yes"}
+    related = bool(related)
+    confidence = data.get("confidence")
+    try:
+        confidence = float(confidence)
+    except Exception:
+        confidence = 0.0
+    confidence = max(0.0, min(1.0, confidence))
+    matched_facts = data.get("matched_facts") if isinstance(data.get("matched_facts"), list) else []
+    contradictions = data.get("contradictions") if isinstance(data.get("contradictions"), list) else []
+    rationale = str(data.get("rationale") or "").strip()
+    return {
+        "related": related,
+        "confidence": confidence,
+        "matched_facts": [str(x).strip() for x in matched_facts if str(x).strip()],
+        "contradictions": [str(x).strip() for x in contradictions if str(x).strip()],
+        "rationale": rationale,
+    }, None
+
+
+def _contains_word(text: str, token: str) -> bool:
+    if not text or not token:
+        return False
+    pattern = re.compile(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", re.IGNORECASE)
+    return bool(pattern.search(text))
+
+
+def _validate_event_source_fallback(
+    event: dict[str, object],
+    source: dict[str, object],
+    content: str,
+) -> dict[str, object]:
+    haystack = " ".join(
+        [
+            str(source.get("title") or ""),
+            str(source.get("snippet") or ""),
+            content or "",
+        ]
+    ).lower()
+    entity = str(event.get("entity") or "").strip()
+    title = str(event.get("title") or "").strip()
+    entity_token = (entity or title).split()[0].strip().lower() if (entity or title) else ""
+    kind = str(event.get("kind") or "").strip().lower()
+    keyword_sets = {
+        "breach": {"breach", "compromised", "intrusion", "incident", "stolen"},
+        "ransomware": {"ransomware", "extortion", "leak", "encrypt"},
+        "campaign": {"campaign", "apt", "espionage"},
+        "exploit": {"exploit", "vulnerability", "poc"},
+        "vuln": {"vulnerability", "advisory", "patch"},
+    }
+    kind_keywords = keyword_sets.get(kind, {"breach", "incident", "compromised"})
+    entity_hit = _contains_word(haystack, entity_token) if entity_token else False
+    keyword_hits = [kw for kw in kind_keywords if kw in haystack]
+    related = entity_hit and bool(keyword_hits)
+    confidence = 0.2
+    if entity_hit:
+        confidence += 0.35
+    if keyword_hits:
+        confidence += min(0.35, 0.1 * len(keyword_hits))
+    incident_year = str(event.get("incident_date") or "")[:4]
+    if incident_year and incident_year in haystack:
+        confidence += 0.1
+    confidence = max(0.0, min(1.0, confidence))
+    matched = []
+    if entity_hit and entity_token:
+        matched.append(f"entity:{entity_token}")
+    matched.extend([f"keyword:{kw}" for kw in keyword_hits[:4]])
+    return {
+        "related": related,
+        "confidence": confidence,
+        "matched_facts": matched,
+        "contradictions": [],
+        "rationale": "fallback_lexical_validation",
+        "validator": "fallback",
+    }
+
+
+def _validate_event_source_with_llm(
+    conn,
+    logger: logging.Logger,
+    *,
+    event: dict[str, object],
+    source: dict[str, object],
+    content: str,
+) -> tuple[dict[str, object], str]:
+    profile = None
+    profile_id = str(os.getenv("SV_EVENT_ENRICH_VALIDATION_PROFILE_ID", "")).strip()
+    if profile_id:
+        profile = get_profile(conn, profile_id)
+    if not profile:
+        profile, _reason = get_active_profile_for_stage(conn, "event_web_validate")
+    if not profile:
+        profile, _reason = get_active_profile_for_stage(conn, "summarize_article")
+    if not profile:
+        return _validate_event_source_fallback(event, source, content), "fallback_no_profile"
+
+    prompt_input = (
+        "Validate whether the candidate article is truly about the given security event.\n"
+        "Return JSON only with keys: related (bool), confidence (0..1), matched_facts (array), "
+        "contradictions (array), rationale (string).\n\n"
+        f"Event title: {event.get('title')}\n"
+        f"Event entity: {event.get('entity')}\n"
+        f"Event kind: {event.get('kind')}\n"
+        f"Event incident_date: {event.get('incident_date')}\n"
+        f"Event summary: {event.get('summary')}\n\n"
+        f"Candidate source title: {source.get('title')}\n"
+        f"Candidate source domain: {source.get('domain')}\n"
+        f"Candidate snippet: {source.get('snippet')}\n\n"
+        "Candidate article content:\n"
+        f"{content[:12000]}"
+    )
+    result = run_profile(
+        conn,
+        str(profile["id"]),
+        prompt_input,
+        logger,
+        context={
+            "stage": "event_web_validate",
+            "job_type": "validate_event_web_source",
+            "profile_name": profile.get("name") or "",
+        },
+    )
+    parsed, reason = _parse_event_web_validation(result if isinstance(result, dict) else {})
+    if parsed:
+        parsed["validator"] = "llm"
+        return parsed, ""
+    return _validate_event_source_fallback(event, source, content), f"fallback_parse:{reason or 'unknown'}"
 
 
 def _normalize_threat_actor_item(item: dict[str, object]) -> dict[str, object] | None:
@@ -5755,6 +7293,9 @@ def _handle_article_enrich_threat_actors(
     article = get_article_by_id(conn, int(article_id))
     if not article:
         return {"status": "skipped", "reason": "article_not_found"}
+    if get_article_threat_actors(conn, int(article_id)):
+        mark_article_threat_actors_checked(conn, int(article_id))
+        return {"status": "skipped", "reason": "already_linked"}
     profile, reason = get_active_profile_for_stage(conn, "article_enrich_threat_actors")
     if not profile:
         return {"status": "skipped", "reason": f"no_profile_routed:{reason}"}
@@ -5793,15 +7334,28 @@ def _handle_article_enrich_threat_actors(
         if len(preview) > 800:
             preview = preview[:800] + "\n[TRUNCATED]"
         labels = _llm_profile_labels(conn, profile)
-        log_event(
-            logger,
-            logging.WARNING,
-            "llm_parse_failed",
-            stage="article_enrich_threat_actors",
-            article_id=article_id,
-            reason=error_reason,
-            **labels,
-        )
+        # Treat parse outcomes as terminal for "need" accounting.
+        mark_article_threat_actors_checked(conn, int(article_id))
+        if error_reason in {"no_items", "no_valid_items"}:
+            log_event(
+                logger,
+                logging.INFO,
+                "llm_no_items",
+                stage="article_enrich_threat_actors",
+                article_id=article_id,
+                reason=error_reason,
+                **labels,
+            )
+        else:
+            log_event(
+                logger,
+                logging.WARNING,
+                "llm_parse_failed",
+                stage="article_enrich_threat_actors",
+                article_id=article_id,
+                reason=error_reason,
+                **labels,
+            )
         return {"status": "skipped", "reason": error_reason, "raw_preview": preview}
     cleaned = []
     for item in items:
@@ -5809,6 +7363,7 @@ def _handle_article_enrich_threat_actors(
         if normalized:
             cleaned.append(normalized)
     if not cleaned:
+        mark_article_threat_actors_checked(conn, int(article_id))
         return {"status": "skipped", "reason": "no_valid_items"}
     threat_actors_created = 0
     threat_links_created = 0
@@ -5829,6 +7384,7 @@ def _handle_article_enrich_threat_actors(
             add_threat_actor_alias(conn, actor_id, str(alias))
         link_article_threat_actor(conn, int(article_id), actor_id)
         threat_links_created += 1
+    mark_article_threat_actors_checked(conn, int(article_id))
     log_event(
         logger,
         logging.INFO,
@@ -5857,6 +7413,9 @@ def _handle_cve_enrich_threat_actors(
     cve = get_cve(conn, cve_id)
     if not cve:
         return {"status": "skipped", "reason": "cve_not_found"}
+    if get_cve_threat_actors(conn, cve_id):
+        mark_cve_threat_actors_checked(conn, cve_id)
+        return {"status": "skipped", "reason": "already_linked"}
     profile, reason = get_active_profile_for_stage(conn, "cve_enrich_threat_actors")
     if not profile:
         return {"status": "skipped", "reason": f"no_profile_routed:{reason}"}
@@ -5890,15 +7449,28 @@ def _handle_cve_enrich_threat_actors(
         if len(preview) > 800:
             preview = preview[:800] + "\n[TRUNCATED]"
         labels = _llm_profile_labels(conn, profile)
-        log_event(
-            logger,
-            logging.WARNING,
-            "llm_parse_failed",
-            stage="cve_enrich_threat_actors",
-            cve_id=cve_id,
-            reason=error_reason,
-            **labels,
-        )
+        # Treat parse outcomes as terminal for "need" accounting.
+        mark_cve_threat_actors_checked(conn, cve_id)
+        if error_reason in {"no_items", "no_valid_items"}:
+            log_event(
+                logger,
+                logging.INFO,
+                "llm_no_items",
+                stage="cve_enrich_threat_actors",
+                cve_id=cve_id,
+                reason=error_reason,
+                **labels,
+            )
+        else:
+            log_event(
+                logger,
+                logging.WARNING,
+                "llm_parse_failed",
+                stage="cve_enrich_threat_actors",
+                cve_id=cve_id,
+                reason=error_reason,
+                **labels,
+            )
         return {"status": "skipped", "reason": error_reason, "raw_preview": preview}
     cleaned = []
     for item in items:
@@ -5906,6 +7478,7 @@ def _handle_cve_enrich_threat_actors(
         if normalized:
             cleaned.append(normalized)
     if not cleaned:
+        mark_cve_threat_actors_checked(conn, cve_id)
         return {"status": "skipped", "reason": "no_valid_items"}
     threat_actors_created = 0
     threat_links_created = 0
@@ -5926,6 +7499,7 @@ def _handle_cve_enrich_threat_actors(
             add_threat_actor_alias(conn, actor_id, str(alias))
         link_cve_threat_actor(conn, cve_id, actor_id)
         threat_links_created += 1
+    mark_cve_threat_actors_checked(conn, cve_id)
     log_event(
         logger,
         logging.INFO,
@@ -5954,6 +7528,7 @@ def _handle_article_enrich_products(conn, config, job, logger: logging.Logger) -
     if not article:
         return {"status": "skipped", "reason": "article_not_found"}
     if not force and count_products_for_article(conn, int(article_id)) > 0:
+        mark_article_products_checked(conn, int(article_id))
         return {"status": "skipped", "reason": "already_linked"}
     profile, reason = get_active_profile_for_stage(conn, "article_enrich_products")
     if not profile:
@@ -5993,6 +7568,8 @@ def _handle_article_enrich_products(conn, config, job, logger: logging.Logger) -
         if len(preview) > 800:
             preview = preview[:800] + "\n[TRUNCATED]"
         labels = _llm_profile_labels(conn, profile)
+        # Treat parse outcomes as terminal for "need" accounting.
+        mark_article_products_checked(conn, int(article_id))
         if error_reason in {"no_items", "no_valid_items"}:
             log_event(
                 logger,
@@ -6040,6 +7617,7 @@ def _handle_article_enrich_products(conn, config, job, logger: logging.Logger) -
             evidence=item,
         )
         links_created += 1
+    mark_article_products_checked(conn, int(article_id))
     log_event(
         logger,
         logging.INFO,
@@ -6176,6 +7754,16 @@ def _publish_events(conn, config, logger: logging.Logger) -> None:
         if not items:
             break
         for item in items:
+            publish_state = str(item.get("publish_state") or "").lower()
+            lifecycle = str(item.get("lifecycle") or item.get("status") or "").lower()
+            if publish_state:
+                # Published events must also be confirmed.
+                if publish_state != "published" or lifecycle != "confirmed":
+                    continue
+            else:
+                # Backward-compatible fallback for older schemas without publish_state.
+                if lifecycle != "confirmed":
+                    continue
             detail = get_event(conn, item["id"])
             if detail:
                 events.append(detail)
@@ -6210,6 +7798,184 @@ def _maybe_enqueue_cve_sync(conn, logger: logging.Logger) -> None:
     due = last_dt + timedelta(minutes=int(settings.get("schedule_minutes", 60))) <= now
     if due:
         enqueue_job(conn, "cve_sync", None, debounce=True)
+
+
+def _queued_job_total(conn) -> int:
+    total = 0
+    for row in list_queued_job_stats(conn):
+        try:
+            total += int(row.get("queued") or 0)
+        except Exception:
+            continue
+    return total
+
+
+def _maybe_enqueue_auto_catchup(
+    conn,
+    config,
+    logger: logging.Logger,
+    worker_id: str,
+    allowed_types: list[str] | None,
+) -> None:
+    if not bool(getattr(config.jobs, "auto_catchup_enabled", False)):
+        return
+    if allowed_types is not None and not any(job in _AUTO_CATCHUP_JOB_TYPES for job in allowed_types):
+        return
+    if _queued_job_total(conn) > 0:
+        return
+    lease_holder = f"{worker_id}:{uuid.uuid4().hex}"
+    if not try_acquire_lease(conn, _AUTO_CATCHUP_LEASE, lease_holder, ttl_seconds=30):
+        return
+    try:
+        if _queued_job_total(conn) > 0:
+            return
+        queued_total = 0
+        by_type: dict[str, int] = {}
+
+        def _bump(job_type: str) -> None:
+            by_type[job_type] = int(by_type.get(job_type, 0) or 0) + 1
+
+        missing_content_ids = list_article_ids_missing_content_all(conn, limit=_AUTO_CATCHUP_BATCH_LIMIT)
+        for article_id in missing_content_ids:
+            if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:
+                break
+            article_id = int(article_id)
+            if has_pending_article_job(conn, "fetch_article_content", article_id):
+                continue
+            enqueue_job(conn, "fetch_article_content", {"article_id": article_id}, dedupe=True)
+            queued_total += 1
+            _bump("fetch_article_content")
+
+        summary_profile, _summary_reason = get_active_profile_for_stage(conn, "summarize_article")
+        if summary_profile:
+            for article_id in list_article_ids_ready_for_summary_all(conn):
+                if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:
+                    break
+                article_id = int(article_id)
+                if has_pending_article_job(conn, "summarize_article_llm", article_id):
+                    continue
+                enqueue_job(conn, "summarize_article_llm", {"article_id": article_id}, dedupe=True)
+                queued_total += 1
+                _bump("summarize_article_llm")
+
+        context_profile, _context_reason = get_active_profile_for_stage(conn, "article_context_pack")
+        if context_profile:
+            remaining = _AUTO_CATCHUP_BATCH_LIMIT - queued_total
+            if remaining > 0:
+                context_ids = list_article_ids_missing_context_pack(conn, limit=remaining)
+                for article_id in context_ids:
+                    if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:
+                        break
+                    article_id = int(article_id)
+                    if has_pending_article_job(conn, "summarize_article_context_llm", article_id):
+                        continue
+                    enqueue_job(
+                        conn,
+                        "summarize_article_context_llm",
+                        {"article_id": article_id},
+                        dedupe=True,
+                    )
+                    queued_total += 1
+                    _bump("summarize_article_context_llm")
+
+        derive_profile, _derive_reason = get_active_profile_for_stage(conn, "derive_events_from_articles")
+        remaining = _AUTO_CATCHUP_BATCH_LIMIT - queued_total
+        if remaining > 0 and derive_profile:
+            derive_ids = list_article_ids_without_event(conn, limit=remaining)
+            for article_id in derive_ids:
+                if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:
+                    break
+                article_id = int(article_id)
+                if has_pending_article_job(conn, "derive_events_from_articles", article_id):
+                    continue
+                enqueue_job(
+                    conn,
+                    "derive_events_from_articles",
+                    {"article_id": article_id},
+                    dedupe=True,
+                )
+                queued_total += 1
+                _bump("derive_events_from_articles")
+
+        remaining = _AUTO_CATCHUP_BATCH_LIMIT - queued_total
+        if remaining > 0:
+            product_ids = list_article_ids_missing_products(conn, limit=remaining)
+            for article_id in product_ids:
+                if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:
+                    break
+                article_id = int(article_id)
+                if has_pending_article_job(conn, "article_enrich_products", article_id):
+                    continue
+                enqueue_job(conn, "article_enrich_products", {"article_id": article_id}, dedupe=True)
+                queued_total += 1
+                _bump("article_enrich_products")
+
+        remaining = _AUTO_CATCHUP_BATCH_LIMIT - queued_total
+        if remaining > 0:
+            threat_article_ids = list_article_ids_missing_threat_actors(conn, limit=remaining)
+            for article_id in threat_article_ids:
+                if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:
+                    break
+                article_id = int(article_id)
+                if has_pending_article_job(conn, "article_enrich_threat_actors", article_id):
+                    continue
+                enqueue_job(conn, "article_enrich_threat_actors", {"article_id": article_id}, dedupe=True)
+                queued_total += 1
+                _bump("article_enrich_threat_actors")
+
+        remaining = _AUTO_CATCHUP_BATCH_LIMIT - queued_total
+        if remaining > 0:
+            kev_ids = list_cve_ids_needing_kev_check(conn, limit=remaining)
+            for cve_id in kev_ids:
+                if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:
+                    break
+                cve_id = str(cve_id)
+                if get_pending_job_id_for_cve(conn, "cve_enrich_kev", cve_id):
+                    continue
+                enqueue_job(conn, "cve_enrich_kev", {"cve_id": cve_id}, dedupe=True)
+                queued_total += 1
+                _bump("cve_enrich_kev")
+
+        cve_profile, _cve_reason = get_active_profile_for_stage(conn, "cve_enrich_products")
+        remaining = _AUTO_CATCHUP_BATCH_LIMIT - queued_total
+        if remaining > 0 and cve_profile:
+            cve_ids = list_cve_ids_missing_products(conn, limit=remaining)
+            for cve_id in cve_ids:
+                if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:
+                    break
+                cve_id = str(cve_id)
+                if get_pending_job_id_for_cve(conn, "cve_enrich_llm", cve_id):
+                    continue
+                enqueue_job(conn, "cve_enrich_llm", {"cve_id": cve_id}, dedupe=True)
+                queued_total += 1
+                _bump("cve_enrich_llm")
+
+        remaining = _AUTO_CATCHUP_BATCH_LIMIT - queued_total
+        if remaining > 0:
+            cve_threat_ids = list_cve_ids_missing_threat_actors(conn, limit=remaining)
+            for cve_id in cve_threat_ids:
+                if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:
+                    break
+                cve_id = str(cve_id)
+                if get_pending_job_id_for_cve(conn, "cve_enrich_threat_actors", cve_id):
+                    continue
+                enqueue_job(conn, "cve_enrich_threat_actors", {"cve_id": cve_id}, dedupe=True)
+                queued_total += 1
+                _bump("cve_enrich_threat_actors")
+
+        if queued_total > 0:
+            log_event(
+                logger,
+                logging.INFO,
+                "auto_catchup_enqueued",
+                queued=queued_total,
+                by_type=by_type,
+            )
+    finally:
+        try:
+            release_lease(conn, _AUTO_CATCHUP_LEASE, lease_holder)
+        except Exception:
+            pass
 
 def _should_tick_ingest_due(allowed_types: list[str] | None) -> bool:
     if allowed_types is None:
@@ -6408,6 +8174,8 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         return _handle_test_source(conn, config, job.payload, logger)
     if job.job_type == "cve_sync":
         return _handle_cve_sync(conn, config, logger, job.payload)
+    if job.job_type == "cve_enrich_kev":
+        return _handle_cve_enrich_kev(conn, config, job, logger)
     if job.job_type == "cve_enrich_llm":
         return _handle_cve_enrich_llm(conn, config, job, logger)
     if job.job_type == "cve_enrich_threat_actors":
@@ -6445,10 +8213,14 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         return _handle_derive_events_from_articles(conn, config, job.payload or {}, logger)
     if job.job_type == "enrich_event_from_web":
         return _handle_enrich_event_from_web(conn, config, job.payload or {}, logger)
+    if job.job_type == "validate_event_web_source":
+        return _handle_validate_event_web_source(conn, config, job.payload or {}, logger)
     if job.job_type == "promote_event_web_source_to_article":
         return _handle_promote_event_web_source(conn, config, job.payload or {}, logger)
     if job.job_type == "enrich_event_summary_llm":
         return _handle_enrich_event_summary_llm(conn, config, job.payload or {}, logger)
+    if job.job_type == "event_report_llm":
+        return _handle_event_report_llm(conn, config, job.payload or {}, logger)
     if job.job_type == "rebuild_vendor_products":
         return _handle_rebuild_vendor_products(conn, config, logger)
     if job.job_type == "smoke_test":
@@ -6504,7 +8276,7 @@ def _maybe_enqueue_fetch(
     if not article:
         return
     content_error = str(article.get("content_error") or "")
-    if content_error in {"http_404", "http_410"}:
+    if _is_terminal_content_error(content_error):
         return
     if not ( article.get("original_url") or article.get("normalized_url")):
         return
@@ -6535,6 +8307,19 @@ def _maybe_enqueue_fetch(
         payload["not_before"] = utc_now_iso_offset(seconds=delay)
     priority = _article_priority(article)
     enqueue_job(conn, "fetch_article_content", payload, priority=priority)
+
+
+def _is_terminal_content_error(content_error: str) -> bool:
+    value = str(content_error or "").strip()
+    if not value:
+        return False
+    if value in {"http_404", "http_410", "stale_older_than_week", "max_retries_exceeded"}:
+        return True
+    return (
+        value.startswith("fetch_failed:HTTP Error 30")
+        or value.startswith("fetch_failed:HTTP Error 401")
+        or value.startswith("fetch_failed:HTTP Error 403")
+    )
 
 
 def _maybe_enqueue_summarize(
@@ -6695,6 +8480,7 @@ def _handle_cve_description_fill(conn, api_key: str | None) -> dict:
             min_cvss=None,
             missing_description=True,
             missing_products=None,
+            kev=None,
             after=None,
             before=None,
             vendor_keywords=None,

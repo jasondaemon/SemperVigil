@@ -10,7 +10,7 @@ services:
     volumes:
       - sempervigil_pgdata:/var/lib/postgresql/data
     networks:
-      - svnet
+      - nginx-proxy-manager_default
     restart: unless-stopped
 
   # 1) Admin API (internal)
@@ -49,7 +49,7 @@ services:
       - ${SV_LOG_DIR:-./log}:/log
       - ./tools:/tools:ro
     networks:
-      - svnet
+      - nginx-proxy-manager_default
     restart: unless-stopped
 
   # 2) Workers (internal)
@@ -83,7 +83,7 @@ services:
       HTTPS_PROXY: http://vpn:8888
       # ✅ critical: keep internal services direct (no proxy)
       NO_PROXY: db,admin,web,searxng,localhost,127.0.0.1
-      SV_WORKER_ONLY_TYPES: "ingest_due_sources,ingest_source,fetch_article_content,cve_sync,enrich_event_from_web,promote_event_web_source_to_article,article_products_backfill,rebuild_vendor_products,source_acquire"
+      SV_WORKER_ONLY_TYPES: "ingest_due_sources,ingest_source,fetch_article_content,cve_sync,cve_enrich_kev,enrich_event_from_web,validate_event_web_source,promote_event_web_source_to_article,events_rebuild,article_products_backfill,article_threat_actors_backfill,cve_threat_actors_backfill,rebuild_vendor_products,source_acquire"
     command:
       - sh
       - -lc
@@ -99,10 +99,12 @@ services:
       - ${SV_SITE_SRC_DIR:-./site-src}:/site-src
       - ./tools:/tools:ro
     networks:
-      - svnet
+      - nginx-proxy-manager_default
     restart: unless-stopped
+    
   vpn:
     image: qmcgaw/gluetun:latest
+    container_name: sempervigil-vpn
     cap_add:
       - NET_ADMIN
     devices:
@@ -126,7 +128,7 @@ services:
     volumes:
       - ./data/gluetun:/gluetun
     networks:
-      - svnet
+      - nginx-proxy-manager_default
     restart: unless-stopped
     
   worker_llm:
@@ -153,7 +155,7 @@ services:
       SV_UMASK: ${SV_UMASK:-002}
       SV_DB_URL: ${SV_DB_URL:-}
       SV_WORKER_PROVIDER_SCOPE: "non_openai"
-      SV_WORKER_ONLY_TYPES: "summarize_article_llm,summarize_article_context_llm,enrich_event_summary_llm,cve_enrich_llm,article_enrich_products,article_enrich_threat_actors,cve_enrich_threat_actors,article_threat_actors_backfill,cve_threat_actors_backfill,derive_events_from_articles,build_daily_brief"
+      SV_WORKER_ONLY_TYPES: "summarize_article_llm,summarize_article_context_llm,enrich_event_summary_llm,event_report_llm,derive_events_from_articles,cve_enrich_llm,article_enrich_products,article_enrich_threat_actors,cve_enrich_threat_actors"
       SV_DAILY_BRIEF_MODE: "single"
       SV_LLM_MAX_INFLIGHT: "1"
       SV_WORKER_CONCURRENCY: "1"
@@ -172,7 +174,7 @@ services:
       - ${SV_SITE_SRC_DIR:-./site-src}:/site-src
       - ./tools:/tools:ro
     networks:
-      - svnet
+      - nginx-proxy-manager_default
     restart: unless-stopped
 
   worker_openai:
@@ -199,7 +201,7 @@ services:
       SV_UMASK: ${SV_UMASK:-002}
       SV_DB_URL: ${SV_DB_URL:-}
       SV_WORKER_PROVIDER_SCOPE: "openai"
-      SV_WORKER_ONLY_TYPES: "summarize_article_llm,enrich_event_summary_llm,cve_enrich_llm,article_enrich_products,article_enrich_threat_actors,cve_enrich_threat_actors,article_threat_actors_backfill,cve_threat_actors_backfill,derive_events_from_articles,build_daily_brief"
+      SV_WORKER_ONLY_TYPES: "build_daily_brief"
       SV_DAILY_BRIEF_MODE: "single"
       SV_LLM_MAX_INFLIGHT: "1"
       SV_WORKER_CONCURRENCY: "1"
@@ -218,7 +220,7 @@ services:
       - ${SV_SITE_SRC_DIR:-./site-src}:/site-src
       - ./tools:/tools:ro
     networks:
-      - svnet
+      - nginx-proxy-manager_default
     restart: unless-stopped
 
   # 3) Builder (on-demand Hugo build)
@@ -260,7 +262,7 @@ services:
         sh /tools/ensure-dirs.sh
         PYTHONPATH=/app/src /venv/bin/python -m sempervigil.builder --once
     networks:
-      - svnet
+      - nginx-proxy-manager_default
     restart: "no"
 
   # 3b) Builder scheduler (always-on, claims build_site jobs)
@@ -301,7 +303,7 @@ services:
         sh /tools/ensure-dirs.sh
         PYTHONPATH=/app/src /venv/bin/python -m sempervigil.builder --sleep ${SV_BUILDER_POLL_SECONDS:-10}
     networks:
-      - svnet
+      - nginx-proxy-manager_default
     restart: unless-stopped
 
   # 4) Static site server (public)
@@ -315,7 +317,7 @@ services:
       - ${SV_SITE_PUBLIC_DIR:-./site-public}:/usr/share/nginx/html:ro
       - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
-      - svnet
+      - nginx-proxy-manager_default
     restart: unless-stopped
 
   # 4) SearXNG (internal web search for enrichment; optional)
@@ -327,7 +329,7 @@ services:
       BASE_URL: ${SEARXNG_BASE_URL:-http://searxng:8080/}
     volumes:
       - ${SV_SEARXNG_DATA_DIR:-./searxng}:/etc/searxng
-    networks: [svnet]
+    networks: [nginx-proxy-manager_default]
     restart: unless-stopped
 
   # 5) Test runner (image-only, no NFS)
@@ -355,5 +357,6 @@ volumes:
   sempervigil_pgdata:
 
 networks:
-  svnet:
-    driver: bridge
+  nginx-proxy-manager_default:
+    external: true
+    name: nginx-proxy-manager_default

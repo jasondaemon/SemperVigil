@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from ..normalize import normalize_name
 
 
@@ -24,6 +26,10 @@ def build_event_enrich_query(event: dict[str, object]) -> str:
     cves = _extract_cves(event)
     if cves and kind != "cve_cluster":
         parts.append(" OR ".join(sorted(cves)))
+    incident_year = _incident_year(event)
+    current_year = datetime.utcnow().year
+    if incident_year and incident_year < current_year:
+        parts.append(str(incident_year))
     return " ".join(part for part in parts if part).strip()
 
 
@@ -45,3 +51,23 @@ def _extract_cves(event: dict[str, object]) -> set[str]:
         if cve_id:
             cves.add(str(cve_id))
     return cves
+
+
+def _incident_year(event: dict[str, object]) -> int | None:
+    for field in ("incident_date", "first_seen_at"):
+        raw = str(event.get(field) or "").strip()
+        if not raw:
+            continue
+        for i in range(0, max(0, len(raw) - 3)):
+            chunk = raw[i : i + 4]
+            if chunk.isdigit():
+                year = int(chunk)
+                if 1900 <= year <= 2100:
+                    return year
+        for sep in ("-", "/", "."):
+            chunk = raw.split(sep)[0]
+            if len(chunk) == 4 and chunk.isdigit():
+                year = int(chunk)
+                if 1900 <= year <= 2100:
+                    return year
+    return None

@@ -164,20 +164,36 @@ def write_events_markdown(
 ) -> list[str]:
     output_dir = os.path.join(base_content_dir, "events")
     os.makedirs(output_dir, exist_ok=True)
+    for existing in Path(output_dir).glob("*.md"):
+        if existing.name in {"_index.md"}:
+            continue
+        try:
+            existing.unlink()
+        except OSError:
+            pass
     written: list[str] = []
     for event in events:
         event_id = str(event.get("id") or "")
         if not event_id:
             continue
+        site_slug = str(event.get("site_slug") or "").strip()
+        if not site_slug:
+            site_slug = event_id
         frontmatter = {
             "title": event.get("title") or event_id,
             "severity": event.get("severity") or "UNKNOWN",
-            "kind": event.get("kind"),
+            "event_kind": event.get("kind"),
             "status": event.get("status"),
+            "publish_state": event.get("publish_state"),
+            "published_at": event.get("published_at"),
             "first_seen_at": event.get("first_seen_at"),
             "last_seen_at": event.get("last_seen_at"),
+            "slug": site_slug,
         }
         summary = (event.get("summary") or "").strip()
+        narrative = event.get("narrative") or {}
+        report = event.get("report") or {}
+        timeline = event.get("timeline") or []
         items = event.get("items") or {}
         cves = items.get("cves") or []
         products = items.get("products") or []
@@ -186,8 +202,151 @@ def write_events_markdown(
         lines.append(yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=False).strip())
         lines.append("---")
         lines.append("")
-        if summary:
+        narrative_summary = ""
+        narrative_bullets: list[str] = []
+        narrative_sections: dict[str, object] = {}
+        if isinstance(narrative, dict):
+            narrative_summary = str(narrative.get("summary") or "").strip()
+            bullets_raw = narrative.get("bullets") or []
+            if isinstance(bullets_raw, list):
+                narrative_bullets = [str(item).strip() for item in bullets_raw if str(item).strip()][:10]
+            sections_raw = narrative.get("sections") or {}
+            if isinstance(sections_raw, dict):
+                narrative_sections = sections_raw
+        report_overview = ""
+        report_timeline: list[dict[str, object]] = []
+        report_sections: dict[str, list[str]] = {}
+        report_attribution: dict[str, object] = {}
+        if isinstance(report, dict):
+            report_overview = str(report.get("overview") or "").strip()
+            timeline_raw = report.get("timeline") or []
+            if isinstance(timeline_raw, list):
+                report_timeline = [row for row in timeline_raw if isinstance(row, dict)]
+            attribution_raw = report.get("attribution") or {}
+            if isinstance(attribution_raw, dict):
+                report_attribution = attribution_raw
+            for key in (
+                "impact",
+                "compromise_path",
+                "investigation_findings",
+                "legal_regulatory_outcomes",
+                "response_recovery",
+                "lessons_learned",
+                "confidence_notes",
+            ):
+                values = report.get(key) or []
+                if isinstance(values, list):
+                    report_sections[key] = [str(v).strip() for v in values if str(v).strip()][:20]
+        if report_overview:
+            lines.append(report_overview)
+            lines.append("")
+        elif narrative_summary:
+            lines.append(narrative_summary)
+        elif summary:
             lines.append(summary)
+            lines.append("")
+        if narrative_bullets:
+            for bullet in narrative_bullets:
+                lines.append(f"- {bullet}")
+            lines.append("")
+        section_order = [
+            "breach_compromise",
+            "impact",
+            "response_recovery",
+            "lessons_learned",
+        ]
+        for section_key in section_order:
+            section = narrative_sections.get(section_key) if isinstance(narrative_sections, dict) else None
+            if not isinstance(section, dict):
+                continue
+            title = str(section.get("title") or "").strip()
+            points = section.get("points") or []
+            if not title or not isinstance(points, list) or not points:
+                continue
+            lines.append(f"## {title}")
+            for point in points[:8]:
+                clean = str(point).strip()
+                if clean:
+                    lines.append(f"- {clean}")
+            lines.append("")
+        report_section_order = [
+            ("attribution", "Attribution"),
+            ("compromise_path", "Compromise Path"),
+            ("investigation_findings", "Investigation Findings"),
+            ("legal_regulatory_outcomes", "Legal and Regulatory Outcomes"),
+            ("impact", "Impact"),
+            ("response_recovery", "Response and Recovery"),
+            ("lessons_learned", "Lessons Learned"),
+            ("confidence_notes", "Confidence Notes"),
+        ]
+        for key, title in report_section_order:
+            if key == "attribution":
+                actor = str(report_attribution.get("responsible_actor") or "").strip()
+                actor_type = str(report_attribution.get("actor_type") or "").strip()
+                confidence = str(report_attribution.get("confidence") or "").strip()
+                rationale = report_attribution.get("rationale") or []
+                disputed = report_attribution.get("disputed_claims") or []
+                if actor or actor_type or confidence or rationale or disputed:
+                    lines.append(f"## {title}")
+                    if actor:
+                        lines.append(f"- Responsible actor: {actor}")
+                    if actor_type:
+                        lines.append(f"- Actor type: {actor_type}")
+                    if confidence:
+                        lines.append(f"- Attribution confidence: {confidence}")
+                    if isinstance(rationale, list):
+                        for point in rationale[:8]:
+                            clean = str(point).strip()
+                            if clean:
+                                lines.append(f"- Rationale: {clean}")
+                    if isinstance(disputed, list):
+                        for point in disputed[:8]:
+                            clean = str(point).strip()
+                            if clean:
+                                lines.append(f"- Disputed claim: {clean}")
+                    lines.append("")
+                continue
+            points = report_sections.get(key) or []
+            if not points:
+                continue
+            lines.append(f"## {title}")
+            for point in points[:20]:
+                lines.append(f"- {point}")
+            lines.append("")
+        if report_timeline:
+            lines.append("## Timeline")
+            for entry in report_timeline[:60]:
+                date_text = str(entry.get("date") or "Unknown date").strip() or "Unknown date"
+                event_text = str(entry.get("event") or "").strip()
+                if not event_text:
+                    continue
+                lines.append(f"- **{date_text}**: {event_text}")
+                evidence = entry.get("evidence") or []
+                if isinstance(evidence, list):
+                    for fact in evidence[:6]:
+                        clean = str(fact).strip()
+                        if clean:
+                            lines.append(f"  - {clean}")
+            lines.append("")
+        if timeline and not report_timeline:
+            lines.append("## Timeline")
+            for entry in timeline[:50]:
+                ts = entry.get("date") or "Unknown date"
+                title = entry.get("title") or "Untitled"
+                summary_text = str(entry.get("summary") or "").strip()
+                facts = entry.get("facts") or []
+                url = str(entry.get("url") or "").strip()
+                if url:
+                    lines.append(f"- **{ts}**: [{title}]({url})")
+                else:
+                    lines.append(f"- **{ts}**: {title}")
+                if summary_text:
+                    lines.append(f"  - {summary_text}")
+                if isinstance(facts, list):
+                    for fact in facts[:6]:
+                        clean = str(fact).strip()
+                        if clean:
+                            lines.append(f"  - {clean}")
             lines.append("")
         if cves:
             lines.append("## CVEs")
@@ -216,7 +375,7 @@ def write_events_markdown(
                     lines.append(f"- {title}")
             lines.append("")
         content = "\n".join(lines).strip() + "\n"
-        path = os.path.join(output_dir, f"{event_id}.md")
+        path = os.path.join(output_dir, f"{site_slug}.md")
         atomic_write_text(path, content)
         written.append(path)
     return written

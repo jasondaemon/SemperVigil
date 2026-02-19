@@ -35,6 +35,12 @@ def searxng_search(
     req_url = url.rstrip("/") + "/search"
     attempts = 0
     last_error = None
+    headers = {
+        "User-Agent": "SemperVigil/1.0",
+        # SearxNG bot detection expects a client IP header.
+        "X-Forwarded-For": "127.0.0.1",
+        "X-Real-IP": "127.0.0.1",
+    }
     while attempts < 2:
         attempts += 1
         try:
@@ -42,7 +48,7 @@ def searxng_search(
                 req_url,
                 params=params,
                 timeout=timeout_s,
-                headers={"User-Agent": "SemperVigil/1.0"},
+                headers=headers,
             )
         except requests.RequestException as exc:
             last_error = exc

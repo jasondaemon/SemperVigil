@@ -37,6 +37,13 @@ def _extract_entities(title: str) -> list[str]:
     return entities[:5]
 
 
+def _contains_whole_token(text: str, token: str) -> bool:
+    if not text or not token:
+        return False
+    pattern = re.compile(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", re.IGNORECASE)
+    return bool(pattern.search(text))
+
+
 def score_web_result(event: dict[str, object], result: dict[str, object]) -> tuple[int, dict[str, int]]:
     allowlist = _parse_csv(os.getenv("SV_ENRICH_DOMAIN_ALLOWLIST"))
     blocklist = _parse_csv(os.getenv("SV_ENRICH_DOMAIN_BLOCKLIST"))
@@ -97,11 +104,11 @@ def score_web_result(event: dict[str, object], result: dict[str, object]) -> tup
     entities = _extract_entities(str(event.get("title") or ""))
     for entity in entities:
         token = entity.lower()
-        if token and token in title.lower():
+        if _contains_whole_token(title, token):
             score += 10
             reasons["entity_title"] = 10
             break
-        if token and token in combined:
+        if _contains_whole_token(combined, token):
             score += 5
             reasons["entity_snippet"] = 5
             break

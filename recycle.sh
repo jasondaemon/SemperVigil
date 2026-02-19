@@ -7,13 +7,30 @@ export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-sempervigil}"
 DB_USER="${SV_DB_USER:-sempervigil}"
 ADMIN_PORT="${SV_ADMIN_PORT:-8001}"
 WEB_PORT="${SV_WEB_PORT:-8080}"
+START_WEB=0
+STOP_WEB=0
+
+for arg in "$@"; do
+  case "${arg}" in
+    --with-web)
+      START_WEB=1
+      STOP_WEB=1
+      ;;
+  esac
+done
 
 # Optional toggles (set in env or .env before running)
 SV_ENABLE_SEARCH="${SV_ENABLE_SEARCH:-0}"  # 1 => start searxng profile
 
-# --- stop everything ---
-echo "🛑 Stopping running containers..."
-docker compose down --remove-orphans
+# --- stop services ---
+if [[ "${STOP_WEB}" == "1" ]]; then
+  echo "🛑 Stopping running containers (including web)..."
+  docker compose down --remove-orphans
+else
+  echo "🛑 Stopping running containers (leaving web up)..."
+  docker compose stop admin worker_fetch worker_llm worker_openai builder_scheduler db vpn || true
+  docker compose rm -f admin worker_fetch worker_llm worker_openai builder_scheduler db vpn || true
+fi
 
 # --- NEW: remove ONLY locally-built service images (the ones that will be rebuilt) ---
 echo "🧽 Removing old locally-built images for buildable services..."
@@ -85,12 +102,17 @@ for i in $(seq 1 60); do
 done
 
 # --- start app services ---
-echo "⚙️  Starting admin + workers + web..."
+echo "⚙️  Starting admin + workers..."
 docker compose up -d \
   --scale worker_fetch=2 \
   --scale worker_llm=1 \
   --scale worker_openai=1 \
-  admin worker_fetch worker_llm worker_openai web
+  admin worker_fetch worker_llm worker_openai
+
+if [[ "${START_WEB}" == "1" ]]; then
+  echo "🌐 Starting web (requested)..."
+  docker compose up -d web
+fi
 
 # --- start builder scheduler (always-on) ---
 echo "🏗️  Starting builder scheduler..."
@@ -104,7 +126,11 @@ fi
 
 echo "🎉 SemperVigil recycle complete."
 echo "   Admin: http://localhost:${ADMIN_PORT}"
-echo "   Site:  http://localhost:${WEB_PORT}"
+if [[ "${START_WEB}" == "1" ]]; then
+  echo "   Site:  http://localhost:${WEB_PORT}"
+else
+  echo "   Site:  (web left running; use --with-web to restart)"
+fi
 echo
 echo "ℹ️  Builder scheduler is running (polling build jobs)."
 echo "   To trigger a build manually (if needed):"

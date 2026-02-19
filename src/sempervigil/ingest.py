@@ -7,8 +7,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin, urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import unquote, urljoin, urlparse
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 import feedparser
 from bs4 import BeautifulSoup
@@ -52,12 +52,19 @@ def _fetch_url(
     timeout: int,
     max_retries: int,
     backoff_seconds: int,
+    *,
+    use_vpn: bool = True,
 ) -> tuple[int | None, bytes | None, str | None]:
     attempt = 0
     while attempt <= max_retries:
         try:
             request = Request(url, headers=headers)
-            with urlopen(request, timeout=timeout) as response:
+            if use_vpn:
+                response_ctx = urlopen(request, timeout=timeout)
+            else:
+                opener = build_opener(ProxyHandler({}))
+                response_ctx = opener.open(request, timeout=timeout)
+            with response_ctx as response:
                 status = response.getcode()
                 content = response.read()
             return status, content, None
@@ -84,6 +91,37 @@ def _keyword_match(text: str, keywords: list[str]) -> list[str]:
     return [keyword for keyword in keywords if keyword.lower() in lowered]
 
 
+def _looks_like_url(text: str) -> bool:
+    lowered = text.lower().strip()
+    return lowered.startswith("http://") or lowered.startswith("https://")
+
+
+def _title_from_url(url: str) -> str:
+    parsed = urlparse(url)
+    path = (parsed.path or "/").strip("/")
+    if not path:
+        return parsed.netloc or url
+    slug = path.split("/")[-1].strip()
+    if not slug:
+        return parsed.netloc or url
+    slug = unquote(slug)
+    if slug.lower() in {"index", "rss", "feed"} and len(path.split("/")) > 1:
+        slug = path.split("/")[-2]
+    text = re.sub(r"[_\-]+", " ", slug).strip()
+    text = re.sub(r"\s+", " ", text)
+    return text.title() if text else (parsed.netloc or url)
+
+
+def _normalize_entry_title(title: str, link: str | None) -> str:
+    clean = (title or "").strip()
+    if not clean:
+        return clean
+    if _looks_like_url(clean):
+        candidate = link or clean
+        return _title_from_url(candidate)
+    return clean
+
+
 def evaluate_entry(
     entry: Any,
     source: Source,
@@ -96,6 +134,7 @@ def evaluate_entry(
 ) -> tuple[Decision, Article | None]:
     title = (entry.get("title") or "").strip()
     link = entry.get("link") or entry.get("id")
+    title = _normalize_entry_title(title, link)
     prefer_entry_summary = bool(policy.get("parse", {}).get("prefer_entry_summary", True))
     summary = _entry_summary(entry, prefer_entry_summary)
     derived_tags = derive_tags(policy.get("tags", {}), title, summary)
@@ -345,6 +384,8 @@ def _run_tactic(
     fetcher, fetch_timeout_seconds, fetch_headers = get_http_fetch_settings(
         overrides, http_cfg.timeout_seconds
     )
+    fetch_cfg = overrides.get("fetch", {}) if isinstance(overrides, dict) else {}
+    use_vpn = bool(fetch_cfg.get("use_vpn", True)) if isinstance(fetch_cfg, dict) else True
     request_headers = {"User-Agent": http_cfg.user_agent}
     request_headers.update({str(k): str(v) for k, v in headers.items()})
     request_headers.update(fetch_headers)
@@ -353,9 +394,10 @@ def _run_tactic(
         http_status, content, error = _fetch_url(
             feed_url,
             headers=request_headers,
-            timeout=http_cfg.timeout_seconds,
+            timeout=fetch_timeout_seconds,
             max_retries=http_cfg.max_retries,
             backoff_seconds=http_cfg.backoff_seconds,
+            use_vpn=use_vpn,
         )
         if error or not content:
             return (
@@ -381,34 +423,93 @@ def _run_tactic(
                     "error": error or "empty response",
                 },
             )
-        soup = BeautifulSoup(content, "html.parser")
-        entry_selector = tactic.config.get("entry_selector") if tactic.config else None
-        link_selector = tactic.config.get("link_selector") if tactic.config else None
-        containers = soup.select(entry_selector) if entry_selector else [soup]
-        urls: list[str] = []
-        seen_urls: set[str] = set()
         entries: list[dict[str, Any]] = []
-        for container in containers:
-            anchors = container.select(link_selector) if link_selector else container.find_all("a")
-            for anchor in anchors:
-                href = anchor.get("href")
-                if not href:
+        seen_urls: set[str] = set()
+        content_text = ""
+        try:
+            content_text = content.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                content_text = content.decode("latin-1")
+            except Exception:  # noqa: BLE001
+                content_text = ""
+
+        json_payload: dict[str, Any] | None = None
+        if content_text:
+            stripped = content_text.lstrip()
+            if stripped.startswith("{") or stripped.startswith("["):
+                try:
+                    parsed_payload = json.loads(content_text)
+                    if isinstance(parsed_payload, dict):
+                        json_payload = parsed_payload
+                except Exception:  # noqa: BLE001
+                    json_payload = None
+
+        if isinstance(json_payload, dict) and isinstance(json_payload.get("results"), list):
+            for item in json_payload["results"]:
+                if not isinstance(item, dict):
                     continue
+                href = item.get("permalink") or item.get("readMoreLink") or item.get("url")
+                if not isinstance(href, str) or not href.strip():
+                    continue
+                href = href.strip()
                 if href.startswith("#"):
                     continue
                 parsed = urlparse(href)
                 if parsed.scheme in {"mailto", "javascript"}:
                     continue
-                url = urljoin(feed_url, href)
+                if parsed.scheme in {"http", "https"}:
+                    url = href
+                else:
+                    if "msstoreapiprod/api/msrc" in feed_url and href.startswith("/"):
+                        url = urljoin("https://www.microsoft.com/en-us/msrc/", href.lstrip("/"))
+                    else:
+                        url = urljoin(feed_url, href)
                 parsed_url = urlparse(url)
                 if parsed_url.scheme not in {"http", "https"}:
                     continue
                 if url in seen_urls:
                     continue
                 seen_urls.add(url)
-                text = anchor.get_text(" ", strip=True) or url
-                entries.append({"link": url, "title": text, "summary": ""})
-                urls.append(url)
+                title_text = item.get("title") if isinstance(item.get("title"), str) else url
+                summary_text = (
+                    item.get("summary")
+                    if isinstance(item.get("summary"), str)
+                    else item.get("blurb") if isinstance(item.get("blurb"), str) else ""
+                )
+                entry: dict[str, Any] = {"link": url, "title": title_text, "summary": summary_text}
+                if isinstance(item.get("publishedDate"), str):
+                    entry["published"] = item["publishedDate"]
+                if isinstance(item.get("updatedDate"), str):
+                    entry["updated"] = item["updatedDate"]
+                entries.append(entry)
+        else:
+            soup = BeautifulSoup(content, "html.parser")
+            entry_selector = tactic.config.get("entry_selector") if tactic.config else None
+            link_selector = tactic.config.get("link_selector") if tactic.config else None
+            containers = soup.select(entry_selector) if entry_selector else [soup]
+            for container in containers:
+                anchors = (
+                    container.select(link_selector) if link_selector else container.find_all("a")
+                )
+                for anchor in anchors:
+                    href = anchor.get("href")
+                    if not href:
+                        continue
+                    if href.startswith("#"):
+                        continue
+                    parsed = urlparse(href)
+                    if parsed.scheme in {"mailto", "javascript"}:
+                        continue
+                    url = urljoin(feed_url, href)
+                    parsed_url = urlparse(url)
+                    if parsed_url.scheme not in {"http", "https"}:
+                        continue
+                    if url in seen_urls:
+                        continue
+                    seen_urls.add(url)
+                    text = anchor.get_text(" ", strip=True) or url
+                    entries.append({"link": url, "title": text, "summary": ""})
         accepted: list[Article] = []
         decisions: list[Decision] = []
         seen_ids: set[str] = set()
@@ -562,6 +663,7 @@ def _run_tactic(
             timeout=http_cfg.timeout_seconds,
             max_retries=http_cfg.max_retries,
             backoff_seconds=http_cfg.backoff_seconds,
+            use_vpn=use_vpn,
         )
 
     if error or not content:
@@ -716,6 +818,7 @@ def _skip_override_decision(
 ) -> Decision:
     title = (entry.get("title") or "").strip()
     link = entry.get("link") or entry.get("id")
+    title = _normalize_entry_title(title, link)
     summary = _entry_summary(entry, prefer_entry_summary)
     derived_tags = derive_tags(policy.get("tags", {}), title, summary)
     normalized_url = None

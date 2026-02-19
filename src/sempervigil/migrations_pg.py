@@ -306,6 +306,60 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_jobs_priority_028")
             applied.add("pg_jobs_priority_028")
+        if "pg_cve_kev_029" not in applied:
+            _migrate_cve_kev(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_cve_kev_029", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_cve_kev_029")
+            applied.add("pg_cve_kev_029")
+        if "pg_jobs_indexes_030" not in applied:
+            _migrate_jobs_indexes(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_jobs_indexes_030", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_jobs_indexes_030")
+            applied.add("pg_jobs_indexes_030")
+        if "pg_enrich_checked_markers_031" not in applied:
+            _migrate_enrich_checked_markers(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_enrich_checked_markers_031", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_enrich_checked_markers_031")
+            applied.add("pg_enrich_checked_markers_031")
+        if "pg_events_lifecycle_032" not in applied:
+            _migrate_events_lifecycle(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_events_lifecycle_032", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_events_lifecycle_032")
+            applied.add("pg_events_lifecycle_032")
+        if "pg_llm_event_classify_033" not in applied:
+            _migrate_llm_event_classify_prompts_v2(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_llm_event_classify_033", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_llm_event_classify_033")
+            applied.add("pg_llm_event_classify_033")
+        if "pg_events_publish_034" not in applied:
+            _migrate_events_publish_fields(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_events_publish_034", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_events_publish_034")
+            applied.add("pg_events_publish_034")
         else:
             conn.commit()
         return
@@ -595,6 +649,8 @@ def _bootstrap_schema(conn) -> None:
             summary_error TEXT NULL,
             brief_day TEXT NULL,
             has_full_content INTEGER NOT NULL DEFAULT 0,
+            article_products_checked_at TEXT NULL,
+            article_threat_actors_checked_at TEXT NULL,
             UNIQUE(source_id, stable_id)
         )
         """
@@ -668,6 +724,28 @@ def _bootstrap_schema(conn) -> None:
             affected_cpes_json TEXT NULL,
             reference_domains_json TEXT NULL,
             description_text TEXT NULL,
+            kev_cve_id TEXT NULL,
+            kev_checked_at TEXT NULL,
+            cve_products_checked_at TEXT NULL,
+            cve_threat_actors_checked_at TEXT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cve_kev (
+            cve_id TEXT PRIMARY KEY,
+            added_at TEXT NULL,
+            due_date TEXT NULL,
+            vendor_project TEXT NULL,
+            product TEXT NULL,
+            vulnerability_name TEXT NULL,
+            short_description TEXT NULL,
+            required_action TEXT NULL,
+            ransomware_use TEXT NULL,
+            notes TEXT NULL,
+            raw_json TEXT NULL,
             updated_at TEXT NOT NULL
         )
         """
@@ -880,6 +958,7 @@ def _bootstrap_schema(conn) -> None:
             is_manual INTEGER NOT NULL DEFAULT 0,
             visibility TEXT NOT NULL DEFAULT 'active',
             confidence_tier TEXT NOT NULL DEFAULT 'watch',
+            lifecycle TEXT NOT NULL DEFAULT 'candidate',
             reasons JSONB NOT NULL DEFAULT '[]'::jsonb
         )
         """
@@ -1056,12 +1135,33 @@ def _migrate_events_visibility(conn) -> None:
     conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'active'")
     conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS confidence_tier TEXT NOT NULL DEFAULT 'watch'")
     conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS candidate BOOLEAN NOT NULL DEFAULT false")
+    conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS lifecycle TEXT NOT NULL DEFAULT 'candidate'")
     conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS entity TEXT")
     conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS incident_date TEXT")
     conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS evidence JSONB NOT NULL DEFAULT '[]'::jsonb")
     conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS reasons JSONB NOT NULL DEFAULT '[]'::jsonb")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_visibility ON events(visibility)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_kind_visibility ON events(kind, visibility)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_lifecycle ON events(lifecycle)")
+
+
+def _migrate_events_lifecycle(conn) -> None:
+    conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS lifecycle TEXT NOT NULL DEFAULT 'candidate'")
+    conn.execute(
+        """
+        UPDATE events
+        SET lifecycle = CASE
+            WHEN visibility = 'suppressed' THEN 'archived'
+            WHEN status = 'closed' THEN 'resolved'
+            WHEN status IN ('resolved', 'archived') THEN status
+            WHEN candidate THEN 'candidate'
+            WHEN confidence_tier = 'confirmed' THEN 'confirmed'
+            ELSE 'active'
+        END
+        WHERE lifecycle IS NULL OR lifecycle = ''
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_lifecycle ON events(lifecycle)")
 
 
 def _create_article_product_tables(conn) -> None:
@@ -1611,6 +1711,66 @@ def _migrate_llm_event_classify_prompts(conn) -> None:
         "derive_events_from_articles",
         "prompt_event_classify_v1",
         "schema_event_classify_v1",
+    )
+
+
+def _migrate_llm_event_classify_prompts_v2(conn) -> None:
+    if not (_table_exists(conn, "llm_prompts") and _table_exists(conn, "llm_schemas")):
+        return
+    schema_event_classify = """
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["is_event", "event_type", "victim", "headline", "summary", "confidence", "what_compromised", "incident_date"],
+      "properties": {
+        "is_event": { "type": "boolean" },
+        "event_type": { "type": "string", "enum": ["breach", "ransomware", "compromise", "active_exploitation", "ddos", "outage", "other"] },
+        "victim": { "type": "string" },
+        "headline": { "type": "string" },
+        "summary": { "type": "string" },
+        "what_compromised": { "type": "string" },
+        "incident_date": { "type": "string" },
+        "confidence": { "type": "integer", "minimum": 0, "maximum": 100 }
+      }
+    }
+    """.strip()
+    _upsert_llm_schema(
+        conn,
+        "schema_event_classify_v2",
+        "Event Classify",
+        "v2",
+        schema_event_classify,
+    )
+    _upsert_llm_prompt(
+        conn,
+        "prompt_event_classify_v2",
+        "Event Classify",
+        "v2",
+        "\n".join(
+            [
+                "Classify whether the article describes an actionable cybersecurity incident event.",
+                "Return JSON only.",
+                "",
+                "Output must be:",
+                "{\"is_event\":true|false,\"event_type\":\"...\",\"victim\":\"...\",\"headline\":\"...\",\"summary\":\"...\",\"what_compromised\":\"...\",\"incident_date\":\"YYYY-MM-DD|unknown\",\"confidence\":0-100}",
+                "",
+                "Rules:",
+                "- is_event must be false for research, funding, policy, guidance, predictions, or generic threat commentary.",
+                "- event_type must be one of: breach, ransomware, compromise, active_exploitation, ddos, outage, other.",
+                "- victim must be a concrete impacted organization/entity; otherwise is_event=false.",
+                "- what_compromised must briefly state impacted data/systems; otherwise is_event=false.",
+                "- incident_date must be YYYY-MM-DD if explicit, otherwise 'unknown'.",
+                "- Do not invent details.",
+            ]
+        ),
+        "{{input}}",
+        "Strict JSON-only actionable incident classification.",
+    )
+    _update_stage_profile_prompt_schema(
+        conn,
+        "derive_events_from_articles",
+        "prompt_event_classify_v2",
+        "schema_event_classify_v2",
     )
 
 
@@ -4735,3 +4895,76 @@ def _migrate_jobs_priority(conn) -> None:
     if _has_column(conn, "jobs", "priority"):
         return
     conn.execute("ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
+
+
+def _migrate_cve_kev(conn) -> None:
+    if _table_exists(conn, "cves"):
+        if not _has_column(conn, "cves", "kev_cve_id"):
+            conn.execute("ALTER TABLE cves ADD COLUMN kev_cve_id TEXT NULL")
+        if not _has_column(conn, "cves", "kev_checked_at"):
+            conn.execute("ALTER TABLE cves ADD COLUMN kev_checked_at TEXT NULL")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cve_kev (
+            cve_id TEXT PRIMARY KEY,
+            added_at TEXT NULL,
+            due_date TEXT NULL,
+            vendor_project TEXT NULL,
+            product TEXT NULL,
+            vulnerability_name TEXT NULL,
+            short_description TEXT NULL,
+            required_action TEXT NULL,
+            ransomware_use TEXT NULL,
+            notes TEXT NULL,
+            raw_json TEXT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+def _migrate_jobs_indexes(conn) -> None:
+    if not _table_exists(conn, "jobs"):
+        return
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_status_job_type ON jobs (status, job_type)"
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_jobs_inflight
+        ON jobs (job_type)
+        WHERE started_at IS NOT NULL AND finished_at IS NULL
+        """
+    )
+
+
+def _migrate_enrich_checked_markers(conn) -> None:
+    if _table_exists(conn, "articles"):
+        if not _has_column(conn, "articles", "article_products_checked_at"):
+            conn.execute("ALTER TABLE articles ADD COLUMN article_products_checked_at TEXT NULL")
+        if not _has_column(conn, "articles", "article_threat_actors_checked_at"):
+            conn.execute("ALTER TABLE articles ADD COLUMN article_threat_actors_checked_at TEXT NULL")
+    if _table_exists(conn, "cves"):
+        if not _has_column(conn, "cves", "cve_products_checked_at"):
+            conn.execute("ALTER TABLE cves ADD COLUMN cve_products_checked_at TEXT NULL")
+        if not _has_column(conn, "cves", "cve_threat_actors_checked_at"):
+            conn.execute("ALTER TABLE cves ADD COLUMN cve_threat_actors_checked_at TEXT NULL")
+
+
+def _migrate_events_publish_fields(conn) -> None:
+    if not _table_exists(conn, "events"):
+        return
+    conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS publish_state TEXT NOT NULL DEFAULT 'draft'")
+    conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS published_at TEXT NULL")
+    conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS site_slug TEXT NULL")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_publish_state ON events(publish_state)")
+    conn.execute(
+        """
+        UPDATE events
+        SET publish_state = 'published',
+            published_at = COALESCE(published_at, updated_at, created_at, %s)
+        WHERE COALESCE(publish_state, '') = ''
+           OR (publish_state = 'draft' AND COALESCE(lifecycle, status, '') IN ('confirmed', 'active', 'open'))
+        """,
+        (utc_now_iso(),),
+    )

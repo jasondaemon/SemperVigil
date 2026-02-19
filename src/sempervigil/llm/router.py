@@ -24,6 +24,7 @@ from ..services.ai_service import (
     get_schema,
     load_provider_secret,
 )
+from ..config import load_runtime_config
 from ..utils import log_event
 
 STAGE_NAMES = [
@@ -35,6 +36,8 @@ STAGE_NAMES = [
     "article_enrich_products",
     "article_enrich_threat_actors",
     "derive_events_from_articles",
+    "event_web_validate",
+    "event_report_llm",
 ]
 
 
@@ -212,6 +215,28 @@ def _call_with_profile(
     ctx.setdefault("prompt_name", prompt_name)
     ctx.setdefault("provider_name", provider.get("name") or "")
     ctx.setdefault("model_name", model.get("model_name") or "")
+    if "openai_background_enabled" not in ctx:
+        try:
+            runtime = load_runtime_config(conn)
+            llm_cfg = runtime.llm or {}
+            ctx["openai_background_enabled"] = bool(llm_cfg.get("openai_background_enabled"))
+            ctx["openai_background_poll_seconds"] = llm_cfg.get("openai_background_poll_seconds")
+            ctx["openai_background_max_seconds"] = llm_cfg.get("openai_background_max_seconds")
+            stage_name = str(ctx.get("stage") or "")
+            json_mode_enabled = bool(llm_cfg.get("json_response_format_enabled", True))
+            json_mode_stages_raw = llm_cfg.get("json_response_format_stages") or [
+                "cve_enrich_products"
+            ]
+            json_mode_stages = {
+                str(item).strip()
+                for item in json_mode_stages_raw
+                if str(item).strip()
+            }
+            ctx["json_response_format_enabled"] = json_mode_enabled and (
+                stage_name in json_mode_stages
+            )
+        except Exception:
+            pass
     log_event(
         logger,
         logging.INFO,
@@ -303,12 +328,25 @@ def _call_provider(
     context: dict[str, Any] | None = None,
 ) -> str:
     if provider_type == "openai_compatible":
+        if _use_openai_background(provider, base_url, context):
+            response = _call_openai_responses_background(
+                provider,
+                base_url,
+                api_key,
+                model_name,
+                messages,
+                params,
+                context=context,
+            )
+            return _read_openai(response)
         path = _join_url(base_url, "/chat/completions")
         payload = {
             "model": model_name,
             "messages": messages,
             **_filter_params(params),
         }
+        if bool((context or {}).get("json_response_format_enabled")):
+            payload["response_format"] = {"type": "json_object"}
         headers = _auth_headers(provider_type, api_key)
         response = _http_request("POST", path, headers, payload, provider, context=context)
         return _read_openai(response)
@@ -561,10 +599,119 @@ def _http_request(
 
 
 def _read_openai(response: dict[str, Any]) -> str:
+    if "output" in response:
+        text = _extract_openai_output_text(response)
+        if not text:
+            raise ValueError("openai_missing_output_text")
+        return text
     choices = response.get("choices") or []
     if not choices:
         raise ValueError("openai_missing_choices")
     return choices[0]["message"]["content"]
+
+
+def _extract_openai_output_text(response: dict[str, Any]) -> str:
+    output_text = response.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text
+    output = response.get("output") or []
+    parts: list[str] = []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "message":
+            content = item.get("content")
+            if isinstance(content, str):
+                if content.strip():
+                    parts.append(content)
+                continue
+            if isinstance(content, list):
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    part_type = part.get("type")
+                    if part_type in {"output_text", "text"}:
+                        text = part.get("text")
+                        if isinstance(text, str) and text.strip():
+                            parts.append(text)
+    return "\n".join(parts).strip()
+
+
+def _use_openai_background(
+    provider: dict[str, Any],
+    base_url: str,
+    context: dict[str, Any] | None = None,
+) -> bool:
+    if str(provider.get("type") or "").lower() != "openai_compatible":
+        return False
+    if "api.openai.com" not in str(base_url or "").lower():
+        return False
+    ctx = context or {}
+    if isinstance(ctx.get("openai_background_enabled"), bool):
+        return bool(ctx.get("openai_background_enabled"))
+    flag = os.environ.get("SV_OPENAI_BACKGROUND", "").strip().lower()
+    return flag in {"1", "true", "yes", "on"}
+
+
+def _call_openai_responses_background(
+    provider: dict[str, Any],
+    base_url: str,
+    api_key: str | None,
+    model_name: str,
+    messages: list[dict[str, str]],
+    params: dict[str, Any],
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    headers = _auth_headers(provider["type"], api_key)
+    response_params = _filter_params(params)
+    response_params.pop("max_tokens", None)
+    payload = {
+        "model": model_name,
+        "input": messages,
+        "background": True,
+        "store": True,
+        **response_params,
+    }
+    if "max_tokens" in params and "max_output_tokens" not in payload:
+        try:
+            payload["max_output_tokens"] = int(params["max_tokens"])
+        except Exception:
+            pass
+    create_path = _join_url(base_url, "/responses")
+    response = _http_request("POST", create_path, headers, payload, provider, context=context)
+    resp_id = response.get("id")
+    if not resp_id:
+        return response
+    status = response.get("status") or ""
+    poll_seconds = _get_int_env("SV_OPENAI_BACKGROUND_POLL_SECONDS", 2, minimum=1)
+    max_wait = _get_int_env("SV_OPENAI_BACKGROUND_MAX_SECONDS", 3600, minimum=60)
+    ctx = context or {}
+    poll_override = ctx.get("openai_background_poll_seconds")
+    max_override = ctx.get("openai_background_max_seconds")
+    if isinstance(poll_override, int) and poll_override > 0:
+        poll_seconds = poll_override
+    if isinstance(max_override, int) and max_override >= 60:
+        max_wait = max_override
+    started_at = time.time()
+    while status in {"queued", "in_progress"}:
+        if time.time() - started_at > max_wait:
+            raise ValueError("openai_background_timeout")
+        time.sleep(poll_seconds)
+        get_path = _join_url(base_url, f"/responses/{resp_id}")
+        response = _http_request("GET", get_path, headers, None, provider, context=context)
+        status = response.get("status") or ""
+    return response
+
+
+def _get_int_env(name: str, default: int, minimum: int | None = None) -> int:
+    raw = os.environ.get(name)
+    try:
+        value = int(raw) if raw is not None else int(default)
+    except Exception:
+        value = int(default)
+    if minimum is not None and value < minimum:
+        value = minimum
+    return value
 
 
 def _read_anthropic(response: dict[str, Any]) -> str:

@@ -6,6 +6,18 @@
     <h2>Danger Zone</h2>
     <p class="danger-banner">Destructive actions. For testing only.</p>
 
+    <div class="danger-section" id="danger-site-data">
+      <h3>Rebuild Site Data Exports</h3>
+      <p>Regenerates article JSON, product/vendor indexes, and sources dashboard data.</p>
+      <label class="checkbox">
+        <input type="checkbox" class="danger-ack"> I understand this may take a while
+      </label>
+      <label>Type confirmation</label>
+      <input type="text" class="danger-confirm" placeholder="REBUILD_SITE_DATA">
+      <button class="btn danger-btn" data-action="site-data" disabled>Rebuild Site Data</button>
+      <pre class="mono danger-result"></pre>
+    </div>
+
     <div class="danger-section" id="danger-articles">
       <h3>Clear Articles</h3>
       <p>Deletes all article rows and related tag/link tables.</p>

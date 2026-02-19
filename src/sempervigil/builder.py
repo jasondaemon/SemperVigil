@@ -190,13 +190,11 @@ def _sanitize_product_pages(source_dir: str) -> int:
 
 def run_once(builder_id: str) -> int:
     logger = _setup_logging()
-    log_event(logger, logging.INFO, "builder_once_start", builder_id=builder_id)
     try:
         conn = init_db()
         config = load_runtime_config(conn)
     except ConfigError as exc:
         log_event(logger, logging.ERROR, "config_error", error=str(exc))
-        log_event(logger, logging.INFO, "builder_once_done", builder_id=builder_id)
         return 1
 
     set_umask_from_env()
@@ -216,12 +214,10 @@ def run_once(builder_id: str) -> int:
         lock_timeout_seconds=config.jobs.lock_timeout_seconds,
     )
     if not job:
-        log_event(logger, logging.INFO, "builder_once_done", builder_id=builder_id)
         return 0
 
     if is_job_canceled(conn, job.id):
         log_event(logger, logging.INFO, "build_canceled", job_id=job.id)
-        log_event(logger, logging.INFO, "builder_once_done", builder_id=builder_id)
         return 0
 
     debounce_seconds = int(config.jobs.build_debounce_seconds)
@@ -240,7 +236,6 @@ def run_once(builder_id: str) -> int:
                     job_id=job.id,
                     not_before=payload["not_before"],
                 )
-                log_event(logger, logging.INFO, "builder_once_done", builder_id=builder_id)
                 return 0
 
     log_paths = _build_log_paths(config.paths.logs_dir, job.id)
@@ -258,12 +253,10 @@ def run_once(builder_id: str) -> int:
     except Exception as exc:  # noqa: BLE001
         fail_job(conn, job.id, str(exc))
         log_event(logger, logging.ERROR, "build_failed", job_id=job.id, error=str(exc))
-        log_event(logger, logging.INFO, "builder_once_done", builder_id=builder_id)
         return 1
 
     if canceled or is_job_canceled(conn, job.id):
         log_event(logger, logging.INFO, "build_canceled", job_id=job.id)
-        log_event(logger, logging.INFO, "builder_once_done", builder_id=builder_id)
         return 0
 
     if returncode != 0:
@@ -281,7 +274,6 @@ def run_once(builder_id: str) -> int:
             output=tail,
             cmd=" ".join(cmd),
         )
-        log_event(logger, logging.INFO, "builder_once_done", builder_id=builder_id)
         return 1
 
     duration = round(time.time() - start, 2)
@@ -298,7 +290,6 @@ def run_once(builder_id: str) -> int:
         log_event(logger, logging.INFO, "build_succeeded", job_id=job.id)
     else:
         log_event(logger, logging.ERROR, "build_complete_failed", job_id=job.id)
-    log_event(logger, logging.INFO, "builder_once_done", builder_id=builder_id)
     return 0
 
 

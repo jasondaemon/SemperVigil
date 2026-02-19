@@ -14,7 +14,7 @@ mkdir -p \
   "${SITE_SRC_DIR}/content/posts" \
   "${SITE_SRC_DIR}/content/events" \
   "${SITE_SRC_DIR}/content/cves" \
-  "${SITE_SRC_DIR}/content/briefs" \
+  "${SITE_SRC_DIR}/content/daily" \
   "${SITE_SRC_DIR}/static/sempervigil" \
   "${SITE_PUBLIC_DIR}"
 
