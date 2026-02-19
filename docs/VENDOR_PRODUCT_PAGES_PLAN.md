@@ -1,4 +1,7 @@
-# Vendor + Product Pages Plan (Refined)
+# Vendor + Product Pages Plan (Refined, Historical)
+
+> Superseded by unified entity search at `/entities/`.
+> Keep this document as implementation history only.
 
 ## Purpose
 Deliver vendor/product browsing pages with a **popular-only word cloud** and **full-inventory search** without changing pipeline mechanics.
@@ -24,11 +27,14 @@ Maps provide drill-down:
 - `vendor_map.json`: vendor_slug → { articles, cves, products }
 - `product_map.json`: product_slug → { articles, cves, vendors }
 
-## Pages (Required)
+## Pages (Original Plan)
 - `/vendors/` (directory, word cloud + search)
 - `/products/` (directory, word cloud + search)
 - `/vendor/<vendor_slug>/` (single vendor, lists)
 - `/product/<product_slug>/` (single product, lists)
+
+Current implementation replaced this with:
+- `/entities/` (merged vendors/products/threats search + cloud)
 
 ## Behavior
 - Empty search: show popular word cloud.

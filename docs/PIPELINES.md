@@ -8,7 +8,7 @@
 2) Articles are normalized, deduped, and stored in Postgres.
 3) Fetch content (optional) and store readable text.
 4) Summarize (optional).
-5) Write Hugo markdown under `/site/content/posts`.
+5) Enqueue downstream enrichment/classification jobs (products, threat actors, event derivation).
 6) Enqueue a build job (builder updates `/site`).
 
 ## CVE Sync
@@ -21,13 +21,12 @@
 
 ---
 
-## Vendor/Product Pages Verification
+## Entity Search Verification
 
 Scriptable check:
 
 ```bash
 docker compose up -d --build
-docker compose exec builder_scheduler sh -lc 'ls -la /site/data/vendors.json /site/data/products.json /site/data/vendor_map.json /site/data/product_map.json'
-curl -I http://localhost:${SV_WEB_PORT:-8080}/vendors/
-curl -I http://localhost:${SV_WEB_PORT:-8080}/products/
+docker compose exec builder_scheduler sh -lc 'ls -la /site/data/feed/index.json'
+curl -I http://localhost:${SV_WEB_PORT:-8080}/entities/
 ```

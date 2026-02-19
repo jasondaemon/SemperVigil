@@ -304,7 +304,7 @@ docker compose run --rm worker_fetch \
 
 ## PostgreSQL required
 
-SQLite is no longer supported. The stack requires a Postgres database and `SV_DB_URL`.
+SemperVigil is Postgres-only. Set `SV_DB_URL` and run with the `db` service.
 
 ---
 

@@ -22,15 +22,13 @@ The system ingests Articles + CVEs into a DB, correlates and enriches them, then
 
 ### Public URL structure (canonical)
 - `/` — Live article feed (today + backfill to 20+, day-by-day paging)
-- `/daily/` — Daily News index (newest day first)
-- `/daily/YYYY-MM-DD/` — Daily News page
+- `/daily-briefs/` — Daily brief index (newest day first)
+- `/daily-briefs/YYYY-MM-DD/` — Daily brief page
 - `/events/` — Security Events index (sorted by last_modified desc)
 - `/events/<event-id>/` — Event dossier page (updated over time)
 - `/cves/` — CVE index (optional; Search-first is fine)
 - `/cves/CVE-YYYY-NNNN/` — CVE detail page
-- `/products/` — Product index (optional)
-- `/products/<vendor>/<product>/` — Product page
-- `/search/` — Search UI (client-side for MVP, service-backed later)
+- `/entities/` — Unified entity search (vendors/products/threats)
 
 ---
 
@@ -64,7 +62,7 @@ Progressive disclosure:
 Update cadence:
 - Content updated hourly (or more often), but the front page should remain fast and stable.
 
-### Daily Brief `/daily/YYYY-MM-DD/`
+### Daily Brief `/daily-briefs/YYYY-MM-DD/`
 Generated around midnight (timezone defined in runtime config).
 
 Required structure:
@@ -110,7 +108,7 @@ Event inclusion rule:
 
 ---
 
-## Search News `/search/`
+## Search News `/entities/`
 **Goal:** investigation console.
 
 Result ordering:
@@ -118,7 +116,7 @@ Result ordering:
 2) Daily Summaries
 3) Articles
 4) CVEs
-5) Products (if implemented as first-class)
+5) Entity hits (vendors/products/threats)
 
 MVP (client-side search):
 - Uses JSON indexes produced at publish time.
@@ -204,18 +202,20 @@ MVP deterministic clustering:
 
 ### Generated content (Markdown)
 - `/site/content/posts/*.md` — articles (optional to publish all; can publish only “selected” later)
-- `/site/content/daily/YYYY-MM-DD.md` — daily summaries
+- `/site/content/daily-briefs/YYYY-MM-DD.md` — daily briefs
 - `/site/content/events/<event-id>.md` — events
 - `/site/content/cves/<cve-id>.md` — CVEs (optional, but recommended)
-- `/site/content/products/<vendor>-<product>.md` — products (phase 2/3)
+- Product/vendor/threat detail pages are not required; entity links resolve to `/entities/?search=<term>`.
 
 ### JSON indexes (for Search + front page data)
 Under a single namespace directory:
 - `/site/static/sempervigil/index/articles.json`
-- `/site/static/sempervigil/index/daily.json`
+- `/site/data/feed/index.json`
+- `/site/data/feed/days/YYYY-MM-DD.json`
+- `/site/static/sempervigil/index/daily.json` (optional aggregate index)
 - `/site/static/sempervigil/index/events.json`
 - `/site/static/sempervigil/index/cves.json`
-- `/site/static/sempervigil/index/products.json`
+- `/site/static/sempervigil/index/entities.json`
 
 Index payload design:
 - small, fast, searchable
@@ -237,7 +237,7 @@ Index payload design:
 ### Admin sections
 - Content Browser (Articles, CVEs)
 - Events (browse, drilldown, rebuild)
-- Products (browse, drilldown)
+- Entity Search (unified vendors/products/threats)
 - Sources / Health / Jobs
 - AI Config (providers/models/prompts/schemas)
 - Runtime Config (form-driven)
@@ -293,7 +293,7 @@ Index payload design:
 - Produce daily brief JSON and publish
 - Produce event markdown and publish (already close)
 - Produce CVE markdown and publish
-- Produce JSON indexes: articles/events/cves/daily/products
+- Produce JSON indexes: articles/events/cves/daily/entities
 
 ### Phase C: Public UX (front page + search)
 - Hugo templates consume indexes and render:
@@ -302,9 +302,9 @@ Index payload design:
   - daily index
 - Implement Search MVP (Fuse/Lunr) using indexes
 
-### Phase D: Enrichment (products/versions, exploit signals)
+### Phase D: Enrichment (entity quality, exploit signals)
 - Parse version ranges where possible
 - Add exploit-signal classifier
-- Add product pages and “all high/critical for product” views
+- Improve entity search ranking and add “all high/critical for product” filtered views in `/entities/`
 
 ### Development stages.

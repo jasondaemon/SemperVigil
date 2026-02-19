@@ -365,8 +365,9 @@ Overrides let us tune discovery + content extraction for problematic sources wit
 ### 6.4 Daily Brief (Topic-First)
 Daily Briefs are generated from **today’s accepted articles** and clustered into topics.
 The brief is synthesized from topics (not raw per-article summaries) and grouped by
-NIST 800-53 families. Output is written to Hugo JSON data files at:
-`site-src/data/briefs/YYYY-MM-DD.json`.
+NIST 800-53 families. Output is published to Hugo as:
+- daily brief content pages under `content/daily-briefs/YYYY-MM-DD.md`
+- homepage feed data under `data/feed/index.json` and `data/feed/days/YYYY-MM-DD.json`
 
 Pipeline stages (via Admin > AI Config) are the **only** control plane for prompts:
 - `daily_brief_cluster_topics`
@@ -374,7 +375,8 @@ Pipeline stages (via Admin > AI Config) are the **only** control plane for promp
 - `daily_brief_map_nist_families`
 - `daily_brief_overall_synthesis`
 
-The brief renderer reads from `site.Data.briefs[day]` and does not use per-article markdown.
+The brief renderer reads from the daily brief content page and homepage feed/day JSON.
+Per-article markdown remains disabled by default.
 If overrides are unset, behavior is unchanged.
 
 Stored in `sources.overrides` (JSONB) with this schema:
