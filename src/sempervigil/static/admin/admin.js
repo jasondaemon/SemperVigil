@@ -4811,12 +4811,16 @@ function wireEvents() {
     const kind = document.getElementById("events-kind").value;
     const severity = document.getElementById("events-severity").value;
     const status = document.getElementById("events-status").value;
+    const candidate = document.getElementById("events-candidate").value;
+    const articles = document.getElementById("events-articles").value;
     const after = document.getElementById("events-after").value;
     const before = document.getElementById("events-before").value;
     const includeLegacy = document.getElementById("events-include-legacy");
     if (query) params.set("query", query);
     if (kind) params.set("kind", kind);
     if (status) params.set("status", status);
+    if (candidate) params.set("candidate", candidate);
+    if (articles) params.set("article_bucket", articles);
     if (after) params.set("after", after);
     if (before) params.set("before", before);
     if (includeLegacy && includeLegacy.checked) params.set("include_legacy", "1");
@@ -4829,21 +4833,29 @@ function wireEvents() {
       eventsById[event.id] = event;
       const row = document.createElement("tr");
       const when = event.last_seen_at || event.last_article_at || event.created_at || "";
+      const eventLink = `/ui/events/${event.id}`;
+      const published = String(event.publish_state || "").toLowerCase() === "published";
       row.innerHTML = `
-        <td>${renderShortId(event.id, `/ui/events/${event.id}`)}</td>
-        <td class="line-clamp-2" title="${esc(event.title || "")}">${esc(event.title || "")}</td>
+        <td class="line-clamp-2" title="${esc(event.title || "")}"><a href="${eventLink}">${esc(event.title || "")}</a></td>
         <td><span class="badge muted">${esc(event.kind || "")}</span></td>
-        <td><span class="badge muted">${esc(event.severity || "UNKNOWN")}</span></td>
         <td>${statusBadge(event.status || "")}</td>
         <td>${event.lifecycle ? `<span class="badge ${event.lifecycle === "candidate" ? "warn" : "success"}">${esc(event.lifecycle)}</span>` : (event.candidate ? '<span class="badge warn">candidate</span>' : '<span class="badge success">confirmed</span>')}</td>
+        <td>${published ? '<span class="badge success">yes</span>' : '<span class="badge muted">no</span>'}</td>
         <td>${event.confidence ? event.confidence.toFixed(2) : ""}</td>
         <td class="truncate" title="${esc(event.entity || "")}">${esc(event.entity || "")}</td>
         <td><span data-ts="${esc(event.incident_date || "")}"></span></td>
         <td><span data-ts="${esc(when)}"></span></td>
         <td><span class="badge muted">📰 ${event.article_count ?? 0}</span></td>
         <td class="table-actions">
-          <button class="btn small secondary event-edit" data-event-id="${event.id}">Edit</button>
-          <button class="btn small danger event-delete" data-event-id="${event.id}">Delete</button>
+          <div class="action-menu">
+            <button class="action-menu-button" type="button" aria-label="More actions">☰</button>
+            <div class="action-menu-list">
+              <button type="button" class="event-edit" data-event-id="${event.id}">Edit</button>
+              <button type="button" class="event-delete" data-event-id="${event.id}">Delete</button>
+              <button type="button" class="event-search-web" data-event-id="${event.id}">Search Web</button>
+              <button type="button" class="event-publish" data-event-id="${event.id}">Publish</button>
+            </div>
+          </div>
         </td>
       `;
       tbody.appendChild(row);
@@ -4941,6 +4953,35 @@ function wireEvents() {
           await apiFetch(`/admin/api/events/${eventId}`, { method: "DELETE" });
           showToast("Event deleted");
           load(1).catch((err) => setError(err.message || String(err)));
+        } catch (err) {
+          setError(err.message || String(err));
+        }
+      }
+      if (target.classList.contains("event-search-web")) {
+        try {
+          const payload = await apiFetch(`/admin/api/events/${eventId}/enrich/web`, {
+            method: "POST",
+            body: JSON.stringify({}),
+          });
+          const added = Number(payload && payload.added_count) || 0;
+          showToast(`Web search queued${added ? ` (added ${added})` : ""}`);
+        } catch (err) {
+          setError(err.message || String(err));
+        }
+      }
+      if (target.classList.contains("event-publish")) {
+        try {
+          const payload = await apiFetch(`/admin/api/events/${eventId}/publish`, {
+            method: "POST",
+            body: JSON.stringify({ publish: true }),
+          });
+          if (payload && payload.status === "blocked") {
+            const reasons = ((payload.readiness && payload.readiness.reasons) || []).join(", ");
+            showToast(`Publish blocked: ${reasons || "not_ready"}`);
+            return;
+          }
+          showToast("Event published");
+          load(currentPage).catch((err) => setError(err.message || String(err)));
         } catch (err) {
           setError(err.message || String(err));
         }
@@ -5949,6 +5990,11 @@ function wireDebug() {
         label: "Articles stale (>1 week)",
         value: status.articles_stale_count ?? 0,
         link: "/ui/content?type=article&content_error=1&content_error_kind=stale",
+      },
+      {
+        label: "Articles max retries exceeded",
+        value: status.articles_max_retries_count ?? 0,
+        link: "/ui/content?type=article&content_error=1&content_error_kind=max_retries",
       },
       {
         label: "Articles pending publish",

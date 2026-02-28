@@ -1219,12 +1219,14 @@ def enqueue(job: JobRequest, _: None = Depends(_require_admin_token)) -> dict[st
     if job.job_type not in allowed_job_types:
         raise HTTPException(status_code=400, detail="unsupported_job_type")
     payload = {"source_id": job.source_id} if job.source_id else None
+    # Debounce is job_type-wide; when a source_id is provided we need payload-level dedupe instead.
+    use_debounce = False if job.source_id else True
     if job.job_type == "build_site" and has_pending_job(conn, "build_site"):
         last = get_last_job_by_type(conn, "build_site")
         if last and last.status in {"queued", "running"}:
             return {"status": "already_queued", "job_id": last.id}
         return {"status": "already_queued"}
-    job_id = enqueue_job(conn, job.job_type, payload, debounce=True, dedupe=True)
+    job_id = enqueue_job(conn, job.job_type, payload, debounce=use_debounce, dedupe=True)
     log_event(
         logger,
         logging.INFO,
@@ -1371,6 +1373,9 @@ def debug_overview() -> dict[str, object]:
             ),
             "articles_404_count": int(pipeline_metrics.get("articles_404_count") or 0),
             "articles_stale_count": int(pipeline_metrics.get("articles_stale_count") or 0),
+            "articles_max_retries_count": int(
+                pipeline_metrics.get("articles_max_retries_count") or 0
+            ),
             "articles_pending_publish": int(pipeline_metrics.get("articles_pending_publish") or 0),
             "cves_missing_description_count": int(
                 pipeline_metrics.get("cves_missing_description_count") or 0
@@ -2306,6 +2311,8 @@ def api_events(
     severity: str | None = None,
     kind: str | None = None,
     status: str | None = None,
+    candidate: str | None = None,
+    article_bucket: str | None = None,
     after: str | None = None,
     before: str | None = None,
     include_legacy: bool = False,
@@ -2317,6 +2324,8 @@ def api_events(
     items, total = list_events_with_counts(
         conn,
         status=status,
+        candidate=candidate,
+        article_bucket=article_bucket,
         kind=kind,
         severity=severity,
         query=query,

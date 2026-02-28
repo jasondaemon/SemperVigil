@@ -341,6 +341,18 @@ def _run_tactic(
     test_mode: bool,
     ignore_dedupe: bool,
 ) -> tuple[SourceResult, dict[str, Any]]:
+    def _looks_like_feed_payload(payload: bytes, content_type: str | None) -> bool:
+        # Some sites intermittently return HTML challenge/marketing pages at feed URLs.
+        # Treat those as fetch errors so we do not ingest navigation/footer links as articles.
+        content_type_lc = (content_type or "").lower()
+        if any(
+            token in content_type_lc
+            for token in ("application/rss+xml", "application/atom+xml", "application/xml", "text/xml")
+        ):
+            return True
+        probe = payload[:16384].lstrip().lower()
+        return b"<rss" in probe or b"<feed" in probe or b"<rdf" in probe
+
     if overrides is None:
         overrides = {}
     policy = resolve_policy(tactic.config or {}, logger)
@@ -633,8 +645,9 @@ def _run_tactic(
         )
 
     if tactic.tactic_type == "rss":
+        headers_dict: dict[str, str] = {}
         try:
-            http_status, _final_url, _headers_dict, content, fetcher_used = fetch_bytes(
+            http_status, _final_url, headers_dict, content, fetcher_used = fetch_bytes(
                 feed_url,
                 headers=request_headers,
                 timeout_seconds=fetch_timeout_seconds,
@@ -655,6 +668,33 @@ def _run_tactic(
                 source_id=source.id,
                 tactic_type=tactic.tactic_type,
                 fetcher_used=fetcher_used,
+            )
+        content_type = None
+        if isinstance(headers_dict, dict):
+            content_type = headers_dict.get("content-type")
+        if content and not _looks_like_feed_payload(content, content_type):
+            return (
+                SourceResult(
+                    source_id=source.id,
+                    status="error",
+                    http_status=http_status,
+                    found_count=0,
+                    accepted_count=0,
+                    skipped_duplicates=0,
+                    skipped_filters=0,
+                    skipped_missing_url=0,
+                    already_seen_count=0,
+                    error=f"rss_non_feed_payload content_type={content_type or 'unknown'}",
+                    articles=[],
+                    decisions=[],
+                    raw_entry=None,
+                ),
+                {
+                    "tactic_type": tactic.tactic_type,
+                    "status": "error",
+                    "http_status": http_status,
+                    "error": f"rss_non_feed_payload content_type={content_type or 'unknown'}",
+                },
             )
     else:
         http_status, content, error = _fetch_url(

@@ -237,7 +237,7 @@ services:
       SV_DATA_DIR: /data
       SV_LOG_DIR: /log
       SV_LOG_FILE: /log/builder.log
-      SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-http://localhost:${SV_WEB_PORT:-8080}/}
+      SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-https://cybernews.jasondaemon.net/}
       SV_HUGO_CACHE_DIR: /data/hugo_cache
       SV_HUGO_MODULES_DIR: /data/hugo_modules
       SV_DB_URL: ${SV_DB_URL:-}
@@ -277,7 +277,7 @@ services:
       SV_DATA_DIR: /data
       SV_LOG_DIR: /log
       SV_LOG_FILE: /log/builder.log
-      SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-http://localhost:${SV_WEB_PORT:-8080}/}
+      SV_HUGO_BASEURL: ${SV_HUGO_BASEURL:-https://cybernews.jasondaemon.net/}
       SV_HUGO_CACHE_DIR: /data/hugo_cache
       SV_HUGO_MODULES_DIR: /data/hugo_modules
       SV_DB_URL: ${SV_DB_URL:-}

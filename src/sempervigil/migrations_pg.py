@@ -34,6 +34,16 @@ def _events_visibility_ready(conn) -> bool:
     return _has_column(conn, "events", "candidate") and _has_column(conn, "events", "evidence")
 
 
+def _enrich_checked_markers_ready(conn) -> bool:
+    return (
+        _has_column(conn, "articles", "article_products_checked_at")
+        and _has_column(conn, "articles", "article_events_checked_at")
+        and _has_column(conn, "articles", "article_threat_actors_checked_at")
+        and _has_column(conn, "cves", "cve_products_checked_at")
+        and _has_column(conn, "cves", "cve_threat_actors_checked_at")
+    )
+
+
 def apply_migrations_pg(conn) -> None:
     logger = logging.getLogger("sempervigil.migrations")
     conn.execute("BEGIN")
@@ -53,6 +63,9 @@ def apply_migrations_pg(conn) -> None:
         if "pg_events_005" in applied and not _events_visibility_ready(conn):
             _migrate_events_visibility(conn)
             logger.info("migration_reapplied version=pg_events_005")
+        if "pg_enrich_checked_markers_031" in applied and not _enrich_checked_markers_ready(conn):
+            _migrate_enrich_checked_markers(conn)
+            logger.info("migration_reapplied version=pg_enrich_checked_markers_031")
 
         if "pg_events_002" not in applied:
             _migrate_events_v2(conn)
@@ -650,6 +663,7 @@ def _bootstrap_schema(conn) -> None:
             brief_day TEXT NULL,
             has_full_content INTEGER NOT NULL DEFAULT 0,
             article_products_checked_at TEXT NULL,
+            article_events_checked_at TEXT NULL,
             article_threat_actors_checked_at TEXT NULL,
             UNIQUE(source_id, stable_id)
         )
@@ -4942,6 +4956,8 @@ def _migrate_enrich_checked_markers(conn) -> None:
     if _table_exists(conn, "articles"):
         if not _has_column(conn, "articles", "article_products_checked_at"):
             conn.execute("ALTER TABLE articles ADD COLUMN article_products_checked_at TEXT NULL")
+        if not _has_column(conn, "articles", "article_events_checked_at"):
+            conn.execute("ALTER TABLE articles ADD COLUMN article_events_checked_at TEXT NULL")
         if not _has_column(conn, "articles", "article_threat_actors_checked_at"):
             conn.execute("ALTER TABLE articles ADD COLUMN article_threat_actors_checked_at TEXT NULL")
     if _table_exists(conn, "cves"):

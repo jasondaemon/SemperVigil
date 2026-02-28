@@ -2,7 +2,10 @@
 set -euo pipefail
 
 ROOT="${1:-$(pwd)}"
-NFS_ROOT="${SV_NFS_ROOT:-/nfs/sempervigil}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+STACK_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
+NFS_ROOT="${SV_NFS_ROOT:-${STACK_ROOT}}"
 SITE_SRC_DIR="${SV_SITE_SRC_DIR:-${NFS_ROOT}/site-src}"
 SITE_PUBLIC_DIR="${SV_SITE_PUBLIC_DIR:-${NFS_ROOT}/site-public}"
 DATA_DIR="${SV_DATA_DIR:-${NFS_ROOT}/data}"

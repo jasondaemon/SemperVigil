@@ -1513,6 +1513,7 @@ def get_dashboard_metrics(conn: Any) -> dict[str, object]:
     content_error_count = 0
     content_404_count = 0
     content_stale_count = 0
+    content_max_retries_count = 0
     missing_summary_count = 0
     missing_context_count = 0
     if article_columns:
@@ -1568,6 +1569,10 @@ def get_dashboard_metrics(conn: Any) -> dict[str, object]:
                     f"SELECT COUNT(*) FROM articles WHERE {error_stale_clause}"
                 ).fetchone()
                 content_stale_count = int(row[0] or 0)
+            row = conn.execute(
+                "SELECT COUNT(*) FROM articles WHERE content_error = 'max_retries_exceeded'"
+            ).fetchone()
+            content_max_retries_count = int(row[0] or 0)
         if "summary_llm" in article_columns:
             where = "summary_llm IS NULL OR summary_llm = ''"
             if error_exclude_clause:
@@ -1595,6 +1600,7 @@ def get_dashboard_metrics(conn: Any) -> dict[str, object]:
     metrics["articles_with_content_error_count"] = content_error_count
     metrics["articles_404_count"] = content_404_count
     metrics["articles_stale_count"] = content_stale_count
+    metrics["articles_max_retries_count"] = content_max_retries_count
     metrics["articles_missing_summary_count"] = missing_summary_count
     metrics["articles_missing_context_count"] = missing_context_count
     metrics["articles_missing_products_count"] = 0
@@ -2373,6 +2379,26 @@ def mark_article_threat_actors_checked(
         """
         UPDATE articles
         SET article_threat_actors_checked_at = %s
+        WHERE id = %s
+        """,
+        (checked_at or utc_now_iso(), int(article_id)),
+    )
+    if commit:
+        conn.commit()
+
+
+def mark_article_events_checked(
+    conn: Any, article_id: int, checked_at: str | None = None, *, commit: bool = True
+) -> None:
+    if not _table_exists(conn, "articles"):
+        return
+    columns = _table_columns(conn, "articles")
+    if "article_events_checked_at" not in columns:
+        return
+    conn.execute(
+        """
+        UPDATE articles
+        SET article_events_checked_at = %s
         WHERE id = %s
         """,
         (checked_at or utc_now_iso(), int(article_id)),
@@ -5773,6 +5799,8 @@ def list_events(
 def list_events_with_counts(
     conn: Any,
     status: str | None,
+    candidate: str | None,
+    article_bucket: str | None,
     kind: str | None,
     severity: str | None,
     query: str | None,
@@ -5799,8 +5827,9 @@ def list_events_with_counts(
     if not include_suppressed and "visibility" in columns:
         where.append("e.visibility = 'active'")
     if status:
-        where.append("e.status = %s")
-        params.append(status)
+        # Lifecycle is the authoritative event state; fall back to status for legacy rows.
+        where.append("LOWER(COALESCE(e.lifecycle, e.status, '')) = %s")
+        params.append(status.lower())
     if kind:
         where.append("e.kind = %s")
         params.append(kind)
@@ -5817,15 +5846,13 @@ def list_events_with_counts(
     if before:
         where.append("e.last_seen_at <= %s")
         params.append(before)
+    if candidate == "true":
+        where.append("COALESCE(e.candidate, FALSE) = TRUE")
+    elif candidate == "false":
+        where.append("COALESCE(e.candidate, FALSE) = FALSE")
     where_sql = " AND ".join(where)
     if where_sql:
         where_sql = "WHERE " + where_sql
-    count_cursor = conn.execute(
-        f"SELECT COUNT(*) FROM events e {where_sql}",
-        params,
-    )
-    total = count_cursor.fetchone()[0]
-    offset = max(page - 1, 0) * page_size
     article_counts_join = ""
     if _table_exists(conn, "event_articles"):
         article_counts_join = """
@@ -5850,6 +5877,30 @@ def list_events_with_counts(
             GROUP BY ei.event_id
         ) ac ON ac.event_id = e.id
         """
+    article_bucket_clause = ""
+    if article_bucket == "1":
+        article_bucket_clause = "COALESCE(ac.article_count, 0) = 1"
+    elif article_bucket == "2":
+        article_bucket_clause = "COALESCE(ac.article_count, 0) = 2"
+    elif article_bucket == "3plus":
+        article_bucket_clause = "COALESCE(ac.article_count, 0) >= 3"
+    where_plus_bucket = where_sql
+    if article_bucket_clause:
+        if where_plus_bucket:
+            where_plus_bucket = f"{where_plus_bucket} AND {article_bucket_clause}"
+        else:
+            where_plus_bucket = f"WHERE {article_bucket_clause}"
+    count_cursor = conn.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM events e
+        {article_counts_join}
+        {where_plus_bucket}
+        """,
+        params,
+    )
+    total = count_cursor.fetchone()[0]
+    offset = max(page - 1, 0) * page_size
     cve_join = (
         """
         LEFT JOIN (
@@ -5889,7 +5940,7 @@ def list_events_with_counts(
         {article_counts_join}
         {cve_join}
         {product_join}
-        {where_sql}
+        {where_plus_bucket}
         ORDER BY e.last_seen_at DESC
         LIMIT %s OFFSET %s
         """,
@@ -7123,6 +7174,8 @@ def search_articles(
             where.append(f"({error_404_clause})")
         elif kind in ("stale", "stale_older_than_week"):
             where.append(f"({error_stale_clause})")
+        elif kind in ("max_retries", "max_retries_exceeded"):
+            where.append("(a.content_error = 'max_retries_exceeded')")
         elif kind == "other":
             where.append(
                 f"(a.content_error IS NOT NULL AND a.content_error != '' AND NOT ({error_404_clause} OR {error_stale_clause}))"
@@ -8236,6 +8289,12 @@ def list_event_ids_for_article(conn: Any, article_id: int) -> list[str]:
 def list_article_ids_without_event(conn: Any, limit: int | None = 200) -> list[int]:
     if not _table_exists(conn, "articles"):
         return []
+    article_columns = _table_columns(conn, "articles")
+    checked_clause = (
+        "AND a.article_events_checked_at IS NULL"
+        if "article_events_checked_at" in article_columns
+        else ""
+    )
     if _table_exists(conn, "event_articles"):
         sql = """
             SELECT a.id
@@ -8243,8 +8302,9 @@ def list_article_ids_without_event(conn: Any, limit: int | None = 200) -> list[i
             LEFT JOIN event_articles ea ON ea.article_id = a.id
             WHERE ea.article_id IS NULL
               AND COALESCE(BTRIM(a.content_text), '') <> ''
+              {checked_clause}
             ORDER BY a.published_at DESC NULLS LAST
-        """
+        """.format(checked_clause=checked_clause)
         params: list[object] = []
         if limit is not None:
             sql += " LIMIT %s"
@@ -8257,8 +8317,9 @@ def list_article_ids_without_event(conn: Any, limit: int | None = 200) -> list[i
             LEFT JOIN event_items ei ON ei.item_type = 'article' AND ei.item_key = CAST(a.id AS TEXT)
             WHERE ei.event_id IS NULL
               AND COALESCE(BTRIM(a.content_text), '') <> ''
+              {checked_clause}
             ORDER BY a.published_at DESC NULLS LAST
-        """
+        """.format(checked_clause=checked_clause)
         params = []
         if limit is not None:
             sql += " LIMIT %s"
@@ -8269,8 +8330,9 @@ def list_article_ids_without_event(conn: Any, limit: int | None = 200) -> list[i
             SELECT id
             FROM articles
             WHERE COALESCE(BTRIM(content_text), '') <> ''
+              {checked_clause}
             ORDER BY published_at DESC NULLS LAST
-        """
+        """.format(checked_clause=checked_clause.replace("a.", ""))
         params = []
         if limit is not None:
             sql += " LIMIT %s"
@@ -8462,6 +8524,13 @@ def update_article_content(
     content_error: str | None,
     has_full_content: bool,
 ) -> None:
+    # PostgreSQL text columns reject NUL bytes; strip them from fetched payloads.
+    if content_text is not None:
+        content_text = content_text.replace("\x00", "")
+    if content_html is not None:
+        content_html = content_html.replace("\x00", "")
+    if content_error is not None:
+        content_error = content_error.replace("\x00", "")
     conn.execute(
         """
         UPDATE articles

@@ -32,8 +32,22 @@
     </select>
     <select id="events-status">
       <option value="">All status</option>
-      <option value="open">Open</option>
-      <option value="closed">Closed</option>
+      <option value="candidate">Candidate</option>
+      <option value="confirmed">Confirmed</option>
+      <option value="active">Active</option>
+      <option value="resolved">Resolved</option>
+      <option value="archived">Archived</option>
+    </select>
+    <select id="events-candidate">
+      <option value="">All candidate states</option>
+      <option value="true">Candidate only</option>
+      <option value="false">Non-candidate only</option>
+    </select>
+    <select id="events-articles">
+      <option value="">All article counts</option>
+      <option value="1">1 article</option>
+      <option value="2">2 articles</option>
+      <option value="3plus">3+ articles</option>
     </select>
     <label class="checkbox"><input type="checkbox" id="events-include-legacy"> Include legacy</label>
     <input type="date" id="events-after">
@@ -68,12 +82,11 @@
   <table class="table-compact" id="events-table">
     <thead>
       <tr>
-        <th>ID</th>
         <th>Title</th>
         <th>Kind</th>
-        <th>Severity</th>
         <th>Status</th>
         <th>Candidate</th>
+        <th>Published</th>
         <th>Confidence</th>
         <th>Entity</th>
         <th>Incident</th>

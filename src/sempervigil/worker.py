@@ -127,6 +127,7 @@ from .storage import (
     count_products_for_article,
     infer_article_products_from_cves,
     list_article_ids_missing_products,
+    list_cve_ids_missing_products,
     list_cves_for_day,
     list_cve_ids_needing_kev_check,
     get_cve_kev,
@@ -160,6 +161,7 @@ from .storage import (
     list_article_ids_missing_threat_actors,
     list_cve_ids_missing_threat_actors,
     mark_article_products_checked,
+    mark_article_events_checked,
     mark_article_threat_actors_checked,
     mark_cve_products_checked,
     mark_cve_threat_actors_checked,
@@ -352,6 +354,16 @@ def _is_timeout_error(exc: Exception) -> bool:
             return True
     message = str(exc).lower()
     return "timeout" in message or "timed out" in message
+
+
+def _looks_like_thn_teaser(source_id: str | None, content_text: str | None) -> bool:
+    if (source_id or "").strip().lower() != "the-hacker-news":
+        return False
+    text = (content_text or "").strip()
+    if not text:
+        return False
+    lowered = text.lower()
+    return "zero trust + ai: thrive in the ai era" in lowered and "zero trust everywhere" in lowered
 
 
 _LLM_JOB_TYPES = {
@@ -1883,9 +1895,15 @@ def _write_cve_pages(conn, site_root: str, tz_name: str, logger: logging.Logger)
             f"severity: {_yaml_escape_value(preferred_base_severity)}",
             f"base_score: {_yaml_escape_value(preferred_base_score)}",
             f"vector: {_yaml_escape_value(preferred_vector)}",
-            f"summary: {_yaml_escape_value(summary)}",
             f"nvd_url: {_yaml_escape_value(nvd_url)}",
         ]
+
+        if summary:
+            lines.append("summary: |")
+            for line in summary.splitlines():
+                lines.append(f"  {line}")
+        else:
+            lines.append("summary: ''")
 
         if description:
             lines.append("description: |")
@@ -4071,6 +4089,27 @@ def _handle_fetch_article_content(
             overrides=overrides,
         )
         content_text = result["content_text"]
+        if _looks_like_thn_teaser(str(source_id) if source_id else None, content_text):
+            update_article_content(
+                conn,
+                int(article_id),
+                content_text=None,
+                content_html=None,
+                content_fetched_at=utc_now_iso(),
+                content_error="content_guard:the_hacker_news_teaser",
+                has_full_content=False,
+            )
+            _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
+            log_event(
+                logger,
+                logging.WARNING,
+                "fetch_article_guard_blocked",
+                article_id=article_id,
+                source_id=source_id,
+                source_name=source_name,
+                reason="the_hacker_news_teaser",
+            )
+            return {"article_id": article_id, "has_full_content": False, "permanent_error": True}
         fallback_title = ""
         existing_title = str(article.get("title") or "").strip()
         if not existing_title:
@@ -4130,15 +4169,27 @@ def _handle_fetch_article_content(
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         raise
     except Exception as exc:  # noqa: BLE001
+        previous_failures = count_failed_article_jobs(conn, "fetch_article_content", int(article_id))
+        is_timeout = _is_timeout_error(exc)
+        is_terminal_timeout = is_timeout and (previous_failures + 1 >= 3)
         update_article_content(
             conn,
             int(article_id),
             content_text=None,
             content_html=None,
             content_fetched_at=utc_now_iso(),
-            content_error=f"fetch_failed:{exc}",
+            content_error="max_retries_exceeded" if is_terminal_timeout else f"fetch_failed:{exc}",
             has_full_content=False,
         )
+        if is_terminal_timeout:
+            log_event(
+                logger,
+                logging.WARNING,
+                "fetch_article_timeout_max_attempts",
+                article_id=article_id,
+                attempts=previous_failures + 1,
+                error=str(exc),
+            )
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         raise
     _maybe_enqueue_context_pack(conn, int(article_id), article["source_id"], logger)
@@ -5369,24 +5420,31 @@ def _handle_derive_events_from_articles(
             conn, config, {"article_id": item_id}, logger
         )
         return {"status": "single", "article_id": item_id, "result": result}
+    article_id = int(article_id)
+
+    def _done(result: dict[str, object]) -> dict[str, object]:
+        # Mark this article as derive-events checked so queueable "need" can drain.
+        mark_article_events_checked(conn, article_id, commit=False)
+        return result
+
     if list_event_ids_for_article(conn, article_id):
-        return {"status": "skipped", "reason": "already_linked"}
+        return _done({"status": "skipped", "reason": "already_linked"})
     article = get_article_by_id(conn, article_id)
     if not article:
-        return {"status": "skipped", "reason": "article_missing"}
+        return _done({"status": "skipped", "reason": "article_missing"})
     title = str(article.get("title") or "")
     summary = str(article.get("summary") or "")
     content = str(article.get("content_text") or "")
     combined = " ".join(part for part in ( title, summary, content) if part).strip()
     if not combined:
-        return {"status": "skipped", "reason": "no_content"}
+        return _done({"status": "skipped", "reason": "no_content"})
     policy = _event_admission_policy(conn)
     cve_ids = list_article_cve_ids(conn, article_id)
     is_primary_source = _is_primary_source(article)
     profile, reason = get_active_profile_for_stage(conn, "derive_events_from_articles")
     if profile:
         if not content:
-            return {"status": "skipped", "reason": "no_full_content"}
+            return _done({"status": "skipped", "reason": "no_full_content"})
         excerpt = content.strip()
         if len(excerpt) > 20000:
             excerpt = excerpt[:20000] + "\n[TRUNCATED]"
@@ -5417,7 +5475,7 @@ def _handle_derive_events_from_articles(
             )
         else:
             if not parsed.get("is_event"):
-                return {"status": "skipped", "reason": "llm_non_event"}
+                return _done({"status": "skipped", "reason": "llm_non_event"})
             event_type_raw = str(parsed.get("event_type") or "").strip()
             victim_raw = str(parsed.get("victim") or "").strip()
             kind = _normalize_event_type(event_type_raw)
@@ -5427,11 +5485,11 @@ def _handle_derive_events_from_articles(
             llm_scope = str(parsed.get("what_compromised") or "").strip()
             scope = llm_scope or _extract_compromise_scope(" ".join([headline, summary_text or "", combined]))
             if not kind or kind not in _STRICT_EVENT_TYPES:
-                return {"status": "skipped", "reason": "llm_non_incident_type"}
+                return _done({"status": "skipped", "reason": "llm_non_incident_type"})
             if not entity:
-                return {"status": "skipped", "reason": "llm_missing_entity"}
+                return _done({"status": "skipped", "reason": "llm_missing_entity"})
             if not scope:
-                return {"status": "skipped", "reason": "llm_missing_scope"}
+                return _done({"status": "skipped", "reason": "llm_missing_scope"})
             parsed_incident_date = str(parsed.get("incident_date") or "").strip()
             if parsed_incident_date.lower() in {"unknown", "n/a", "none", "null"}:
                 parsed_incident_date = ""
@@ -5446,22 +5504,22 @@ def _handle_derive_events_from_articles(
                 entity,
             )
             if len(qualifier_reasons) < int(policy["min_signal_reasons"]):
-                return {"status": "skipped", "reason": "llm_insufficient_signals"}
+                return _done({"status": "skipped", "reason": "llm_insufficient_signals"})
             if _is_generic_event_entity(entity):
-                return {"status": "skipped", "reason": "llm_generic_entity"}
+                return _done({"status": "skipped", "reason": "llm_generic_entity"})
             if kind in {"breach", "compromise", "ransomware"} and not any(
                 reason.startswith("victim:") for reason in qualifier_reasons
             ):
-                return {"status": "skipped", "reason": "llm_missing_victim_signal"}
+                return _done({"status": "skipped", "reason": "llm_missing_victim_signal"})
             llm_non_event = _non_event_reason(" ".join([headline, summary_text or "", combined]))
             if llm_non_event and not any(reason.startswith(("victim:", "law:")) for reason in qualifier_reasons):
-                return {"status": "skipped", "reason": "llm_non_incident", "detail": llm_non_event}
+                return _done({"status": "skipped", "reason": "llm_non_incident", "detail": llm_non_event})
             if (
                 confidence < float(policy["min_create_confidence"])
                 and not is_primary_source
                 and not (bool(policy["allow_cve_only_create"]) and bool(cve_ids))
             ):
-                return {"status": "skipped", "reason": "llm_low_confidence"}
+                return _done({"status": "skipped", "reason": "llm_low_confidence"})
             candidate = True
             status = "candidate"
             event_id, _ = upsert_event_by_key(
@@ -5511,17 +5569,17 @@ def _handle_derive_events_from_articles(
             update_event_summary_from_articles(conn, event_id)
             enqueue_job(conn, "event_report_llm", {"event_id": event_id}, dedupe=True)
             _maybe_queue_event_research(conn, event_id)
-            return {
+            return _done({
                 "status": "linked",
                 "event_id": event_id,
                 "cves": len(cve_ids),
                 "source": "llm",
                 "lifecycle": lifecycle,
-            }
+            })
     kind = _derive_event_kind(combined)
     confidence, _, evidence = _derive_confidence(combined)
     if kind not in _STRICT_EVENT_TYPES:
-        return {"status": "skipped", "reason": "non_incident_kind"}
+        return _done({"status": "skipped", "reason": "non_incident_kind"})
     incident_date = _extract_incident_date(combined) or ( article.get("published_at") or "")[:10] or None
     entity = _normalize_entity(_extract_event_entity(title))
     if not entity and kind == "exploit_in_the_wild":
@@ -5539,28 +5597,28 @@ def _handle_derive_events_from_articles(
         for reason in qualifier_reasons
     )
     if len(qualifier_reasons) < int(policy["min_signal_reasons"]):
-        return {"status": "skipped", "reason": "insufficient_signals"}
+        return _done({"status": "skipped", "reason": "insufficient_signals"})
     if non_event and not strong_signal:
-        return {"status": "skipped", "reason": "non_incident", "detail": non_event}
+        return _done({"status": "skipped", "reason": "non_incident", "detail": non_event})
     if not strong_signal:
-        return {"status": "skipped", "reason": "no_incident_signal"}
+        return _done({"status": "skipped", "reason": "no_incident_signal"})
     if not entity:
-        return {"status": "skipped", "reason": "entity_missing"}
+        return _done({"status": "skipped", "reason": "entity_missing"})
     if _is_generic_event_entity(entity):
-        return {"status": "skipped", "reason": "entity_generic"}
+        return _done({"status": "skipped", "reason": "entity_generic"})
     if kind in {"breach", "compromise", "ransomware"} and not any(
         reason.startswith("victim:") for reason in qualifier_reasons
     ):
-        return {"status": "skipped", "reason": "missing_victim_signal"}
+        return _done({"status": "skipped", "reason": "missing_victim_signal"})
     scope = _extract_compromise_scope(combined)
     if not scope:
-        return {"status": "skipped", "reason": "scope_missing"}
+        return _done({"status": "skipped", "reason": "scope_missing"})
     if (
         confidence < float(policy["min_create_confidence"])
         and not is_primary_source
         and not (bool(policy["allow_cve_only_create"]) and bool(cve_ids))
     ):
-        return {"status": "skipped", "reason": "low_confidence"}
+        return _done({"status": "skipped", "reason": "low_confidence"})
     bucket = incident_date or ( article.get("published_at") or article.get("ingested_at") or "")[:10]
     bucket = bucket or utc_now_iso()[:10]
     kind_label = _event_kind_label(kind)
@@ -5616,12 +5674,12 @@ def _handle_derive_events_from_articles(
             upsert_event_item(conn, event_id, "product", product_key)
     update_event_summary_from_articles(conn, event_id)
     enqueue_job(conn, "event_report_llm", {"event_id": event_id}, dedupe=True)
-    return {
+    return _done({
         "status": "linked",
         "event_id": event_id,
         "cves": len(cve_ids),
         "lifecycle": lifecycle,
-    }
+    })
 
 
 def _handle_enrich_event_from_web(
@@ -6325,6 +6383,15 @@ def _handle_event_report_llm(
         model_id=str(profile.get("primary_model_id") or ""),
         model_name=str(profile.get("model_name") or ""),
     )
+    if updated:
+        lifecycle = str(event.get("lifecycle") or event.get("status") or "").lower()
+        publish_state = str(event.get("publish_state") or "").lower()
+        if publish_state == "published" and lifecycle == "confirmed":
+            enqueue_build_site_if_needed(
+                conn,
+                reason="event_report_update",
+                debounce_seconds=max(30, int(getattr(config.jobs, "build_debounce_seconds", 45))),
+            )
     return {
         "status": "ok" if updated else "skipped",
         "event_id": event_id,
@@ -7841,6 +7908,20 @@ def _maybe_enqueue_auto_catchup(
                 break
             article_id = int(article_id)
             if has_pending_article_job(conn, "fetch_article_content", article_id):
+                continue
+            failed_attempts = count_failed_article_jobs(conn, "fetch_article_content", article_id)
+            if failed_attempts >= 3:
+                article = get_article_by_id(conn, article_id)
+                if article and str(article.get("content_error") or "") != "max_retries_exceeded":
+                    update_article_content(
+                        conn,
+                        article_id,
+                        content_text=article.get("content_text"),
+                        content_html=article.get("content_html"),
+                        content_fetched_at=article.get("content_fetched_at"),
+                        content_error="max_retries_exceeded",
+                        has_full_content=bool(article.get("has_full_content")),
+                    )
                 continue
             enqueue_job(conn, "fetch_article_content", {"article_id": article_id}, dedupe=True)
             queued_total += 1

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
 
+import requests
 from bs4 import BeautifulSoup
 
 from ..source_overrides import normalize_source_overrides
@@ -25,23 +26,19 @@ def fetch_article_content(
     source_name: str | None = None,
     overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    request = urllib.request.Request(url, headers={"User-Agent": user_agent})
     fetch_cfg = normalize_source_overrides(overrides or {}).get("fetch", {})
+    request_headers: dict[str, str] = {"User-Agent": user_agent}
+    raw_headers = fetch_cfg.get("http_headers", {}) if isinstance(fetch_cfg, dict) else {}
+    if isinstance(raw_headers, dict):
+        for key, value in raw_headers.items():
+            request_headers[str(key)] = str(value)
+    request = urllib.request.Request(url, headers=request_headers)
     use_vpn = bool(fetch_cfg.get("use_vpn", True))
+    used_vpn = use_vpn
     try:
-        with _open_request(request, timeout_seconds, use_vpn=use_vpn) as response:
+        with _open_request(request, timeout_seconds, use_vpn=used_vpn) as response:
             status_code = response.getcode()
             raw = response.read()
-        log_event(
-            logger,
-            logging.INFO,
-            "content_fetch_done",
-            url=url,
-            status_code=status_code,
-            vpn_used=use_vpn,
-            source_id=source_id,
-            source_name=source_name,
-        )
     except urllib.error.HTTPError as exc:
         status_code = exc.code
         snippet = ""
@@ -55,7 +52,7 @@ def fetch_article_content(
             "content_fetch_failed",
             url=url,
             status_code=status_code,
-            vpn_used=use_vpn,
+            vpn_used=used_vpn,
             source_id=source_id,
             source_name=source_name,
             error=str(exc),
@@ -67,25 +64,104 @@ def fetch_article_content(
                 "content_fetch_forbidden",
                 url=url,
                 status_code=status_code,
-                vpn_used=use_vpn,
+                vpn_used=used_vpn,
                 source_id=source_id,
                 source_name=source_name,
                 body_snippet=(snippet or "")[:200],
             )
+            # Some sites (including Cloudflare-protected origins) block urllib TLS fingerprints
+            # but allow requests/urllib3. Retry once with requests before failing the job.
+            try:
+                status_code, raw = _fetch_with_requests(
+                    url,
+                    request_headers,
+                    timeout_seconds,
+                    use_vpn=used_vpn,
+                )
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "content_fetch_retry_requests_ok",
+                    url=url,
+                    status_code=status_code,
+                    vpn_used=used_vpn,
+                    source_id=source_id,
+                    source_name=source_name,
+                )
+            except Exception as retry_exc:  # noqa: BLE001
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "content_fetch_retry_requests_failed",
+                    url=url,
+                    status_code=status_code,
+                    vpn_used=used_vpn,
+                    source_id=source_id,
+                    source_name=source_name,
+                    error=str(retry_exc),
+                )
+                raise
+            else:
+                html = raw.decode("utf-8", errors="replace")
+                extracted = extract_content_from_html(html, overrides=overrides, logger=logger)
+                published_at, published_at_source = extract_published_at_from_html(html)
+                return {
+                    "content_text": extracted["content_text"],
+                    "content_html": html,
+                    "method": f'{extracted["method"]}:requests_retry',
+                    "published_at": published_at,
+                    "published_at_source": published_at_source,
+                }
         raise
     except Exception as exc:  # noqa: BLE001
+        # Some sources intermittently time out over VPN; retry once directly.
+        if use_vpn and _is_timeout_error(exc):
+            log_event(
+                logger,
+                logging.INFO,
+                "content_fetch_retry_no_vpn",
+                url=url,
+                source_id=source_id,
+                source_name=source_name,
+            )
+            used_vpn = False
+            with _open_request(request, timeout_seconds, use_vpn=used_vpn) as response:
+                status_code = response.getcode()
+                raw = response.read()
+            log_event(
+                logger,
+                logging.INFO,
+                "content_fetch_done",
+                url=url,
+                status_code=status_code,
+                vpn_used=used_vpn,
+                source_id=source_id,
+                source_name=source_name,
+            )
+        else:
+            log_event(
+                logger,
+                logging.WARNING,
+                "content_fetch_failed",
+                url=url,
+                status_code=None,
+                vpn_used=used_vpn,
+                source_id=source_id,
+                source_name=source_name,
+                error=str(exc),
+            )
+            raise
+    else:
         log_event(
             logger,
-            logging.WARNING,
-            "content_fetch_failed",
+            logging.INFO,
+            "content_fetch_done",
             url=url,
-            status_code=None,
-            vpn_used=use_vpn,
+            status_code=status_code,
+            vpn_used=used_vpn,
             source_id=source_id,
             source_name=source_name,
-            error=str(exc),
         )
-        raise
     html = raw.decode("utf-8", errors="replace")
     extracted = extract_content_from_html(html, overrides=overrides, logger=logger)
     published_at, published_at_source = extract_published_at_from_html(html)
@@ -103,6 +179,22 @@ def _open_request(request: urllib.request.Request, timeout_seconds: int, *, use_
         return urllib.request.urlopen(request, timeout=timeout_seconds)
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     return opener.open(request, timeout=timeout_seconds)
+
+
+def _fetch_with_requests(
+    url: str, headers: dict[str, str], timeout_seconds: int, *, use_vpn: bool
+) -> tuple[int, bytes]:
+    session = requests.Session()
+    # Respect container proxy env for VPN path; bypass env proxy when VPN is disabled.
+    session.trust_env = use_vpn
+    response = session.get(url, headers=headers, timeout=timeout_seconds)
+    response.raise_for_status()
+    return int(response.status_code), response.content
+
+
+def _is_timeout_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "timed out" in message or "timeout" in message
 
 
 def extract_content_from_html(

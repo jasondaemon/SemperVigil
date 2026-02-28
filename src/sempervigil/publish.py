@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Iterable
 
@@ -9,6 +11,84 @@ import yaml
 
 from .models import Article
 from .utils import atomic_write_json, atomic_write_text, slugify
+
+
+_DATE_PREFIX_RE = re.compile(
+    r"^(?:\d{4}-\d{2}-\d{2}|"
+    r"\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}|"
+    r"[A-Za-z]{3,9}\s+\d{1,2}(?:,\s*\d{4})?)\s*[-:]\s*"
+)
+
+
+def _normalize_timeline_text(value: str) -> str:
+    text = re.sub(r"\[[^\]]+\]\([^)]+\)", "", value or "")
+    text = _DATE_PREFIX_RE.sub("", text)
+    text = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+    return text
+
+
+def _timeline_tokens(value: str) -> set[str]:
+    stop = {
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "of",
+        "to",
+        "for",
+        "on",
+        "in",
+        "by",
+        "as",
+        "is",
+        "was",
+        "were",
+        "with",
+        "at",
+        "from",
+        "that",
+        "this",
+    }
+    return {tok for tok in _normalize_timeline_text(value).split() if len(tok) > 2 and tok not in stop}
+
+
+def _stem_timeline_token(token: str) -> str:
+    tok = token.lower()
+    for suffix in ("ing", "ed", "es", "s"):
+        if tok.endswith(suffix) and len(tok) > len(suffix) + 2:
+            return tok[: -len(suffix)]
+    return tok
+
+
+def _is_duplicate_timeline_fact(fact: str, event_text: str, date_text: str) -> bool:
+    fact_norm = _normalize_timeline_text(fact)
+    event_norm = _normalize_timeline_text(event_text)
+    date_norm = _normalize_timeline_text(date_text)
+    if not fact_norm:
+        return True
+    if fact_norm == event_norm:
+        return True
+    if date_norm and fact_norm == f"{date_norm} {event_norm}".strip():
+        return True
+    if event_norm and (event_norm in fact_norm or fact_norm in event_norm):
+        return True
+    if event_norm and SequenceMatcher(None, fact_norm, event_norm).ratio() >= 0.72:
+        return True
+    fact_tokens = _timeline_tokens(fact)
+    event_tokens = _timeline_tokens(event_text)
+    if fact_tokens and event_tokens:
+        overlap = len(fact_tokens & event_tokens)
+        smaller = min(len(fact_tokens), len(event_tokens))
+        if smaller >= 4 and overlap / smaller >= 0.7:
+            return True
+        fact_stems = {_stem_timeline_token(tok) for tok in fact_tokens}
+        event_stems = {_stem_timeline_token(tok) for tok in event_tokens}
+        stem_overlap = len(fact_stems & event_stems)
+        stem_smaller = min(len(fact_stems), len(event_stems))
+        if stem_smaller >= 4 and stem_overlap / stem_smaller >= 0.65:
+            return True
+    return False
 
 
 def _safe_filename(article: Article) -> str:
@@ -323,10 +403,16 @@ def write_events_markdown(
                 lines.append(f"- **{date_text}**: {event_text}")
                 evidence = entry.get("evidence") or []
                 if isinstance(evidence, list):
+                    seen_facts: set[str] = set()
                     for fact in evidence[:6]:
                         clean = str(fact).strip()
-                        if clean:
-                            lines.append(f"  - {clean}")
+                        if not clean or _is_duplicate_timeline_fact(clean, event_text, date_text):
+                            continue
+                        normalized = _normalize_timeline_text(clean)
+                        if normalized in seen_facts:
+                            continue
+                        seen_facts.add(normalized)
+                        lines.append(f"  - {clean}")
             lines.append("")
         if timeline and not report_timeline:
             lines.append("## Timeline")
