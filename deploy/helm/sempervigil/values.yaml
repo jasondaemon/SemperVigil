@@ -1,0 +1,137 @@
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/jasondaemon/sempervigil-ingest
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+builderImage:
+  repository: ghcr.io/jasondaemon/sempervigil-builder
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+namespaceLabels: {}
+commonLabels: {}
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+postgresql:
+  enabled: false
+  auth:
+    database: sempervigil
+    username: sempervigil
+    password: ""
+
+externalDatabase:
+  host: ""
+  port: 5432
+  database: sempervigil
+  username: sempervigil
+  existingSecret: ""
+  passwordKey: password
+  urlKey: url
+
+storage:
+  data:
+    enabled: true
+    existingClaim: ""
+    storageClassName: ""
+    accessModes: ["ReadWriteMany"]
+    size: 20Gi
+  siteSrc:
+    enabled: true
+    existingClaim: ""
+    storageClassName: ""
+    accessModes: ["ReadWriteMany"]
+    size: 10Gi
+  sitePublic:
+    enabled: true
+    existingClaim: ""
+    storageClassName: ""
+    accessModes: ["ReadWriteMany"]
+    size: 10Gi
+  logs:
+    enabled: false
+    existingClaim: ""
+    storageClassName: ""
+    accessModes: ["ReadWriteMany"]
+    size: 10Gi
+
+env:
+  SV_ENV: prod
+  SV_LOG_LEVEL: INFO
+  SV_FIX_SITE_PERMS: "0"
+  SV_UMASK: "002"
+  SV_HUGO_SOURCE_DIR: /site-src
+  SV_HUGO_OUTPUT_DIR: /site
+  SV_HUGO_CACHE_DIR: /data/hugo_cache
+  SV_HUGO_MODULES_DIR: /data/hugo_modules
+  SV_BUILDER_POLL_SECONDS: "60"
+
+admin:
+  enabled: true
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 8000
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    tls: []
+  resources: {}
+
+workerFetch:
+  enabled: true
+  replicaCount: 1
+  resources: {}
+  vpn:
+    enabled: true
+    image: qmcgaw/gluetun:latest
+    provider: "private internet access"
+    region: us_east
+    existingSecret: ""
+    userKey: PIA_USER
+    passwordKey: PIA_PASS
+
+workerLlm:
+  enabled: true
+  replicaCount: 1
+  resources: {}
+
+workerOpenai:
+  enabled: true
+  replicaCount: 1
+  resources: {}
+
+builderScheduler:
+  enabled: true
+  replicaCount: 1
+  resources: {}
+
+web:
+  enabled: true
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 8080
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    tls: []
+  resources: {}
+
+searxng:
+  enabled: false
+  replicaCount: 1
+  resources: {}
+
+networkPolicy:
+  enabled: false

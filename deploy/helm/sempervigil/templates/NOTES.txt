@@ -1,0 +1,19 @@
+SemperVigil Helm packaging skeleton installed.
+
+This chart intentionally reserves explicit SemperVigil component names.
+Examples:
+- sempervigil-admin
+- sempervigil-worker-fetch
+- sempervigil-worker-llm
+- sempervigil-worker-openai
+- sempervigil-builder-scheduler
+- sempervigil-web
+- sempervigil-searxng
+- sempervigil-db
+
+Next implementation steps:
+1. add ConfigMap/Secret templates for SemperVigil env contracts
+2. add PVC templates for data, site-src, and site-public
+3. add Deployments for admin/workers/builder_scheduler/web
+4. model worker-fetch with VPN sidecar in the same pod
+5. add web ingress and internal admin ingress options
