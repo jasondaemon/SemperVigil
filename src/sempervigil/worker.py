@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import feedparser
 import urllib.error
 import re
 import logging
@@ -366,6 +367,70 @@ def _looks_like_thn_teaser(source_id: str | None, content_text: str | None) -> b
     return "zero trust + ai: thrive in the ai era" in lowered and "zero trust everywhere" in lowered
 
 
+def _dark_reading_rss_summary_fallback(url: str, logger: logging.Logger) -> str:
+    try:
+        parsed = feedparser.parse("https://www.darkreading.com/rss.xml")
+    except Exception:  # noqa: BLE001
+        return ""
+    if getattr(parsed, "bozo", False):
+        return ""
+    target = _normalize_canonical_url(url).lower()
+    for entry in getattr(parsed, "entries", []) or []:
+        link = _normalize_canonical_url(str(getattr(entry, "link", "") or "")).lower()
+        if not link or link != target:
+            continue
+        summary = str(getattr(entry, "summary", "") or "").strip()
+        summary = re.sub(r"<[^>]+>", " ", summary)
+        summary = re.sub(r"\s+", " ", summary).strip()
+        if not summary:
+            return ""
+        return summary
+    log_event(
+        logger,
+        logging.INFO,
+        "dark_reading_rss_fallback_miss",
+        url=url,
+    )
+    return ""
+
+
+def _apply_dark_reading_403_fallback(
+    conn: DB,
+    config: RuntimeConfig,
+    logger: logging.Logger,
+    article_id: int,
+    article: dict[str, Any],
+    source_id: str | None,
+    url: str,
+) -> bool:
+    if (source_id or "").strip().lower() != "dark-reading":
+        return False
+    fallback_summary = _dark_reading_rss_summary_fallback(url, logger)
+    if not fallback_summary:
+        return False
+    update_article_content(
+        conn,
+        int(article_id),
+        content_text=fallback_summary,
+        content_html=None,
+        content_fetched_at=utc_now_iso(),
+        content_error="fallback:rss_summary_403",
+        has_full_content=True,
+    )
+    log_event(
+        logger,
+        logging.INFO,
+        "dark_reading_rss_fallback_applied",
+        article_id=article_id,
+        content_len=len(fallback_summary),
+    )
+    _maybe_enqueue_context_pack(conn, int(article_id), article["source_id"], logger)
+    if not _maybe_enqueue_summarize(conn, int(article_id), article["source_id"], logger):
+        _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
+    _maybe_enqueue_article_product_enrich(conn, int(article_id), article["source_id"], logger)
+    return True
+
+
 _LLM_JOB_TYPES = {
     "summarize_article_llm",
     "summarize_article_context_llm",
@@ -625,7 +690,7 @@ def _is_article_in_today_feed(
     return False
 
 
-def _write_article_data_files(conn, config, logger: logging.Logger) -> dict[str, object]:
+def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, object]:
     site_root = _site_root_from_output_dir(config.paths.output_dir)
     data_root = getattr(config.paths, "data_dir", None) or ""
     if not data_root:
@@ -1036,7 +1101,7 @@ def _write_article_data_files(conn, config, logger: logging.Logger) -> dict[str,
     log_event(
         logger,
         logging.INFO,
-        "article_data_written",
+        "feed_data_refreshed",
         today=len(today_items),
         recent=len(recent_items),
         path=str(data_dir),
@@ -3851,7 +3916,18 @@ def _handle_ingest_source(
                 if hit.get("hit"):
                     extra_by_stable[article.stable_id] = {"watchlist_hit": True}
         write_json_index(result.articles, config.publishing.json_index_path, extra_by_stable)
-    _write_article_data_files(conn, config, logger)
+    if result.accepted_count > 0:
+        _refresh_feed_data_files(conn, config, logger)
+    else:
+        # Avoid expensive full data/CVE page rewrites when ingest found no new articles.
+        log_event(
+            logger,
+            logging.INFO,
+            "feed_data_refresh_skipped",
+            source_id=source.id,
+            source_name=source.name,
+            reason="no_new_articles",
+        )
     _maybe_pause_source(conn, source.id, logger)
     return {
         "source_id": source.id,
@@ -4000,7 +4076,7 @@ def _handle_write_article_markdown(
         article_url=article.original_url,
         progress=progress,
     )
-    _write_article_data_files(conn, config, logger)
+    _refresh_feed_data_files(conn, config, logger)
     if batch_id and batch_total:
         counts = get_batch_job_counts(conn, batch_id)
         remaining = counts["queued"] + counts["running"] - 1
@@ -4138,6 +4214,16 @@ def _handle_fetch_article_content(
         )
     except urllib.error.HTTPError as exc:
         status_code = exc.code
+        if status_code == 403 and _apply_dark_reading_403_fallback(
+            conn,
+            config,
+            logger,
+            int(article_id),
+            article,
+            str(source_id) if source_id else None,
+            url,
+        ):
+            return {"article_id": article_id, "has_full_content": True}
         if status_code in (404, 410):
             update_article_content(
                 conn,
@@ -4169,6 +4255,17 @@ def _handle_fetch_article_content(
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         raise
     except Exception as exc:  # noqa: BLE001
+        err_text = str(exc)
+        if ("403" in err_text or "Forbidden" in err_text) and _apply_dark_reading_403_fallback(
+            conn,
+            config,
+            logger,
+            int(article_id),
+            article,
+            str(source_id) if source_id else None,
+            url,
+        ):
+            return {"article_id": article_id, "has_full_content": True}
         previous_failures = count_failed_article_jobs(conn, "fetch_article_content", int(article_id))
         is_timeout = _is_timeout_error(exc)
         is_terminal_timeout = is_timeout and (previous_failures + 1 >= 3)
@@ -4196,7 +4293,7 @@ def _handle_fetch_article_content(
     if not _maybe_enqueue_summarize(conn, int(article_id), article["source_id"], logger):
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         if has_full_content and _is_article_in_today_feed(conn, config, int(article_id), logger):
-            _write_article_data_files(conn, config, logger)
+            _refresh_feed_data_files(conn, config, logger)
             enqueue_build_site_if_needed(
                 conn,
                 reason="article_content_ready_today",
@@ -7867,10 +7964,13 @@ def _maybe_enqueue_cve_sync(conn, logger: logging.Logger) -> None:
         enqueue_job(conn, "cve_sync", None, debounce=True)
 
 
-def _queued_job_total(conn) -> int:
+def _queued_job_total(conn, job_types: set[str] | None = None) -> int:
     total = 0
     for row in list_queued_job_stats(conn):
         try:
+            job_type = str(row.get("job_type") or "")
+            if job_types is not None and job_type not in job_types:
+                continue
             total += int(row.get("queued") or 0)
         except Exception:
             continue
@@ -7886,15 +7986,19 @@ def _maybe_enqueue_auto_catchup(
 ) -> None:
     if not bool(getattr(config.jobs, "auto_catchup_enabled", False)):
         return
-    if allowed_types is not None and not any(job in _AUTO_CATCHUP_JOB_TYPES for job in allowed_types):
+    if allowed_types is None:
+        allowed_auto_types = set(_AUTO_CATCHUP_JOB_TYPES)
+    else:
+        allowed_auto_types = {job for job in allowed_types if job in _AUTO_CATCHUP_JOB_TYPES}
+    if not allowed_auto_types:
         return
-    if _queued_job_total(conn) > 0:
+    if _queued_job_total(conn, allowed_auto_types) > 0:
         return
     lease_holder = f"{worker_id}:{uuid.uuid4().hex}"
     if not try_acquire_lease(conn, _AUTO_CATCHUP_LEASE, lease_holder, ttl_seconds=30):
         return
     try:
-        if _queued_job_total(conn) > 0:
+        if _queued_job_total(conn, allowed_auto_types) > 0:
             return
         queued_total = 0
         by_type: dict[str, int] = {}
@@ -7902,33 +8006,34 @@ def _maybe_enqueue_auto_catchup(
         def _bump(job_type: str) -> None:
             by_type[job_type] = int(by_type.get(job_type, 0) or 0) + 1
 
-        missing_content_ids = list_article_ids_missing_content_all(conn, limit=_AUTO_CATCHUP_BATCH_LIMIT)
-        for article_id in missing_content_ids:
-            if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:
-                break
-            article_id = int(article_id)
-            if has_pending_article_job(conn, "fetch_article_content", article_id):
-                continue
-            failed_attempts = count_failed_article_jobs(conn, "fetch_article_content", article_id)
-            if failed_attempts >= 3:
-                article = get_article_by_id(conn, article_id)
-                if article and str(article.get("content_error") or "") != "max_retries_exceeded":
-                    update_article_content(
-                        conn,
-                        article_id,
-                        content_text=article.get("content_text"),
-                        content_html=article.get("content_html"),
-                        content_fetched_at=article.get("content_fetched_at"),
-                        content_error="max_retries_exceeded",
-                        has_full_content=bool(article.get("has_full_content")),
-                    )
-                continue
-            enqueue_job(conn, "fetch_article_content", {"article_id": article_id}, dedupe=True)
-            queued_total += 1
-            _bump("fetch_article_content")
+        if "fetch_article_content" in allowed_auto_types:
+            missing_content_ids = list_article_ids_missing_content_all(conn, limit=_AUTO_CATCHUP_BATCH_LIMIT)
+            for article_id in missing_content_ids:
+                if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:
+                    break
+                article_id = int(article_id)
+                if has_pending_article_job(conn, "fetch_article_content", article_id):
+                    continue
+                failed_attempts = count_failed_article_jobs(conn, "fetch_article_content", article_id)
+                if failed_attempts >= 3:
+                    article = get_article_by_id(conn, article_id)
+                    if article and str(article.get("content_error") or "") != "max_retries_exceeded":
+                        update_article_content(
+                            conn,
+                            article_id,
+                            content_text=article.get("content_text"),
+                            content_html=article.get("content_html"),
+                            content_fetched_at=article.get("content_fetched_at"),
+                            content_error="max_retries_exceeded",
+                            has_full_content=bool(article.get("has_full_content")),
+                        )
+                    continue
+                enqueue_job(conn, "fetch_article_content", {"article_id": article_id}, dedupe=True)
+                queued_total += 1
+                _bump("fetch_article_content")
 
         summary_profile, _summary_reason = get_active_profile_for_stage(conn, "summarize_article")
-        if summary_profile:
+        if summary_profile and "summarize_article_llm" in allowed_auto_types:
             for article_id in list_article_ids_ready_for_summary_all(conn):
                 if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:
                     break
@@ -7940,7 +8045,7 @@ def _maybe_enqueue_auto_catchup(
                 _bump("summarize_article_llm")
 
         context_profile, _context_reason = get_active_profile_for_stage(conn, "article_context_pack")
-        if context_profile:
+        if context_profile and "summarize_article_context_llm" in allowed_auto_types:
             remaining = _AUTO_CATCHUP_BATCH_LIMIT - queued_total
             if remaining > 0:
                 context_ids = list_article_ids_missing_context_pack(conn, limit=remaining)
@@ -7961,7 +8066,7 @@ def _maybe_enqueue_auto_catchup(
 
         derive_profile, _derive_reason = get_active_profile_for_stage(conn, "derive_events_from_articles")
         remaining = _AUTO_CATCHUP_BATCH_LIMIT - queued_total
-        if remaining > 0 and derive_profile:
+        if remaining > 0 and derive_profile and "derive_events_from_articles" in allowed_auto_types:
             derive_ids = list_article_ids_without_event(conn, limit=remaining)
             for article_id in derive_ids:
                 if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:
@@ -7979,7 +8084,7 @@ def _maybe_enqueue_auto_catchup(
                 _bump("derive_events_from_articles")
 
         remaining = _AUTO_CATCHUP_BATCH_LIMIT - queued_total
-        if remaining > 0:
+        if remaining > 0 and "article_enrich_products" in allowed_auto_types:
             product_ids = list_article_ids_missing_products(conn, limit=remaining)
             for article_id in product_ids:
                 if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:
@@ -7992,7 +8097,7 @@ def _maybe_enqueue_auto_catchup(
                 _bump("article_enrich_products")
 
         remaining = _AUTO_CATCHUP_BATCH_LIMIT - queued_total
-        if remaining > 0:
+        if remaining > 0 and "article_enrich_threat_actors" in allowed_auto_types:
             threat_article_ids = list_article_ids_missing_threat_actors(conn, limit=remaining)
             for article_id in threat_article_ids:
                 if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:
@@ -8005,7 +8110,7 @@ def _maybe_enqueue_auto_catchup(
                 _bump("article_enrich_threat_actors")
 
         remaining = _AUTO_CATCHUP_BATCH_LIMIT - queued_total
-        if remaining > 0:
+        if remaining > 0 and "cve_enrich_kev" in allowed_auto_types:
             kev_ids = list_cve_ids_needing_kev_check(conn, limit=remaining)
             for cve_id in kev_ids:
                 if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:
@@ -8019,7 +8124,7 @@ def _maybe_enqueue_auto_catchup(
 
         cve_profile, _cve_reason = get_active_profile_for_stage(conn, "cve_enrich_products")
         remaining = _AUTO_CATCHUP_BATCH_LIMIT - queued_total
-        if remaining > 0 and cve_profile:
+        if remaining > 0 and cve_profile and "cve_enrich_llm" in allowed_auto_types:
             cve_ids = list_cve_ids_missing_products(conn, limit=remaining)
             for cve_id in cve_ids:
                 if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:
@@ -8032,7 +8137,7 @@ def _maybe_enqueue_auto_catchup(
                 _bump("cve_enrich_llm")
 
         remaining = _AUTO_CATCHUP_BATCH_LIMIT - queued_total
-        if remaining > 0:
+        if remaining > 0 and "cve_enrich_threat_actors" in allowed_auto_types:
             cve_threat_ids = list_cve_ids_missing_threat_actors(conn, limit=remaining)
             for cve_id in cve_threat_ids:
                 if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:

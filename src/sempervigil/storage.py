@@ -7279,7 +7279,12 @@ def search_articles(
     total = count_cursor.fetchone()[0]
 
     offset = max(page - 1, 0) * page_size
-    order_col = "a.published_at" if "published_at" in columns else "a.ingested_at"
+    if "published_at" in columns and "ingested_at" in columns:
+        order_col = "COALESCE(NULLIF(a.published_at, ''), a.ingested_at)"
+    elif "published_at" in columns:
+        order_col = "NULLIF(a.published_at, '')"
+    else:
+        order_col = "a.ingested_at"
     watchlist_select = (
         """
         EXISTS (

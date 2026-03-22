@@ -212,11 +212,12 @@ from .utils import configure_logging, log_event, utc_now_iso, utc_now_iso_offset
 
 _LOG_SERVICES = {
     "admin": "admin.log",
-    "worker": "worker.log",
-    "worker_llm": "worker.log",
-    "worker_fetch": "worker.log",
+    "worker": "worker_fetch.log",
+    "worker_llm": "worker_llm.log",
+    "worker_fetch": "worker_fetch.log",
     "worker_openai": "worker_openai.log",
     "openai_prompts": "openai_http.log",
+    "vpn_watchdog": "vpn-403-watchdog.log",
     "builder": "builder.log",
     "build_hugo": "",
 }

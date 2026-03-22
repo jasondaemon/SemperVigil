@@ -225,6 +225,11 @@ def _parse_date_value(value: Any) -> datetime | None:
     return None
 
 
+def _is_reasonable_publish_time(value: datetime, *, skew_hours: int = 18) -> bool:
+    now_utc = datetime.now(tz=timezone.utc)
+    return value <= now_utc + timedelta(hours=skew_hours)
+
+
 def extract_published_at(
     entry: Any,
     fetched_at: str,
@@ -233,6 +238,10 @@ def extract_published_at(
 ) -> tuple[str, str]:
     published = _parse_date_value(entry.get("published_parsed") or entry.get("published"))
     updated = _parse_date_value(entry.get("updated_parsed") or entry.get("updated"))
+    if published and not _is_reasonable_publish_time(published):
+        published = None
+    if updated and not _is_reasonable_publish_time(updated):
+        updated = None
 
     if strategy == "updated_then_published":
         if updated:
@@ -255,7 +264,7 @@ def extract_published_at(
         dc_date = _parse_date_value(
             entry.get("dc_date") or entry.get("dc:date") or entry.get("dc_date_parsed")
         )
-        if dc_date:
+        if dc_date and _is_reasonable_publish_time(dc_date):
             return dc_date.isoformat(), "guessed"
 
     return fetched_at, "guessed"

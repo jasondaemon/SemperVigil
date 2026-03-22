@@ -76,7 +76,7 @@ services:
       SV_FIX_SITE_PERMS: "0"
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
       SV_LOG_DIR: /log
-      SV_LOG_FILE: /log/worker.log
+      SV_LOG_FILE: /log/worker_fetch.log
       SV_UMASK: ${SV_UMASK:-002}
       SV_DB_URL: ${SV_DB_URL:-}
       HTTP_PROXY:  http://vpn:8888
@@ -151,7 +151,7 @@ services:
       SV_FIX_SITE_PERMS: "0"
       SV_LOG_LEVEL: ${SV_LOG_LEVEL:-INFO}
       SV_LOG_DIR: /log
-      SV_LOG_FILE: /log/worker.log
+      SV_LOG_FILE: /log/worker_llm.log
       SV_UMASK: ${SV_UMASK:-002}
       SV_DB_URL: ${SV_DB_URL:-}
       SV_WORKER_PROVIDER_SCOPE: "non_openai"
