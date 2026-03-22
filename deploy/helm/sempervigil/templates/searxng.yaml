@@ -1,0 +1,48 @@
+{{- if .Values.searxng.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sempervigil.componentFullname" (list . "searxng") }}
+  labels:
+    {{- include "sempervigil.labels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+spec:
+  replicas: {{ .Values.searxng.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "sempervigil.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: searxng
+  template:
+    metadata:
+      labels:
+        {{- include "sempervigil.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: searxng
+    spec:
+      serviceAccountName: {{ include "sempervigil.serviceAccountName" . }}
+      containers:
+        - name: sempervigil-searxng
+          image: searxng/searxng:latest
+          env:
+            - name: BASE_URL
+              value: http://sempervigil-searxng:8080/
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            {{- toYaml .Values.searxng.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "sempervigil.componentFullname" (list . "searxng") }}
+  labels:
+    {{- include "sempervigil.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "sempervigil.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- end }}

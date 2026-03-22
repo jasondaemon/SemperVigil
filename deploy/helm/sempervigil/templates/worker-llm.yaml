@@ -1,0 +1,87 @@
+{{- if .Values.workerLlm.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sempervigil.componentFullname" (list . "worker-llm") }}
+  labels:
+    {{- include "sempervigil.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker-llm
+spec:
+  replicas: {{ .Values.workerLlm.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "sempervigil.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker-llm
+  template:
+    metadata:
+      labels:
+        {{- include "sempervigil.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker-llm
+    spec:
+      serviceAccountName: {{ include "sempervigil.serviceAccountName" . }}
+      containers:
+        - name: {{ include "sempervigil.componentFullname" (list . "worker-llm") }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh","-lc"]
+          args:
+            - >-
+              set -e;
+              umask {{ .Values.env.SV_UMASK | quote }};
+              sh /app/tools/ensure-dirs.sh;
+              sempervigil-worker
+          envFrom:
+            - configMapRef:
+                name: {{ include "sempervigil.fullname" . }}-env
+          env:
+            - name: SV_LOG_FILE
+              value: /log/worker_llm.log
+            - name: SV_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (include "sempervigil.secretName" .) .Values.externalDatabase.existingSecret }}
+                  key: {{ default "url" .Values.externalDatabase.urlKey }}
+            - name: SV_WORKER_PROVIDER_SCOPE
+              value: "non_openai"
+            - name: SV_WORKER_ONLY_TYPES
+              value: "summarize_article_llm,summarize_article_context_llm,enrich_event_summary_llm,event_report_llm,derive_events_from_articles,cve_enrich_llm,article_enrich_products,article_enrich_threat_actors,cve_enrich_threat_actors"
+            - name: SV_DAILY_BRIEF_MODE
+              value: "single"
+            - name: SV_LLM_MAX_INFLIGHT
+              value: "1"
+            - name: SV_WORKER_CONCURRENCY
+              value: "1"
+            - name: SEMPERVIGIL_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sempervigil.secretName" . }}
+                  key: SEMPERVIGIL_MASTER_KEY
+            - name: SEMPERVIGIL_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sempervigil.secretName" . }}
+                  key: SEMPERVIGIL_KEY_ID
+            - name: NVD_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sempervigil.secretName" . }}
+                  key: NVD_API_KEY
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: logs
+              mountPath: /log
+            - name: site-src
+              mountPath: /site-src
+          resources:
+            {{- toYaml .Values.workerLlm.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "sempervigil.storageClaimName" (list . .Values.storage.data "data") }}
+        - name: logs
+          {{- include "sempervigil.logsVolume" . | nindent 10 }}
+        - name: site-src
+          persistentVolumeClaim:
+            claimName: {{ include "sempervigil.storageClaimName" (list . .Values.storage.siteSrc "siteSrc") }}
+{{- end }}

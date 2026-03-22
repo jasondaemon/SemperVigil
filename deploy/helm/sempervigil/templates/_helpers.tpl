@@ -41,3 +41,34 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "sempervigil.componentName" -}}
 {{- printf "sempervigil-%s" . | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
+
+
+{{- define "sempervigil.storageClaimName" -}}
+{{- $root := index . 0 -}}
+{{- $storage := index . 1 -}}
+{{- if $storage.existingClaim -}}
+{{- $storage.existingClaim -}}
+{{- else -}}
+{{- printf "%s-%s" (include "sempervigil.fullname" $root) (index . 2) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "sempervigil.secretName" -}}
+{{- printf "%s-secrets" (include "sempervigil.fullname" .) -}}
+{{- end -}}
+
+{{- define "sempervigil.componentFullname" -}}
+{{- $root := index . 0 -}}
+{{- $name := index . 1 -}}
+{{- printf "%s-%s" (include "sempervigil.fullname" $root) $name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+
+{{- define "sempervigil.logsVolume" -}}
+{{- if .Values.storage.logs.enabled }}
+persistentVolumeClaim:
+  claimName: {{ include "sempervigil.storageClaimName" (list . .Values.storage.logs "logs") }}
+{{- else }}
+emptyDir: {}
+{{- end }}
+{{- end -}}

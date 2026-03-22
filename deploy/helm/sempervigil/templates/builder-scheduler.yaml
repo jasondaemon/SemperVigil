@@ -1,0 +1,77 @@
+{{- if .Values.builderScheduler.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sempervigil.componentFullname" (list . "builder-scheduler") }}
+  labels:
+    {{- include "sempervigil.labels" . | nindent 4 }}
+    app.kubernetes.io/component: builder-scheduler
+spec:
+  replicas: {{ .Values.builderScheduler.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "sempervigil.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: builder-scheduler
+  template:
+    metadata:
+      labels:
+        {{- include "sempervigil.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: builder-scheduler
+    spec:
+      serviceAccountName: {{ include "sempervigil.serviceAccountName" . }}
+      containers:
+        - name: sempervigil-builder-scheduler
+          image: "{{ .Values.builderImage.repository }}:{{ .Values.builderImage.tag }}"
+          imagePullPolicy: {{ .Values.builderImage.pullPolicy }}
+          command: ["sh","-lc"]
+          args:
+            - >-
+              set -e;
+              umask {{ .Values.env.SV_UMASK | quote }};
+              sh /app/tools/ensure-dirs.sh;
+              PYTHONPATH=/app/src /venv/bin/python -m sempervigil.builder --sleep {{ .Values.env.SV_BUILDER_POLL_SECONDS | quote }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "sempervigil.fullname" . }}-env
+          env:
+            - name: SV_LOG_FILE
+              value: /log/builder.log
+            - name: SV_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (include "sempervigil.secretName" .) .Values.externalDatabase.existingSecret }}
+                  key: {{ default "url" .Values.externalDatabase.urlKey }}
+            - name: SEMPERVIGIL_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sempervigil.secretName" . }}
+                  key: SEMPERVIGIL_MASTER_KEY
+            - name: SEMPERVIGIL_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sempervigil.secretName" . }}
+                  key: SEMPERVIGIL_KEY_ID
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: logs
+              mountPath: /log
+            - name: site-src
+              mountPath: /site-src
+            - name: site-public
+              mountPath: /site
+          resources:
+            {{- toYaml .Values.builderScheduler.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "sempervigil.storageClaimName" (list . .Values.storage.data "data") }}
+        - name: logs
+          {{- include "sempervigil.logsVolume" . | nindent 10 }}
+        - name: site-src
+          persistentVolumeClaim:
+            claimName: {{ include "sempervigil.storageClaimName" (list . .Values.storage.siteSrc "siteSrc") }}
+        - name: site-public
+          persistentVolumeClaim:
+            claimName: {{ include "sempervigil.storageClaimName" (list . .Values.storage.sitePublic "sitePublic") }}
+{{- end }}

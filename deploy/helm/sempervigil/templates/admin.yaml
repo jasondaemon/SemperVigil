@@ -1,0 +1,145 @@
+{{- if .Values.admin.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sempervigil.componentFullname" (list . "admin") }}
+  labels:
+    {{- include "sempervigil.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+spec:
+  replicas: {{ .Values.admin.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "sempervigil.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: admin
+  template:
+    metadata:
+      labels:
+        {{- include "sempervigil.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: admin
+    spec:
+      serviceAccountName: {{ include "sempervigil.serviceAccountName" . }}
+      containers:
+        - name: sempervigil-admin
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh","-lc"]
+          args:
+            - >-
+              set -e;
+              umask {{ .Values.env.SV_UMASK | quote }};
+              sh /app/tools/ensure-dirs.sh;
+              uvicorn sempervigil.admin:app --host 0.0.0.0 --port 8000
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: {{ include "sempervigil.fullname" . }}-env
+          env:
+            - name: SV_LOG_FILE
+              value: /log/admin.log
+            - name: SV_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (include "sempervigil.secretName" .) .Values.externalDatabase.existingSecret }}
+                  key: {{ default "url" .Values.externalDatabase.urlKey }}
+            - name: SV_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sempervigil.secretName" . }}
+                  key: SV_ADMIN_TOKEN
+            - name: SEMPERVIGIL_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sempervigil.secretName" . }}
+                  key: SEMPERVIGIL_MASTER_KEY
+            - name: SEMPERVIGIL_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sempervigil.secretName" . }}
+                  key: SEMPERVIGIL_KEY_ID
+            - name: LITELLM_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sempervigil.secretName" . }}
+                  key: LITELLM_MASTER_KEY
+            - name: NVD_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sempervigil.secretName" . }}
+                  key: NVD_API_KEY
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: logs
+              mountPath: /log
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 20
+          resources:
+            {{- toYaml .Values.admin.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "sempervigil.storageClaimName" (list . .Values.storage.data "data") }}
+        - name: logs
+          {{- include "sempervigil.logsVolume" . | nindent 10 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "sempervigil.componentFullname" (list . "admin") }}
+  labels:
+    {{- include "sempervigil.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.admin.service.type }}
+  selector:
+    {{- include "sempervigil.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+  ports:
+    - name: http
+      port: {{ .Values.admin.service.port }}
+      targetPort: http
+{{- if .Values.admin.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "sempervigil.componentFullname" (list . "admin") }}
+  labels:
+    {{- include "sempervigil.labels" . | nindent 4 }}
+  {{- with .Values.admin.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.admin.ingress.className }}
+  ingressClassName: {{ .Values.admin.ingress.className }}
+  {{- end }}
+  rules:
+    {{- range .Values.admin.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          - path: {{ default "/" .path }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "sempervigil.componentFullname" (list $ "admin") }}
+                port:
+                  number: {{ $.Values.admin.service.port }}
+    {{- end }}
+  {{- with .Values.admin.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}

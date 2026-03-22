@@ -17,3 +17,6 @@ Next implementation steps:
 3. add Deployments for admin/workers/builder_scheduler/web
 4. model worker-fetch with VPN sidecar in the same pod
 5. add web ingress and internal admin ingress options
+
+Implemented workloads: admin, worker-llm, worker-openai, builder-scheduler, web.
+worker-fetch remains intentionally deferred until the VPN sidecar model is templated.

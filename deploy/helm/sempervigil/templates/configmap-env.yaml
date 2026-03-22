@@ -1,0 +1,55 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sempervigil.fullname" . }}-env
+  labels:
+    {{- include "sempervigil.labels" . | nindent 4 }}
+data:
+  SV_ENV: {{ .Values.env.SV_ENV | quote }}
+  SV_LOG_LEVEL: {{ .Values.env.SV_LOG_LEVEL | quote }}
+  SV_LOG_TZ: {{ .Values.env.SV_LOG_TZ | quote }}
+  SV_FIX_SITE_PERMS: {{ .Values.env.SV_FIX_SITE_PERMS | quote }}
+  SV_UMASK: {{ .Values.env.SV_UMASK | quote }}
+  SV_UID: {{ .Values.env.SV_UID | quote }}
+  SV_GID: {{ .Values.env.SV_GID | quote }}
+  SV_DATA_DIR: /data
+  SV_LOG_DIR: /log
+  SV_HUGO_SOURCE_DIR: {{ .Values.env.SV_HUGO_SOURCE_DIR | quote }}
+  SV_HUGO_OUTPUT_DIR: {{ .Values.env.SV_HUGO_OUTPUT_DIR | quote }}
+  SV_HUGO_CACHE_DIR: {{ .Values.env.SV_HUGO_CACHE_DIR | quote }}
+  SV_HUGO_MODULES_DIR: {{ .Values.env.SV_HUGO_MODULES_DIR | quote }}
+  SV_HTTP_TIMEOUT_SECONDS: {{ .Values.env.SV_HTTP_TIMEOUT_SECONDS | quote }}
+  SV_HTTP_USER_AGENT: {{ .Values.env.SV_HTTP_USER_AGENT | quote }}
+  SV_FETCH_FULL_CONTENT: {{ .Values.env.SV_FETCH_FULL_CONTENT | quote }}
+  SV_CONTENT_MIN_LEN: {{ .Values.env.SV_CONTENT_MIN_LEN | quote }}
+  SV_STORE_ARTICLE_HTML: {{ .Values.env.SV_STORE_ARTICLE_HTML | quote }}
+  SV_INGEST_DUE_DEBOUNCE_SECONDS: {{ .Values.env.SV_INGEST_DUE_DEBOUNCE_SECONDS | quote }}
+  SV_INGEST_DEFAULT_INTERVAL_MINUTES: {{ .Values.env.SV_INGEST_DEFAULT_INTERVAL_MINUTES | quote }}
+  SV_SOURCE_FAILURE_THRESHOLD: {{ .Values.env.SV_SOURCE_FAILURE_THRESHOLD | quote }}
+  SV_SEARXNG_URL: {{ .Values.env.SV_SEARXNG_URL | quote }}
+  SV_SEARXNG_ENGINES: {{ .Values.env.SV_SEARXNG_ENGINES | quote }}
+  SV_SEARXNG_CATEGORIES: {{ .Values.env.SV_SEARXNG_CATEGORIES | quote }}
+  SV_SEARXNG_TIMEOUT_S: {{ .Values.env.SV_SEARXNG_TIMEOUT_S | quote }}
+  SV_SEARXNG_MAX_RESULTS: {{ .Values.env.SV_SEARXNG_MAX_RESULTS | quote }}
+  SV_ENRICH_MIN_SCORE: {{ .Values.env.SV_ENRICH_MIN_SCORE | quote }}
+  SV_ENRICH_DOMAIN_ALLOWLIST: {{ .Values.env.SV_ENRICH_DOMAIN_ALLOWLIST | quote }}
+  SV_ENRICH_DOMAIN_BLOCKLIST: {{ .Values.env.SV_ENRICH_DOMAIN_BLOCKLIST | quote }}
+  SV_ENRICH_ENABLE_LLM: {{ .Values.env.SV_ENRICH_ENABLE_LLM | quote }}
+  SV_EVENT_ENRICH_AUTO_FETCH: {{ .Values.env.SV_EVENT_ENRICH_AUTO_FETCH | quote }}
+  SV_EVENT_ENRICH_AUTO_FETCH_MIN_SCORE: {{ .Values.env.SV_EVENT_ENRICH_AUTO_FETCH_MIN_SCORE | quote }}
+  SV_EVENT_ENRICH_AUTO_FETCH_MAX_PER_RUN: {{ .Values.env.SV_EVENT_ENRICH_AUTO_FETCH_MAX_PER_RUN | quote }}
+  SV_EVENT_ENRICH_VALIDATE_MIN_CONFIDENCE: {{ .Values.env.SV_EVENT_ENRICH_VALIDATE_MIN_CONFIDENCE | quote }}
+  SV_EVENT_ENRICH_VALIDATE_REQUIRE_LLM: {{ .Values.env.SV_EVENT_ENRICH_VALIDATE_REQUIRE_LLM | quote }}
+  SV_EVENT_ENRICH_VALIDATE_AUTO_DISCARD: {{ .Values.env.SV_EVENT_ENRICH_VALIDATE_AUTO_DISCARD | quote }}
+  SV_EVENT_ENRICH_VALIDATION_PROFILE_ID: {{ .Values.env.SV_EVENT_ENRICH_VALIDATION_PROFILE_ID | quote }}
+  SV_HUGO_BASEURL: {{ .Values.env.SV_HUGO_BASEURL | quote }}
+  SV_BUILDER_POLL_SECONDS: {{ .Values.env.SV_BUILDER_POLL_SECONDS | quote }}
+  SV_ENABLE_ARTICLE_MARKDOWN: {{ .Values.env.SV_ENABLE_ARTICLE_MARKDOWN | quote }}
+  SV_DAILY_SUMMARY_PROMPT: {{ .Values.env.SV_DAILY_SUMMARY_PROMPT | quote }}
+  SV_BUILD_DEBOUNCE_SECONDS: {{ .Values.env.SV_BUILD_DEBOUNCE_SECONDS | quote }}
+  SV_LLM_BASE_URL: {{ .Values.env.SV_LLM_BASE_URL | quote }}
+  SV_LLM_MODEL: {{ .Values.env.SV_LLM_MODEL | quote }}
+  SV_LLM_TEMPERATURE: {{ .Values.env.SV_LLM_TEMPERATURE | quote }}
+  SV_LLM_MAX_TOKENS: {{ .Values.env.SV_LLM_MAX_TOKENS | quote }}
+  SV_LLM_MAX_INFLIGHT: {{ .Values.env.SV_LLM_MAX_INFLIGHT | quote }}
+  SV_LLM_MAX_TIMEOUT_RETRIES: {{ .Values.env.SV_LLM_MAX_TIMEOUT_RETRIES | quote }}

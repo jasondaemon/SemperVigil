@@ -1,0 +1,20 @@
+{{- range $name, $cfg := .Values.storage }}
+{{- if and $cfg.enabled (not $cfg.existingClaim) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "sempervigil.storageClaimName" (list $ $cfg $name) }}
+  labels:
+    {{- include "sempervigil.labels" $ | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml $cfg.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ $cfg.size }}
+  {{- if $cfg.storageClassName }}
+  storageClassName: {{ $cfg.storageClassName | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}

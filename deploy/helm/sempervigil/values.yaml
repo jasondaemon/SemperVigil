@@ -31,9 +31,20 @@ externalDatabase:
   port: 5432
   database: sempervigil
   username: sempervigil
+  password: ""
   existingSecret: ""
   passwordKey: password
   urlKey: url
+
+secrets:
+  adminToken: ""
+  sempervigilMasterKey: ""
+  sempervigilKeyId: "v1"
+  litellmMasterKey: ""
+  llmApiKey: ""
+  nvdApiKey: ""
+  piaUser: ""
+  piaPass: ""
 
 storage:
   data:
@@ -64,13 +75,50 @@ storage:
 env:
   SV_ENV: prod
   SV_LOG_LEVEL: INFO
+  SV_LOG_TZ: America/New_York
   SV_FIX_SITE_PERMS: "0"
   SV_UMASK: "002"
+  SV_UID: "1000"
+  SV_GID: "1000"
   SV_HUGO_SOURCE_DIR: /site-src
   SV_HUGO_OUTPUT_DIR: /site
   SV_HUGO_CACHE_DIR: /data/hugo_cache
   SV_HUGO_MODULES_DIR: /data/hugo_modules
+  SV_HTTP_TIMEOUT_SECONDS: "20"
+  SV_HTTP_USER_AGENT: SemperVigil/0.1 (+https://github.com/jasondaemon/SemperVigil)
+  SV_FETCH_FULL_CONTENT: "1"
+  SV_CONTENT_MIN_LEN: "500"
+  SV_STORE_ARTICLE_HTML: "0"
+  SV_INGEST_DUE_DEBOUNCE_SECONDS: "60"
+  SV_INGEST_DEFAULT_INTERVAL_MINUTES: "60"
+  SV_SOURCE_FAILURE_THRESHOLD: "5"
+  SV_SEARXNG_URL: http://sempervigil-searxng:8080
+  SV_SEARXNG_ENGINES: google,bing,duckduckgo
+  SV_SEARXNG_CATEGORIES: news
+  SV_SEARXNG_TIMEOUT_S: "20"
+  SV_SEARXNG_MAX_RESULTS: "10"
+  SV_ENRICH_MIN_SCORE: "20"
+  SV_ENRICH_DOMAIN_ALLOWLIST: thehackernews.com,bleepingcomputer.com,krebsonsecurity.com,securelist.com,unit42.paloaltonetworks.com
+  SV_ENRICH_DOMAIN_BLOCKLIST: twitter.com,facebook.com,linkedin.com
+  SV_ENRICH_ENABLE_LLM: "0"
+  SV_EVENT_ENRICH_AUTO_FETCH: "0"
+  SV_EVENT_ENRICH_AUTO_FETCH_MIN_SCORE: "25"
+  SV_EVENT_ENRICH_AUTO_FETCH_MAX_PER_RUN: "5"
+  SV_EVENT_ENRICH_VALIDATE_MIN_CONFIDENCE: "0.70"
+  SV_EVENT_ENRICH_VALIDATE_REQUIRE_LLM: "0"
+  SV_EVENT_ENRICH_VALIDATE_AUTO_DISCARD: "1"
+  SV_EVENT_ENRICH_VALIDATION_PROFILE_ID: ""
+  SV_HUGO_BASEURL: https://cybernews.jasondaemon.net/
   SV_BUILDER_POLL_SECONDS: "60"
+  SV_ENABLE_ARTICLE_MARKDOWN: "0"
+  SV_DAILY_SUMMARY_PROMPT: ""
+  SV_BUILD_DEBOUNCE_SECONDS: "60"
+  SV_LLM_BASE_URL: ""
+  SV_LLM_MODEL: ollama/llama3
+  SV_LLM_TEMPERATURE: "0.2"
+  SV_LLM_MAX_TOKENS: "256"
+  SV_LLM_MAX_INFLIGHT: "1"
+  SV_LLM_MAX_TIMEOUT_RETRIES: "0"
 
 admin:
   enabled: true
@@ -87,7 +135,7 @@ admin:
   resources: {}
 
 workerFetch:
-  enabled: true
+  enabled: false
   replicaCount: 1
   resources: {}
   vpn:
