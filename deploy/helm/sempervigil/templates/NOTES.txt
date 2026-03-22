@@ -19,4 +19,4 @@ Next implementation steps:
 5. add web ingress and internal admin ingress options
 
 Implemented workloads: admin, worker-llm, worker-openai, builder-scheduler, web.
-worker-fetch remains intentionally deferred until the VPN sidecar model is templated.
+worker-fetch is implemented as a fetch-worker pod with a gluetun sidecar sharing the pod network namespace.

@@ -135,17 +135,20 @@ admin:
   resources: {}
 
 workerFetch:
-  enabled: false
+  enabled: true
   replicaCount: 1
   resources: {}
+  noProxy: "localhost,127.0.0.1,sempervigil-admin,sempervigil-web,sempervigil-searxng,sempervigil-db"
   vpn:
     enabled: true
     image: qmcgaw/gluetun:latest
     provider: "private internet access"
     region: us_east
+    firewallOutboundSubnets: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
     existingSecret: ""
     userKey: PIA_USER
     passwordKey: PIA_PASS
+    tunDeviceHostPath: /dev/net/tun
 
 workerLlm:
   enabled: true

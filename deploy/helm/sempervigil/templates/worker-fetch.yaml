@@ -1,0 +1,126 @@
+{{- if .Values.workerFetch.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sempervigil.componentFullname" (list . "worker-fetch") }}
+  labels:
+    {{- include "sempervigil.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker-fetch
+spec:
+  replicas: {{ .Values.workerFetch.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "sempervigil.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker-fetch
+  template:
+    metadata:
+      labels:
+        {{- include "sempervigil.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker-fetch
+    spec:
+      serviceAccountName: {{ include "sempervigil.serviceAccountName" . }}
+      containers:
+        - name: sempervigil-vpn
+          image: {{ .Values.workerFetch.vpn.image | quote }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN"]
+          env:
+            - name: VPN_SERVICE_PROVIDER
+              value: {{ .Values.workerFetch.vpn.provider | quote }}
+            - name: OPENVPN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sempervigil.secretName" . }}
+                  key: PIA_USER
+            - name: OPENVPN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sempervigil.secretName" . }}
+                  key: PIA_PASS
+            - name: SERVER_REGIONS
+              value: {{ .Values.workerFetch.vpn.region | quote }}
+            - name: FIREWALL
+              value: "on"
+            - name: DOT
+              value: "off"
+            - name: FIREWALL_OUTBOUND_SUBNETS
+              value: {{ .Values.workerFetch.vpn.firewallOutboundSubnets | quote }}
+            - name: HTTPPROXY
+              value: "on"
+            - name: HTTPPROXY_LOG
+              value: "on"
+          volumeMounts:
+            - name: tun-device
+              mountPath: /dev/net/tun
+            - name: data
+              mountPath: /gluetun
+              subPath: gluetun
+        - name: sempervigil-worker-fetch
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh","-lc"]
+          args:
+            - >-
+              set -e;
+              umask {{ .Values.env.SV_UMASK | quote }};
+              sh /app/tools/ensure-dirs.sh;
+              sempervigil-worker
+          envFrom:
+            - configMapRef:
+                name: {{ include "sempervigil.fullname" . }}-env
+          env:
+            - name: SV_LOG_FILE
+              value: /log/worker_fetch.log
+            - name: SV_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (include "sempervigil.secretName" .) .Values.externalDatabase.existingSecret }}
+                  key: {{ default "url" .Values.externalDatabase.urlKey }}
+            - name: HTTP_PROXY
+              value: http://127.0.0.1:8888
+            - name: HTTPS_PROXY
+              value: http://127.0.0.1:8888
+            - name: NO_PROXY
+              value: {{ .Values.workerFetch.noProxy | quote }}
+            - name: SV_WORKER_ONLY_TYPES
+              value: "ingest_due_sources,ingest_source,fetch_article_content,cve_sync,cve_enrich_kev,enrich_event_from_web,validate_event_web_source,promote_event_web_source_to_article,events_rebuild,article_products_backfill,article_threat_actors_backfill,cve_threat_actors_backfill,rebuild_vendor_products,source_acquire"
+            - name: SEMPERVIGIL_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sempervigil.secretName" . }}
+                  key: SEMPERVIGIL_MASTER_KEY
+            - name: SEMPERVIGIL_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sempervigil.secretName" . }}
+                  key: SEMPERVIGIL_KEY_ID
+            - name: NVD_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sempervigil.secretName" . }}
+                  key: NVD_API_KEY
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: logs
+              mountPath: /log
+            - name: site-src
+              mountPath: /site-src
+          resources:
+            {{- toYaml .Values.workerFetch.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "sempervigil.storageClaimName" (list . .Values.storage.data "data") }}
+        - name: logs
+          {{- include "sempervigil.logsVolume" . | nindent 10 }}
+        - name: site-src
+          persistentVolumeClaim:
+            claimName: {{ include "sempervigil.storageClaimName" (list . .Values.storage.siteSrc "siteSrc") }}
+        - name: tun-device
+          hostPath:
+            path: {{ .Values.workerFetch.vpn.tunDeviceHostPath | quote }}
+            type: CharDevice
+{{- end }}

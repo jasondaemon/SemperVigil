@@ -41,7 +41,7 @@ This is required so workloads remain readable when spread across nodes, namespac
   - `/data`
   - `/site-src`
   - `/site`
-- Fetch-worker VPN egress isolation must be preserved.
+- Fetch-worker VPN egress isolation must be preserved. In Kubernetes, this is implemented as a `sempervigil-worker-fetch` pod with a `sempervigil-vpn` sidecar sharing the same pod network namespace.
 - Only the public web component may be internet-facing by default.
 
 ## Packaging Direction
