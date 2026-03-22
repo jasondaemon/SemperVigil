@@ -16,3 +16,11 @@ Design constraints:
 - Component names must remain explicitly SemperVigil-prefixed.
 
 This chart is currently a skeleton and intentionally does not yet render full workloads.
+
+## Image Publishing
+
+The chart expects published container images for:
+- `ghcr.io/<owner>/sempervigil-ingest`
+- `ghcr.io/<owner>/sempervigil-builder`
+
+A GitHub Actions workflow is provided at `.github/workflows/container-images.yml` to build and publish those images to GHCR on pushes to `main` and on version tags.
