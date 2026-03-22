@@ -57,6 +57,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-secrets" (include "sempervigil.fullname" .) -}}
 {{- end -}}
 
+{{- define "sempervigil.appSecretName" -}}
+{{- default (include "sempervigil.secretName" .) .Values.secrets.existingSecret -}}
+{{- end -}}
+
 {{- define "sempervigil.componentFullname" -}}
 {{- $root := index . 0 -}}
 {{- $name := index . 1 -}}

@@ -44,12 +44,12 @@ spec:
             - name: SEMPERVIGIL_MASTER_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sempervigil.secretName" . }}
+                  name: {{ include "sempervigil.appSecretName" . }}
                   key: SEMPERVIGIL_MASTER_KEY
             - name: SEMPERVIGIL_KEY_ID
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sempervigil.secretName" . }}
+                  name: {{ include "sempervigil.appSecretName" . }}
                   key: SEMPERVIGIL_KEY_ID
           volumeMounts:
             - name: data

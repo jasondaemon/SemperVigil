@@ -37,6 +37,7 @@ externalDatabase:
   urlKey: url
 
 secrets:
+  existingSecret: ""
   adminToken: ""
   sempervigilMasterKey: ""
   sempervigilKeyId: "v1"

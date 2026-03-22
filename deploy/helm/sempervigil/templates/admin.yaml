@@ -47,27 +47,27 @@ spec:
             - name: SV_ADMIN_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sempervigil.secretName" . }}
+                  name: {{ include "sempervigil.appSecretName" . }}
                   key: SV_ADMIN_TOKEN
             - name: SEMPERVIGIL_MASTER_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sempervigil.secretName" . }}
+                  name: {{ include "sempervigil.appSecretName" . }}
                   key: SEMPERVIGIL_MASTER_KEY
             - name: SEMPERVIGIL_KEY_ID
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sempervigil.secretName" . }}
+                  name: {{ include "sempervigil.appSecretName" . }}
                   key: SEMPERVIGIL_KEY_ID
             - name: LITELLM_MASTER_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sempervigil.secretName" . }}
+                  name: {{ include "sempervigil.appSecretName" . }}
                   key: LITELLM_MASTER_KEY
             - name: NVD_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sempervigil.secretName" . }}
+                  name: {{ include "sempervigil.appSecretName" . }}
                   key: NVD_API_KEY
           volumeMounts:
             - name: data

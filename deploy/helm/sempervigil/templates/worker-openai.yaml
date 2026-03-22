@@ -56,22 +56,22 @@ spec:
             - name: SV_LLM_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sempervigil.secretName" . }}
+                  name: {{ include "sempervigil.appSecretName" . }}
                   key: SV_LLM_API_KEY
             - name: SEMPERVIGIL_MASTER_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sempervigil.secretName" . }}
+                  name: {{ include "sempervigil.appSecretName" . }}
                   key: SEMPERVIGIL_MASTER_KEY
             - name: SEMPERVIGIL_KEY_ID
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sempervigil.secretName" . }}
+                  name: {{ include "sempervigil.appSecretName" . }}
                   key: SEMPERVIGIL_KEY_ID
             - name: NVD_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sempervigil.secretName" . }}
+                  name: {{ include "sempervigil.appSecretName" . }}
                   key: NVD_API_KEY
           volumeMounts:
             - name: data

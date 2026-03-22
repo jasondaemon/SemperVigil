@@ -32,12 +32,12 @@ spec:
             - name: OPENVPN_USER
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sempervigil.secretName" . }}
+                  name: {{ include "sempervigil.appSecretName" . }}
                   key: PIA_USER
             - name: OPENVPN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sempervigil.secretName" . }}
+                  name: {{ include "sempervigil.appSecretName" . }}
                   key: PIA_PASS
             - name: SERVER_REGIONS
               value: {{ .Values.workerFetch.vpn.region | quote }}
@@ -89,17 +89,17 @@ spec:
             - name: SEMPERVIGIL_MASTER_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sempervigil.secretName" . }}
+                  name: {{ include "sempervigil.appSecretName" . }}
                   key: SEMPERVIGIL_MASTER_KEY
             - name: SEMPERVIGIL_KEY_ID
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sempervigil.secretName" . }}
+                  name: {{ include "sempervigil.appSecretName" . }}
                   key: SEMPERVIGIL_KEY_ID
             - name: NVD_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sempervigil.secretName" . }}
+                  name: {{ include "sempervigil.appSecretName" . }}
                   key: NVD_API_KEY
           volumeMounts:
             - name: data
