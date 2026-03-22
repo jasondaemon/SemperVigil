@@ -49,7 +49,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if $storage.existingClaim -}}
 {{- $storage.existingClaim -}}
 {{- else -}}
-{{- printf "%s-%s" (include "sempervigil.fullname" $root) (index . 2) | trunc 63 | trimSuffix "-" -}}
+{{- printf "%s-%s" (include "sempervigil.fullname" $root) ((index . 2) | kebabcase) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 {{- end -}}
 
