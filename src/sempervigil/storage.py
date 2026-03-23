@@ -2516,6 +2516,114 @@ def get_queue_stats(conn: Any) -> list[dict[str, object]]:
     return rows
 
 
+def get_job_metrics(conn: Any) -> list[dict[str, object]]:
+    if not _table_exists(conn, "jobs"):
+        return []
+    effective_queue_name = _effective_queue_name_sql()
+    cursor = conn.execute(
+        f"""
+        SELECT {effective_queue_name} AS effective_queue_name,
+               job_type,
+               status,
+               COUNT(*) AS job_count
+        FROM jobs
+        GROUP BY effective_queue_name, job_type, status
+        ORDER BY effective_queue_name, job_type, status
+        """
+    )
+    rows: list[dict[str, object]] = []
+    for queue_name, job_type, status, job_count in cursor.fetchall():
+        rows.append(
+            {
+                "queue_name": queue_name or "default",
+                "job_type": str(job_type or ""),
+                "status": str(status or ""),
+                "count": int(job_count or 0),
+            }
+        )
+    return rows
+
+
+def get_runner_stats(conn: Any) -> list[dict[str, object]]:
+    if not _table_exists(conn, "jobs"):
+        return []
+    effective_queue_name = _effective_queue_name_sql()
+    cursor = conn.execute(
+        f"""
+        SELECT job_type, status, COUNT(*) AS job_count
+        FROM jobs
+        WHERE {effective_queue_name} = 'control'
+          AND job_type IN ('launch_fetch_worker', 'launch_llm_worker', 'launch_openai_worker', 'launch_build_worker')
+        GROUP BY job_type, status
+        ORDER BY job_type, status
+        """
+    )
+    launch_to_runner = {
+        "launch_fetch_worker": "fetch",
+        "launch_llm_worker": "llm_local",
+        "launch_openai_worker": "openai",
+        "launch_build_worker": "build",
+    }
+    rows: list[dict[str, object]] = []
+    for job_type, status, job_count in cursor.fetchall():
+        rows.append(
+            {
+                "runner_type": launch_to_runner.get(str(job_type or ""), "unknown"),
+                "job_type": str(job_type or ""),
+                "status": str(status or ""),
+                "count": int(job_count or 0),
+            }
+        )
+    return rows
+
+
+def get_stale_job_stats(conn: Any, *, stale_after_seconds: int = 300) -> list[dict[str, object]]:
+    if not _table_exists(conn, "jobs"):
+        return []
+    effective_queue_name = _effective_queue_name_sql()
+    cutoff = utc_now_iso_offset(seconds=-max(1, int(stale_after_seconds or 1)))
+    cursor = conn.execute(
+        f"""
+        SELECT {effective_queue_name} AS effective_queue_name,
+               COUNT(*) AS stale_count
+        FROM jobs
+        WHERE status = 'running'
+          AND COALESCE(lease_expires_at, locked_at) IS NOT NULL
+          AND COALESCE(lease_expires_at, locked_at) < %s
+        GROUP BY effective_queue_name
+        ORDER BY effective_queue_name
+        """,
+        (cutoff,),
+    )
+    rows: list[dict[str, object]] = []
+    for queue_name, stale_count in cursor.fetchall():
+        rows.append(
+            {
+                "queue_name": queue_name or "default",
+                "stale": int(stale_count or 0),
+            }
+        )
+    return rows
+
+
+def get_source_ingest_state_counts(conn: Any) -> dict[str, int]:
+    if not _table_exists(conn, "sources"):
+        return {"queued": 0, "running": 0}
+    row = conn.execute(
+        """
+        SELECT COUNT(*) FILTER (WHERE ingest_job_id IS NOT NULL AND ingest_started_at IS NULL) AS queued_count,
+               COUNT(*) FILTER (WHERE ingest_job_id IS NOT NULL AND ingest_started_at IS NOT NULL) AS running_count
+        FROM sources
+        """
+    ).fetchone()
+    if not row:
+        return {"queued": 0, "running": 0}
+    return {
+        "queued": int(row[0] or 0),
+        "running": int(row[1] or 0),
+    }
+
+
 def has_pending_article_job(
     conn: Any, job_type: str, article_id: int
 ) -> bool:

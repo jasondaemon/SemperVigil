@@ -9,7 +9,7 @@ from typing import Any
 from pathlib import Path
 
 from fastapi import Body, APIRouter, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 try:
     from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -67,7 +67,11 @@ from .storage import (
     get_job,
     has_pending_job,
     get_build_state,
+    get_job_metrics,
     get_queue_stats,
+    get_runner_stats,
+    get_source_ingest_state_counts,
+    get_stale_job_stats,
     mark_build_dirty,
 )
 from .cve_filters import CveSignals, matches_filters
@@ -434,6 +438,168 @@ def health() -> dict[str, object]:
         "version": _get_version(),
         "time": datetime.now(tz=timezone.utc).isoformat(),
     }
+
+
+def _prometheus_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def _prometheus_label_block(labels: dict[str, object]) -> str:
+    parts = []
+    for key, value in sorted(labels.items()):
+        parts.append(f'{key}="{_prometheus_escape(str(value))}"')
+    return "{" + ",".join(parts) + "}" if parts else ""
+
+
+def _prometheus_timestamp(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        return _parse_iso(value).timestamp()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _render_metrics_text(conn: Any) -> str:
+    now = datetime.now(tz=timezone.utc)
+    lines: list[str] = []
+
+    def add_metric(
+        name: str,
+        help_text: str,
+        metric_type: str,
+        samples: list[tuple[dict[str, object], int | float]],
+    ) -> None:
+        lines.append(f"# HELP {name} {help_text}")
+        lines.append(f"# TYPE {name} {metric_type}")
+        for labels, value in samples:
+            lines.append(f"{name}{_prometheus_label_block(labels)} {value}")
+
+    lines.append("# SemperVigil metrics")
+    version = _prometheus_escape(_get_version())
+    lines.append("# HELP sempervigil_info SemperVigil build and version metadata")
+    lines.append("# TYPE sempervigil_info gauge")
+    lines.append(f'sempervigil_info{{version="{version}"}} 1')
+
+    build_state = get_build_state(conn)
+    add_metric(
+        "sempervigil_build_dirty",
+        "Whether SemperVigil has a pending build request",
+        "gauge",
+        [({}, 1 if build_state.get("dirty") else 0)],
+    )
+    last_built_at = _prometheus_timestamp(build_state.get("last_built_at"))
+    if last_built_at is not None:
+        add_metric(
+            "sempervigil_build_last_success_timestamp_seconds",
+            "Unix timestamp of the last successful site build",
+            "gauge",
+            [({}, last_built_at)],
+        )
+
+    queue_samples: list[tuple[dict[str, object], int | float]] = []
+    oldest_samples: list[tuple[dict[str, object], int | float]] = []
+    for row in get_queue_stats(conn):
+        queue_name = str(row.get("queue_name") or "default")
+        queue_samples.append(({"queue_name": queue_name, "status": "queued"}, int(row.get("queued") or 0)))
+        queue_samples.append(({"queue_name": queue_name, "status": "running"}, int(row.get("running") or 0)))
+        oldest_at = row.get("oldest_requested_at")
+        if isinstance(oldest_at, str):
+            try:
+                age_seconds = max(0.0, (now - _parse_iso(oldest_at)).total_seconds())
+                oldest_samples.append(({"queue_name": queue_name}, age_seconds))
+            except Exception:  # noqa: BLE001
+                pass
+    add_metric(
+        "sempervigil_queue_jobs",
+        "Queued and running job counts by logical queue",
+        "gauge",
+        queue_samples,
+    )
+    add_metric(
+        "sempervigil_queue_oldest_age_seconds",
+        "Age in seconds of the oldest queued job by logical queue",
+        "gauge",
+        oldest_samples,
+    )
+
+    add_metric(
+        "sempervigil_jobs",
+        "Job counts by logical queue, job type, and status",
+        "gauge",
+        [
+            (
+                {
+                    "queue_name": str(row.get("queue_name") or "default"),
+                    "job_type": str(row.get("job_type") or ""),
+                    "status": str(row.get("status") or ""),
+                },
+                int(row.get("count") or 0),
+            )
+            for row in get_job_metrics(conn)
+        ],
+    )
+
+    runner_samples: list[tuple[dict[str, object], int | float]] = []
+    active_runner_samples: list[tuple[dict[str, object], int | float]] = []
+    runner_rows = get_runner_stats(conn)
+    for row in runner_rows:
+        runner_type = str(row.get("runner_type") or "unknown")
+        status = str(row.get("status") or "")
+        count = int(row.get("count") or 0)
+        runner_samples.append(({"runner_type": runner_type, "status": status}, count))
+    active_by_type: dict[str, int] = {}
+    for row in runner_rows:
+        if str(row.get("status") or "") != "running":
+            continue
+        runner_type = str(row.get("runner_type") or "unknown")
+        active_by_type[runner_type] = active_by_type.get(runner_type, 0) + int(row.get("count") or 0)
+    for runner_type, count in sorted(active_by_type.items()):
+        active_runner_samples.append(({"runner_type": runner_type}, count))
+    add_metric(
+        "sempervigil_runner_launch_jobs",
+        "Launch job counts by runner type and status",
+        "gauge",
+        runner_samples,
+    )
+    add_metric(
+        "sempervigil_runner_active",
+        "Active runner launches by runner type",
+        "gauge",
+        active_runner_samples,
+    )
+
+    add_metric(
+        "sempervigil_stale_jobs",
+        "Running jobs whose lease or lock has expired",
+        "gauge",
+        [
+            ({"queue_name": str(row.get("queue_name") or "default")}, int(row.get("stale") or 0))
+            for row in get_stale_job_stats(conn)
+        ],
+    )
+
+    source_counts = get_source_ingest_state_counts(conn)
+    add_metric(
+        "sempervigil_sources_ingest_state",
+        "Source ingest scheduling state counts",
+        "gauge",
+        [
+            ({"state": "queued"}, int(source_counts.get("queued") or 0)),
+            ({"state": "running"}, int(source_counts.get("running") or 0)),
+        ],
+    )
+
+    return "\n".join(lines) + "\n"
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+def metrics() -> PlainTextResponse:
+    conn = _get_conn()
+    return PlainTextResponse(
+        _render_metrics_text(conn),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 @app.get("/admin/config/runtime", dependencies=[Depends(_require_admin_token)])
@@ -1386,6 +1552,10 @@ def queue_diagnostics() -> dict[str, object]:
         "now": now.isoformat(),
         "queue": items,
         "queue_stats": get_queue_stats(conn),
+        "job_metrics": get_job_metrics(conn),
+        "runner_stats": get_runner_stats(conn),
+        "stale_jobs": get_stale_job_stats(conn),
+        "source_ingest_state": get_source_ingest_state_counts(conn),
         "build_state": get_build_state(conn),
     }
 
