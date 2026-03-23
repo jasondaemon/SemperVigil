@@ -15,7 +15,7 @@ Use it first when starting a new chat or debugging issues.
   - `worker_openai` (dedicated `build_daily_brief`)
 - **Builder**:
   - `builder` (one-shot, profile `build`)
-  - `builder_scheduler` (always-on, claims `build_site` jobs)
+  - `build_worker` (always-on, claims admitted `build_site` jobs)
 - **Web**: nginx serving `/site-public` on `SV_WEB_PORT` (default 8080).
 
 Key volumes (NFS):
@@ -79,14 +79,14 @@ If builds are too frequent or CPU-pegged, verify both values in `.env`.
 
 1) **Builder OOM / killed hugo**
    - Hugo can be killed by the OS when memory/CPU spikes.
-   - Verify with `builder_scheduler` logs and system `dmesg`.
+   - Verify with `build_worker` logs and system `dmesg`.
 
 2) **Permissions flipping on site-src**
    - `fsinit._ensure_dir()` now only chmods on creation.
    - `SV_FIX_SITE_PERMS=0` in compose prevents aggressive chmod/chown.
 
 3) **Stale builds / no changes**
-   - If `builder_scheduler` runs but output doesn’t change, confirm a build job exists and that Hugo succeeded.
+   - If `build_worker` runs but output doesn’t change, confirm a build job exists and that Hugo succeeded.
 
 4) **RSS probe/fetch timeouts (Sophos‑style feeds)**
    - RSS probe and ingest support curl HTTP/2 fetcher with Range prefixing.
@@ -102,7 +102,7 @@ If builds are too frequent or CPU-pegged, verify both values in `.env`.
 1) Enqueue a build and watch scheduler:
    ```
    docker compose run --rm worker_fetch sempervigil jobs enqueue build_site
-   docker compose logs --tail=50 builder_scheduler
+   docker compose logs --tail=50 build_worker
    ```
 
 2) Check output files:

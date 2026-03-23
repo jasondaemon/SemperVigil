@@ -58,7 +58,7 @@ If you (Codex) propose edits affecting pipeline stability, you must:
 - Risk / Impact: med
 - Verification steps run:
   - docker compose up -d --build
-  - docker compose exec builder_scheduler sh -lc 'ls -la /site/index.html'
+  - docker compose exec build_worker sh -lc 'ls -la /site/index.html'
   - docker compose exec web sh -lc 'ls -la /usr/share/nginx/html/index.html'
   - curl -I http://localhost:${SV_WEB_PORT:-8080}/
 - Outcome: success

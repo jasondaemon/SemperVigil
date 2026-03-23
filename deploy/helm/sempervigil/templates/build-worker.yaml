@@ -1,26 +1,26 @@
-{{- if .Values.builderScheduler.enabled }}
+{{- if .Values.buildWorker.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "sempervigil.componentFullname" (list . "builder-scheduler") }}
+  name: {{ include "sempervigil.componentFullname" (list . "build-worker") }}
   labels:
     {{- include "sempervigil.labels" . | nindent 4 }}
-    app.kubernetes.io/component: builder-scheduler
+    app.kubernetes.io/component: build-worker
 spec:
-  replicas: {{ .Values.builderScheduler.replicaCount }}
+  replicas: {{ .Values.buildWorker.replicaCount }}
   selector:
     matchLabels:
       {{- include "sempervigil.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: builder-scheduler
+      app.kubernetes.io/component: build-worker
   template:
     metadata:
       labels:
         {{- include "sempervigil.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: builder-scheduler
+        app.kubernetes.io/component: build-worker
     spec:
       serviceAccountName: {{ include "sempervigil.serviceAccountName" . }}
       containers:
-        - name: sempervigil-builder-scheduler
+        - name: sempervigil-build-worker
           image: "{{ .Values.builderImage.repository }}:{{ .Values.builderImage.tag }}"
           imagePullPolicy: {{ .Values.builderImage.pullPolicy }}
           command: ["sh","-lc"]
@@ -68,7 +68,7 @@ spec:
             - name: site-public
               mountPath: /site
           resources:
-            {{- toYaml .Values.builderScheduler.resources | nindent 12 }}
+            {{- toYaml .Values.buildWorker.resources | nindent 12 }}
       volumes:
         - name: data
           persistentVolumeClaim:

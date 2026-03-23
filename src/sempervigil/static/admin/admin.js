@@ -228,7 +228,7 @@ function wireDashboard() {
       autoCatchupToggle.checked = false;
     }
   }
-  function renderJobCounts(counts, jobTypes, jobGroups, countsSince, queueable) {
+  function renderJobCounts(counts, jobTypes, jobGroups, countsSince, queueable, buildState) {
     const allTypes = jobTypes && jobTypes.length ? jobTypes : Object.keys(counts).sort();
     const fallbackGroups = [
       { id: "all", title: "Job Queue", job_types: allTypes },
@@ -373,6 +373,17 @@ function wireDashboard() {
         body.appendChild(row);
       });
       section.appendChild(table);
+      if (group.id === "build" && buildState && typeof buildState === "object") {
+        const meta = document.createElement("div");
+        meta.className = "muted";
+        const reasons = Array.isArray(buildState.reasons) && buildState.reasons.length
+          ? ` reasons: ${buildState.reasons.join(", ")}`
+          : "";
+        meta.textContent = buildState.dirty
+          ? `Build state: dirty since ${formatTimestamp(buildState.requested_at || buildState.last_dirty_at)}.${reasons}`
+          : `Build state: clean${buildState.last_built_at ? `, last built ${formatTimestamp(buildState.last_built_at)}` : ""}.`;
+        section.appendChild(meta);
+      }
       wrapper.appendChild(section);
     });
     jobCountsContainer.innerHTML = "";
@@ -396,7 +407,8 @@ function wireDashboard() {
       data.job_types || [],
       data.job_groups || [],
       data.job_counts_since || null,
-      data.queueable_by_job_type || {}
+      data.queueable_by_job_type || {},
+      data.build_state || {}
     );
   }
   async function loadQueueDiagnostics() {
@@ -419,7 +431,7 @@ function wireDashboard() {
     const detail = stale
       .map((item) => `${item.job_type} (${item.oldest_age_minutes}m, ${item.queued} queued)`)
       .join("; ");
-    queueBanner.textContent = `Queued jobs older than ${staleMinutes}m: ${detail}. Hint: No worker claims this job type; check SV_WORKER_ONLY_TYPES.`;
+    queueBanner.textContent = `Queued jobs older than ${staleMinutes}m: ${detail}. Hint: check queue-to-worker assignment and orchestrator/build state.`;
     queueBanner.style.display = "block";
   }
   jobCountsContainer.addEventListener("click", async (event) => {
@@ -6138,11 +6150,10 @@ function wireDebug() {
   if (buildNow) {
     buildNow.addEventListener("click", async () => {
       try {
-        const data = await apiFetch("/jobs/enqueue", {
+        const data = await apiFetch("/admin/api/build/request", {
           method: "POST",
-          body: JSON.stringify({ job_type: "build_site" }),
         });
-        showToast(`Build enqueued: ${data.job_id}`);
+        showToast(data.status === "already_dirty" ? "Build already pending" : "Build requested");
       } catch (err) {
         if (error) {
           error.textContent = err.message || String(err);

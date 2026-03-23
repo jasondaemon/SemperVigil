@@ -6,7 +6,7 @@ Examples:
 - sempervigil-worker-fetch
 - sempervigil-worker-llm
 - sempervigil-worker-openai
-- sempervigil-builder-scheduler
+- sempervigil-build-worker
 - sempervigil-web
 - sempervigil-searxng
 - sempervigil-db
@@ -14,9 +14,9 @@ Examples:
 Next implementation steps:
 1. add ConfigMap/Secret templates for SemperVigil env contracts
 2. add PVC templates for data, site-src, and site-public
-3. add Deployments for admin/workers/builder_scheduler/web
+3. add Deployments for admin/workers/build_worker/web
 4. model worker-fetch with VPN sidecar in the same pod
 5. add web ingress and internal admin ingress options
 
-Implemented workloads: admin, worker-llm, worker-openai, builder-scheduler, web.
+Implemented workloads: admin, worker-llm, worker-openai, build-worker, orchestrator, web.
 worker-fetch is implemented as a fetch-worker pod with a gluetun sidecar sharing the pod network namespace.

@@ -310,7 +310,7 @@ services:
     restart: "no"
 
   # 3b) Build worker (always-on queue consumer for admitted build_site jobs)
-  builder_scheduler:
+  build_worker:
     build:
       context: .
       dockerfile: docker/builder/Dockerfile

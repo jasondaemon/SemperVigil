@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import time
-import threading
 import urllib.request
 from typing import Any
 from pathlib import Path
@@ -67,6 +66,8 @@ from .storage import (
     get_last_job_by_type,
     get_job,
     has_pending_job,
+    get_build_state,
+    get_queue_stats,
     mark_build_dirty,
 )
 from .cve_filters import CveSignals, matches_filters
@@ -222,9 +223,6 @@ _LOG_SERVICES = {
     "build_hugo": "",
 }
 
-_SCHEDULE_JOB_TYPES = {
-    "daily_brief": "build_daily_brief",
-}
 _DASHBOARD_LLM_JOB_TYPES = [
     "summarize_article_llm",
     "summarize_article_context_llm",
@@ -250,94 +248,10 @@ _DASHBOARD_FETCH_JOB_TYPES = [
     "ingest_due_sources",
     "ingest_source",
     "rebuild_vendor_products",
+]
+_DASHBOARD_BUILD_JOB_TYPES = [
     "build_site",
 ]
-_scheduler_thread: threading.Thread | None = None
-_scheduler_stop = threading.Event()
-
-
-def _parse_hhmm(value: str) -> tuple[int, int] | None:
-    if not isinstance(value, str):
-        return None
-    parts = value.strip().split(":")
-    if len(parts) != 2 or not all(p.isdigit() for p in parts):
-        return None
-    hour = int(parts[0])
-    minute = int(parts[1])
-    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
-        return None
-    return hour, minute
-
-
-def _resolve_timezone(conn) -> timezone:
-    try:
-        cfg = get_schedule_settings(conn)
-        tz = cfg.get("timezone")
-        if tz:
-            return ZoneInfo(str(tz))
-    except Exception:
-        pass
-    try:
-        runtime = get_runtime_config(conn)
-        app_cfg = runtime.get("app") or {}
-        tz = app_cfg.get("timezone")
-        if tz:
-            return ZoneInfo(str(tz))
-    except Exception:
-        pass
-    return timezone.utc
-
-
-def _scheduler_loop() -> None:
-    logger = logging.getLogger("sempervigil.admin")
-    while not _scheduler_stop.is_set():
-        try:
-            conn = init_db()
-            cfg = get_schedule_settings(conn)
-            tasks = cfg.get("tasks") or {}
-            tzinfo = _resolve_timezone(conn)
-            now = datetime.now(tzinfo)
-            today = now.date().isoformat()
-            dirty = False
-            for task_key, task in tasks.items():
-                if not isinstance(task, dict):
-                    continue
-                if not task.get("enabled"):
-                    continue
-                job_type = _SCHEDULE_JOB_TYPES.get(task_key)
-                if not job_type:
-                    continue
-                time_val = task.get("time") or ""
-                parsed = _parse_hhmm(str(time_val))
-                if not parsed:
-                    continue
-                hour, minute = parsed
-                run_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-                if now < run_time:
-                    continue
-                last_run = task.get("last_run")
-                if last_run == today:
-                    continue
-                if has_pending_job(conn, job_type):
-                    task["last_run"] = today
-                    dirty = True
-                    continue
-                job_id = enqueue_job(conn, job_type, payload=None, debounce=True, dedupe=True)
-                log_event(
-                    logger,
-                    logging.INFO,
-                    "scheduled_job_enqueued",
-                    job_id=job_id,
-                    job_type=job_type,
-                    schedule_key=task_key,
-                )
-                task["last_run"] = today
-                dirty = True
-            if dirty:
-                set_schedule_settings(conn, cfg)
-        except Exception as exc:  # noqa: BLE001
-            log_event(logger, logging.ERROR, "schedule_loop_error", error=str(exc))
-        _scheduler_stop.wait(30)
 
 
 def _read_log_tail(path: str, max_lines: int, max_bytes: int) -> str:
@@ -618,13 +532,17 @@ def dashboard_metrics() -> dict[str, object]:
         _DASHBOARD_LLM_JOB_TYPES
         + _DASHBOARD_OPENAI_JOB_TYPES
         + _DASHBOARD_FETCH_JOB_TYPES
+        + _DASHBOARD_BUILD_JOB_TYPES
     )
     metrics["job_types"] = visible_job_types
     metrics["job_groups"] = [
         {"id": "llm", "title": "LLM Worker", "job_types": _DASHBOARD_LLM_JOB_TYPES},
         {"id": "openai", "title": "OpenAI Worker", "job_types": _DASHBOARD_OPENAI_JOB_TYPES},
         {"id": "fetch", "title": "Fetch Worker", "job_types": _DASHBOARD_FETCH_JOB_TYPES},
+        {"id": "build", "title": "Build / Publish", "job_types": _DASHBOARD_BUILD_JOB_TYPES},
     ]
+    metrics["build_state"] = get_build_state(conn)
+    metrics["queue_stats"] = get_queue_stats(conn)
     stage_statuses = list_stage_statuses(conn, STAGE_NAMES)
     metrics["llm_stage_active"] = sum(1 for item in stage_statuses if item["status"] == "active")
     metrics["llm_stage_total"] = len(stage_statuses)
@@ -1201,15 +1119,6 @@ def _startup() -> None:
         return
     set_umask_from_env()
     ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir, config.paths.logs_dir))
-    global _scheduler_thread
-    if os.environ.get("SV_SCHEDULER_ENABLED", "1") != "0" and _scheduler_thread is None:
-        _scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True)
-        _scheduler_thread.start()
-
-
-@app.on_event("shutdown")
-def _shutdown() -> None:
-    _scheduler_stop.set()
 
 
 @app.post("/jobs/enqueue")
@@ -1236,6 +1145,16 @@ def enqueue(job: JobRequest, _: None = Depends(_require_admin_token)) -> dict[st
         job_type=job.job_type,
     )
     return {"job_id": job_id}
+
+
+@app.post("/admin/api/build/request", dependencies=[Depends(_require_admin_token)])
+def request_build() -> dict[str, object]:
+    conn = _get_conn()
+    state = get_build_state(conn)
+    if state.get("dirty"):
+        return {"status": "already_dirty", "build_state": state}
+    mark_build_dirty(conn, reason="admin_requested")
+    return {"status": "requested", "build_state": get_build_state(conn)}
 
 
 @app.post("/jobs/{job_id}/cancel", dependencies=[Depends(_require_admin_token)])

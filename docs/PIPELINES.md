@@ -27,6 +27,6 @@ Scriptable check:
 
 ```bash
 docker compose up -d --build
-docker compose exec builder_scheduler sh -lc 'ls -la /site/data/feed/index.json'
+docker compose exec build_worker sh -lc 'ls -la /site/data/feed/index.json'
 curl -I http://localhost:${SV_WEB_PORT:-8080}/entities/
 ```

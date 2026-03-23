@@ -22,7 +22,7 @@ Examples:
 - `sempervigil-worker-fetch`
 - `sempervigil-worker-llm`
 - `sempervigil-worker-openai`
-- `sempervigil-builder-scheduler`
+- `sempervigil-build-worker`
 - `sempervigil-web`
 - `sempervigil-searxng`
 - `sempervigil-db`

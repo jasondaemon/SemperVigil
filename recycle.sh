@@ -28,8 +28,8 @@ if [[ "${STOP_WEB}" == "1" ]]; then
   docker compose down --remove-orphans
 else
   echo "🛑 Stopping running containers (leaving web up)..."
-  docker compose stop admin worker_fetch worker_llm worker_openai builder_scheduler db vpn || true
-  docker compose rm -f admin worker_fetch worker_llm worker_openai builder_scheduler db vpn || true
+  docker compose stop admin worker_fetch worker_llm worker_openai build_worker db vpn || true
+  docker compose rm -f admin worker_fetch worker_llm worker_openai build_worker db vpn || true
 fi
 
 # --- NEW: remove ONLY locally-built service images (the ones that will be rebuilt) ---
@@ -116,7 +116,7 @@ fi
 
 # --- start builder scheduler (always-on) ---
 echo "🏗️  Starting builder scheduler..."
-docker compose up -d builder_scheduler
+docker compose up -d build_worker
 
 # Optional: internal search (SearXNG) via compose profile
 if [[ "${SV_ENABLE_SEARCH}" == "1" ]]; then
