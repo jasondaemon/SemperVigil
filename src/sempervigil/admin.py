@@ -460,6 +460,141 @@ def _prometheus_timestamp(value: str | None) -> float | None:
         return None
 
 
+def _dashboard_job_groups() -> list[dict[str, object]]:
+    return [
+        {"id": "llm", "title": "LLM Worker", "job_types": _DASHBOARD_LLM_JOB_TYPES},
+        {"id": "openai", "title": "OpenAI Worker", "job_types": _DASHBOARD_OPENAI_JOB_TYPES},
+        {"id": "fetch", "title": "Fetch Worker", "job_types": _DASHBOARD_FETCH_JOB_TYPES},
+        {"id": "build", "title": "Build / Publish", "job_types": _DASHBOARD_BUILD_JOB_TYPES},
+    ]
+
+
+def _job_group_id_for_job_type(job_type: str) -> str:
+    for group in _dashboard_job_groups():
+        if job_type in set(group.get("job_types") or []):
+            return str(group.get("id") or "other")
+    return "other"
+
+
+def _build_dashboard_metrics_payload(conn: Any) -> dict[str, object]:
+    metrics = get_dashboard_metrics(conn)
+    visible_job_types = (
+        _DASHBOARD_LLM_JOB_TYPES
+        + _DASHBOARD_OPENAI_JOB_TYPES
+        + _DASHBOARD_FETCH_JOB_TYPES
+        + _DASHBOARD_BUILD_JOB_TYPES
+    )
+    metrics["job_types"] = visible_job_types
+    metrics["job_groups"] = _dashboard_job_groups()
+    metrics["build_state"] = get_build_state(conn)
+    metrics["queue_stats"] = get_queue_stats(conn)
+    stage_statuses = list_stage_statuses(conn, STAGE_NAMES)
+    metrics["llm_stage_active"] = sum(1 for item in stage_statuses if item["status"] == "active")
+    metrics["llm_stage_total"] = len(stage_statuses)
+    metrics["llm_configured"] = metrics["llm_stage_active"] > 0
+
+    def _pending_article_ids(job_type: str) -> set[int]:
+        rows = conn.execute(
+            """
+            SELECT payload_json
+            FROM jobs
+            WHERE job_type = %s
+              AND status IN ('queued', 'running')
+              AND payload_json IS NOT NULL
+            """,
+            (job_type,),
+        ).fetchall()
+        ids: set[int] = set()
+        for row in rows:
+            raw = row[0] if row else None
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+            except Exception:
+                continue
+            value = payload.get("article_id") if isinstance(payload, dict) else None
+            if value is None:
+                continue
+            try:
+                ids.add(int(value))
+            except (TypeError, ValueError):
+                continue
+        return ids
+
+    def _pending_cve_ids(job_type: str) -> set[str]:
+        rows = conn.execute(
+            """
+            SELECT payload_json
+            FROM jobs
+            WHERE job_type = %s
+              AND status IN ('queued', 'running')
+              AND payload_json IS NOT NULL
+            """,
+            (job_type,),
+        ).fetchall()
+        ids: set[str] = set()
+        for row in rows:
+            raw = row[0] if row else None
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+            except Exception:
+                continue
+            value = payload.get("cve_id") if isinstance(payload, dict) else None
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                ids.add(text)
+        return ids
+
+    queueable: dict[str, int] = {}
+    missing_content_ids = list_article_ids_missing_content_all(conn, limit=None)
+    pending_fetch = _pending_article_ids("fetch_article_content")
+    queueable["fetch_article_content"] = sum(1 for article_id in missing_content_ids if int(article_id) not in pending_fetch)
+    profile, _reason = get_active_profile_for_stage(conn, "summarize_article")
+    if profile:
+        summary_ids = list_article_ids_ready_for_summary_all(conn)
+        pending_summary = _pending_article_ids("summarize_article_llm")
+        queueable["summarize_article_llm"] = sum(1 for article_id in summary_ids if int(article_id) not in pending_summary)
+    else:
+        queueable["summarize_article_llm"] = 0
+    profile, _reason = get_active_profile_for_stage(conn, "article_context_pack")
+    if profile:
+        context_ids = list_article_ids_missing_context_pack(conn, limit=None)
+        pending_context = _pending_article_ids("summarize_article_context_llm")
+        queueable["summarize_article_context_llm"] = sum(1 for article_id in context_ids if int(article_id) not in pending_context)
+    else:
+        queueable["summarize_article_context_llm"] = 0
+    product_ids = list_article_ids_missing_products(conn, limit=None)
+    pending_products = _pending_article_ids("article_enrich_products")
+    queueable["article_enrich_products"] = sum(1 for article_id in product_ids if int(article_id) not in pending_products)
+    threat_article_ids = list_article_ids_missing_threat_actors(conn, limit=None)
+    pending_article_threats = _pending_article_ids("article_enrich_threat_actors")
+    queueable["article_enrich_threat_actors"] = sum(1 for article_id in threat_article_ids if int(article_id) not in pending_article_threats)
+    event_candidate_ids = list_article_ids_without_event(conn, limit=None)
+    pending_derive_events = _pending_article_ids("derive_events_from_articles")
+    queueable["derive_events_from_articles"] = sum(1 for article_id in event_candidate_ids if int(article_id) not in pending_derive_events)
+    profile, _reason = get_active_profile_for_stage(conn, "cve_enrich_products")
+    if profile:
+        cve_ids = list_cve_ids_missing_products(conn, limit=None)
+        pending_cve_products = _pending_cve_ids("cve_enrich_llm")
+        queueable["cve_enrich_llm"] = sum(1 for cve_id in cve_ids if str(cve_id) not in pending_cve_products)
+    else:
+        queueable["cve_enrich_llm"] = 0
+    kev_ids = list_cve_ids_needing_kev_check(conn, limit=None)
+    pending_kev = _pending_cve_ids("cve_enrich_kev")
+    queueable["cve_enrich_kev"] = sum(1 for cve_id in kev_ids if str(cve_id) not in pending_kev)
+    cve_threat_ids = list_cve_ids_missing_threat_actors(conn, limit=None)
+    pending_cve_threats = _pending_cve_ids("cve_enrich_threat_actors")
+    queueable["cve_enrich_threat_actors"] = sum(1 for cve_id in cve_threat_ids if str(cve_id) not in pending_cve_threats)
+    queueable["build_daily_brief"] = int(metrics.get("daily_brief_missing_days_count") or 0)
+    metrics["queueable_by_job_type"] = queueable
+    return metrics
+
+
 def _render_metrics_text(conn: Any) -> str:
     now = datetime.now(tz=timezone.utc)
     lines: list[str] = []
@@ -481,7 +616,8 @@ def _render_metrics_text(conn: Any) -> str:
     lines.append("# TYPE sempervigil_info gauge")
     lines.append(f'sempervigil_info{{version="{version}"}} 1')
 
-    build_state = get_build_state(conn)
+    dashboard_metrics = _build_dashboard_metrics_payload(conn)
+    build_state = dashboard_metrics.get("build_state") or get_build_state(conn)
     add_metric(
         "sempervigil_build_dirty",
         "Whether SemperVigil has a pending build request",
@@ -590,6 +726,47 @@ def _render_metrics_text(conn: Any) -> str:
         ],
     )
 
+    dashboard_job_counts = dashboard_metrics.get("job_counts_by_type_status") or {}
+    dashboard_jobs_samples: list[tuple[dict[str, object], int | float]] = []
+    for job_type, statuses in sorted(dashboard_job_counts.items()):
+        if not isinstance(statuses, dict):
+            continue
+        worker_group = _job_group_id_for_job_type(str(job_type))
+        for status_key, value in sorted(statuses.items()):
+            dashboard_jobs_samples.append(
+                (
+                    {
+                        "worker_group": worker_group,
+                        "job_type": str(job_type),
+                        "status": str(status_key),
+                    },
+                    int(value or 0),
+                )
+            )
+    add_metric(
+        "sempervigil_dashboard_jobs",
+        "Admin-style current job counts by worker group, job type, and status",
+        "gauge",
+        dashboard_jobs_samples,
+    )
+
+    queueable = dashboard_metrics.get("queueable_by_job_type") or {}
+    add_metric(
+        "sempervigil_dashboard_need",
+        "Admin-style queueable job counts by worker group and job type",
+        "gauge",
+        [
+            (
+                {
+                    "worker_group": _job_group_id_for_job_type(str(job_type)),
+                    "job_type": str(job_type),
+                },
+                int(value or 0),
+            )
+            for job_type, value in sorted(queueable.items())
+        ],
+    )
+
     return "\n".join(lines) + "\n"
 
 
@@ -693,127 +870,7 @@ def logs_latest_build(stream: str = "stdout", lines: int = 200) -> dict[str, obj
 @app.get("/admin/api/dashboard/metrics", dependencies=[Depends(_require_admin_token)])
 def dashboard_metrics() -> dict[str, object]:
     conn = _get_conn()
-    metrics = get_dashboard_metrics(conn)
-    visible_job_types = (
-        _DASHBOARD_LLM_JOB_TYPES
-        + _DASHBOARD_OPENAI_JOB_TYPES
-        + _DASHBOARD_FETCH_JOB_TYPES
-        + _DASHBOARD_BUILD_JOB_TYPES
-    )
-    metrics["job_types"] = visible_job_types
-    metrics["job_groups"] = [
-        {"id": "llm", "title": "LLM Worker", "job_types": _DASHBOARD_LLM_JOB_TYPES},
-        {"id": "openai", "title": "OpenAI Worker", "job_types": _DASHBOARD_OPENAI_JOB_TYPES},
-        {"id": "fetch", "title": "Fetch Worker", "job_types": _DASHBOARD_FETCH_JOB_TYPES},
-        {"id": "build", "title": "Build / Publish", "job_types": _DASHBOARD_BUILD_JOB_TYPES},
-    ]
-    metrics["build_state"] = get_build_state(conn)
-    metrics["queue_stats"] = get_queue_stats(conn)
-    stage_statuses = list_stage_statuses(conn, STAGE_NAMES)
-    metrics["llm_stage_active"] = sum(1 for item in stage_statuses if item["status"] == "active")
-    metrics["llm_stage_total"] = len(stage_statuses)
-    metrics["llm_configured"] = metrics["llm_stage_active"] > 0
-
-    def _pending_article_ids(job_type: str) -> set[int]:
-        rows = conn.execute(
-            """
-            SELECT payload_json
-            FROM jobs
-            WHERE job_type = %s
-              AND status IN ('queued', 'running')
-              AND payload_json IS NOT NULL
-            """,
-            (job_type,),
-        ).fetchall()
-        ids: set[int] = set()
-        for row in rows:
-            raw = row[0] if row else None
-            if not raw:
-                continue
-            try:
-                payload = json.loads(raw)
-            except Exception:
-                continue
-            value = payload.get("article_id") if isinstance(payload, dict) else None
-            if value is None:
-                continue
-            try:
-                ids.add(int(value))
-            except (TypeError, ValueError):
-                continue
-        return ids
-
-    def _pending_cve_ids(job_type: str) -> set[str]:
-        rows = conn.execute(
-            """
-            SELECT payload_json
-            FROM jobs
-            WHERE job_type = %s
-              AND status IN ('queued', 'running')
-              AND payload_json IS NOT NULL
-            """,
-            (job_type,),
-        ).fetchall()
-        ids: set[str] = set()
-        for row in rows:
-            raw = row[0] if row else None
-            if not raw:
-                continue
-            try:
-                payload = json.loads(raw)
-            except Exception:
-                continue
-            value = payload.get("cve_id") if isinstance(payload, dict) else None
-            if value is None:
-                continue
-            text = str(value).strip()
-            if text:
-                ids.add(text)
-        return ids
-
-    queueable: dict[str, int] = {}
-    missing_content_ids = list_article_ids_missing_content_all(conn, limit=None)
-    pending_fetch = _pending_article_ids("fetch_article_content")
-    queueable["fetch_article_content"] = sum(1 for article_id in missing_content_ids if int(article_id) not in pending_fetch)
-    profile, _reason = get_active_profile_for_stage(conn, "summarize_article")
-    if profile:
-        summary_ids = list_article_ids_ready_for_summary_all(conn)
-        pending_summary = _pending_article_ids("summarize_article_llm")
-        queueable["summarize_article_llm"] = sum(1 for article_id in summary_ids if int(article_id) not in pending_summary)
-    else:
-        queueable["summarize_article_llm"] = 0
-    profile, _reason = get_active_profile_for_stage(conn, "article_context_pack")
-    if profile:
-        context_ids = list_article_ids_missing_context_pack(conn, limit=None)
-        pending_context = _pending_article_ids("summarize_article_context_llm")
-        queueable["summarize_article_context_llm"] = sum(1 for article_id in context_ids if int(article_id) not in pending_context)
-    else:
-        queueable["summarize_article_context_llm"] = 0
-    product_ids = list_article_ids_missing_products(conn, limit=None)
-    pending_products = _pending_article_ids("article_enrich_products")
-    queueable["article_enrich_products"] = sum(1 for article_id in product_ids if int(article_id) not in pending_products)
-    threat_article_ids = list_article_ids_missing_threat_actors(conn, limit=None)
-    pending_article_threats = _pending_article_ids("article_enrich_threat_actors")
-    queueable["article_enrich_threat_actors"] = sum(1 for article_id in threat_article_ids if int(article_id) not in pending_article_threats)
-    event_candidate_ids = list_article_ids_without_event(conn, limit=None)
-    pending_derive_events = _pending_article_ids("derive_events_from_articles")
-    queueable["derive_events_from_articles"] = sum(1 for article_id in event_candidate_ids if int(article_id) not in pending_derive_events)
-    profile, _reason = get_active_profile_for_stage(conn, "cve_enrich_products")
-    if profile:
-        cve_ids = list_cve_ids_missing_products(conn, limit=None)
-        pending_cve_products = _pending_cve_ids("cve_enrich_llm")
-        queueable["cve_enrich_llm"] = sum(1 for cve_id in cve_ids if str(cve_id) not in pending_cve_products)
-    else:
-        queueable["cve_enrich_llm"] = 0
-    kev_ids = list_cve_ids_needing_kev_check(conn, limit=None)
-    pending_kev = _pending_cve_ids("cve_enrich_kev")
-    queueable["cve_enrich_kev"] = sum(1 for cve_id in kev_ids if str(cve_id) not in pending_kev)
-    cve_threat_ids = list_cve_ids_missing_threat_actors(conn, limit=None)
-    pending_cve_threats = _pending_cve_ids("cve_enrich_threat_actors")
-    queueable["cve_enrich_threat_actors"] = sum(1 for cve_id in cve_threat_ids if str(cve_id) not in pending_cve_threats)
-    queueable["build_daily_brief"] = int(metrics.get("daily_brief_missing_days_count") or 0)
-    metrics["queueable_by_job_type"] = queueable
-    return metrics
+    return _build_dashboard_metrics_payload(conn)
 
 @app.post("/admin/api/dashboard/reset_failures", dependencies=[Depends(_require_admin_token)])
 def dashboard_reset_failures() -> dict[str, object]:

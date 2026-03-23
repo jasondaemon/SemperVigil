@@ -16,4 +16,5 @@ def test_render_metrics_text_exposes_queue_runner_and_build_metrics(tmp_path):
     assert 'sempervigil_jobs{job_type="launch_fetch_worker",queue_name="control",status="queued"} 1' in payload
     assert 'sempervigil_runner_launch_jobs{runner_type="fetch",status="queued"} 1' in payload
     assert 'sempervigil_sources_ingest_state{state="queued"} 0' in payload
-
+    assert 'sempervigil_dashboard_jobs{job_type="fetch_article_content",status="queued",worker_group="fetch"} 1' in payload
+    assert 'sempervigil_dashboard_need{job_type="fetch_article_content",worker_group="fetch"}' in payload
