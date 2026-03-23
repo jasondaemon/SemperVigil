@@ -49,5 +49,8 @@ def test_render_metrics_text_exposes_runner_health_and_queue_worker_health(tmp_p
     payload = _render_metrics_text(conn)
 
     assert 'sempervigil_runner_health{health="active",runner_type="fetch"} 1' in payload
+    assert 'sempervigil_runner_health{health="idle",runner_type="fetch"} 0' in payload
+    assert 'sempervigil_runner_health{health="stale",runner_type="fetch"} 0' in payload
+    assert 'sempervigil_runner_health{health="active",runner_type="llm_local"} 0' in payload
     assert 'sempervigil_queue_worker_health{metric="active_runners",queue_name="fetch"} 1' in payload
     assert 'sempervigil_queue_worker_health{metric="running_jobs",queue_name="fetch"} 1' in payload

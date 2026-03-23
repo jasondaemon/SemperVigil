@@ -2660,6 +2660,11 @@ def get_runner_health_stats(
             health = "idle" if idle_age >= max(1, int(idle_after_seconds or 1)) else "starting"
         counts[(runner_type, health)] = counts.get((runner_type, health), 0) + 1
     rows: list[dict[str, object]] = []
+    known_runner_types = ["fetch", "llm_local", "openai", "build"]
+    known_health_states = ["active", "starting", "idle", "stale"]
+    for runner_type in known_runner_types:
+        for health in known_health_states:
+            counts.setdefault((runner_type, health), 0)
     for (runner_type, health), count in sorted(counts.items()):
         rows.append(
             {
