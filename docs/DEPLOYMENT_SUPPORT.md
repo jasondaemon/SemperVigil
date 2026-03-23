@@ -30,6 +30,8 @@ Examples:
 
 This is required so workloads remain readable when spread across nodes, namespaces, and dashboards.
 
+Optional Grafana assets are versioned in `ops/grafana/` so operators can import project-matched dashboards without making Grafana a SemperVigil dependency.
+
 ## Kubernetes Support Rules
 
 - Kubernetes support must not replace Docker Compose support.

@@ -1,0 +1,152 @@
+{
+  "id": null,
+  "uid": "sempervigil-live-logs",
+  "title": "SemperVigil / Live Logs",
+  "tags": ["sempervigil", "logs"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "liveNow": true,
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "type": "custom",
+        "label": "Service",
+        "query": ".*,admin,orchestrator,worker_fetch,worker_llm,worker_openai,builder,build_hugo,openai_prompts,vpn_watchdog",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {"selected": true, "text": "all", "value": ".*"},
+        "options": [
+          {"selected": true, "text": "all", "value": ".*"},
+          {"selected": false, "text": "admin", "value": "admin"},
+          {"selected": false, "text": "orchestrator", "value": "orchestrator"},
+          {"selected": false, "text": "worker_fetch", "value": "worker_fetch"},
+          {"selected": false, "text": "worker_llm", "value": "worker_llm"},
+          {"selected": false, "text": "worker_openai", "value": "worker_openai"},
+          {"selected": false, "text": "builder", "value": "builder"},
+          {"selected": false, "text": "build_hugo", "value": "build_hugo"}
+        ]
+      },
+      {
+        "name": "runner",
+        "type": "custom",
+        "label": "Runner",
+        "query": ".*,control,fetch,llm_local,openai,build",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {"selected": true, "text": "all", "value": ".*"},
+        "options": [
+          {"selected": true, "text": "all", "value": ".*"},
+          {"selected": false, "text": "fetch", "value": "fetch"},
+          {"selected": false, "text": "llm_local", "value": "llm_local"},
+          {"selected": false, "text": "openai", "value": "openai"},
+          {"selected": false, "text": "build", "value": "build"}
+        ]
+      },
+      {
+        "name": "job_type",
+        "type": "custom",
+        "label": "Job Type",
+        "query": ".*,summarize_article_llm,summarize_article_context_llm,derive_events_from_articles,article_enrich_products,article_enrich_threat_actors,cve_enrich_llm,cve_enrich_threat_actors,event_report_llm,build_daily_brief,fetch_article_content,cve_sync,cve_enrich_kev,events_rebuild,enrich_event_from_web,validate_event_web_source,promote_event_web_source_to_article,source_acquire,ingest_due_sources,ingest_source,rebuild_vendor_products,build_site,launch_fetch_worker,launch_llm_worker,launch_openai_worker,launch_build_worker",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {"selected": true, "text": "all", "value": ".*"},
+        "options": [
+          {"selected": true, "text": "all", "value": ".*"},
+          {"selected": false, "text": "summarize_article_llm", "value": "summarize_article_llm"},
+          {"selected": false, "text": "summarize_article_context_llm", "value": "summarize_article_context_llm"},
+          {"selected": false, "text": "derive_events_from_articles", "value": "derive_events_from_articles"},
+          {"selected": false, "text": "article_enrich_products", "value": "article_enrich_products"},
+          {"selected": false, "text": "article_enrich_threat_actors", "value": "article_enrich_threat_actors"},
+          {"selected": false, "text": "cve_enrich_llm", "value": "cve_enrich_llm"},
+          {"selected": false, "text": "cve_enrich_threat_actors", "value": "cve_enrich_threat_actors"},
+          {"selected": false, "text": "event_report_llm", "value": "event_report_llm"},
+          {"selected": false, "text": "build_daily_brief", "value": "build_daily_brief"},
+          {"selected": false, "text": "fetch_article_content", "value": "fetch_article_content"},
+          {"selected": false, "text": "cve_sync", "value": "cve_sync"},
+          {"selected": false, "text": "cve_enrich_kev", "value": "cve_enrich_kev"},
+          {"selected": false, "text": "events_rebuild", "value": "events_rebuild"},
+          {"selected": false, "text": "enrich_event_from_web", "value": "enrich_event_from_web"},
+          {"selected": false, "text": "validate_event_web_source", "value": "validate_event_web_source"},
+          {"selected": false, "text": "promote_event_web_source_to_article", "value": "promote_event_web_source_to_article"},
+          {"selected": false, "text": "source_acquire", "value": "source_acquire"},
+          {"selected": false, "text": "ingest_due_sources", "value": "ingest_due_sources"},
+          {"selected": false, "text": "ingest_source", "value": "ingest_source"},
+          {"selected": false, "text": "rebuild_vendor_products", "value": "rebuild_vendor_products"},
+          {"selected": false, "text": "build_site", "value": "build_site"},
+          {"selected": false, "text": "launch_fetch_worker", "value": "launch_fetch_worker"},
+          {"selected": false, "text": "launch_llm_worker", "value": "launch_llm_worker"},
+          {"selected": false, "text": "launch_openai_worker", "value": "launch_openai_worker"},
+          {"selected": false, "text": "launch_build_worker", "value": "launch_build_worker"}
+        ]
+      },
+      {
+        "name": "level",
+        "type": "custom",
+        "label": "Level",
+        "query": ".*,INFO,WARNING,ERROR,CRITICAL,DEBUG",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {"selected": true, "text": "all", "value": ".*"},
+        "options": [
+          {"selected": true, "text": "all", "value": ".*"},
+          {"selected": false, "text": "INFO", "value": "INFO"},
+          {"selected": false, "text": "WARNING", "value": "WARNING"},
+          {"selected": false, "text": "ERROR", "value": "ERROR"},
+          {"selected": false, "text": "CRITICAL", "value": "CRITICAL"},
+          {"selected": false, "text": "DEBUG", "value": "DEBUG"}
+        ]
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Log Volume By Service",
+      "type": "timeseries",
+      "datasource": "monitoring-loki",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "sum by (service) (count_over_time({namespace=\"sempervigil\"} | json | __error__=\"\" | service=~\"(${service:pipe})\" | runner_type=~\"(${runner:pipe})\" | job_type=~\"(${job_type:pipe})\" | level=~\"(${level:pipe})\" [$__interval]))",
+          "refId": "A"
+        }
+      ],
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}}
+    },
+    {
+      "id": 2,
+      "title": "Live Logs",
+      "type": "logs",
+      "datasource": "monitoring-loki",
+      "gridPos": {"h": 18, "w": 24, "x": 0, "y": 8},
+      "targets": [
+        {
+          "expr": "{namespace=\"sempervigil\"} | json | __error__=\"\" | service=~\"(${service:pipe})\" | runner_type=~\"(${runner:pipe})\" | job_type=~\"(${job_type:pipe})\" | level=~\"(${level:pipe})\"",
+          "refId": "A",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      }
+    }
+  ]
+}
