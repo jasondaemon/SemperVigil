@@ -66,6 +66,12 @@ storage:
     storageClassName: ""
     accessModes: ["ReadWriteMany"]
     size: 10Gi
+  tools:
+    enabled: false
+    existingClaim: ""
+    storageClassName: ""
+    accessModes: ["ReadOnlyMany"]
+    size: 1Gi
   logs:
     enabled: false
     existingClaim: ""

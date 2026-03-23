@@ -74,6 +74,11 @@ spec:
               mountPath: /data
             - name: logs
               mountPath: /log
+            {{- if .Values.storage.tools.enabled }}
+            - name: tools
+              mountPath: /tools
+              readOnly: true
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /
@@ -92,6 +97,11 @@ spec:
             claimName: {{ include "sempervigil.storageClaimName" (list . .Values.storage.data "data") }}
         - name: logs
           {{- include "sempervigil.logsVolume" . | nindent 10 }}
+        {{- if .Values.storage.tools.enabled }}
+        - name: tools
+          persistentVolumeClaim:
+            claimName: {{ include "sempervigil.storageClaimName" (list . .Values.storage.tools "tools") }}
+        {{- end }}
 ---
 apiVersion: v1
 kind: Service
