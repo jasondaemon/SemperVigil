@@ -363,7 +363,7 @@ def _normalize_text(text: str) -> str:
 def _normalize_published_candidate(value: Any) -> str | None:
     if value is None:
         return None
-    max_future = datetime.now(tz=timezone.utc) + timedelta(hours=18)
+    max_future = datetime.now(tz=timezone.utc)
     if isinstance(value, (int, float)):
         number = float(value)
         if number > 10_000_000_000:

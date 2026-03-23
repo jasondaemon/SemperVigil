@@ -1,4 +1,5 @@
 import time
+from datetime import datetime, timedelta, timezone
 
 from sempervigil.utils import extract_published_at
 
@@ -28,3 +29,14 @@ def test_fallback_source():
     )
     assert source == "guessed"
     assert published_at == "2024-01-01T00:00:00+00:00"
+
+
+def test_future_published_falls_back_to_fetched_at():
+    future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    entry = {"published": future}
+    fetched_at = "2024-01-01T00:00:00+00:00"
+    published_at, source = extract_published_at(
+        entry, fetched_at, strategy="published_then_updated"
+    )
+    assert source == "guessed"
+    assert published_at == fetched_at

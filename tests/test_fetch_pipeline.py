@@ -1,6 +1,7 @@
 import logging
 
 from sempervigil.config import load_runtime_config
+from sempervigil.pipelines.content_fetch import extract_published_at_from_html
 from sempervigil.storage import claim_next_job, enqueue_job, init_db
 from sempervigil.services import ai_service
 from sempervigil import worker
@@ -173,3 +174,17 @@ def test_summarize_enqueues_publish_when_markdown_enabled(tmp_path, monkeypatch)
     rows = conn.execute("SELECT job_type FROM jobs").fetchall()
     types = [row[0] for row in rows]
     assert "write_article_markdown" in types
+
+
+def test_extract_published_at_from_html_rejects_future_timestamp():
+    html = """
+    <html>
+      <head>
+        <meta property="article:published_time" content="2999-01-01T00:00:00Z" />
+      </head>
+      <body></body>
+    </html>
+    """
+    published_at, source = extract_published_at_from_html(html)
+    assert published_at is None
+    assert source is None

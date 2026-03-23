@@ -353,7 +353,7 @@ def _parse_date_value(value: Any) -> datetime | None:
     return None
 
 
-def _is_reasonable_publish_time(value: datetime, *, skew_hours: int = 18) -> bool:
+def _is_reasonable_publish_time(value: datetime, *, skew_hours: int = 0) -> bool:
     now_utc = datetime.now(tz=timezone.utc)
     return value <= now_utc + timedelta(hours=skew_hours)
 
