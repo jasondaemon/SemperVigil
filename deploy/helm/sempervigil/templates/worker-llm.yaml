@@ -29,7 +29,7 @@ spec:
               set -e;
               umask {{ .Values.env.SV_UMASK | quote }};
               sh /app/tools/ensure-dirs.sh;
-              PYTHONPATH=/app/src /venv/bin/python -m sempervigil.runner --runner llm_local --sleep 5
+              PYTHONPATH=/app/src python -m sempervigil.runner --runner llm_local --sleep 5
           envFrom:
             - configMapRef:
                 name: {{ include "sempervigil.fullname" . }}-env

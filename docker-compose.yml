@@ -82,7 +82,7 @@ services:
         set -e
         umask ${SV_UMASK:-002}
         sh /tools/ensure-dirs.sh
-        PYTHONPATH=/app/src /venv/bin/python -m sempervigil.orchestrator --sleep ${SV_ORCH_TICK_SECONDS:-30}
+        PYTHONPATH=/app/src python -m sempervigil.orchestrator --sleep ${SV_ORCH_TICK_SECONDS:-30}
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - ${SV_DATA_DIR:-./data}:/data
@@ -133,7 +133,7 @@ services:
         set -e
         umask ${SV_UMASK:-002}
         sh /tools/ensure-dirs.sh
-        PYTHONPATH=/app/src /venv/bin/python -m sempervigil.runner --runner fetch --sleep ${SV_RUNNER_POLL_SECONDS:-5}
+        PYTHONPATH=/app/src python -m sempervigil.runner --runner fetch --sleep ${SV_RUNNER_POLL_SECONDS:-5}
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - ${SV_DATA_DIR:-./data}:/data
@@ -208,7 +208,7 @@ services:
         set -e
         umask ${SV_UMASK:-002}
         sh /tools/ensure-dirs.sh
-        PYTHONPATH=/app/src /venv/bin/python -m sempervigil.runner --runner llm_local --sleep ${SV_RUNNER_POLL_SECONDS:-5}
+        PYTHONPATH=/app/src python -m sempervigil.runner --runner llm_local --sleep ${SV_RUNNER_POLL_SECONDS:-5}
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - ${SV_DATA_DIR:-./data}:/data
@@ -254,7 +254,7 @@ services:
         set -e
         umask ${SV_UMASK:-002}
         sh /tools/ensure-dirs.sh
-        PYTHONPATH=/app/src /venv/bin/python -m sempervigil.runner --runner openai --sleep ${SV_RUNNER_POLL_SECONDS:-5}
+        PYTHONPATH=/app/src python -m sempervigil.runner --runner openai --sleep ${SV_RUNNER_POLL_SECONDS:-5}
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - ${SV_DATA_DIR:-./data}:/data

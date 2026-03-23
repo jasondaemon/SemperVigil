@@ -41,9 +41,9 @@ from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .utils import utc_now_iso
 from .worker import (
     WORKER_JOB_TYPES,
+    _refresh_feed_data_files,
     _site_root_from_output_dir,
     _write_vendor_product_indexes,
-    _write_article_data_files,
     _write_sources_data_files,
 )
 from .http_fetch import fetch_prefix
@@ -3132,7 +3132,7 @@ def api_article_suppress(article_id: int, payload: dict | None = Body(None)) -> 
         suppressed = not current
     result = update_article_suppressed(conn, article_id, bool(suppressed), reason if isinstance(reason, str) else None)
     config = load_runtime_config(conn)
-    _write_article_data_files(conn, config, logging.getLogger("admin"))
+    _refresh_feed_data_files(conn, config, logging.getLogger("admin"))
     mark_build_dirty(conn, reason="article_suppressed")
     return {"status": "ok", **result}
 
@@ -3145,7 +3145,7 @@ def api_article_delete(article_id: int):
     conn.execute("DELETE FROM articles WHERE id = %s", (article_id,))
     conn.commit()
     config = load_runtime_config(conn)
-    _write_article_data_files(conn, config, logging.getLogger("admin"))
+    _refresh_feed_data_files(conn, config, logging.getLogger("admin"))
     mark_build_dirty(conn, reason="article_deleted")
     return {"status": "deleted", "article_id": article_id}
 
@@ -3292,7 +3292,7 @@ def api_rebuild_site_data(payload: ClearRequest, request: Request) -> dict[str, 
     conn = _get_conn()
     config = load_runtime_config(conn)
     logger = logging.getLogger("sempervigil.admin")
-    article_stats = _write_article_data_files(conn, config, logger)
+    article_stats = _refresh_feed_data_files(conn, config, logger)
     site_root = _site_root_from_output_dir(config.paths.output_dir)
     tz_name = config.app.timezone or "UTC"
     vendor_stats = _write_vendor_product_indexes(conn, site_root, tz_name, logger)
