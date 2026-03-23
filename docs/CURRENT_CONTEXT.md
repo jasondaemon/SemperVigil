@@ -9,13 +9,15 @@ Use it first when starting a new chat or debugging issues.
 
 - **Postgres**: `sempervigil-db` (internal).
 - **Admin API/UI**: `sempervigil-admin` on port `SV_ADMIN_PORT` (default 8001).
-- **Workers**:
-  - `worker_fetch` (ingest, content fetch, CVE sync/KEV, source health, events rebuild, web enrich/promote)
-  - `worker_llm` (summarize/context, article/CVE enrichment, event derivation, event report)
-  - `worker_openai` (dedicated `build_daily_brief`)
+- **Discovery / Orchestrator**:
+  - `orchestrator` (singleton control plane: due-source checks, schedules, launch policy, build admission)
+- **Stage runners**:
+  - `worker_fetch` runner (claims control launch jobs, executes bounded fetch-stage worker passes)
+  - `worker_llm` runner (claims control launch jobs, executes bounded local-LLM-stage worker passes)
+  - `worker_openai` runner (claims control launch jobs, executes bounded OpenAI-stage worker passes)
 - **Builder**:
   - `builder` (one-shot, profile `build`)
-  - `build_worker` (always-on, claims admitted `build_site` jobs)
+  - `build_worker` runner (claims control launch jobs and executes admitted `build_site`)
 - **Web**: nginx serving `/site-public` on `SV_WEB_PORT` (default 8080).
 
 Key volumes (NFS):
@@ -32,10 +34,11 @@ The same share is mounted as:
 
 ## Build System Behavior
 
-- **Only build when a job exists**: use `build_site` job via admin UI or `sempervigil jobs enqueue build_site`.
-- **Single-build at a time**: admin enqueue refuses if a build is already queued/running.
-- **Scheduler poll interval**: `SV_BUILDER_POLL_SECONDS` (default 60).
-- **Debounce**: `SV_BUILD_DEBOUNCE_SECONDS` (default 60).
+- **Builds are dirty-state driven**: admin and workers mark the site dirty; the orchestrator admits `build_site`.
+- **Single-build at a time**: orchestrator admits at most one pending/running `build_site`.
+- **Runner poll interval**: `SV_RUNNER_POLL_SECONDS` (default 5).
+- **Orchestrator tick interval**: `SV_ORCH_TICK_SECONDS` (default 30).
+- **Debounce**: `SV_BUILD_DEBOUNCE_SECONDS` (default 60), applied at orchestrator admission time.
 
 If builds are too frequent or CPU-pegged, verify both values in `.env`.
 
@@ -81,27 +84,33 @@ If builds are too frequent or CPU-pegged, verify both values in `.env`.
    - Hugo can be killed by the OS when memory/CPU spikes.
    - Verify with `build_worker` logs and system `dmesg`.
 
-2) **Permissions flipping on site-src**
+2) **Control queue backlog**
+   - If stage work is not moving, inspect control-queue launch jobs first.
+   - A growing `launch_*_worker` backlog means the orchestrator is admitting work faster than runners can drain it.
+
+3) **Permissions flipping on site-src**
    - `fsinit._ensure_dir()` now only chmods on creation.
    - `SV_FIX_SITE_PERMS=0` in compose prevents aggressive chmod/chown.
 
-3) **Stale builds / no changes**
+4) **Stale builds / no changes**
    - If `build_worker` runs but output doesn’t change, confirm a build job exists and that Hugo succeeded.
+   - Also verify `build_site.state` is being cleared after successful build completion.
 
-4) **RSS probe/fetch timeouts (Sophos‑style feeds)**
+5) **RSS probe/fetch timeouts (Sophos‑style feeds)**
    - RSS probe and ingest support curl HTTP/2 fetcher with Range prefixing.
    - Per‑source overrides can force `http_fetcher=curl` or `python_then_curl`.
 
-4) **DB host resolution**
-   - Builder must run on `svnet` to reach `db`.
+6) **DB host resolution**
+   - Orchestrator, runners, and builder all require direct DB reachability.
 
 ---
 
 ## Quick Start (Debug)
 
-1) Enqueue a build and watch scheduler:
+1) Request a build and watch the orchestrator/build runner:
    ```
    docker compose run --rm worker_fetch sempervigil jobs enqueue build_site
+   docker compose logs --tail=50 orchestrator
    docker compose logs --tail=50 build_worker
    ```
 
@@ -119,12 +128,23 @@ If builds are too frequent or CPU-pegged, verify both values in `.env`.
 
 ---
 
-## Worker Roles (Allowed Types)
+## Queue / Runner Roles
 
-- worker_fetch: ingest, fetch, cve_sync, derive_events, build_daily_brief, web enrich
-- worker_llm: summarize_article_llm, cve_enrich_llm, enrich_event_summary_llm
+- control queue:
+  - `launch_fetch_worker`
+  - `launch_llm_worker`
+  - `launch_openai_worker`
+  - `launch_build_worker`
+- fetch queue:
+  - ingest, fetch, KEV sync, event web enrichment/promotion, rebuild jobs
+- llm_local queue:
+  - summarization, article/CVE enrichment, event derivation/report
+- openai queue:
+  - `build_daily_brief`
+- build queue:
+  - `build_site`
 
-Keep `SV_WORKER_ONLY_TYPES` aligned with actual job types.
+Stage runners should be configured by queue, not by large `SV_WORKER_ONLY_TYPES` lists.
 
 ---
 

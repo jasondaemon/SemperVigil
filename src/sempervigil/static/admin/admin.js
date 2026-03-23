@@ -417,6 +417,8 @@ function wireDashboard() {
     }
     const data = await apiFetch("/admin/api/diagnostics/queue");
     const items = Array.isArray(data.queue) ? data.queue : [];
+    const queueStats = Array.isArray(data.queue_stats) ? data.queue_stats : [];
+    const buildState = data.build_state || {};
     const stale = items.filter((item) => {
       if (typeof item.oldest_age_minutes !== "number") {
         return false;
@@ -431,7 +433,12 @@ function wireDashboard() {
     const detail = stale
       .map((item) => `${item.job_type} (${item.oldest_age_minutes}m, ${item.queued} queued)`)
       .join("; ");
-    queueBanner.textContent = `Queued jobs older than ${staleMinutes}m: ${detail}. Hint: check queue-to-worker assignment and orchestrator/build state.`;
+    const controlQueued = queueStats
+      .filter((item) => item.queue_name === "control" && item.status === "queued")
+      .reduce((sum, item) => sum + (parseInt(item.count || 0, 10) || 0), 0);
+    const dirtyText = buildState && buildState.dirty ? " Build is currently dirty." : "";
+    const controlText = controlQueued > 0 ? ` Control queue queued=${controlQueued}.` : "";
+    queueBanner.textContent = `Queued jobs older than ${staleMinutes}m: ${detail}.${controlText}${dirtyText} Hint: check queue-to-runner assignment and orchestrator state.`;
     queueBanner.style.display = "block";
   }
   jobCountsContainer.addEventListener("click", async (event) => {

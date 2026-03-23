@@ -1381,7 +1381,12 @@ def queue_diagnostics() -> dict[str, object]:
                 "oldest_age_minutes": age_minutes,
             }
         )
-    return {"now": now.isoformat(), "queue": items}
+    return {
+        "now": now.isoformat(),
+        "queue": items,
+        "queue_stats": get_queue_stats(conn),
+        "build_state": get_build_state(conn),
+    }
 
 
 @app.post("/admin/api/debug/smoke", dependencies=[Depends(_require_admin_token)])

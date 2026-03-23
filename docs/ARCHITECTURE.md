@@ -116,13 +116,23 @@ Maintains:
 
 All services interact **through Postgres**, not directly with each other.
 
-#### Scheduler
-Monitors Postgres for content and state changes.
-Coordinates site build workflows.
-Triggers Hugo builds when new or updated content is ready.
+#### Discovery / Orchestrator
+Singleton internal control-plane role.
+Monitors Postgres for queue depth, due source checks, scheduled work, and build-dirty state.
+Enqueues stage launch jobs and admits `build_site` only when policy allows.
 
-#### Hugo Builder
-Generates the static site from content stored in Postgres.
+#### Stage Runners
+Lightweight internal execution launchers for:
+- fetch
+- llm_local
+- openai
+- build
+
+Each runner claims a control-plane launch job, runs a bounded stage worker pass, and exits the child worker process when the assigned batch or time limit is reached.
+
+#### Build Worker
+Executes admitted `build_site` jobs only.
+Generates the static site from content stored in Postgres and `site-src`.
 Outputs files to a shared NFS location consumed by the `web` container.
 Does not serve content directly.
 
@@ -130,8 +140,8 @@ Does not serve content directly.
 
 ### Internal Workers & Data Plane
 
-#### worker-fetch (Scaled)
-Stateless acquisition workers that pull fetch jobs from Postgres.
+#### worker-fetch (Scaled via runner launches)
+Stateless acquisition workers that pull fetch-stage jobs from Postgres during bounded runner-directed passes.
 Retrieve external content (RSS, HTML, feeds).
 Write raw content and metadata back to Postgres.
 Designed for horizontal scaling.
@@ -144,7 +154,7 @@ Ensures acquisition traffic exits through a controlled egress point.
 No inbound access and no use by admin, web, or LLM workers.
 
 #### worker-llm
-Stateless enrichment worker that pulls summarization and analysis jobs from Postgres.
+Stateless enrichment worker that pulls only local-LLM-stage jobs from Postgres during bounded runner-directed passes.
 Performs:
 - summarization
 - vendor identification
@@ -499,3 +509,7 @@ and ensure migrations are applied before starting workers.
 - This file is **source of truth**
 - Codex prompts must reference it
 - Changes require intentional updates
+#### worker-openai
+Stateless worker for OpenAI-backed editorial or synthesis stages.
+Initially serialized by orchestrator policy.
+Processes only openai-stage jobs during bounded runner-directed passes.
