@@ -6847,7 +6847,7 @@ def _handle_ingest_due_sources(conn, logger: logging.Logger) -> dict[str, object
     sources = list_due_sources(conn, now)
     enqueued: list[str] = []
     for source in sources:
-        enqueue_job(conn, "ingest_source", {"source_id": source.id})
+        enqueue_job(conn, "ingest_source", {"source_id": source.id}, dedupe=True)
         enqueued.append(source.id)
     log_event(
         logger,
