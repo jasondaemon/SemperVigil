@@ -93,8 +93,8 @@ services:
       - nginx-proxy-manager_default
     restart: unless-stopped
 
-  # 2) Workers (internal)
-  # Recommended scaling: worker_fetch=2, worker_llm=1
+  # 2) Stage runners (internal)
+  # The orchestrator enqueues launch jobs; each runner performs bounded worker drains.
   worker_fetch:
     build:
       context: .
@@ -133,7 +133,7 @@ services:
         set -e
         umask ${SV_UMASK:-002}
         sh /tools/ensure-dirs.sh
-        sempervigil-worker
+        PYTHONPATH=/app/src /venv/bin/python -m sempervigil.runner --runner fetch --sleep ${SV_RUNNER_POLL_SECONDS:-5}
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - ${SV_DATA_DIR:-./data}:/data
@@ -208,7 +208,7 @@ services:
         set -e
         umask ${SV_UMASK:-002}
         sh /tools/ensure-dirs.sh
-        sempervigil-worker
+        PYTHONPATH=/app/src /venv/bin/python -m sempervigil.runner --runner llm_local --sleep ${SV_RUNNER_POLL_SECONDS:-5}
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - ${SV_DATA_DIR:-./data}:/data
@@ -254,7 +254,7 @@ services:
         set -e
         umask ${SV_UMASK:-002}
         sh /tools/ensure-dirs.sh
-        sempervigil-worker
+        PYTHONPATH=/app/src /venv/bin/python -m sempervigil.runner --runner openai --sleep ${SV_RUNNER_POLL_SECONDS:-5}
     user: "${SV_UID:-1000}:${SV_GID:-1000}"
     volumes:
       - ${SV_DATA_DIR:-./data}:/data
@@ -307,7 +307,7 @@ services:
       - nginx-proxy-manager_default
     restart: "no"
 
-  # 3b) Build worker (always-on queue consumer for admitted build_site jobs)
+  # 3b) Build runner (orchestrator-directed, executes admitted build work)
   build_worker:
     build:
       context: .
@@ -344,7 +344,7 @@ services:
         set -e
         umask ${SV_UMASK:-002}
         sh /tools/ensure-dirs.sh
-        PYTHONPATH=/app/src /venv/bin/python -m sempervigil.builder --sleep ${SV_BUILDER_POLL_SECONDS:-10}
+        PYTHONPATH=/app/src /venv/bin/python -m sempervigil.runner --runner build --sleep ${SV_RUNNER_POLL_SECONDS:-5}
     networks:
       - nginx-proxy-manager_default
     restart: unless-stopped

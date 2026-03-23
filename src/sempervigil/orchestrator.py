@@ -18,6 +18,7 @@ from .config import (
 )
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .storage import (
+    count_pending_jobs,
     enqueue_build_site_if_needed,
     enqueue_job,
     get_build_state,
@@ -36,6 +37,13 @@ from .worker import (
 
 _SCHEDULE_JOB_TYPES = {
     "daily_brief": "build_daily_brief",
+}
+
+_RUNNER_LAUNCH_TYPES = {
+    "fetch": "launch_fetch_worker",
+    "llm_local": "launch_llm_worker",
+    "openai": "launch_openai_worker",
+    "build": "launch_build_worker",
 }
 
 
@@ -153,6 +161,145 @@ def _log_queue_stats(conn, logger: logging.Logger) -> None:
     log_event(logger, logging.INFO, "orchestrator_queue_stats", queues=summary)
 
 
+def _queue_summary(conn) -> dict[str, dict[str, int]]:
+    summary: dict[str, dict[str, int]] = {}
+    for row in get_queue_stats(conn):
+        queue_name = str(row.get("queue_name") or "default")
+        queue_summary = summary.setdefault(queue_name, {})
+        queue_summary[str(row.get("status") or "unknown")] = int(row.get("count") or 0)
+    return summary
+
+
+def _launch_policy() -> dict[str, dict[str, int]]:
+    return {
+        "fetch": {
+            "scale_step": int(os.environ.get("SV_FETCH_SCALE_STEP", "25") or 25),
+            "max_active": int(os.environ.get("SV_FETCH_MAX_ACTIVE", "2") or 2),
+            "max_jobs": int(os.environ.get("SV_FETCH_LAUNCH_MAX_JOBS", "25") or 25),
+            "max_runtime_seconds": int(
+                os.environ.get("SV_FETCH_LAUNCH_MAX_RUNTIME_SECONDS", "600") or 600
+            ),
+        },
+        "llm_local": {
+            "max_active": int(os.environ.get("SV_LLM_MAX_ACTIVE", "1") or 1),
+            "max_jobs": int(os.environ.get("SV_LLM_LAUNCH_MAX_JOBS", "3") or 3),
+            "max_runtime_seconds": int(
+                os.environ.get("SV_LLM_LAUNCH_MAX_RUNTIME_SECONDS", "900") or 900
+            ),
+        },
+        "openai": {
+            "max_active": int(os.environ.get("SV_OPENAI_MAX_ACTIVE", "1") or 1),
+            "max_jobs": int(os.environ.get("SV_OPENAI_LAUNCH_MAX_JOBS", "2") or 2),
+            "max_runtime_seconds": int(
+                os.environ.get("SV_OPENAI_LAUNCH_MAX_RUNTIME_SECONDS", "1200") or 1200
+            ),
+        },
+        "build": {
+            "max_active": 1,
+            "max_jobs": 1,
+            "max_runtime_seconds": int(
+                os.environ.get("SV_BUILD_LAUNCH_MAX_RUNTIME_SECONDS", "5400") or 5400
+            ),
+        },
+    }
+
+
+def _desired_fetch_launches(
+    queues: dict[str, dict[str, int]],
+    policy: dict[str, dict[str, int]],
+) -> int:
+    queued = int(queues.get("fetch", {}).get("queued", 0))
+    if queued <= 0:
+        return 0
+    step = max(1, int(policy["fetch"]["scale_step"]))
+    desired = max(1, (queued + step - 1) // step)
+    desired = min(desired, int(policy["fetch"]["max_active"]))
+    llm_backlog = int(queues.get("llm_local", {}).get("queued", 0))
+    openai_backlog = int(queues.get("openai", {}).get("queued", 0))
+    if llm_backlog >= int(os.environ.get("SV_ORCH_LLM_HIGH_WATERMARK", "50") or 50):
+        desired = min(desired, int(os.environ.get("SV_ORCH_FETCH_SUPPRESS_TO", "1") or 1))
+    if openai_backlog >= int(os.environ.get("SV_ORCH_OPENAI_HIGH_WATERMARK", "20") or 20):
+        desired = min(desired, int(os.environ.get("SV_ORCH_FETCH_SUPPRESS_TO", "1") or 1))
+    return desired
+
+
+def _enqueue_launch_job(
+    conn,
+    logger: logging.Logger,
+    *,
+    queue_name: str,
+    max_jobs: int,
+    max_runtime_seconds: int,
+) -> str:
+    job_type = _RUNNER_LAUNCH_TYPES[queue_name]
+    job_id = enqueue_job(
+        conn,
+        job_type,
+        {
+            "queue_name": queue_name,
+            "max_jobs": max_jobs,
+            "max_runtime_seconds": max_runtime_seconds,
+        },
+    )
+    log_event(
+        logger,
+        logging.INFO,
+        "runner_launch_enqueued",
+        job_id=job_id,
+        queue_name=queue_name,
+        launch_job_type=job_type,
+        max_jobs=max_jobs,
+        max_runtime_seconds=max_runtime_seconds,
+    )
+    return job_id
+
+
+def _tick_runner_launches(conn, logger: logging.Logger) -> int:
+    queues = _queue_summary(conn)
+    policy = _launch_policy()
+    launched = 0
+
+    fetch_target = _desired_fetch_launches(queues, policy)
+    fetch_active = count_pending_jobs(conn, _RUNNER_LAUNCH_TYPES["fetch"])
+    for _ in range(max(0, fetch_target - fetch_active)):
+        _enqueue_launch_job(
+            conn,
+            logger,
+            queue_name="fetch",
+            max_jobs=int(policy["fetch"]["max_jobs"]),
+            max_runtime_seconds=int(policy["fetch"]["max_runtime_seconds"]),
+        )
+        launched += 1
+
+    for queue_name in ("llm_local", "openai"):
+        queued = int(queues.get(queue_name, {}).get("queued", 0))
+        active = count_pending_jobs(conn, _RUNNER_LAUNCH_TYPES[queue_name])
+        if queued <= 0 or active >= int(policy[queue_name]["max_active"]):
+            continue
+        _enqueue_launch_job(
+            conn,
+            logger,
+            queue_name=queue_name,
+            max_jobs=int(policy[queue_name]["max_jobs"]),
+            max_runtime_seconds=int(policy[queue_name]["max_runtime_seconds"]),
+        )
+        launched += 1
+
+    build_queued = int(queues.get("build", {}).get("queued", 0))
+    build_active = count_pending_jobs(conn, _RUNNER_LAUNCH_TYPES["build"])
+    if build_queued > 0 and build_active < 1:
+        _enqueue_launch_job(
+            conn,
+            logger,
+            queue_name="build",
+            max_jobs=int(policy["build"]["max_jobs"]),
+            max_runtime_seconds=int(policy["build"]["max_runtime_seconds"]),
+        )
+        launched += 1
+
+    return launched
+
+
 def run_once(orchestrator_id: str) -> int:
     logger = _setup_logging()
     try:
@@ -188,6 +335,7 @@ def run_once(orchestrator_id: str) -> int:
         _maybe_enqueue_cve_sync(conn, logger)
         _maybe_enqueue_auto_catchup(conn, config, logger, orchestrator_id, None)
         builds = _tick_build_admission(conn, config, logger)
+        launches = _tick_runner_launches(conn, logger)
         _log_queue_stats(conn, logger)
         log_event(
             logger,
@@ -195,6 +343,7 @@ def run_once(orchestrator_id: str) -> int:
             "orchestrator_tick_complete",
             scheduled_jobs=scheduled,
             build_jobs=builds,
+            launch_jobs=launches,
         )
         return 0
     finally:

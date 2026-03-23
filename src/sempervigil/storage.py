@@ -24,6 +24,10 @@ from psycopg import errors as pg_errors
 _CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
 
 _QUEUE_NAME_BY_JOB_TYPE: dict[str, str] = {
+    "launch_fetch_worker": "control",
+    "launch_llm_worker": "control",
+    "launch_openai_worker": "control",
+    "launch_build_worker": "control",
     "ingest_due_sources": "discovery",
     "source_acquire": "discovery",
     "test_source": "discovery",
@@ -2210,6 +2214,20 @@ def has_pending_queue_job(conn: Any, queue_name: str) -> bool:
         (queue_name,),
     )
     return cursor.fetchone() is not None
+
+
+def count_pending_jobs(conn: Any, job_type: str) -> int:
+    cursor = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM jobs
+        WHERE job_type = %s
+          AND status IN ('queued', 'running')
+        """,
+        (job_type,),
+    )
+    row = cursor.fetchone()
+    return int(row[0] or 0) if row else 0
 
 
 def get_queue_stats(conn: Any) -> list[dict[str, object]]:

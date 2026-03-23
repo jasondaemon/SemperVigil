@@ -85,6 +85,16 @@ def test_enqueue_job_sets_queue_name(tmp_path):
     assert row[0] == "openai"
 
 
+def test_enqueue_launch_job_sets_control_queue(tmp_path):
+    conn = init_db()
+
+    job_id = enqueue_job(conn, "launch_fetch_worker", {"queue_name": "fetch"})
+    row = conn.execute("SELECT queue_name FROM jobs WHERE id = %s", (job_id,)).fetchone()
+
+    assert row is not None
+    assert row[0] == "control"
+
+
 def test_claim_next_job_can_filter_by_queue(tmp_path):
     conn = init_db()
 
