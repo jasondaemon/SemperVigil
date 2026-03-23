@@ -1466,7 +1466,12 @@ def get_dashboard_metrics(conn: Any) -> dict[str, object]:
             job_counts[job_type]["running"] = max(int(count or 0), int(current or 0))
     metrics["job_counts_by_type_status"] = job_counts
     failures_since = get_setting(conn, "dashboard_failures_since", None)
-    counts_since = get_setting(conn, "dashboard_job_counts_since", None) or failures_since
+    counts_since = get_setting(conn, "dashboard_job_counts_since", None)
+    # Older builds reused the failures reset marker as the completion-count
+    # window. That makes the "Complete" bucket look dead after a reset even
+    # while jobs are finishing. Treat that legacy state as unset.
+    if counts_since and failures_since and counts_since == failures_since:
+        counts_since = None
     if counts_since and _table_exists(conn, "jobs"):
         for job_type in list(job_counts.keys()):
             if "failed" in job_counts[job_type]:
