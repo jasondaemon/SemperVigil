@@ -36,6 +36,8 @@ spec:
           env:
             - name: SV_LOG_FILE
               value: /log/builder.log
+            - name: SV_BUILDER_LEASE_SECONDS
+              value: "3600"
             - name: SV_DB_URL
               valueFrom:
                 secretKeyRef:

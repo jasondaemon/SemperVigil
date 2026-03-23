@@ -84,8 +84,10 @@ spec:
               value: http://127.0.0.1:8888
             - name: NO_PROXY
               value: {{ .Values.workerFetch.noProxy | quote }}
-            - name: SV_WORKER_ONLY_TYPES
-              value: "ingest_due_sources,ingest_source,fetch_article_content,cve_sync,cve_enrich_kev,enrich_event_from_web,validate_event_web_source,promote_event_web_source_to_article,events_rebuild,article_products_backfill,article_threat_actors_backfill,cve_threat_actors_backfill,rebuild_vendor_products,source_acquire"
+            - name: SV_WORKER_QUEUE
+              value: "fetch"
+            - name: SV_WORKER_SCHEDULER_HOOKS_ENABLED
+              value: "0"
             - name: SEMPERVIGIL_MASTER_KEY
               valueFrom:
                 secretKeyRef:

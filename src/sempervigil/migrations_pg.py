@@ -373,6 +373,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_events_publish_034")
             applied.add("pg_events_publish_034")
+        if "pg_jobs_stage_035" not in applied:
+            _migrate_jobs_stage_fields(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_jobs_stage_035", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_jobs_stage_035")
+            applied.add("pg_jobs_stage_035")
         else:
             conn.commit()
         return
@@ -4983,4 +4992,65 @@ def _migrate_events_publish_fields(conn) -> None:
            OR (publish_state = 'draft' AND COALESCE(lifecycle, status, '') IN ('confirmed', 'active', 'open'))
         """,
         (utc_now_iso(),),
+    )
+
+
+def _migrate_jobs_stage_fields(conn) -> None:
+    if not _table_exists(conn, "jobs"):
+        return
+    conn.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS queue_name TEXT NULL")
+    conn.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0")
+    conn.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 0")
+    conn.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS available_at TEXT NULL")
+    conn.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS heartbeat_at TEXT NULL")
+    conn.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS lease_expires_at TEXT NULL")
+    conn.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS parent_job_id TEXT NULL")
+    conn.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS dedupe_key TEXT NULL")
+    conn.execute(
+        """
+        UPDATE jobs
+        SET queue_name = CASE job_type
+            WHEN 'ingest_due_sources' THEN 'discovery'
+            WHEN 'source_acquire' THEN 'discovery'
+            WHEN 'test_source' THEN 'discovery'
+            WHEN 'cve_sync' THEN 'discovery'
+            WHEN 'ingest_source' THEN 'fetch'
+            WHEN 'fetch_article_content' THEN 'fetch'
+            WHEN 'cve_enrich_kev' THEN 'fetch'
+            WHEN 'enrich_event_from_web' THEN 'fetch'
+            WHEN 'validate_event_web_source' THEN 'fetch'
+            WHEN 'promote_event_web_source_to_article' THEN 'fetch'
+            WHEN 'events_rebuild' THEN 'fetch'
+            WHEN 'article_products_backfill' THEN 'fetch'
+            WHEN 'article_threat_actors_backfill' THEN 'fetch'
+            WHEN 'cve_threat_actors_backfill' THEN 'fetch'
+            WHEN 'rebuild_vendor_products' THEN 'fetch'
+            WHEN 'summarize_article_llm' THEN 'llm_local'
+            WHEN 'summarize_article_context_llm' THEN 'llm_local'
+            WHEN 'derive_events_from_articles' THEN 'llm_local'
+            WHEN 'article_enrich_products' THEN 'llm_local'
+            WHEN 'article_enrich_threat_actors' THEN 'llm_local'
+            WHEN 'cve_enrich_llm' THEN 'llm_local'
+            WHEN 'cve_enrich_threat_actors' THEN 'llm_local'
+            WHEN 'enrich_event_summary_llm' THEN 'llm_local'
+            WHEN 'event_report_llm' THEN 'llm_local'
+            WHEN 'build_daily_brief' THEN 'openai'
+            WHEN 'write_article_markdown' THEN 'publish'
+            WHEN 'build_site' THEN 'build'
+            WHEN 'smoke_test' THEN 'ops'
+            ELSE 'default'
+        END
+        WHERE COALESCE(queue_name, '') = ''
+        """
+    )
+    conn.execute("UPDATE jobs SET available_at = COALESCE(available_at, requested_at)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_queue_claim ON jobs (queue_name, status, available_at, requested_at)"
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_jobs_queue_inflight
+        ON jobs (queue_name, lease_expires_at)
+        WHERE status = 'running'
+        """
     )

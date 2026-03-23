@@ -43,8 +43,10 @@ spec:
                   key: {{ default "url" .Values.externalDatabase.urlKey }}
             - name: SV_WORKER_PROVIDER_SCOPE
               value: "openai"
-            - name: SV_WORKER_ONLY_TYPES
-              value: "build_daily_brief"
+            - name: SV_WORKER_QUEUE
+              value: "openai"
+            - name: SV_WORKER_SCHEDULER_HOOKS_ENABLED
+              value: "0"
             - name: SV_DAILY_BRIEF_MODE
               value: "single"
             - name: SV_LLM_MAX_INFLIGHT

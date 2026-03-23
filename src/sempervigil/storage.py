@@ -23,9 +23,67 @@ from psycopg import errors as pg_errors
 
 _CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
 
+_QUEUE_NAME_BY_JOB_TYPE: dict[str, str] = {
+    "ingest_due_sources": "discovery",
+    "source_acquire": "discovery",
+    "test_source": "discovery",
+    "cve_sync": "discovery",
+    "ingest_source": "fetch",
+    "fetch_article_content": "fetch",
+    "cve_enrich_kev": "fetch",
+    "enrich_event_from_web": "fetch",
+    "validate_event_web_source": "fetch",
+    "promote_event_web_source_to_article": "fetch",
+    "events_rebuild": "fetch",
+    "article_products_backfill": "fetch",
+    "article_threat_actors_backfill": "fetch",
+    "cve_threat_actors_backfill": "fetch",
+    "rebuild_vendor_products": "fetch",
+    "summarize_article_llm": "llm_local",
+    "summarize_article_context_llm": "llm_local",
+    "derive_events_from_articles": "llm_local",
+    "article_enrich_products": "llm_local",
+    "article_enrich_threat_actors": "llm_local",
+    "cve_enrich_llm": "llm_local",
+    "cve_enrich_threat_actors": "llm_local",
+    "enrich_event_summary_llm": "llm_local",
+    "event_report_llm": "llm_local",
+    "build_daily_brief": "openai",
+    "write_article_markdown": "publish",
+    "build_site": "build",
+    "smoke_test": "ops",
+}
+
+_JOB_SELECT_COLUMNS = """
+id,
+job_type,
+status,
+payload_json,
+result_json,
+requested_at,
+started_at,
+finished_at,
+locked_by,
+locked_at,
+error,
+priority,
+queue_name,
+attempt_count,
+max_attempts,
+available_at,
+heartbeat_at,
+lease_expires_at,
+parent_job_id,
+dedupe_key
+"""
+
 
 def init_db():
     return connect_db()
+
+
+def get_queue_name_for_job_type(job_type: str) -> str:
+    return _QUEUE_NAME_BY_JOB_TYPE.get(job_type, "default")
 
 
 def _reset_serial_sequence(conn: Any, table: str, column: str) -> None:
@@ -1311,6 +1369,12 @@ def enqueue_job(
     priority: int = 0,
     debounce: bool = False,
     dedupe: bool = False,
+    *,
+    queue_name: str | None = None,
+    max_attempts: int = 0,
+    available_at: str | None = None,
+    parent_job_id: str | None = None,
+    dedupe_key: str | None = None,
 ) -> str:
     if debounce and _has_pending_job(conn, job_type):
         return _get_latest_job_id(conn, job_type)
@@ -1321,12 +1385,14 @@ def enqueue_job(
             return existing
     job_id = _new_job_id()
     now = utc_now_iso()
+    queue_name = queue_name or get_queue_name_for_job_type(job_type)
     conn.execute(
         """
         INSERT INTO jobs
             (id, job_type, status, priority, payload_json, result_json, requested_at, started_at,
-             finished_at, locked_by, locked_at, error)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             finished_at, locked_by, locked_at, error, queue_name, attempt_count, max_attempts,
+             available_at, heartbeat_at, lease_expires_at, parent_job_id, dedupe_key)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             job_id,
@@ -1341,6 +1407,14 @@ def enqueue_job(
             None,
             None,
             None,
+            queue_name,
+            0,
+            int(max_attempts or 0),
+            available_at or now,
+            None,
+            None,
+            parent_job_id,
+            dedupe_key,
         ),
     )
     conn.commit()
@@ -1372,8 +1446,7 @@ def list_jobs_filtered(
     offset = max(page - 1, 0) * page_size
     cursor = conn.execute(
         f"""
-        SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
-               finished_at, locked_by, locked_at, error, priority
+        SELECT {_JOB_SELECT_COLUMNS}
         FROM jobs
         {where_sql}
         ORDER BY requested_at DESC
@@ -1386,9 +1459,8 @@ def list_jobs_filtered(
 
 def list_jobs(conn: Any, limit: int = 50) -> list[Job]:
     cursor = conn.execute(
-        """
-        SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
-               finished_at, locked_by, locked_at, error, priority
+        f"""
+        SELECT {_JOB_SELECT_COLUMNS}
         FROM jobs
         ORDER BY requested_at DESC
         LIMIT %s
@@ -1739,9 +1811,8 @@ def get_last_job_by_type(conn: Any, job_type: str) -> Job | None:
     if not _table_exists(conn, "jobs"):
         return None
     row = conn.execute(
-        """
-        SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
-               finished_at, locked_by, locked_at, error, priority
+        f"""
+        SELECT {_JOB_SELECT_COLUMNS}
         FROM jobs
         WHERE job_type = %s
         ORDER BY requested_at DESC
@@ -1756,9 +1827,8 @@ def get_job(conn: Any, job_id: str) -> Job | None:
     if not _table_exists(conn, "jobs"):
         return None
     row = conn.execute(
-        """
-        SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
-               finished_at, locked_by, locked_at, error, priority
+        f"""
+        SELECT {_JOB_SELECT_COLUMNS}
         FROM jobs
         WHERE id = %s
         """,
@@ -1775,8 +1845,7 @@ def list_jobs_by_types_since(
     placeholders = ",".join("%s" for _ in types)
     cursor = conn.execute(
         f"""
-        SELECT id, job_type, status, payload_json, result_json, requested_at, started_at,
-               finished_at, locked_by, locked_at, error, priority
+        SELECT {_JOB_SELECT_COLUMNS}
         FROM jobs
         WHERE requested_at >= %s AND job_type IN ({placeholders})
         ORDER BY requested_at ASC
@@ -2001,14 +2070,17 @@ def release_job(
         UPDATE jobs
         SET status = 'queued',
             requested_at = %s,
+            available_at = %s,
             started_at = NULL,
             finished_at = NULL,
             locked_by = NULL,
             locked_at = NULL,
+            heartbeat_at = NULL,
+            lease_expires_at = NULL,
             error = %s
         WHERE id = %s AND status = 'running'
         """,
-        (next_run, reason, job_id),
+        (next_run, next_run, reason, job_id),
     )
     conn.commit()
     return cursor.rowcount == 1
@@ -2073,6 +2145,98 @@ def enqueue_build_site_if_needed(
         debounce_seconds,
     )
     return job_id
+
+
+def mark_build_dirty(
+    conn: Any,
+    *,
+    reason: str | None = None,
+    metadata: dict[str, object] | None = None,
+) -> None:
+    current = get_setting(conn, "build_site.state", {}) or {}
+    if not isinstance(current, dict):
+        current = {}
+    reasons = current.get("reasons") or []
+    if not isinstance(reasons, list):
+        reasons = []
+    if reason and reason not in reasons:
+        reasons.append(reason)
+    current.update(
+        {
+            "dirty": True,
+            "requested_at": current.get("requested_at") or utc_now_iso(),
+            "last_dirty_at": utc_now_iso(),
+            "reasons": reasons,
+        }
+    )
+    if metadata:
+        current["metadata"] = metadata
+    set_setting(conn, "build_site.state", current)
+
+
+def get_build_state(conn: Any) -> dict[str, object]:
+    state = get_setting(conn, "build_site.state", {}) or {}
+    return state if isinstance(state, dict) else {}
+
+
+def clear_build_dirty(
+    conn: Any,
+    *,
+    finished_at: str | None = None,
+    build_job_id: str | None = None,
+) -> None:
+    state = get_build_state(conn)
+    state.update(
+        {
+            "dirty": False,
+            "requested_at": None,
+            "last_built_at": finished_at or utc_now_iso(),
+            "last_build_job_id": build_job_id,
+            "reasons": [],
+        }
+    )
+    set_setting(conn, "build_site.state", state)
+
+
+def has_pending_queue_job(conn: Any, queue_name: str) -> bool:
+    cursor = conn.execute(
+        """
+        SELECT 1
+        FROM jobs
+        WHERE queue_name = %s
+          AND status IN ('queued', 'running')
+        LIMIT 1
+        """,
+        (queue_name,),
+    )
+    return cursor.fetchone() is not None
+
+
+def get_queue_stats(conn: Any) -> list[dict[str, object]]:
+    if not _table_exists(conn, "jobs"):
+        return []
+    cursor = conn.execute(
+        """
+        SELECT queue_name,
+               COUNT(*) FILTER (WHERE status = 'queued') AS queued_count,
+               COUNT(*) FILTER (WHERE status = 'running') AS running_count,
+               MIN(requested_at) FILTER (WHERE status = 'queued') AS oldest_requested_at
+        FROM jobs
+        GROUP BY queue_name
+        ORDER BY queue_name
+        """
+    )
+    rows: list[dict[str, object]] = []
+    for queue_name, queued_count, running_count, oldest_requested_at in cursor.fetchall():
+        rows.append(
+            {
+                "queue_name": queue_name or "default",
+                "queued": int(queued_count or 0),
+                "running": int(running_count or 0),
+                "oldest_requested_at": oldest_requested_at,
+            }
+        )
+    return rows
 
 
 def has_pending_article_job(
@@ -2825,17 +2989,26 @@ def claim_next_job(
     worker_id: str,
     allowed_types: list[str] | None = None,
     lock_timeout_seconds: int | None = None,
+    allowed_queues: list[str] | None = None,
+    lease_seconds: int | None = None,
 ) -> Job | None:
     if allowed_types is not None and not allowed_types:
+        return None
+    if allowed_queues is not None and not allowed_queues:
         return None
     for _ in range(20):
         with conn.transaction():
             stale_params: list[object] = []
             stale_type_clause = ""
+            stale_queue_clause = ""
             if allowed_types is not None:
                 stale_placeholders = ",".join(["%s"] * len(allowed_types))
                 stale_type_clause = f" AND job_type IN ({stale_placeholders})"
                 stale_params.extend(allowed_types)
+            if allowed_queues is not None:
+                stale_placeholders = ",".join(["%s"] * len(allowed_queues))
+                stale_queue_clause = f" AND queue_name IN ({stale_placeholders})"
+                stale_params.extend(allowed_queues)
             if lock_timeout_seconds is not None:
                 cutoff = utc_now_iso_offset(seconds=-lock_timeout_seconds)
                 conn.execute(
@@ -2844,39 +3017,61 @@ def claim_next_job(
                     SET status = 'queued',
                         locked_by = NULL,
                         locked_at = NULL,
+                        heartbeat_at = NULL,
+                        lease_expires_at = NULL,
                         started_at = NULL,
+                        available_at = COALESCE(available_at, requested_at, %s),
                         error = 'stale_lock_requeued'
                     WHERE status = 'running'
-                      AND locked_at IS NOT NULL
-                      AND locked_at < %s
+                      AND COALESCE(lease_expires_at, locked_at) IS NOT NULL
+                      AND COALESCE(lease_expires_at, locked_at) < %s
                       {stale_type_clause}
+                      {stale_queue_clause}
                     """,
-                    tuple([cutoff] + stale_params),
+                    tuple([utc_now_iso(), cutoff] + stale_params),
                 )
             params: list[object] = []
             type_clause = ""
+            queue_clause = ""
             if allowed_types is not None:
                 placeholders = ",".join(["%s"] * len(allowed_types))
                 type_clause = f" AND job_type IN ({placeholders})"
                 params.extend(allowed_types)
+            if allowed_queues is not None:
+                placeholders = ",".join(["%s"] * len(allowed_queues))
+                queue_clause = f" AND queue_name IN ({placeholders})"
+                params.extend(allowed_queues)
             now = utc_now_iso()
+            lease_expires_at = (
+                utc_now_iso_offset(seconds=lease_seconds)
+                if lease_seconds is not None and lease_seconds > 0
+                else None
+            )
             cursor = conn.execute(
                 f"""
                 WITH next_job AS (
                     SELECT id
                     FROM jobs
-                    WHERE status = 'queued' AND locked_by IS NULL {type_clause}
+                    WHERE status = 'queued'
+                      AND locked_by IS NULL
+                      AND COALESCE(available_at, requested_at) <= %s
+                      {type_clause}
+                      {queue_clause}
                     ORDER BY priority DESC, requested_at ASC
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                 )
                 UPDATE jobs
-                SET status = 'running', started_at = %s, locked_by = %s, locked_at = %s
+                SET status = 'running',
+                    started_at = %s,
+                    locked_by = %s,
+                    locked_at = %s,
+                    heartbeat_at = %s,
+                    lease_expires_at = %s
                 WHERE id IN (SELECT id FROM next_job)
-                RETURNING id, job_type, status, payload_json, result_json, requested_at, started_at,
-                          finished_at, locked_by, locked_at, error, priority
+                RETURNING {_JOB_SELECT_COLUMNS}
                 """,
-                tuple(params + [now, worker_id, now]),
+                tuple([now] + params + [now, worker_id, now, now, lease_expires_at]),
             )
             row = cursor.fetchone()
             if not row:
@@ -2893,12 +3088,15 @@ def claim_next_job(
                     UPDATE jobs
                     SET status = 'queued',
                         requested_at = %s,
+                        available_at = %s,
                         started_at = NULL,
                         locked_by = NULL,
-                        locked_at = NULL
+                        locked_at = NULL,
+                        heartbeat_at = NULL,
+                        lease_expires_at = NULL
                     WHERE id = %s AND status = 'running'
                     """,
-                    (not_before, row[0]),
+                    (not_before, not_before, row[0]),
                 )
                 continue
             job = _row_to_job(row)
@@ -2915,8 +3113,34 @@ def claim_next_job(
                 locked_by=worker_id,
                 locked_at=now,
                 error=job.error,
+                queue_name=job.queue_name,
+                attempt_count=job.attempt_count,
+                max_attempts=job.max_attempts,
+                available_at=job.available_at,
+                heartbeat_at=now,
+                lease_expires_at=lease_expires_at,
+                parent_job_id=job.parent_job_id,
+                dedupe_key=job.dedupe_key,
             )
     return None
+
+
+def heartbeat_job(conn: Any, job_id: str, worker_id: str, lease_seconds: int) -> bool:
+    now = utc_now_iso()
+    lease_expires_at = utc_now_iso_offset(seconds=max(1, int(lease_seconds or 1)))
+    cursor = conn.execute(
+        """
+        UPDATE jobs
+        SET heartbeat_at = %s,
+            lease_expires_at = %s
+        WHERE id = %s
+          AND status = 'running'
+          AND locked_by = %s
+        """,
+        (now, lease_expires_at, job_id, worker_id),
+    )
+    conn.commit()
+    return cursor.rowcount == 1
 
 
 def try_acquire_lease(
@@ -2951,7 +3175,12 @@ def complete_job(
     cursor = conn.execute(
         """
         UPDATE jobs
-        SET status = 'succeeded', finished_at = %s, error = NULL, result_json = %s
+        SET status = 'succeeded',
+            finished_at = %s,
+            error = NULL,
+            result_json = %s,
+            heartbeat_at = NULL,
+            lease_expires_at = NULL
         WHERE id = %s AND status = 'running'
         """,
         (now, json_dumps(result) if result else None, job_id),
@@ -2965,7 +3194,11 @@ def fail_job(conn: Any, job_id: str, error: str) -> bool:
     cursor = conn.execute(
         """
         UPDATE jobs
-        SET status = 'failed', finished_at = %s, error = %s
+        SET status = 'failed',
+            finished_at = %s,
+            error = %s,
+            heartbeat_at = NULL,
+            lease_expires_at = NULL
         WHERE id = %s AND status = 'running'
         """,
         (now, error, job_id),
@@ -2999,16 +3232,19 @@ def requeue_job(
         UPDATE jobs
         SET status = 'queued',
             requested_at = %s,
+            available_at = %s,
             payload_json = %s,
             result_json = NULL,
             started_at = NULL,
             finished_at = NULL,
             locked_by = NULL,
             locked_at = NULL,
+            heartbeat_at = NULL,
+            lease_expires_at = NULL,
             error = NULL
         WHERE id = %s AND status = 'running'
         """,
-        (requested_at, json_dumps(payload), job_id),
+        (requested_at, requested_at, json_dumps(payload), job_id),
     )
     conn.commit()
     return cursor.rowcount == 1
@@ -3100,20 +3336,52 @@ def _row_to_tactic(row: tuple) -> SourceTactic:
 
 
 def _row_to_job(row: tuple) -> Job:
-    (
-        job_id,
-        job_type,
-        status,
-        payload_json,
-        result_json,
-        requested_at,
-        started_at,
-        finished_at,
-        locked_by,
-        locked_at,
-        error,
-        priority,
-    ) = row
+    if len(row) >= 20:
+        (
+            job_id,
+            job_type,
+            status,
+            payload_json,
+            result_json,
+            requested_at,
+            started_at,
+            finished_at,
+            locked_by,
+            locked_at,
+            error,
+            priority,
+            queue_name,
+            attempt_count,
+            max_attempts,
+            available_at,
+            heartbeat_at,
+            lease_expires_at,
+            parent_job_id,
+            dedupe_key,
+        ) = row[:20]
+    else:
+        (
+            job_id,
+            job_type,
+            status,
+            payload_json,
+            result_json,
+            requested_at,
+            started_at,
+            finished_at,
+            locked_by,
+            locked_at,
+            error,
+            priority,
+        ) = row
+        queue_name = get_queue_name_for_job_type(str(job_type or ""))
+        attempt_count = 0
+        max_attempts = 0
+        available_at = requested_at
+        heartbeat_at = None
+        lease_expires_at = None
+        parent_job_id = None
+        dedupe_key = None
     try:
         payload = json.loads(payload_json) if payload_json else {}
     except json.JSONDecodeError:
@@ -3135,6 +3403,14 @@ def _row_to_job(row: tuple) -> Job:
         locked_by=locked_by,
         locked_at=locked_at,
         error=error,
+        queue_name=queue_name,
+        attempt_count=int(attempt_count or 0),
+        max_attempts=int(max_attempts or 0),
+        available_at=available_at,
+        heartbeat_at=heartbeat_at,
+        lease_expires_at=lease_expires_at,
+        parent_job_id=parent_job_id,
+        dedupe_key=dedupe_key,
     )
 
 

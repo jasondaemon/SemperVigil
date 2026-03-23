@@ -58,7 +58,6 @@ from .storage import (
     claim_next_job,
     complete_job,
     enqueue_job,
-    enqueue_build_site_if_needed,
     fail_job,
     fail_job_force,
     get_source,
@@ -166,6 +165,7 @@ from .storage import (
     mark_article_threat_actors_checked,
     mark_cve_products_checked,
     mark_cve_threat_actors_checked,
+    mark_build_dirty,
     get_pending_job_id_for_cve,
     list_queued_job_stats,
     search_cves,
@@ -215,6 +215,36 @@ WORKER_JOB_TYPES = [
     "smoke_test",
 ]
 
+QUEUE_WORKER_TYPES = {
+    "discovery": ["ingest_due_sources", "test_source", "cve_sync", "source_acquire", "smoke_test"],
+    "fetch": [
+        "ingest_source",
+        "fetch_article_content",
+        "cve_enrich_kev",
+        "events_rebuild",
+        "enrich_event_from_web",
+        "validate_event_web_source",
+        "promote_event_web_source_to_article",
+        "rebuild_vendor_products",
+    ],
+    "llm_local": [
+        "summarize_article_llm",
+        "summarize_article_context_llm",
+        "derive_events_from_articles",
+        "article_enrich_products",
+        "article_enrich_threat_actors",
+        "cve_enrich_llm",
+        "cve_enrich_threat_actors",
+        "event_report_llm",
+        "enrich_event_summary_llm",
+        "article_products_backfill",
+        "article_threat_actors_backfill",
+        "cve_threat_actors_backfill",
+    ],
+    "openai": ["build_daily_brief"],
+    "build": ["write_article_markdown"],
+}
+
 _AUTO_CATCHUP_JOB_TYPES = {
     "fetch_article_content",
     "summarize_article_llm",
@@ -228,6 +258,7 @@ _AUTO_CATCHUP_JOB_TYPES = {
 }
 _AUTO_CATCHUP_BATCH_LIMIT = 200
 _AUTO_CATCHUP_LEASE = "auto_catchup_enqueue"
+_RUN_ONCE_IDLE = 3
 HANDLED_JOB_TYPES = {
     "ingest_source",
     "ingest_due_sources",
@@ -3489,7 +3520,13 @@ def _infer_topic_type(topic: dict[str, object]) -> str:
     return "operational"
 
 
-def run_once(worker_id: str, allowed_types: list[str] | None = None) -> int:
+def run_once(
+    worker_id: str,
+    allowed_types: list[str] | None = None,
+    *,
+    queue_name: str | None = None,
+    lease_seconds: int | None = None,
+) -> int:
     logger = _setup_logging()
     try:
         conn = init_db()
@@ -3503,10 +3540,11 @@ def run_once(worker_id: str, allowed_types: list[str] | None = None) -> int:
 
     set_umask_from_env()
     ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir, config.paths.logs_dir))
-    if _should_tick_ingest_due(allowed_types):
-        _maybe_enqueue_ingest_due_sources(conn, logger)
-    _maybe_enqueue_cve_sync(conn, logger)
-    _maybe_enqueue_auto_catchup(conn, config, logger, worker_id, allowed_types)
+    if _scheduler_hooks_enabled():
+        if _should_tick_ingest_due(allowed_types):
+            _maybe_enqueue_ingest_due_sources(conn, logger)
+        _maybe_enqueue_cve_sync(conn, logger)
+        _maybe_enqueue_auto_catchup(conn, config, logger, worker_id, allowed_types)
     claim_types = WORKER_JOB_TYPES if allowed_types is None else allowed_types
     if not is_article_markdown_enabled() and allowed_types:
         if "write_article_markdown" not in claim_types:
@@ -3518,10 +3556,12 @@ def run_once(worker_id: str, allowed_types: list[str] | None = None) -> int:
             conn,
             worker_id,
             allowed_types=claim_types,
+            allowed_queues=[queue_name] if queue_name else None,
             lock_timeout_seconds=lock_timeout,
+            lease_seconds=lease_seconds,
         )
         if not job:
-            return 0
+            return _RUN_ONCE_IDLE
         if provider_scope in {"openai", "non_openai"} and job.job_type in _LLM_JOB_TYPES:
             uses_openai = _job_uses_openai(conn, job)
             if provider_scope == "openai" and not uses_openai:
@@ -3704,10 +3744,33 @@ def run_loop(
     sleep_seconds: int,
     allowed_types: list[str] | None = None,
     concurrency: int = 1,
+    *,
+    queue_name: str | None = None,
+    max_jobs: int | None = None,
+    max_runtime_seconds: int | None = None,
+    lease_seconds: int | None = None,
 ) -> int:
+    started = time.monotonic()
+    claimed_jobs = 0
     if concurrency <= 1:
         while True:
-            run_once(worker_id, allowed_types)
+            result = run_once(
+                worker_id,
+                allowed_types,
+                queue_name=queue_name,
+                lease_seconds=lease_seconds,
+            )
+            if result != _RUN_ONCE_IDLE:
+                claimed_jobs += 1
+            elif claimed_jobs == 0 and max_jobs is None and max_runtime_seconds is None:
+                time.sleep(sleep_seconds)
+                continue
+            elif result == _RUN_ONCE_IDLE:
+                return 0
+            if max_jobs is not None and claimed_jobs >= max_jobs:
+                return 0
+            if max_runtime_seconds is not None and (time.monotonic() - started) >= max_runtime_seconds:
+                return 0
             time.sleep(sleep_seconds)
         return 0
 
@@ -3728,21 +3791,29 @@ def run_loop(
                 _log_vendor_product_schema(conn, logger)
                 set_umask_from_env()
                 ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir, config.paths.logs_dir))
-                if _should_tick_ingest_due(allowed_types):
-                    _maybe_enqueue_ingest_due_sources(conn, logger)
-                _maybe_enqueue_cve_sync(conn, logger)
-                _maybe_enqueue_auto_catchup(conn, config, logger, worker_id, allowed_types)
+                if _scheduler_hooks_enabled():
+                    if _should_tick_ingest_due(allowed_types):
+                        _maybe_enqueue_ingest_due_sources(conn, logger)
+                    _maybe_enqueue_cve_sync(conn, logger)
+                    _maybe_enqueue_auto_catchup(conn, config, logger, worker_id, allowed_types)
                 lock_timeout = _llm_lock_timeout_seconds(conn, config, WORKER_JOB_TYPES if allowed_types is None else allowed_types)
                 job = claim_next_job(
                     conn,
                     worker_id,
                     allowed_types=WORKER_JOB_TYPES if allowed_types is None else allowed_types,
+                    allowed_queues=[queue_name] if queue_name else None,
                     lock_timeout_seconds=lock_timeout,
+                    lease_seconds=lease_seconds,
                 )
                 conn.close()
                 if not job:
                     break
                 futures.add(executor.submit(_process_claimed_job_thread, worker_id, job))
+                claimed_jobs += 1
+                if max_jobs is not None and claimed_jobs >= max_jobs:
+                    break
+                if max_runtime_seconds is not None and (time.monotonic() - started) >= max_runtime_seconds:
+                    break
             if futures:
                 done, futures = wait(futures, timeout=sleep_seconds, return_when=FIRST_COMPLETED)
                 for future in done:
@@ -3750,7 +3821,15 @@ def run_loop(
                         future.result()
                     except Exception as exc:  # noqa: BLE001
                         log_event(logger, logging.ERROR, "job_thread_error", error=str(exc))
+                if max_jobs is not None and claimed_jobs >= max_jobs and not futures:
+                    return 0
+                if max_runtime_seconds is not None and (time.monotonic() - started) >= max_runtime_seconds and not futures:
+                    return 0
             else:
+                if max_jobs is not None and claimed_jobs >= max_jobs:
+                    return 0
+                if max_runtime_seconds is not None and (time.monotonic() - started) >= max_runtime_seconds:
+                    return 0
                 time.sleep(sleep_seconds)
 
 
@@ -4312,11 +4391,7 @@ def _handle_fetch_article_content(
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         if has_full_content and _is_article_in_today_feed(conn, config, int(article_id), logger):
             _refresh_feed_data_files(conn, config, logger)
-            enqueue_build_site_if_needed(
-                conn,
-                reason="article_content_ready_today",
-                debounce_seconds=config.jobs.build_debounce_seconds,
-            )
+            mark_build_dirty(conn, reason="article_content_ready_today")
     _maybe_enqueue_article_product_enrich(conn, int(article_id), article["source_id"], logger)
     return {"article_id": article_id, "has_full_content": has_full_content}
 
@@ -5093,11 +5168,7 @@ def _handle_build_daily_brief(
         json_path=result["json_path"],
         content_path=result.get("content_path"),
     )
-    enqueue_build_site_if_needed(
-        conn,
-        reason="build_daily_brief",
-        debounce_seconds=config.jobs.build_debounce_seconds,
-    )
+    mark_build_dirty(conn, reason="build_daily_brief")
     return {"day": day, "count": len(articles), **result}
 
 
@@ -6502,11 +6573,7 @@ def _handle_event_report_llm(
         lifecycle = str(event.get("lifecycle") or event.get("status") or "").lower()
         publish_state = str(event.get("publish_state") or "").lower()
         if publish_state == "published" and lifecycle == "confirmed":
-            enqueue_build_site_if_needed(
-                conn,
-                reason="event_report_update",
-                debounce_seconds=max(30, int(getattr(config.jobs, "build_debounce_seconds", 45))),
-            )
+            mark_build_dirty(conn, reason="event_report_update")
     return {
         "status": "ok" if updated else "skipped",
         "event_id": event_id,
@@ -6852,11 +6919,7 @@ def _handle_cve_sync(
     if events_settings.get("enabled", True):
         _publish_events(conn, config, logger)
     if (result.get("processed") or 0) > 0 or (result.get("changes") or 0) > 0:
-        enqueue_build_site_if_needed(
-            conn,
-            reason="cve_sync_updated",
-            debounce_seconds=config.jobs.build_debounce_seconds,
-        )
+        mark_build_dirty(conn, reason="cve_sync_updated")
         kev_limit = int(result.get("processed") or 0)
         kev_limit = min(kev_limit, 2000) if kev_limit else 500
         enqueue_job(
@@ -8286,6 +8349,48 @@ def _parse_only_types(value: str | None) -> list[str] | None:
     return items or None
 
 
+def _resolve_allowed_types(
+    raw_only_types: str | None,
+    queue_name: str | None,
+    logger: logging.Logger,
+) -> tuple[list[str] | None, str | None]:
+    allowed_types = _parse_only_types(raw_only_types)
+    normalized_queue = (queue_name or "").strip().lower() or None
+    if not normalized_queue:
+        return allowed_types, None
+    queue_types = QUEUE_WORKER_TYPES.get(normalized_queue)
+    if queue_types is None:
+        log_event(
+            logger,
+            logging.WARNING,
+            "worker_unknown_queue",
+            queue_name=normalized_queue,
+        )
+        return [], normalized_queue
+    if allowed_types is None:
+        return list(queue_types), normalized_queue
+    allowed_set = set(allowed_types)
+    filtered = [job_type for job_type in queue_types if job_type in allowed_set]
+    if not filtered:
+        log_event(
+            logger,
+            logging.WARNING,
+            "worker_queue_filtered_empty",
+            queue_name=normalized_queue,
+            only_job_types=allowed_types,
+        )
+    return filtered, normalized_queue
+
+
+def _scheduler_hooks_enabled() -> bool:
+    return os.environ.get("SV_WORKER_SCHEDULER_HOOKS_ENABLED", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _validate_allowed_types(
     allowed_types: list[str] | None,
     raw_value: str | None,
@@ -8346,11 +8451,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--once", action="store_true", help="Run a single job and exit")
     parser.add_argument("--sleep", type=int, default=10, help="Sleep seconds between polls")
     parser.add_argument("--worker-id", default=os.environ.get("HOSTNAME", "worker"))
+    parser.add_argument("--queue", default=os.environ.get("SV_WORKER_QUEUE", ""))
     parser.add_argument("--only-job-types", default=os.environ.get("SV_WORKER_ONLY_TYPES", ""))
     parser.add_argument(
         "--concurrency",
         type=int,
         default=int(os.environ.get("SV_WORKER_CONCURRENCY", "1")),
+    )
+    parser.add_argument(
+        "--max-jobs",
+        type=int,
+        default=int(os.environ.get("SV_WORKER_MAX_JOBS", "0") or 0),
+        help="Drain at most N claimed jobs before exiting (0 = unlimited)",
+    )
+    parser.add_argument(
+        "--max-runtime-seconds",
+        type=int,
+        default=int(os.environ.get("SV_WORKER_MAX_RUNTIME_SECONDS", "0") or 0),
+        help="Drain for at most N seconds before exiting (0 = unlimited)",
+    )
+    parser.add_argument(
+        "--lease-seconds",
+        type=int,
+        default=int(os.environ.get("SV_WORKER_LEASE_SECONDS", "0") or 0),
+        help="Set an explicit lease duration for claimed jobs (0 = default)",
     )
     return parser
 
@@ -8359,11 +8483,29 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     logger = _setup_logging()
-    allowed_types = _parse_only_types(args.only_job_types)
+    allowed_types, queue_name = _resolve_allowed_types(args.only_job_types, args.queue, logger)
     allowed_types = _validate_allowed_types(allowed_types, args.only_job_types, logger)
+    max_jobs = args.max_jobs if args.max_jobs > 0 else None
+    max_runtime_seconds = args.max_runtime_seconds if args.max_runtime_seconds > 0 else None
+    lease_seconds = args.lease_seconds if args.lease_seconds > 0 else None
     if args.once:
-        return run_once(args.worker_id, allowed_types)
-    return run_loop(args.worker_id, args.sleep, allowed_types, args.concurrency)
+        result = run_once(
+            args.worker_id,
+            allowed_types,
+            queue_name=queue_name,
+            lease_seconds=lease_seconds,
+        )
+        return 0 if result == _RUN_ONCE_IDLE else result
+    return run_loop(
+        args.worker_id,
+        args.sleep,
+        allowed_types,
+        args.concurrency,
+        queue_name=queue_name,
+        max_jobs=max_jobs,
+        max_runtime_seconds=max_runtime_seconds,
+        lease_seconds=lease_seconds,
+    )
 
 
 def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, object]:
@@ -8411,7 +8553,7 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         if result.get("status") != "skipped" and not has_pending_job(
             conn, "write_article_markdown", exclude_job_id=job.id
         ):
-            enqueue_build_site_if_needed(conn, reason="write_article_markdown", debounce_seconds=config.jobs.build_debounce_seconds)
+            mark_build_dirty(conn, reason="write_article_markdown")
         return result
     if job.job_type == "derive_events_from_articles":
         return _handle_derive_events_from_articles(conn, config, job.payload or {}, logger)

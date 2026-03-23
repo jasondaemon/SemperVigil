@@ -11,12 +11,13 @@ from datetime import datetime, timedelta, timezone
 from .config import ConfigError, load_runtime_config
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .storage import (
+    clear_build_dirty,
     claim_next_job,
     complete_job,
     fail_job,
+    heartbeat_job,
     init_db,
     is_job_canceled,
-    requeue_job,
 )
 from .utils import configure_logging, log_event
 
@@ -95,7 +96,7 @@ def _build_log_paths(logs_dir: str, job_id: str) -> dict[str, Path]:
 
 
 def _run_hugo_until_done(
-    conn, job_id: str, log_paths: dict[str, Path]
+    conn, job_id: str, builder_id: str, log_paths: dict[str, Path], lease_seconds: int
 ) -> tuple[int, str, str, bool, list[str]]:
     cmd = ["/bin/sh", "/tools/hugo-build.sh"]
     stdout_path = log_paths["stdout"]
@@ -109,6 +110,7 @@ def _run_hugo_until_done(
             text=True,
         )
     canceled = False
+    last_heartbeat = 0.0
     while True:
         if is_job_canceled(conn, job_id):
             canceled = True
@@ -120,6 +122,10 @@ def _run_hugo_until_done(
             break
         if proc.poll() is not None:
             break
+        now = time.monotonic()
+        if now - last_heartbeat >= 15:
+            heartbeat_job(conn, job_id, builder_id, lease_seconds)
+            last_heartbeat = now
         time.sleep(0.5)
     proc.wait()
     stdout = _tail_file(stdout_path)
@@ -207,11 +213,17 @@ def run_once(builder_id: str) -> int:
             source_dir = None
     if source_dir:
         _sanitize_product_pages(source_dir)
+    lease_seconds = max(
+        int(os.environ.get("SV_BUILDER_LEASE_SECONDS", "0") or 0),
+        int(config.jobs.lock_timeout_seconds or 0),
+    ) or 3600
     job = claim_next_job(
         conn,
         builder_id,
         allowed_types=["build_site"],
+        allowed_queues=["build"],
         lock_timeout_seconds=config.jobs.lock_timeout_seconds,
+        lease_seconds=lease_seconds,
     )
     if not job:
         return 0
@@ -219,24 +231,6 @@ def run_once(builder_id: str) -> int:
     if is_job_canceled(conn, job.id):
         log_event(logger, logging.INFO, "build_canceled", job_id=job.id)
         return 0
-
-    debounce_seconds = int(config.jobs.build_debounce_seconds)
-    if debounce_seconds > 0:
-        last_finished = _last_successful_build_at(conn)
-        if last_finished:
-            next_time = last_finished + timedelta(seconds=debounce_seconds)
-            if datetime.now(tz=timezone.utc) < next_time:
-                payload = dict(job.payload or {})
-                payload["not_before"] = next_time.isoformat()
-                requeue_job(conn, job.id, payload, payload["not_before"])
-                log_event(
-                    logger,
-                    logging.INFO,
-                    "build_debounced",
-                    job_id=job.id,
-                    not_before=payload["not_before"],
-                )
-                return 0
 
     log_paths = _build_log_paths(config.paths.logs_dir, job.id)
     log_event(
@@ -249,7 +243,13 @@ def run_once(builder_id: str) -> int:
     )
     start = time.time()
     try:
-        returncode, stdout, stderr, canceled, cmd = _run_hugo_until_done(conn, job.id, log_paths)
+        returncode, stdout, stderr, canceled, cmd = _run_hugo_until_done(
+            conn,
+            job.id,
+            builder_id,
+            log_paths,
+            lease_seconds,
+        )
     except Exception as exc:  # noqa: BLE001
         fail_job(conn, job.id, str(exc))
         log_event(logger, logging.ERROR, "build_failed", job_id=job.id, error=str(exc))
@@ -287,6 +287,7 @@ def run_once(builder_id: str) -> int:
         "stderr_log_path": str(log_paths["stderr"]),
     }
     if complete_job(conn, job.id, result=result_payload):
+        clear_build_dirty(conn, finished_at=datetime.now(tz=timezone.utc).isoformat(), build_job_id=job.id)
         log_event(logger, logging.INFO, "build_succeeded", job_id=job.id)
     else:
         log_event(logger, logging.ERROR, "build_complete_failed", job_id=job.id)

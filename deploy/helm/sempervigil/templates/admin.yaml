@@ -39,6 +39,8 @@ spec:
           env:
             - name: SV_LOG_FILE
               value: /log/admin.log
+            - name: SV_SCHEDULER_ENABLED
+              value: "0"
             - name: SV_DB_URL
               valueFrom:
                 secretKeyRef:

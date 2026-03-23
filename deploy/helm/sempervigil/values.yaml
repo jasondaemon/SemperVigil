@@ -141,6 +141,13 @@ admin:
     tls: []
   resources: {}
 
+orchestrator:
+  enabled: true
+  replicaCount: 1
+  tickSeconds: 30
+  leaseSeconds: 120
+  resources: {}
+
 workerFetch:
   enabled: true
   replicaCount: 1

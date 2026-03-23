@@ -63,6 +63,14 @@ class Job:
     locked_by: str | None
     locked_at: str | None
     error: str | None
+    queue_name: str | None = None
+    attempt_count: int = 0
+    max_attempts: int = 0
+    available_at: str | None = None
+    heartbeat_at: str | None = None
+    lease_expires_at: str | None = None
+    parent_job_id: str | None = None
+    dedupe_key: str | None = None
 
 
 @dataclass(frozen=True)

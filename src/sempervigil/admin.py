@@ -46,7 +46,6 @@ from .worker import (
     _write_vendor_product_indexes,
     _write_article_data_files,
     _write_sources_data_files,
-    enqueue_build_site_if_needed,
 )
 from .http_fetch import fetch_prefix
 from .source_overrides import get_http_fetch_settings, normalize_source_overrides
@@ -68,6 +67,7 @@ from .storage import (
     get_last_job_by_type,
     get_job,
     has_pending_job,
+    mark_build_dirty,
 )
 from .cve_filters import CveSignals, matches_filters
 from .cve_sync import CveSyncConfig, isoformat_utc, preview_cves
@@ -2618,7 +2618,7 @@ def api_event_publish(event_id: str, payload: EventPublishRequest | None = None)
         if not ok:
             raise HTTPException(status_code=409, detail="publish_state_not_supported")
     enqueue_job(conn, "events_rebuild", None, debounce=True)
-    enqueue_build_site_if_needed(conn, reason="event_publish_state", debounce_seconds=45)
+    mark_build_dirty(conn, reason="event_publish_state")
     updated = get_event(conn, event_id)
     return {
         "status": "ok",
@@ -3209,11 +3209,7 @@ def api_article_suppress(article_id: int, payload: dict | None = Body(None)) -> 
     result = update_article_suppressed(conn, article_id, bool(suppressed), reason if isinstance(reason, str) else None)
     config = load_runtime_config(conn)
     _write_article_data_files(conn, config, logging.getLogger("admin"))
-    enqueue_build_site_if_needed(
-        conn,
-        reason="article_suppressed",
-        debounce_seconds=config.jobs.build_debounce_seconds,
-    )
+    mark_build_dirty(conn, reason="article_suppressed")
     return {"status": "ok", **result}
 
 @app.delete("/admin/api/articles/{article_id}", dependencies=[Depends(_require_admin_token)])
@@ -3226,11 +3222,7 @@ def api_article_delete(article_id: int):
     conn.commit()
     config = load_runtime_config(conn)
     _write_article_data_files(conn, config, logging.getLogger("admin"))
-    enqueue_build_site_if_needed(
-        conn,
-        reason="article_deleted",
-        debounce_seconds=config.jobs.build_debounce_seconds,
-    )
+    mark_build_dirty(conn, reason="article_deleted")
     return {"status": "deleted", "article_id": article_id}
 
 
