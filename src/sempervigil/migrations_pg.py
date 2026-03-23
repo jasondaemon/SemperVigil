@@ -382,6 +382,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_jobs_stage_035")
             applied.add("pg_jobs_stage_035")
+        if "pg_sources_schedule_state_036" not in applied:
+            _migrate_sources_schedule_state(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_sources_schedule_state_036", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_sources_schedule_state_036")
+            applied.add("pg_sources_schedule_state_036")
         else:
             conn.commit()
         return
@@ -598,7 +607,11 @@ def _bootstrap_schema(conn) -> None:
             overrides JSONB NULL,
             last_checked_at TEXT NULL,
             last_ok_at TEXT NULL,
-            last_error TEXT NULL
+            last_error TEXT NULL,
+            last_enqueued_at TEXT NULL,
+            next_due_at TEXT NULL,
+            ingest_job_id TEXT NULL,
+            ingest_started_at TEXT NULL
         )
         """
     )
@@ -5054,3 +5067,14 @@ def _migrate_jobs_stage_fields(conn) -> None:
         WHERE status = 'running'
         """
     )
+
+
+def _migrate_sources_schedule_state(conn) -> None:
+    if not _table_exists(conn, "sources"):
+        return
+    conn.execute("ALTER TABLE sources ADD COLUMN IF NOT EXISTS last_enqueued_at TEXT NULL")
+    conn.execute("ALTER TABLE sources ADD COLUMN IF NOT EXISTS next_due_at TEXT NULL")
+    conn.execute("ALTER TABLE sources ADD COLUMN IF NOT EXISTS ingest_job_id TEXT NULL")
+    conn.execute("ALTER TABLE sources ADD COLUMN IF NOT EXISTS ingest_started_at TEXT NULL")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sources_next_due_at ON sources (next_due_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sources_ingest_job_id ON sources (ingest_job_id)")

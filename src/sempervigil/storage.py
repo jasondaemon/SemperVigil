@@ -187,9 +187,11 @@ def set_source_enabled(conn: Any, source_id: str, enabled: bool) -> None:
 def get_source(conn: Any, source_id: str) -> Source | None:
     cursor = conn.execute(
         """
-        SELECT id, name, enabled, base_url, topic_key, default_frequency_minutes,
+        SELECT id, name, enabled, COALESCE(NULLIF(interval_minutes, 0), default_frequency_minutes, 60),
                kind, url,
-               pause_until, paused_reason, robots_notes, overrides
+               pause_until, paused_reason, robots_notes, overrides,
+               last_checked_at, last_ok_at, last_error,
+               last_enqueued_at, next_due_at, ingest_job_id, ingest_started_at
         FROM sources
         WHERE id = %s
         """,
@@ -205,9 +207,11 @@ def list_sources(conn: Any, enabled_only: bool = True) -> list[Source]:
     if enabled_only:
         cursor = conn.execute(
             """
-            SELECT id, name, enabled, base_url, topic_key, default_frequency_minutes,
+            SELECT id, name, enabled, COALESCE(NULLIF(interval_minutes, 0), default_frequency_minutes, 60),
                    kind, url,
-                   pause_until, paused_reason, robots_notes, overrides
+                   pause_until, paused_reason, robots_notes, overrides,
+                   last_checked_at, last_ok_at, last_error,
+                   last_enqueued_at, next_due_at, ingest_job_id, ingest_started_at
             FROM sources
             WHERE enabled = 1
             ORDER BY id
@@ -216,9 +220,11 @@ def list_sources(conn: Any, enabled_only: bool = True) -> list[Source]:
     else:
         cursor = conn.execute(
             """
-            SELECT id, name, enabled, base_url, topic_key, default_frequency_minutes,
+            SELECT id, name, enabled, COALESCE(NULLIF(interval_minutes, 0), default_frequency_minutes, 60),
                    kind, url,
-                   pause_until, paused_reason, robots_notes, overrides
+                   pause_until, paused_reason, robots_notes, overrides,
+                   last_checked_at, last_ok_at, last_error,
+                   last_enqueued_at, next_due_at, ingest_job_id, ingest_started_at
             FROM sources
             ORDER BY id
             """
@@ -241,22 +247,180 @@ def list_tactics_for_source(conn: Any, source_id: str) -> list[SourceTactic]:
     return [_row_to_tactic(row) for row in rows]
 
 
+def _job_is_pending(conn: Any, job_id: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM jobs WHERE id = %s AND status IN ('queued', 'running')",
+        (job_id,),
+    ).fetchone()
+    return row is not None
+
+
+def _source_due_at(
+    conn: Any,
+    source: Source,
+    *,
+    last_runs: dict[str, str] | None = None,
+) -> datetime | None:
+    if source.next_due_at:
+        return _parse_iso(source.next_due_at)
+    if source.last_checked_at:
+        return _parse_iso(source.last_checked_at) + timedelta(
+            minutes=source.default_frequency_minutes
+        )
+    run_map = last_runs if last_runs is not None else _last_run_map(conn)
+    last_run = run_map.get(source.id)
+    if not last_run:
+        return None
+    return _parse_iso(last_run) + timedelta(minutes=source.default_frequency_minutes)
+
+
 def list_due_sources(conn: Any, now_iso: str) -> list[Source]:
     sources = list_sources(conn, enabled_only=True)
     due: list[Source] = []
-    last_runs = _last_run_map(conn)
     now_dt = _parse_iso(now_iso)
+    last_runs = _last_run_map(conn)
     for source in sources:
         if source.pause_until and _parse_iso(source.pause_until) > now_dt:
             continue
-        last_run = last_runs.get(source.id)
-        if not last_run:
+        if source.ingest_job_id and _job_is_pending(conn, source.ingest_job_id):
+            continue
+        due_at = _source_due_at(conn, source, last_runs=last_runs)
+        if due_at is None:
             due.append(source)
             continue
-        last_dt = _parse_iso(last_run)
-        if last_dt + timedelta(minutes=source.default_frequency_minutes) <= now_dt:
+        if due_at <= now_dt:
             due.append(source)
     return due
+
+
+def enqueue_source_ingest_job(
+    conn: Any,
+    source_id: str,
+    *,
+    limit: int | None = None,
+    manual: bool = False,
+    now_iso: str | None = None,
+) -> str | None:
+    source = get_source(conn, source_id)
+    if source is None:
+        return None
+    now = now_iso or utc_now_iso()
+    now_dt = _parse_iso(now)
+    if source.ingest_job_id and _job_is_pending(conn, source.ingest_job_id):
+        return source.ingest_job_id
+    if source.ingest_job_id:
+        conn.execute(
+            """
+            UPDATE sources
+            SET ingest_job_id = NULL,
+                ingest_started_at = NULL,
+                updated_at = %s
+            WHERE id = %s
+            """,
+            (now, source.id),
+        )
+        conn.commit()
+    if source.pause_until and _parse_iso(source.pause_until) > now_dt:
+        return None
+    if not manual:
+        due_at = _source_due_at(conn, source)
+        if due_at is not None and due_at > now_dt:
+            return None
+    payload: dict[str, object] = {"source_id": source.id}
+    if isinstance(limit, int):
+        payload["limit"] = limit
+    job_id = _new_job_id()
+    payload_json = json_dumps(payload)
+    conn.execute(
+        """
+        INSERT INTO jobs
+            (id, job_type, status, priority, payload_json, result_json, requested_at, started_at,
+             finished_at, locked_by, locked_at, error, queue_name, attempt_count, max_attempts,
+             available_at, heartbeat_at, lease_expires_at, parent_job_id, dedupe_key)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            job_id,
+            "ingest_source",
+            "queued",
+            0,
+            payload_json,
+            None,
+            now,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "fetch",
+            0,
+            0,
+            now,
+            None,
+            None,
+            None,
+            f"ingest_source:{source.id}",
+        ),
+    )
+    conn.execute(
+        """
+        UPDATE sources
+        SET last_enqueued_at = %s,
+            ingest_job_id = %s,
+            ingest_started_at = NULL,
+            updated_at = %s
+        WHERE id = %s
+        """,
+        (now, job_id, now, source.id),
+    )
+    conn.commit()
+    return job_id
+
+
+def mark_source_ingest_started(conn: Any, source_id: str, job_id: str, started_at: str) -> None:
+    conn.execute(
+        """
+        UPDATE sources
+        SET ingest_started_at = %s,
+            updated_at = %s
+        WHERE id = %s AND ingest_job_id = %s
+        """,
+        (started_at, started_at, source_id, job_id),
+    )
+    conn.commit()
+
+
+def finalize_source_ingest_state(
+    conn: Any,
+    *,
+    source_id: str,
+    job_id: str | None,
+    finished_at: str,
+    next_due_at: str,
+) -> None:
+    if job_id:
+        conn.execute(
+            """
+            UPDATE sources
+            SET next_due_at = %s,
+                ingest_job_id = NULL,
+                ingest_started_at = NULL,
+                updated_at = %s
+            WHERE id = %s AND ingest_job_id = %s
+            """,
+            (next_due_at, finished_at, source_id, job_id),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE sources
+            SET next_due_at = %s,
+                updated_at = %s
+            WHERE id = %s
+            """,
+            (next_due_at, finished_at, source_id),
+        )
+    conn.commit()
 
 
 def list_tactics(conn: Any, source_id: str) -> list[SourceTactic]:
@@ -1298,6 +1462,28 @@ def record_source_run(
             error,
             json_dumps(notes) if notes else None,
             started_at,
+        ),
+    )
+    conn.execute(
+        """
+        UPDATE sources
+        SET last_checked_at = %s,
+            last_ok_at = CASE WHEN %s = 'ok' THEN %s ELSE last_ok_at END,
+            last_error = CASE
+                WHEN %s = 'ok' THEN NULL
+                ELSE %s
+            END,
+            updated_at = %s
+        WHERE id = %s
+        """,
+        (
+            finished_at or started_at,
+            status,
+            finished_at or started_at,
+            status,
+            error,
+            finished_at or started_at,
+            source_id,
         ),
     )
     conn.commit()
@@ -3303,7 +3489,29 @@ def requeue_job(
 
 
 def _row_to_source(row: tuple) -> Source:
-    if len(row) == 12:
+    if len(row) == 19:
+        (
+            source_id,
+            name,
+            enabled,
+            base_url,
+            topic_key,
+            default_frequency_minutes,
+            kind,
+            url,
+            pause_until,
+            paused_reason,
+            robots_notes,
+            overrides_raw,
+            last_checked_at,
+            last_ok_at,
+            last_error,
+            last_enqueued_at,
+            next_due_at,
+            ingest_job_id,
+            ingest_started_at,
+        ) = row
+    elif len(row) == 12:
         (
             source_id,
             name,
@@ -3318,6 +3526,13 @@ def _row_to_source(row: tuple) -> Source:
             robots_notes,
             overrides_raw,
         ) = row
+        last_checked_at = None
+        last_ok_at = None
+        last_error = None
+        last_enqueued_at = None
+        next_due_at = None
+        ingest_job_id = None
+        ingest_started_at = None
     else:
         (
             source_id,
@@ -3333,6 +3548,13 @@ def _row_to_source(row: tuple) -> Source:
         ) = row
         kind = None
         url = None
+        last_checked_at = None
+        last_ok_at = None
+        last_error = None
+        last_enqueued_at = None
+        next_due_at = None
+        ingest_job_id = None
+        ingest_started_at = None
     overrides = None
     if overrides_raw is not None:
         if isinstance(overrides_raw, dict):
@@ -3355,6 +3577,13 @@ def _row_to_source(row: tuple) -> Source:
         overrides=overrides,
         kind=kind,
         url=url,
+        last_checked_at=last_checked_at,
+        last_ok_at=last_ok_at,
+        last_error=last_error,
+        last_enqueued_at=last_enqueued_at,
+        next_due_at=next_due_at,
+        ingest_job_id=ingest_job_id,
+        ingest_started_at=ingest_started_at,
     )
 
 

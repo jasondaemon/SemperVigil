@@ -34,6 +34,13 @@ class Source:
     overrides: dict[str, object] | None = None
     kind: str | None = None
     url: str | None = None
+    last_checked_at: str | None = None
+    last_ok_at: str | None = None
+    last_error: str | None = None
+    last_enqueued_at: str | None = None
+    next_due_at: str | None = None
+    ingest_job_id: str | None = None
+    ingest_started_at: str | None = None
 
 
 @dataclass(frozen=True)

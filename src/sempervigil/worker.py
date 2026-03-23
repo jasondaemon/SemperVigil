@@ -166,6 +166,9 @@ from .storage import (
     mark_cve_products_checked,
     mark_cve_threat_actors_checked,
     mark_build_dirty,
+    mark_source_ingest_started,
+    finalize_source_ingest_state,
+    enqueue_source_ingest_job,
     get_pending_job_id_for_cve,
     list_queued_job_stats,
     search_cves,
@@ -3581,6 +3584,19 @@ def run_once(
 def _process_claimed_job(conn, config, job, logger: logging.Logger) -> int:
     if is_job_canceled(conn, job.id):
         log_event(logger, logging.INFO, "job_canceled", job_id=job.id)
+        if job.job_type == "ingest_source":
+            source_id = str((job.payload or {}).get("source_id") or "")
+            source = get_source(conn, source_id) if source_id else None
+            if source is not None:
+                finalize_source_ingest_state(
+                    conn,
+                    source_id=source.id,
+                    job_id=job.id,
+                    finished_at=utc_now_iso(),
+                    next_due_at=utc_now_iso_offset(
+                        seconds=source.default_frequency_minutes * 60
+                    ),
+                )
         return 0
 
     llm_job_types = _LLM_JOB_TYPES
@@ -3688,6 +3704,19 @@ def _process_claimed_job(conn, config, job, logger: logging.Logger) -> int:
         failed = fail_job(conn, job.id, str(exc))
         if not failed:
             fail_job_force(conn, job.id, str(exc))
+        if job.job_type == "ingest_source":
+            source_id = str((job.payload or {}).get("source_id") or "")
+            source = get_source(conn, source_id) if source_id else None
+            if source is not None:
+                finalize_source_ingest_state(
+                    conn,
+                    source_id=source.id,
+                    job_id=job.id,
+                    finished_at=utc_now_iso(),
+                    next_due_at=utc_now_iso_offset(
+                        seconds=source.default_frequency_minutes * 60
+                    ),
+                )
         fields = _job_context_fields(conn, job)
         log_event(
             logger,
@@ -3851,7 +3880,10 @@ def _handle_ingest_source(
         raise ValueError(f"Source not found: {source_id}")
 
     started_at = utc_now_iso()
+    if job_id:
+        mark_source_ingest_started(conn, source.id, job_id, started_at)
     now_dt = _parse_iso(started_at)
+    next_due_at = utc_now_iso_offset(seconds=source.default_frequency_minutes * 60)
     if not source.enabled or ( source.pause_until and _parse_iso(source.pause_until) > now_dt):
         record_source_run(
             conn,
@@ -3867,6 +3899,13 @@ def _handle_ingest_source(
             skipped_missing_url=0,
             error=source.paused_reason or "source_disabled",
             notes=None,
+        )
+        finalize_source_ingest_state(
+            conn,
+            source_id=source.id,
+            job_id=job_id,
+            finished_at=utc_now_iso(),
+            next_due_at=next_due_at,
         )
         return {
             "source_id": source.id,
@@ -3934,6 +3973,13 @@ def _handle_ingest_source(
 
     if result.status != "ok":
         _maybe_pause_source(conn, source.id, logger)
+        finalize_source_ingest_state(
+            conn,
+            source_id=source.id,
+            job_id=job_id,
+            finished_at=finished_at,
+            next_due_at=next_due_at,
+        )
         return {
             "source_id": source.id,
             "status": result.status,
@@ -3946,6 +3992,13 @@ def _handle_ingest_source(
         }
 
     if job_id and is_job_canceled(conn, job_id):
+        finalize_source_ingest_state(
+            conn,
+            source_id=source.id,
+            job_id=job_id,
+            finished_at=finished_at,
+            next_due_at=next_due_at,
+        )
         return {"canceled": True}
 
     # When no new articles were accepted, the ingest work is complete once the
@@ -3953,6 +4006,13 @@ def _handle_ingest_source(
     # unnecessary downstream work for duplicate-only feeds.
     if result.accepted_count <= 0:
         _maybe_pause_source(conn, source.id, logger)
+        finalize_source_ingest_state(
+            conn,
+            source_id=source.id,
+            job_id=job_id,
+            finished_at=finished_at,
+            next_due_at=next_due_at,
+        )
         return {
             "source_id": source.id,
             "status": result.status,
@@ -3969,6 +4029,13 @@ def _handle_ingest_source(
     insert_articles(conn, result.articles)
     for article in result.articles:
         if job_id and is_job_canceled(conn, job_id):
+            finalize_source_ingest_state(
+                conn,
+                source_id=source.id,
+                job_id=job_id,
+                finished_at=finished_at,
+                next_due_at=next_due_at,
+            )
             return {"canceled": True}
         cve_ids = extract_cve_ids(
             [article.title, article.summary or "", article.original_url]
@@ -4026,6 +4093,13 @@ def _handle_ingest_source(
             reason="no_new_articles",
         )
     _maybe_pause_source(conn, source.id, logger)
+    finalize_source_ingest_state(
+        conn,
+        source_id=source.id,
+        job_id=job_id,
+        finished_at=finished_at,
+        next_due_at=next_due_at,
+    )
     return {
         "source_id": source.id,
         "status": result.status,
@@ -6605,10 +6679,14 @@ def _handle_source_acquire(conn, config, job, logger: logging.Logger) -> dict[st
             return True
         return job_type in worker_types
 
-    ingest_payload: dict[str, object] = {"source_id": source.id}
-    if isinstance(limit, int):
-        ingest_payload["limit"] = limit
-    ingest_job_id = enqueue_job(conn, "ingest_source", ingest_payload)
+    ingest_job_id = enqueue_source_ingest_job(
+        conn,
+        source.id,
+        limit=limit if isinstance(limit, int) else None,
+        manual=True,
+    )
+    if not ingest_job_id:
+        raise ValueError(f"Unable to enqueue ingest_source for {source.id}")
     result["ingest_job_id"] = ingest_job_id
     _run_jobs_inline_if_allowed(
         conn,
@@ -6847,8 +6925,8 @@ def _handle_ingest_due_sources(conn, logger: logging.Logger) -> dict[str, object
     sources = list_due_sources(conn, now)
     enqueued: list[str] = []
     for source in sources:
-        enqueue_job(conn, "ingest_source", {"source_id": source.id}, dedupe=True)
-        enqueued.append(source.id)
+        if enqueue_source_ingest_job(conn, source.id, now_iso=now):
+            enqueued.append(source.id)
     log_event(
         logger,
         logging.INFO,

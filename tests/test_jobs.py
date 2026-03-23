@@ -2,12 +2,17 @@ from sempervigil.storage import (
     claim_next_job,
     complete_job,
     enqueue_job,
+    enqueue_source_ingest_job,
     get_build_state,
+    get_source,
     init_db,
+    list_due_sources,
     list_jobs,
     mark_build_dirty,
+    record_source_run,
+    finalize_source_ingest_state,
 )
-from sempervigil.utils import utc_now_iso_offset
+from sempervigil.utils import utc_now_iso, utc_now_iso_offset
 
 
 def test_enqueue_and_claim_job(tmp_path):
@@ -121,3 +126,81 @@ def test_mark_build_dirty_tracks_state(tmp_path):
     assert state["requested_at"]
     assert state["last_dirty_at"]
     assert state["reasons"] == ["article_updated", "daily_brief"]
+
+
+def test_due_source_enqueue_sets_pending_state_and_blocks_duplicate_schedule(tmp_path):
+    conn = init_db()
+    now = utc_now_iso()
+    conn.execute(
+        """
+        INSERT INTO sources
+            (id, name, enabled, interval_minutes, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        ("source-a", "Source A", 1, 60, now, now),
+    )
+    conn.commit()
+
+    due = list_due_sources(conn, now)
+    assert [source.id for source in due] == ["source-a"]
+
+    first_job_id = enqueue_source_ingest_job(conn, "source-a", now_iso=now)
+    assert first_job_id is not None
+
+    source = get_source(conn, "source-a")
+    assert source is not None
+    assert source.ingest_job_id == first_job_id
+    assert source.last_enqueued_at == now
+
+    due_after_enqueue = list_due_sources(conn, now)
+    assert due_after_enqueue == []
+
+    second_job_id = enqueue_source_ingest_job(conn, "source-a", now_iso=now)
+    assert second_job_id == first_job_id
+
+
+def test_source_not_due_again_until_interval_after_completion(tmp_path):
+    conn = init_db()
+    now = utc_now_iso()
+    conn.execute(
+        """
+        INSERT INTO sources
+            (id, name, enabled, interval_minutes, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        ("source-b", "Source B", 1, 60, now, now),
+    )
+    conn.commit()
+
+    job_id = enqueue_source_ingest_job(conn, "source-b", now_iso=now)
+    assert job_id is not None
+
+    finished_at = utc_now_iso_offset(seconds=300)
+    record_source_run(
+        conn,
+        source_id="source-b",
+        started_at=now,
+        finished_at=finished_at,
+        status="ok",
+        http_status=200,
+        items_found=5,
+        items_accepted=1,
+        skipped_duplicates=0,
+        skipped_filters=0,
+        skipped_missing_url=0,
+        error=None,
+        notes=None,
+    )
+    finalize_source_ingest_state(
+        conn,
+        source_id="source-b",
+        job_id=job_id,
+        finished_at=finished_at,
+        next_due_at=utc_now_iso_offset(seconds=3900),
+    )
+
+    before_due = list_due_sources(conn, utc_now_iso_offset(seconds=3599))
+    assert before_due == []
+
+    after_due = list_due_sources(conn, utc_now_iso_offset(seconds=3901))
+    assert [source.id for source in after_due] == ["source-b"]
