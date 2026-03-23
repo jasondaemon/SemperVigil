@@ -564,9 +564,11 @@ function wireLogs() {
   const jobAllBtn = document.getElementById("logs-job-all");
   const jobNoneBtn = document.getElementById("logs-job-none");
   let rawLines = [];
+  let rawEntryIds = new Set();
   let selectedEvents = null;
   let selectedJobs = null;
   let buildMode = "";
+  let stream = null;
   const workerLlmJobTypes = new Set([
     "summarize_article_llm",
     "summarize_article_context_llm",
@@ -798,7 +800,93 @@ function wireLogs() {
       output.scrollTop = output.scrollHeight;
     }
   }
+  function closeStream() {
+    if (stream) {
+      stream.close();
+      stream = null;
+    }
+  }
+  function currentStreamUrl() {
+    const service = serviceSelect.value;
+    const lines = linesSelect.value;
+    const runner = runnerInput ? runnerInput.value.trim() : "";
+    const params = new URLSearchParams({ service, lines: String(lines) });
+    if (runner) params.set("runner", runner);
+    return `/admin/api/logs/stream?${params.toString()}`;
+  }
+  function appendLogEntries(entries) {
+    let changed = false;
+    for (const entry of entries || []) {
+      const key = String(entry.id || "");
+      if (key && rawEntryIds.has(key)) {
+        continue;
+      }
+      if (key) {
+        rawEntryIds.add(key);
+      }
+      rawLines.push(JSON.stringify(entry));
+      changed = true;
+    }
+    const limit = parseInt(linesSelect.value || "200", 10) || 200;
+    if (rawLines.length > limit * 4) {
+      rawLines = rawLines.slice(-limit * 4);
+      rawEntryIds = new Set(
+        rawLines
+          .map((line) => {
+            try {
+              const parsed = JSON.parse(line);
+              return parsed.id ? String(parsed.id) : "";
+            } catch (err) {
+              return "";
+            }
+          })
+          .filter(Boolean)
+      );
+    }
+    if (changed) {
+      const filteredLines = filterLinesByService(rawLines, serviceSelect.value);
+      const { events, jobs } = collectValues(filteredLines);
+      if (eventList && events.length) {
+        buildFilterList(eventList, events, "logs-event", selectedEvents);
+      }
+      if (jobList && jobs.length) {
+        buildFilterList(jobList, jobs, "logs-job", selectedJobs);
+      }
+      renderFiltered();
+    }
+  }
+  function openStream() {
+    closeStream();
+    if (!autoToggle || !autoToggle.checked) {
+      return;
+    }
+    if (serviceSelect.value === "builder" && buildMode) {
+      return;
+    }
+    stream = new EventSource(currentStreamUrl(), { withCredentials: true });
+    stream.onmessage = (event) => {
+      if (!event || !event.data) {
+        return;
+      }
+      try {
+        appendLogEntries([JSON.parse(event.data)]);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    stream.onerror = () => {
+      closeStream();
+      if (autoToggle && autoToggle.checked) {
+        window.setTimeout(() => {
+          if (autoToggle && autoToggle.checked) {
+            openStream();
+          }
+        }, 3000);
+      }
+    };
+  }
   async function loadLogs() {
+    closeStream();
     const service = serviceSelect.value;
     const lines = linesSelect.value;
     const runner = runnerInput ? runnerInput.value.trim() : "";
@@ -814,11 +902,13 @@ function wireLogs() {
       rawLines = rawLines.concat(
         (data.text || "").split("\n").filter((line) => line.trim() !== "")
       );
+      rawEntryIds = new Set();
     } else {
       const params = new URLSearchParams({ service, lines: String(lines) });
       if (runner) params.set("runner", runner);
       const data = await apiFetch(`/admin/api/logs/query?${params.toString()}`);
       rawLines = (data.entries || []).map((entry) => JSON.stringify(entry));
+      rawEntryIds = new Set((data.entries || []).map((entry) => String(entry.id || "")).filter(Boolean));
     }
     const filteredLines = filterLinesByService(rawLines, service);
     const { events, jobs } = collectValues(filteredLines);
@@ -830,6 +920,7 @@ function wireLogs() {
       buildFilterList(jobList, jobListItems, "logs-job", selectedJobs);
     }
     renderFiltered();
+    openStream();
   }
   if (openBtn) {
     openBtn.addEventListener("click", () => {
@@ -903,10 +994,29 @@ function wireLogs() {
     });
   }
   setInterval(() => {
-    if (autoToggle && autoToggle.checked) {
+    if (autoToggle && autoToggle.checked && !(serviceSelect.value === "builder" && buildMode)) {
+      if (!stream) {
+        openStream();
+      }
+    } else if (autoToggle && autoToggle.checked) {
       loadLogs().catch(() => undefined);
+    } else {
+      closeStream();
     }
   }, 4000);
+  if (autoToggle) {
+    autoToggle.addEventListener("change", () => {
+      if (autoToggle.checked) {
+        if (serviceSelect.value === "builder" && buildMode) {
+          loadLogs().catch((err) => showToast(err.message || String(err)));
+        } else {
+          openStream();
+        }
+      } else {
+        closeStream();
+      }
+    });
+  }
   if (buildControls && serviceSelect && serviceSelect.value === "builder") {
     buildControls.style.display = "flex";
   }
