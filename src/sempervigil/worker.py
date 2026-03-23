@@ -3869,6 +3869,24 @@ def _handle_ingest_source(
     if job_id and is_job_canceled(conn, job_id):
         return {"canceled": True}
 
+    # When no new articles were accepted, the ingest work is complete once the
+    # source run and health event have been recorded. Returning here avoids
+    # unnecessary downstream work for duplicate-only feeds.
+    if result.accepted_count <= 0:
+        _maybe_pause_source(conn, source.id, logger)
+        return {
+            "source_id": source.id,
+            "status": result.status,
+            "found_count": result.found_count,
+            "accepted_count": result.accepted_count,
+            "skipped_duplicates": result.skipped_duplicates,
+            "skipped_filters": result.skipped_filters,
+            "skipped_missing_url": result.skipped_missing_url,
+            "seen_count": seen_count,
+            "filtered_count": filtered_count,
+            "error_count": error_count,
+        }
+
     insert_articles(conn, result.articles)
     for article in result.articles:
         if job_id and is_job_canceled(conn, job_id):
