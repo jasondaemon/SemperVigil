@@ -196,7 +196,6 @@ services:
       SV_LOG_FILE: /log/worker_llm.log
       SV_UMASK: ${SV_UMASK:-002}
       SV_DB_URL: ${SV_DB_URL:-}
-      SV_WORKER_PROVIDER_SCOPE: "non_openai"
       SV_WORKER_QUEUE: "llm_local"
       SV_WORKER_SCHEDULER_HOOKS_ENABLED: "0"
       SV_DAILY_BRIEF_MODE: "single"
@@ -243,7 +242,6 @@ services:
       SV_LLM_LOG_HTTP: "1"
       SV_UMASK: ${SV_UMASK:-002}
       SV_DB_URL: ${SV_DB_URL:-}
-      SV_WORKER_PROVIDER_SCOPE: "openai"
       SV_WORKER_QUEUE: "openai"
       SV_WORKER_SCHEDULER_HOOKS_ENABLED: "0"
       SV_DAILY_BRIEF_MODE: "single"

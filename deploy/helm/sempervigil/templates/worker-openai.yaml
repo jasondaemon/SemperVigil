@@ -41,8 +41,6 @@ spec:
                 secretKeyRef:
                   name: {{ default (include "sempervigil.secretName" .) .Values.externalDatabase.existingSecret }}
                   key: {{ default "url" .Values.externalDatabase.urlKey }}
-            - name: SV_WORKER_PROVIDER_SCOPE
-              value: "openai"
             - name: SV_WORKER_QUEUE
               value: "openai"
             - name: SV_WORKER_SCHEDULER_HOOKS_ENABLED

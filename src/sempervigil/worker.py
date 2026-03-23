@@ -3562,7 +3562,7 @@ def run_once(
         )
         if not job:
             return _RUN_ONCE_IDLE
-        if provider_scope in {"openai", "non_openai"} and job.job_type in _LLM_JOB_TYPES:
+        if not queue_name and provider_scope in {"openai", "non_openai"} and job.job_type in _LLM_JOB_TYPES:
             uses_openai = _job_uses_openai(conn, job)
             if provider_scope == "openai" and not uses_openai:
                 release_job(

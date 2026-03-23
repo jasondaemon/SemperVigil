@@ -1,10 +1,8 @@
 import copy
-from datetime import datetime, timezone
 
 from sempervigil import builder
 from sempervigil.config import DEFAULT_CONFIG, set_runtime_config
-from sempervigil.storage import enqueue_job, init_db
-from sempervigil.utils import utc_now_iso
+from sempervigil.storage import enqueue_job, get_build_state, init_db, mark_build_dirty
 
 
 def _seed_runtime_config(tmp_path, monkeypatch):
@@ -24,10 +22,11 @@ def _seed_runtime_config(tmp_path, monkeypatch):
 
 def test_build_job_writes_result(tmp_path, monkeypatch):
     conn = _seed_runtime_config(tmp_path, monkeypatch)
+    mark_build_dirty(conn, reason="test_build")
     enqueue_job(conn, "build_site", None)
 
-    def fake_run(conn, job_id):
-        return 0, "stdout line", "stderr line", False
+    def fake_run(conn, job_id, builder_id, log_paths, lease_seconds):
+        return 0, "stdout line", "stderr line", False, ["/bin/sh", "/tools/hugo-build.sh"]
 
     monkeypatch.setattr(builder, "_run_hugo_until_done", fake_run)
     builder.run_once("builder-test")
@@ -36,44 +35,23 @@ def test_build_job_writes_result(tmp_path, monkeypatch):
     assert row is not None
     assert "stdout_tail" in row[0]
     assert "stderr_tail" in row[0]
+    state = get_build_state(conn)
+    assert state["dirty"] is False
+    assert state["last_build_job_id"]
 
 
-def test_build_job_debounce_requeues(tmp_path, monkeypatch):
+def test_build_job_heartbeat_keeps_lease_fresh(tmp_path, monkeypatch):
     conn = _seed_runtime_config(tmp_path, monkeypatch)
-    now = utc_now_iso()
-    conn.execute(
-        """
-        INSERT INTO jobs
-            (id, job_type, status, payload_json, result_json, requested_at, started_at,
-             finished_at, locked_by, locked_at, error)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            "job_prev_build",
-            "build_site",
-            "succeeded",
-            None,
-            None,
-            now,
-            now,
-            now,
-            None,
-            None,
-            None,
-        ),
-    )
-    conn.commit()
     enqueue_job(conn, "build_site", None)
 
-    def fake_run(conn, job_id):
-        raise AssertionError("build should have been debounced")
+    heartbeat_calls = []
+
+    def fake_run(conn, job_id, builder_id, log_paths, lease_seconds):
+        heartbeat_calls.append((job_id, builder_id, lease_seconds))
+        return 0, "stdout", "stderr", False, ["/bin/sh", "/tools/hugo-build.sh"]
 
     monkeypatch.setattr(builder, "_run_hugo_until_done", fake_run)
     builder.run_once("builder-test")
-    row = conn.execute(
-        "SELECT status, requested_at FROM jobs WHERE job_type = 'build_site' ORDER BY requested_at DESC LIMIT 1"
-    ).fetchone()
-    assert row is not None
-    assert row[0] == "queued"
-    requested_at = datetime.fromisoformat(row[1]).astimezone(timezone.utc)
-    assert requested_at > datetime.fromisoformat(now).astimezone(timezone.utc)
+    assert heartbeat_calls
+    assert heartbeat_calls[0][1] == "builder-test"
+    assert heartbeat_calls[0][2] >= 1

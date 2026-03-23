@@ -23,3 +23,24 @@ def test_claim_next_job_atomic_single_winner():
     assert len(winners) == 1
     assert winners[0] == job_id
     complete_job(conn, winners[0], result={"ok": True})
+
+
+def test_claim_next_job_atomic_single_winner_scoped_to_queue():
+    conn = init_db()
+    job_id = enqueue_job(conn, "summarize_article_llm", {"article_id": 123})
+
+    barrier = threading.Barrier(2)
+
+    def _claim(worker_id: str):
+        local = init_db()
+        barrier.wait()
+        job = claim_next_job(local, worker_id, allowed_queues=["llm_local"])
+        return job.id if job else None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(_claim, ["worker_a", "worker_b"]))
+
+    winners = [job for job in results if job]
+    assert len(winners) == 1
+    assert winners[0] == job_id
+    complete_job(conn, winners[0], result={"ok": True})
