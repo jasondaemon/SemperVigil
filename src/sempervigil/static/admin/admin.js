@@ -549,6 +549,7 @@ function wireLogs() {
   }
   const serviceSelect = document.getElementById("logs-service");
   const linesSelect = document.getElementById("logs-lines");
+  const runnerInput = document.getElementById("logs-runner");
   const autoToggle = document.getElementById("logs-auto");
   const pinToggle = document.getElementById("logs-pin");
   const refreshBtn = document.getElementById("logs-refresh");
@@ -603,11 +604,28 @@ function wireLogs() {
     });
   }
   function parseLine(line) {
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed && typeof parsed === "object") {
+        return {
+          event: parsed.event || "",
+          jobType: parsed.job_type || "",
+          runnerType: parsed.runner_type || parsed.runner_id || "",
+          ts: parsed.ts || "",
+          level: parsed.level || "",
+          parsed,
+        };
+      }
+    } catch (err) {}
     const eventMatch = line.match(/\bevent=([^\s]+)/);
     const jobMatch = line.match(/\bjob_type=([^\s]+)/);
+    const runnerMatch = line.match(/\b(runner_type|runner_id)=([^\s]+)/);
     return {
       event: eventMatch ? eventMatch[1] : "",
       jobType: jobMatch ? jobMatch[1] : "",
+      runnerType: runnerMatch ? runnerMatch[2] : "",
+      ts: "",
+      level: "",
     };
   }
   function normalizeTimezone(tz) {
@@ -618,6 +636,24 @@ function wireLogs() {
   }
   function formatLogLineLocal(line) {
     if (!line || line.startsWith("# ")) return line;
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed && typeof parsed === "object") {
+        const ts = parsed.ts || "";
+        const level = parsed.level || "";
+        const event = parsed.event || "";
+        const message = parsed.message || event || "";
+        const formattedTs = ts ? formatTimestamp(ts) : "";
+        const extras = [];
+        ["service", "runner_type", "job_type", "job_id", "source_id", "article_id", "cve_id"].forEach((key) => {
+          const value = parsed[key];
+          if (value !== undefined && value !== null && value !== "") {
+            extras.push(`${key}=${value}`);
+          }
+        });
+        return [formattedTs, level, message, extras.join(" ")].filter(Boolean).join(" ");
+      }
+    } catch (err) {}
     const match = line.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})([.,](\d{1,6}))?\s(.*)$/);
     if (!match) return line;
     const [, datePart, timePart, , fracRaw, rest] = match;
@@ -741,6 +777,7 @@ function wireLogs() {
   function renderFiltered() {
     selectedEvents = getCheckedValues(eventList);
     selectedJobs = getCheckedValues(jobList);
+    const runnerFilter = runnerInput ? runnerInput.value.trim() : "";
     const allowedEvents = selectedEvents;
     const allowedJobs = selectedJobs;
     const baseLines = filterLinesByService(rawLines, serviceSelect.value);
@@ -748,7 +785,8 @@ function wireLogs() {
       const parsed = parseLine(line);
       const eventOk = !allowedEvents || allowedEvents.size === 0 || !parsed.event || allowedEvents.has(parsed.event);
       const jobOk = !allowedJobs || allowedJobs.size === 0 || !parsed.jobType || allowedJobs.has(parsed.jobType);
-      return eventOk && jobOk;
+      const runnerOk = !runnerFilter || !parsed.runnerType || parsed.runnerType === runnerFilter;
+      return eventOk && jobOk && runnerOk;
     });
     const displayLines = filtered.map((line) => formatLogLineLocal(line));
     const shouldPin = pinToggle ? pinToggle.checked : true;
@@ -763,17 +801,8 @@ function wireLogs() {
   async function loadLogs() {
     const service = serviceSelect.value;
     const lines = linesSelect.value;
-    if (service === "build_hugo") {
-      const data = await apiFetch(`/admin/api/logs/tail?service=build_hugo&lines=${lines}`);
-      const header = data.log_path ? `# ${data.log_path}\n` : "";
-      rawLines = [];
-      if (header) {
-        rawLines.push(header.trimEnd());
-      }
-      rawLines = rawLines.concat(
-        (data.text || "").split("\n").filter((line) => line.trim() !== "")
-      );
-    } else if (service === "builder" && buildMode) {
+    const runner = runnerInput ? runnerInput.value.trim() : "";
+    if (service === "builder" && buildMode) {
       const data = await apiFetch(
         `/admin/api/logs/builds/latest?stream=${buildMode}&lines=${lines}`
       );
@@ -786,8 +815,10 @@ function wireLogs() {
         (data.text || "").split("\n").filter((line) => line.trim() !== "")
       );
     } else {
-      const data = await apiFetch(`/admin/api/logs/tail?service=${service}&lines=${lines}`);
-      rawLines = (data.text || "").split("\n").filter((line) => line.trim() !== "");
+      const params = new URLSearchParams({ service, lines: String(lines) });
+      if (runner) params.set("runner", runner);
+      const data = await apiFetch(`/admin/api/logs/query?${params.toString()}`);
+      rawLines = (data.entries || []).map((entry) => JSON.stringify(entry));
     }
     const filteredLines = filterLinesByService(rawLines, service);
     const { events, jobs } = collectValues(filteredLines);
@@ -808,6 +839,11 @@ function wireLogs() {
   }
   if (refreshBtn) {
     refreshBtn.addEventListener("click", () => {
+      loadLogs().catch((err) => showToast(err.message || String(err)));
+    });
+  }
+  if (runnerInput) {
+    runnerInput.addEventListener("change", () => {
       loadLogs().catch((err) => showToast(err.message || String(err)));
     });
   }

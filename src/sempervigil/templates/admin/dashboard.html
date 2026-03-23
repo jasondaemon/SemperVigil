@@ -37,8 +37,10 @@
     <div class="filters inline">
       <label>Service
         <select id="logs-service">
+          <option value="all" selected>all</option>
           <option value="admin">admin</option>
-          <option value="worker" selected>worker</option>
+          <option value="orchestrator">orchestrator</option>
+          <option value="worker">worker</option>
           <option value="worker_fetch">worker_fetch</option>
           <option value="worker_llm">worker_llm</option>
           <option value="worker_openai">worker_openai</option>
@@ -59,6 +61,9 @@
           <option value="200" selected>200</option>
           <option value="500">500</option>
         </select>
+      </label>
+      <label>Runner
+        <input type="text" id="logs-runner" placeholder="fetch, llm_local, openai, build">
       </label>
       <label class="checkbox"><input type="checkbox" id="logs-auto" checked> Auto-refresh</label>
       <label class="checkbox"><input type="checkbox" id="logs-pin" checked> Pin to bottom</label>

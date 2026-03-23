@@ -20,19 +20,61 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import UUID, uuid4
 
+_LOG_KV_PATTERN = re.compile(r"(?P<key>[A-Za-z0-9_]+)=(?P<value>\"[^\"]*\"|'[^']*'|\\S+)")
+
+
+def _coerce_log_value(value: str) -> Any:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text[0] == text[-1] and text[0] in {'"', "'"} and len(text) >= 2:
+        text = text[1:-1]
+    lowered = text.lower()
+    if lowered in {"true", "false"}:
+        return lowered == "true"
+    try:
+        if "." in text:
+            return float(text)
+        return int(text)
+    except ValueError:
+        return text
+
+
+def parse_log_line(line: str) -> dict[str, Any]:
+    raw = str(line or "").rstrip("\n")
+    if not raw:
+        return {"raw": ""}
+    try:
+        payload = json.loads(raw)
+        if isinstance(payload, dict):
+            payload.setdefault("raw", raw)
+            return payload
+    except Exception:
+        pass
+    event: dict[str, Any] = {"raw": raw, "message": raw}
+    matches = list(_LOG_KV_PATTERN.finditer(raw))
+    if matches:
+        for match in matches:
+            key = match.group("key")
+            value = match.group("value")
+            event[key] = _coerce_log_value(value)
+        if "event" in event and "message" in event:
+            event["message"] = str(event.get("event") or raw)
+    return event
+
 
 def log_event(logger: logging.Logger | None, level: int, event: str, **fields: Any) -> None:
     if logger is None:
         return
-    parts = [f"event={event}"]
+    payload: dict[str, Any] = {"event": event}
     hide_source_id = bool(fields.get("source_name"))
     for key, value in fields.items():
         if value is None or value == "":
             continue
         if hide_source_id and key == "source_id":
             continue
-        parts.append(f"{key}={value}")
-    logger.log(level, " ".join(parts))
+        payload[key] = value
+    logger.log(level, json.dumps(payload, default=_json_default, sort_keys=True))
 
 
 def configure_logging(logger_name: str, default_level: str = "INFO") -> logging.Logger:
@@ -88,20 +130,36 @@ def _ensure_stdout_handler(level_name: str) -> None:
 
 
 def _log_formatter() -> logging.Formatter:
-    tz_name = os.environ.get("SV_LOG_TZ", "America/New_York")
-    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-    try:
-        zone = ZoneInfo(tz_name)
-    except Exception:
-        zone = None
+    return _JsonLogFormatter()
 
-    def _converter(timestamp: float) -> time.struct_time:
-        if zone is None:
-            return time.localtime(timestamp)
-        return datetime.fromtimestamp(timestamp, tz=zone).timetuple()
 
-    formatter.converter = _converter  # type: ignore[assignment]
-    return formatter
+class _JsonLogFormatter(logging.Formatter):
+    def __init__(self) -> None:
+        super().__init__()
+        tz_name = os.environ.get("SV_LOG_TZ", "America/New_York")
+        try:
+            self._zone = ZoneInfo(tz_name)
+        except Exception:
+            self._zone = None
+
+    def format(self, record: logging.LogRecord) -> str:
+        if self._zone is None:
+            timestamp = datetime.now().astimezone().isoformat(timespec="milliseconds")
+        else:
+            timestamp = datetime.now(self._zone).isoformat(timespec="milliseconds")
+        message = record.getMessage()
+        parsed = parse_log_line(message)
+        payload: dict[str, Any] = {
+            "ts": timestamp,
+            "level": record.levelname,
+            "logger": record.name,
+        }
+        if isinstance(parsed, dict):
+            payload.update({key: value for key, value in parsed.items() if key != "raw"})
+            payload.setdefault("message", message)
+        else:
+            payload["message"] = message
+        return json.dumps(payload, default=_json_default, sort_keys=True)
 
 
 def json_dumps(value: Any) -> str:

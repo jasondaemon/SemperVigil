@@ -5,11 +5,12 @@ import logging
 import os
 import time
 import urllib.request
+import hashlib
 from typing import Any
 from pathlib import Path
 
 from fastapi import Body, APIRouter, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 try:
     from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -38,7 +39,7 @@ from .config import (
 )
 from .admin_ui import TEMPLATES, ui_router
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
-from .utils import utc_now_iso
+from .utils import parse_log_line, utc_now_iso
 from .worker import (
     WORKER_JOB_TYPES,
     _refresh_feed_data_files,
@@ -219,6 +220,7 @@ from .utils import configure_logging, log_event, utc_now_iso, utc_now_iso_offset
 
 _LOG_SERVICES = {
     "admin": "admin.log",
+    "orchestrator": "orchestrator.log",
     "worker": "worker_fetch.log",
     "worker_llm": "worker_llm.log",
     "worker_fetch": "worker_fetch.log",
@@ -258,6 +260,20 @@ _DASHBOARD_FETCH_JOB_TYPES = [
 _DASHBOARD_BUILD_JOB_TYPES = [
     "build_site",
 ]
+
+_LOG_STREAM_SERVICES = {
+    "all",
+    "admin",
+    "orchestrator",
+    "worker",
+    "worker_fetch",
+    "worker_llm",
+    "worker_openai",
+    "openai_prompts",
+    "vpn_watchdog",
+    "builder",
+    "build_hugo",
+}
 
 _DASHBOARD_STATUS_COLUMNS = {
     "need": None,
@@ -334,6 +350,109 @@ def _latest_hugo_build_log_path() -> str | None:
     if not log_path.exists():
         return None
     return str(log_path)
+
+
+def _log_paths_for_service(service_key: str, config) -> list[str]:
+    service = str(service_key or "").strip().lower()
+    paths: list[str] = []
+    if service == "all":
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for child in _LOG_STREAM_SERVICES:
+            if child == "all":
+                continue
+            for path in _log_paths_for_service(child, config):
+                if not path or path in seen:
+                    continue
+                seen.add(path)
+                deduped.append(path)
+        return deduped
+    if service == "build_hugo":
+        latest = _latest_hugo_build_log_path()
+        return [latest] if latest else []
+    path = _LOG_SERVICES.get(service)
+    if not path:
+        return []
+    if not os.path.isabs(path):
+        path = str(Path(config.paths.logs_dir) / path)
+    return [path]
+
+
+def _read_log_lines(path: str, max_lines: int, max_bytes: int) -> list[str]:
+    text = _read_log_tail(path, max_lines=max_lines, max_bytes=max_bytes)
+    return [line for line in text.splitlines() if line.strip()]
+
+
+def _normalize_log_service(path: str) -> str:
+    name = Path(path).name
+    mapping = {
+        "admin.log": "admin",
+        "orchestrator.log": "orchestrator",
+        "worker_fetch.log": "worker_fetch",
+        "worker_llm.log": "worker_llm",
+        "worker_openai.log": "worker_openai",
+        "builder.log": "builder",
+        "hugo-build.log": "build_hugo",
+    }
+    if name in mapping:
+        return mapping[name]
+    if name.endswith(".stdout.log") or name.endswith(".stderr.log"):
+        return "builder"
+    return name
+
+
+def _build_log_entry(path: str, raw_line: str) -> dict[str, object]:
+    entry = parse_log_line(raw_line)
+    if not isinstance(entry, dict):
+        entry = {"message": raw_line, "raw": raw_line}
+    entry.setdefault("service", _normalize_log_service(path))
+    entry.setdefault("log_path", path)
+    entry.setdefault("raw", raw_line.rstrip("\n"))
+    digest = hashlib.sha1(f"{path}|{entry.get('raw','')}".encode("utf-8")).hexdigest()
+    entry.setdefault("id", digest)
+    return entry
+
+
+def _matches_log_filters(
+    entry: dict[str, object],
+    *,
+    runner: str | None = None,
+    job_type: str | None = None,
+    event: str | None = None,
+    level: str | None = None,
+) -> bool:
+    if runner:
+        runner_value = str(entry.get("runner_type") or entry.get("runner_id") or "").strip()
+        if runner_value != runner:
+            return False
+    if job_type and str(entry.get("job_type") or "").strip() != job_type:
+        return False
+    if event and str(entry.get("event") or "").strip() != event:
+        return False
+    if level and str(entry.get("level") or "").strip().lower() != level.lower():
+        return False
+    return True
+
+
+def _query_logs(
+    config,
+    *,
+    service: str,
+    limit: int,
+    runner: str | None = None,
+    job_type: str | None = None,
+    event: str | None = None,
+    level: str | None = None,
+) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    for path in _log_paths_for_service(service, config):
+        max_bytes = 600_000 if service in {"all", "build_hugo"} else 250_000
+        for raw_line in _read_log_lines(path, max_lines=max(limit * 4, 200), max_bytes=max_bytes):
+            entry = _build_log_entry(path, raw_line)
+            if _matches_log_filters(entry, runner=runner, job_type=job_type, event=event, level=level):
+                entries.append(entry)
+    entries.sort(key=lambda item: (str(item.get("ts") or ""), str(item.get("id") or "")))
+    return entries[-limit:] if limit > 0 else entries
 
 
 def _format_log_header(path: str | None) -> str:
@@ -954,6 +1073,81 @@ def logs_tail(service: str, lines: int = 200) -> dict[str, object]:
         path = str(Path(config.paths.logs_dir) / path)
     text = _read_log_tail(path, line_limit, max_bytes=200_000)
     return {"service": service_key, "lines": line_limit, "text": text}
+
+
+@app.get("/admin/api/logs/query", dependencies=[Depends(_require_admin_token)])
+def logs_query(
+    service: str = "all",
+    lines: int = 200,
+    runner: str | None = None,
+    job_type: str | None = None,
+    event: str | None = None,
+    level: str | None = None,
+) -> dict[str, object]:
+    service_key = str(service or "all").strip().lower()
+    if service_key not in _LOG_STREAM_SERVICES:
+        raise HTTPException(status_code=400, detail="invalid_service")
+    line_limit = max(1, min(int(lines or 200), 1000))
+    conn = _get_conn()
+    config = load_runtime_config(conn)
+    entries = _query_logs(
+        config,
+        service=service_key,
+        limit=line_limit,
+        runner=(str(runner).strip() or None) if runner is not None else None,
+        job_type=(str(job_type).strip() or None) if job_type is not None else None,
+        event=(str(event).strip() or None) if event is not None else None,
+        level=(str(level).strip() or None) if level is not None else None,
+    )
+    return {
+        "service": service_key,
+        "lines": line_limit,
+        "runner": runner,
+        "job_type": job_type,
+        "event": event,
+        "level": level,
+        "entries": entries,
+    }
+
+
+@app.get("/admin/api/logs/stream", dependencies=[Depends(_require_admin_token)])
+def logs_stream(
+    request: Request,
+    service: str = "all",
+    lines: int = 200,
+    runner: str | None = None,
+    job_type: str | None = None,
+    event: str | None = None,
+    level: str | None = None,
+) -> StreamingResponse:
+    del request
+    service_key = str(service or "all").strip().lower()
+    if service_key not in _LOG_STREAM_SERVICES:
+        raise HTTPException(status_code=400, detail="invalid_service")
+    line_limit = max(1, min(int(lines or 200), 1000))
+    conn = _get_conn()
+    config = load_runtime_config(conn)
+
+    def _event_stream():
+        seen_ids: set[str] = set()
+        while True:
+            entries = _query_logs(
+                config,
+                service=service_key,
+                limit=line_limit,
+                runner=(str(runner).strip() or None) if runner is not None else None,
+                job_type=(str(job_type).strip() or None) if job_type is not None else None,
+                event=(str(event).strip() or None) if event is not None else None,
+                level=(str(level).strip() or None) if level is not None else None,
+            )
+            new_entries = [entry for entry in entries if str(entry.get("id") or "") not in seen_ids]
+            for entry in new_entries:
+                seen_ids.add(str(entry.get("id") or ""))
+                yield f"data: {json.dumps(entry, default=str)}\n\n"
+            yield ": heartbeat\n\n"
+            time.sleep(2)
+
+    return StreamingResponse(_event_stream(), media_type="text/event-stream")
 
 
 @app.get("/admin/api/logs/builds/latest", dependencies=[Depends(_require_admin_token)])
