@@ -187,7 +187,8 @@ def set_source_enabled(conn: Any, source_id: str, enabled: bool) -> None:
 def get_source(conn: Any, source_id: str) -> Source | None:
     cursor = conn.execute(
         """
-        SELECT id, name, enabled, COALESCE(NULLIF(interval_minutes, 0), default_frequency_minutes, 60),
+        SELECT id, name, enabled, base_url, topic_key,
+               COALESCE(NULLIF(interval_minutes, 0), default_frequency_minutes, 60),
                kind, url,
                pause_until, paused_reason, robots_notes, overrides,
                last_checked_at, last_ok_at, last_error,
@@ -207,7 +208,8 @@ def list_sources(conn: Any, enabled_only: bool = True) -> list[Source]:
     if enabled_only:
         cursor = conn.execute(
             """
-            SELECT id, name, enabled, COALESCE(NULLIF(interval_minutes, 0), default_frequency_minutes, 60),
+            SELECT id, name, enabled, base_url, topic_key,
+                   COALESCE(NULLIF(interval_minutes, 0), default_frequency_minutes, 60),
                    kind, url,
                    pause_until, paused_reason, robots_notes, overrides,
                    last_checked_at, last_ok_at, last_error,
@@ -220,7 +222,8 @@ def list_sources(conn: Any, enabled_only: bool = True) -> list[Source]:
     else:
         cursor = conn.execute(
             """
-            SELECT id, name, enabled, COALESCE(NULLIF(interval_minutes, 0), default_frequency_minutes, 60),
+            SELECT id, name, enabled, base_url, topic_key,
+                   COALESCE(NULLIF(interval_minutes, 0), default_frequency_minutes, 60),
                    kind, url,
                    pause_until, paused_reason, robots_notes, overrides,
                    last_checked_at, last_ok_at, last_error,
