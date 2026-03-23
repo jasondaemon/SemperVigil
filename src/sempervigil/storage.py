@@ -2577,6 +2577,166 @@ def get_runner_stats(conn: Any) -> list[dict[str, object]]:
     return rows
 
 
+def get_runner_health_stats(
+    conn: Any,
+    *,
+    idle_after_seconds: int = 60,
+) -> list[dict[str, object]]:
+    if not _table_exists(conn, "jobs"):
+        return []
+    effective_queue_name = _effective_queue_name_sql()
+    launch_rows = conn.execute(
+        f"""
+        SELECT id,
+               job_type,
+               payload_json,
+               locked_by,
+               locked_at,
+               heartbeat_at,
+               lease_expires_at
+        FROM jobs
+        WHERE {effective_queue_name} = 'control'
+          AND status = 'running'
+          AND job_type IN ('launch_fetch_worker', 'launch_llm_worker', 'launch_openai_worker', 'launch_build_worker')
+        ORDER BY job_type, id
+        """
+    ).fetchall()
+    launch_to_runner = {
+        "launch_fetch_worker": "fetch",
+        "launch_llm_worker": "llm_local",
+        "launch_openai_worker": "openai",
+        "launch_build_worker": "build",
+    }
+    now = datetime.now(timezone.utc)
+    counts: dict[tuple[str, str], int] = {}
+    for _job_id, job_type, payload_json, locked_by, locked_at, heartbeat_at, lease_expires_at in launch_rows:
+        runner_type = launch_to_runner.get(str(job_type or ""), "unknown")
+        queue_name = runner_type
+        if payload_json:
+            try:
+                payload = json.loads(payload_json)
+                if isinstance(payload, dict) and payload.get("queue_name"):
+                    queue_name = str(payload.get("queue_name"))
+            except Exception:
+                pass
+        holder = str(locked_by or "").strip()
+        stage_running = 0
+        if holder:
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM jobs
+                WHERE {effective_queue_name} = %s
+                  AND status = 'running'
+                  AND (
+                    locked_by = %s
+                    OR locked_by LIKE %s
+                  )
+                """,
+                (queue_name, holder, f"{holder}-%"),
+            ).fetchone()
+            stage_running = int(row[0] or 0) if row else 0
+        last_touch_raw = heartbeat_at or locked_at
+        last_touch = None
+        if isinstance(last_touch_raw, str):
+            try:
+                last_touch = _parse_iso(last_touch_raw)
+            except Exception:
+                last_touch = None
+        lease_expires = None
+        if isinstance(lease_expires_at, str):
+            try:
+                lease_expires = _parse_iso(lease_expires_at)
+            except Exception:
+                lease_expires = None
+        if lease_expires is not None and lease_expires < now:
+            health = "stale"
+        elif stage_running > 0:
+            health = "active"
+        elif last_touch is None:
+            health = "starting"
+        else:
+            idle_age = max(0.0, (now - last_touch).total_seconds())
+            health = "idle" if idle_age >= max(1, int(idle_after_seconds or 1)) else "starting"
+        counts[(runner_type, health)] = counts.get((runner_type, health), 0) + 1
+    rows: list[dict[str, object]] = []
+    for (runner_type, health), count in sorted(counts.items()):
+        rows.append(
+            {
+                "runner_type": runner_type,
+                "health": health,
+                "count": int(count),
+            }
+        )
+    return rows
+
+
+def get_queue_worker_health(
+    conn: Any,
+    *,
+    idle_after_seconds: int = 60,
+) -> list[dict[str, object]]:
+    effective_queue_name = _effective_queue_name_sql()
+    queue_rows = {str(row.get("queue_name") or "default"): row for row in get_queue_stats(conn)}
+    running_rows = conn.execute(
+        f"""
+        SELECT {effective_queue_name} AS effective_queue_name, COUNT(*)
+        FROM jobs
+        WHERE status = 'running'
+          AND {effective_queue_name} IN ('fetch', 'llm_local', 'openai', 'build')
+        GROUP BY effective_queue_name
+        """
+    ).fetchall() if _table_exists(conn, "jobs") else []
+    running_by_queue = {str(queue_name or "default"): int(count or 0) for queue_name, count in running_rows}
+    health_rows = get_runner_health_stats(conn, idle_after_seconds=idle_after_seconds)
+    active_by_queue: dict[str, int] = {}
+    idle_by_queue: dict[str, int] = {}
+    stale_by_queue: dict[str, int] = {}
+    starting_by_queue: dict[str, int] = {}
+    for row in health_rows:
+        runner_type = str(row.get("runner_type") or "unknown")
+        count = int(row.get("count") or 0)
+        health = str(row.get("health") or "")
+        target = {
+            "active": active_by_queue,
+            "idle": idle_by_queue,
+            "stale": stale_by_queue,
+            "starting": starting_by_queue,
+        }.get(health)
+        if target is not None:
+            target[runner_type] = target.get(runner_type, 0) + count
+    queue_names = ["fetch", "llm_local", "openai", "build"]
+    rows: list[dict[str, object]] = []
+    for queue_name in queue_names:
+        queued = int((queue_rows.get(queue_name) or {}).get("queued") or 0)
+        running = int(running_by_queue.get(queue_name, 0))
+        active_runners = int(active_by_queue.get(queue_name, 0))
+        idle_runners = int(idle_by_queue.get(queue_name, 0))
+        stale_runners = int(stale_by_queue.get(queue_name, 0))
+        starting_runners = int(starting_by_queue.get(queue_name, 0))
+        rows.extend(
+            [
+                {"queue_name": queue_name, "metric": "queued_jobs", "count": queued},
+                {"queue_name": queue_name, "metric": "running_jobs", "count": running},
+                {"queue_name": queue_name, "metric": "active_runners", "count": active_runners},
+                {"queue_name": queue_name, "metric": "idle_runners", "count": idle_runners},
+                {"queue_name": queue_name, "metric": "starting_runners", "count": starting_runners},
+                {"queue_name": queue_name, "metric": "stale_runners", "count": stale_runners},
+                {
+                    "queue_name": queue_name,
+                    "metric": "blocked",
+                    "count": 1 if queued > 0 and running == 0 else 0,
+                },
+                {
+                    "queue_name": queue_name,
+                    "metric": "idle_with_backlog",
+                    "count": 1 if queued > 0 and running == 0 and idle_runners > 0 else 0,
+                },
+            ]
+        )
+    return rows
+
+
 def get_stale_job_stats(conn: Any, *, stale_after_seconds: int = 300) -> list[dict[str, object]]:
     if not _table_exists(conn, "jobs"):
         return []
