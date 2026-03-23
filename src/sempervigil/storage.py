@@ -90,6 +90,37 @@ def get_queue_name_for_job_type(job_type: str) -> str:
     return _QUEUE_NAME_BY_JOB_TYPE.get(job_type, "default")
 
 
+def _queue_name_case_sql(job_type_expr: str = "job_type") -> str:
+    parts = ["CASE"]
+    for job_type, queue_name in sorted(_QUEUE_NAME_BY_JOB_TYPE.items()):
+        safe_job_type = job_type.replace("'", "''")
+        safe_queue_name = queue_name.replace("'", "''")
+        parts.append(f"WHEN {job_type_expr} = '{safe_job_type}' THEN '{safe_queue_name}'")
+    parts.append("ELSE 'default' END")
+    return " ".join(parts)
+
+
+def _effective_queue_name_sql(
+    queue_name_expr: str = "queue_name",
+    job_type_expr: str = "job_type",
+) -> str:
+    return f"COALESCE({queue_name_expr}, {_queue_name_case_sql(job_type_expr)})"
+
+
+def backfill_job_queue_names(conn: Any) -> int:
+    if not _table_exists(conn, "jobs"):
+        return 0
+    cursor = conn.execute(
+        f"""
+        UPDATE jobs
+        SET queue_name = {_queue_name_case_sql('job_type')}
+        WHERE queue_name IS NULL
+        """
+    )
+    conn.commit()
+    return int(getattr(cursor, "rowcount", 0) or 0)
+
+
 def _reset_serial_sequence(conn: Any, table: str, column: str) -> None:
     row = conn.execute(
         "SELECT pg_get_serial_sequence(%s, %s)",
@@ -2203,11 +2234,12 @@ def clear_build_dirty(
 
 
 def has_pending_queue_job(conn: Any, queue_name: str) -> bool:
+    effective_queue_name = _effective_queue_name_sql()
     cursor = conn.execute(
-        """
+        f"""
         SELECT 1
         FROM jobs
-        WHERE queue_name = %s
+        WHERE {effective_queue_name} = %s
           AND status IN ('queued', 'running')
         LIMIT 1
         """,
@@ -2233,15 +2265,16 @@ def count_pending_jobs(conn: Any, job_type: str) -> int:
 def get_queue_stats(conn: Any) -> list[dict[str, object]]:
     if not _table_exists(conn, "jobs"):
         return []
+    effective_queue_name = _effective_queue_name_sql()
     cursor = conn.execute(
-        """
-        SELECT queue_name,
+        f"""
+        SELECT {effective_queue_name} AS effective_queue_name,
                COUNT(*) FILTER (WHERE status = 'queued') AS queued_count,
                COUNT(*) FILTER (WHERE status = 'running') AS running_count,
                MIN(requested_at) FILTER (WHERE status = 'queued') AS oldest_requested_at
         FROM jobs
-        GROUP BY queue_name
-        ORDER BY queue_name
+        GROUP BY effective_queue_name
+        ORDER BY effective_queue_name
         """
     )
     rows: list[dict[str, object]] = []
@@ -3016,6 +3049,7 @@ def claim_next_job(
         return None
     for _ in range(20):
         with conn.transaction():
+            effective_queue_name = _effective_queue_name_sql()
             stale_params: list[object] = []
             stale_type_clause = ""
             stale_queue_clause = ""
@@ -3025,7 +3059,7 @@ def claim_next_job(
                 stale_params.extend(allowed_types)
             if allowed_queues is not None:
                 stale_placeholders = ",".join(["%s"] * len(allowed_queues))
-                stale_queue_clause = f" AND queue_name IN ({stale_placeholders})"
+                stale_queue_clause = f" AND {effective_queue_name} IN ({stale_placeholders})"
                 stale_params.extend(allowed_queues)
             if lock_timeout_seconds is not None:
                 cutoff = utc_now_iso_offset(seconds=-lock_timeout_seconds)
@@ -3057,7 +3091,7 @@ def claim_next_job(
                 params.extend(allowed_types)
             if allowed_queues is not None:
                 placeholders = ",".join(["%s"] * len(allowed_queues))
-                queue_clause = f" AND queue_name IN ({placeholders})"
+                queue_clause = f" AND {effective_queue_name} IN ({placeholders})"
                 params.extend(allowed_queues)
             now = utc_now_iso()
             lease_expires_at = (

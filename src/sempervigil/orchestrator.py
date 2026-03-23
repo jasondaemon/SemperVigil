@@ -18,9 +18,13 @@ from .config import (
 )
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .storage import (
+    backfill_job_queue_names,
+    claim_next_job,
+    complete_job,
     count_pending_jobs,
     enqueue_build_site_if_needed,
     enqueue_job,
+    fail_job,
     get_build_state,
     get_queue_stats,
     has_pending_job,
@@ -30,6 +34,8 @@ from .storage import (
 )
 from .utils import configure_logging, log_event
 from .worker import (
+    _handle_cve_sync,
+    _handle_ingest_due_sources,
     _maybe_enqueue_auto_catchup,
     _maybe_enqueue_cve_sync,
     _maybe_enqueue_ingest_due_sources,
@@ -300,10 +306,53 @@ def _tick_runner_launches(conn, logger: logging.Logger) -> int:
     return launched
 
 
+def _drain_discovery_queue(
+    conn,
+    config,
+    logger: logging.Logger,
+    orchestrator_id: str,
+    lease_seconds: int,
+    *,
+    limit: int = 4,
+) -> int:
+    completed = 0
+    for _ in range(limit):
+        job = claim_next_job(
+            conn,
+            orchestrator_id,
+            allowed_queues=["discovery"],
+            lock_timeout_seconds=lease_seconds,
+            lease_seconds=lease_seconds,
+        )
+        if job is None:
+            break
+        try:
+            if job.job_type == "ingest_due_sources":
+                result = _handle_ingest_due_sources(conn, logger)
+            elif job.job_type == "cve_sync":
+                result = _handle_cve_sync(conn, config, logger, job.payload)
+            else:
+                raise RuntimeError(f"unsupported_discovery_job:{job.job_type}")
+            complete_job(conn, job.id, result)
+            completed += 1
+        except Exception as exc:
+            fail_job(conn, job.id, str(exc))
+            log_event(
+                logger,
+                logging.ERROR,
+                "discovery_job_failed",
+                job_id=job.id,
+                job_type=job.job_type,
+                error=str(exc),
+            )
+    return completed
+
+
 def run_once(orchestrator_id: str) -> int:
     logger = _setup_logging()
     try:
         conn = init_db()
+        backfill_job_queue_names(conn)
         config = load_runtime_config(conn)
         bootstrap_cve_settings(conn)
         bootstrap_events_settings(conn)
@@ -333,6 +382,13 @@ def run_once(orchestrator_id: str) -> int:
         scheduled = _tick_scheduled_jobs(conn, logger)
         _maybe_enqueue_ingest_due_sources(conn, logger)
         _maybe_enqueue_cve_sync(conn, logger)
+        discovery_jobs = _drain_discovery_queue(
+            conn,
+            config,
+            logger,
+            orchestrator_id,
+            lease_seconds,
+        )
         _maybe_enqueue_auto_catchup(conn, config, logger, orchestrator_id, None)
         builds = _tick_build_admission(conn, config, logger)
         launches = _tick_runner_launches(conn, logger)
@@ -342,6 +398,7 @@ def run_once(orchestrator_id: str) -> int:
             logging.INFO,
             "orchestrator_tick_complete",
             scheduled_jobs=scheduled,
+            discovery_jobs=discovery_jobs,
             build_jobs=builds,
             launch_jobs=launches,
         )

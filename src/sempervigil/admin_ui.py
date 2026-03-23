@@ -76,6 +76,11 @@ def _base_context(request: Request) -> dict[str, object]:
     }
 
 
+def _render(template_name: str, context: dict[str, object]) -> HTMLResponse:
+    request = context["request"]
+    return TEMPLATES.TemplateResponse(request, template_name, context)
+
+
 def ui_router(token_guard) -> APIRouter:
     router = APIRouter(dependencies=[Depends(token_guard)])
 
@@ -85,7 +90,7 @@ def ui_router(token_guard) -> APIRouter:
         sources = list_sources(conn)
         jobs = list_jobs(conn, limit=10)
         enabled_count = sum(1 for item in sources if item.get("enabled"))
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/dashboard.html",
             {
                 **_base_context(request),
@@ -103,7 +108,7 @@ def ui_router(token_guard) -> APIRouter:
         for item in items:
             item["articles_24h"] = count_articles_since(conn, item["id"], since)
             item["total_articles"] = count_articles_total(conn, item["id"])
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/sources.html",
             {
                 **_base_context(request),
@@ -116,7 +121,7 @@ def ui_router(token_guard) -> APIRouter:
         base = _base_context(request)
         if not base.get("watchlist_enabled"):
             raise HTTPException(status_code=404, detail="watchlist_disabled")
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/watchlist.html",
             {
                 **base,
@@ -127,7 +132,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/personalization", response_class=HTMLResponse)
     def personalization(request: Request):
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/personalization.html",
             {
                 **_base_context(request),
@@ -140,7 +145,7 @@ def ui_router(token_guard) -> APIRouter:
     def jobs(request: Request):
         conn = _get_conn()
         items = list_jobs(conn, limit=50)
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/jobs.html",
             {
                 **_base_context(request),
@@ -150,7 +155,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/system/utilities", response_class=HTMLResponse)
     def utilities(request: Request):
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/utilities.html",
             {
                 **_base_context(request),
@@ -161,7 +166,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/system/schedules", response_class=HTMLResponse)
     def schedules(request: Request):
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/schedules.html",
             {
                 **_base_context(request),
@@ -172,7 +177,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/threats", response_class=HTMLResponse)
     def threats(request: Request):
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/threats.html",
             {
                 **_base_context(request),
@@ -183,7 +188,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/threats/{actor_key}", response_class=HTMLResponse)
     def threat_detail(request: Request, actor_key: str):
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/threat_detail.html",
             {
                 **_base_context(request),
@@ -195,7 +200,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/briefs", response_class=HTMLResponse)
     def briefs(request: Request):
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/briefs.html",
             {
                 **_base_context(request),
@@ -206,7 +211,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/briefs/{day}", response_class=HTMLResponse)
     def brief_detail(request: Request, day: str):
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/brief_detail.html",
             {
                 **_base_context(request),
@@ -262,7 +267,7 @@ def ui_router(token_guard) -> APIRouter:
                     "consecutive_zero": streaks["consecutive_zero"],
                 }
             )
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/health.html",
             {
                 **_base_context(request),
@@ -272,7 +277,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/debug", response_class=HTMLResponse)
     def debug(request: Request):
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/debug.html",
             {
                 **_base_context(request),
@@ -355,7 +360,7 @@ def ui_router(token_guard) -> APIRouter:
         prompts_latest = [g["latest"] for g in prompts_grouped]
         prompts_history = {g["key"]: g["history"] for g in prompts_grouped if g["history"]}
         schemas_latest, schemas_history = _group_latest(schemas_all)
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/ai.html",
             {
                 **_base_context(request),
@@ -377,7 +382,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/analytics", response_class=HTMLResponse)
     def analytics(request: Request):
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/analytics.html",
             {
                 **_base_context(request),
@@ -386,7 +391,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/cves", response_class=HTMLResponse)
     def cves(request: Request):
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/cves.html",
             {
                 **_base_context(request),
@@ -395,7 +400,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/cves/settings", response_class=HTMLResponse)
     def cve_settings(request: Request):
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/cve_settings.html",
             {
                 **_base_context(request),
@@ -404,7 +409,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/cves/{cve_id}", response_class=HTMLResponse)
     def cve_detail(request: Request, cve_id: str):
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/cve_detail.html",
             {
                 **_base_context(request),
@@ -414,7 +419,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/events", response_class=HTMLResponse)
     def events(request: Request):
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/events.html",
             {
                 **_base_context(request),
@@ -423,7 +428,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/events/{event_id}", response_class=HTMLResponse)
     def event_detail(request: Request, event_id: str):
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/event_detail.html",
             {
                 **_base_context(request),
@@ -433,7 +438,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/products", response_class=HTMLResponse)
     def products(request: Request):
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/products.html",
             {
                 **_base_context(request),
@@ -442,7 +447,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/products/{product_key}", response_class=HTMLResponse)
     def product_detail(request: Request, product_key: str):
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/product_detail.html",
             {
                 **_base_context(request),
@@ -454,7 +459,7 @@ def ui_router(token_guard) -> APIRouter:
     def content(request: Request):
         conn = _get_conn()
         sources = list_sources(conn)
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/content.html",
             {
                 **_base_context(request),
@@ -464,7 +469,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/content/articles/{article_id}", response_class=HTMLResponse)
     def content_article(request: Request, article_id: int):
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/content_article.html",
             {
                 **_base_context(request),
@@ -476,7 +481,7 @@ def ui_router(token_guard) -> APIRouter:
     def runtime_config(request: Request):
         conn = _get_conn()
         cfg = get_runtime_config(conn)
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/config.html",
             {
                 **_base_context(request),
@@ -486,7 +491,7 @@ def ui_router(token_guard) -> APIRouter:
 
     @router.get("/system/danger", response_class=HTMLResponse)
     def danger_zone(request: Request):
-        return TEMPLATES.TemplateResponse(
+        return _render(
             "admin/danger.html",
             {
                 **_base_context(request),
