@@ -76,6 +76,11 @@ SemperVigil is composed of three primary layers:
 For full details, see:
 - `docs/ARCHITECTURE.md`
 
+Optional observability assets:
+- Grafana dashboard JSON is versioned under `ops/grafana/`
+- these assets are for operators who already run Grafana-compatible tooling
+- Grafana is not a SemperVigil runtime dependency
+
 ---
 
 ## Documentation Map
