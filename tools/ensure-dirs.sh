@@ -61,9 +61,9 @@ fix_perms_tree() {
   fi
 }
 
-fix_perms_tree "${DATA_DIR}"
-fix_perms_tree "${LOGS_DIR}"
 if [ "${SV_FIX_SITE_PERMS}" != "0" ]; then
+  fix_perms_tree "${DATA_DIR}"
+  fix_perms_tree "${LOGS_DIR}"
   fix_perms_tree "${SITE_SRC_DIR}"
   fix_perms_tree "${SITE_PUBLIC_DIR}"
 fi
