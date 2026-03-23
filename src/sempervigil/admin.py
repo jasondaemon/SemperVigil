@@ -618,6 +618,7 @@ def _render_metrics_text(conn: Any) -> str:
 
     dashboard_metrics = _build_dashboard_metrics_payload(conn)
     build_state = dashboard_metrics.get("build_state") or get_build_state(conn)
+    counts_since = _prometheus_timestamp(dashboard_metrics.get("job_counts_since"))
     add_metric(
         "sempervigil_build_dirty",
         "Whether SemperVigil has a pending build request",
@@ -631,6 +632,13 @@ def _render_metrics_text(conn: Any) -> str:
             "Unix timestamp of the last successful site build",
             "gauge",
             [({}, last_built_at)],
+        )
+    if counts_since is not None:
+        add_metric(
+            "sempervigil_dashboard_counts_since_timestamp_seconds",
+            "Unix timestamp used for dashboard failed and completed counters",
+            "gauge",
+            [({}, counts_since)],
         )
 
     queue_samples: list[tuple[dict[str, object], int | float]] = []
