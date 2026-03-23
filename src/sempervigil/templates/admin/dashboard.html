@@ -18,6 +18,15 @@
         <a class="btn secondary" href="/ui/sources">Add your first source</a>
       {% endif %}
     </div>
+    {% if grafana_logs_url %}
+      <div class="card">
+        <div class="card-title">Logs</div>
+        <div class="card-sub">Live logs and runner filters are in Grafana.</div>
+        <div class="card-actions">
+          <a class="btn secondary" href="{{ grafana_logs_url }}" target="_blank" rel="noopener">Open Grafana Logs</a>
+        </div>
+      </div>
+    {% endif %}
   </section>
 
   <section class="panel" id="dashboard-job-counts">
@@ -30,64 +39,5 @@
       </div>
     </div>
     <div id="dashboard-job-counts-table"></div>
-  </section>
-
-  <section class="panel" id="dashboard-logs">
-    <h2>Log Tail</h2>
-    <div class="filters inline">
-      <label>Service
-        <select id="logs-service">
-          <option value="all" selected>all</option>
-          <option value="admin">admin</option>
-          <option value="orchestrator">orchestrator</option>
-          <option value="worker">worker</option>
-          <option value="worker_fetch">worker_fetch</option>
-          <option value="worker_llm">worker_llm</option>
-          <option value="worker_openai">worker_openai</option>
-          <option value="openai_prompts">openai_prompts</option>
-          <option value="vpn_watchdog">vpn_watchdog</option>
-          <option value="builder">builder</option>
-          <option value="build_hugo">build_hugo</option>
-        </select>
-      </label>
-      <div class="logs-build-controls" id="logs-build-controls" style="display:none;">
-        <button class="btn secondary small" type="button" id="logs-build-stdout">Builder stdout</button>
-        <button class="btn secondary small" type="button" id="logs-build-stderr">Builder stderr</button>
-      </div>
-      <label>Lines
-        <select id="logs-lines">
-          <option value="50">50</option>
-          <option value="100">100</option>
-          <option value="200" selected>200</option>
-          <option value="500">500</option>
-        </select>
-      </label>
-      <label>Runner
-        <input type="text" id="logs-runner" placeholder="fetch, llm_local, openai, build">
-      </label>
-      <label class="checkbox"><input type="checkbox" id="logs-auto" checked> Auto-refresh</label>
-      <label class="checkbox"><input type="checkbox" id="logs-pin" checked> Pin to bottom</label>
-      <button class="btn secondary" type="button" id="logs-refresh">Refresh</button>
-      <button class="btn secondary icon" type="button" id="logs-open" title="Open in new window" aria-label="Open log tail in new window">↗</button>
-    </div>
-    <div class="log-filters">
-      <div class="log-filter-group">
-        <div class="log-filter-title">Event</div>
-        <div class="log-filter-actions">
-          <button type="button" class="btn tiny" id="logs-event-all">All</button>
-          <button type="button" class="btn tiny secondary" id="logs-event-none">None</button>
-        </div>
-        <div class="log-filter-list" id="logs-event-list"></div>
-      </div>
-      <div class="log-filter-group">
-        <div class="log-filter-title">Job type</div>
-        <div class="log-filter-actions">
-          <button type="button" class="btn tiny" id="logs-job-all">All</button>
-          <button type="button" class="btn tiny secondary" id="logs-job-none">None</button>
-        </div>
-        <div class="log-filter-list" id="logs-job-list"></div>
-      </div>
-    </div>
-    <pre class="mono log-tail" id="logs-output"></pre>
   </section>
 {% endblock %}

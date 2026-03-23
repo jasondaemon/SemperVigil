@@ -22,6 +22,39 @@ from uuid import UUID, uuid4
 
 _LOG_KV_PATTERN = re.compile(r"(?P<key>[A-Za-z0-9_]+)=(?P<value>\"[^\"]*\"|'[^']*'|\\S+)")
 
+_SERVICE_BY_LOGGER_PREFIX = (
+    ("sempervigil.admin", "admin"),
+    ("sempervigil.orchestrator", "orchestrator"),
+    ("sempervigil.runner", "runner"),
+    ("sempervigil.worker", "worker"),
+    ("sempervigil.hugo", "builder"),
+    ("sempervigil.cli", "cli"),
+    ("sempervigil.llm.http", "openai_prompts"),
+)
+
+_SERVICE_BY_LOG_FILE = {
+    "admin.log": "admin",
+    "orchestrator.log": "orchestrator",
+    "runner.log": "runner",
+    "worker.log": "worker",
+    "worker_fetch.log": "worker_fetch",
+    "worker_llm.log": "worker_llm",
+    "worker_openai.log": "worker_openai",
+    "build_worker.log": "builder",
+    "builder.log": "builder",
+    "openai_http.log": "openai_prompts",
+    "hugo-build.log": "build_hugo",
+    "vpn-403-watchdog.log": "vpn_watchdog",
+}
+
+_RUNNER_BY_SERVICE = {
+    "worker_fetch": "fetch",
+    "worker_llm": "llm_local",
+    "worker_openai": "openai",
+    "builder": "build",
+    "build_hugo": "build",
+}
+
 
 def _coerce_log_value(value: str) -> Any:
     text = str(value or "").strip()
@@ -159,7 +192,44 @@ class _JsonLogFormatter(logging.Formatter):
             payload.setdefault("message", message)
         else:
             payload["message"] = message
+        payload.setdefault("service", _default_log_service(record.name))
+        payload.setdefault("runner_type", _default_runner_type(payload))
         return json.dumps(payload, default=_json_default, sort_keys=True)
+
+
+def _default_log_service(logger_name: str) -> str:
+    for prefix, service in _SERVICE_BY_LOGGER_PREFIX:
+        if logger_name.startswith(prefix):
+            return service
+    log_path = os.environ.get("SV_LOG_FILE", "").strip()
+    if log_path:
+        service = _SERVICE_BY_LOG_FILE.get(Path(log_path).name)
+        if service:
+            return service
+    return "app"
+
+
+def _default_runner_type(payload: dict[str, Any]) -> str | None:
+    env_runner = os.environ.get("SV_RUNNER_TYPE", "").strip()
+    if env_runner:
+        return env_runner
+    service = str(payload.get("service") or "").strip()
+    if service in _RUNNER_BY_SERVICE:
+        return _RUNNER_BY_SERVICE[service]
+    logger_name = str(payload.get("logger") or "")
+    if logger_name.startswith("sempervigil.runner"):
+        return "control"
+    return None
+
+
+def build_json_handler(log_path: str, *, level_name: str = "INFO") -> RotatingFileHandler:
+    max_bytes = int(os.environ.get("SV_OPENAI_LOG_MAX_BYTES", 5 * 1024 * 1024))
+    backup_count = int(os.environ.get("SV_OPENAI_LOG_BACKUPS", 1))
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    handler = RotatingFileHandler(log_path, maxBytes=max_bytes, backupCount=backup_count)
+    handler.setLevel(getattr(logging, level_name, logging.INFO))
+    handler.setFormatter(_log_formatter())
+    return handler
 
 
 def json_dumps(value: Any) -> str:

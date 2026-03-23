@@ -4,7 +4,9 @@ import argparse
 import logging
 import os
 from pathlib import Path
+import queue
 import subprocess
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -98,6 +100,7 @@ def _build_log_paths(logs_dir: str, job_id: str) -> dict[str, Path]:
 def _run_hugo_until_done(
     conn, job_id: str, builder_id: str, log_paths: dict[str, Path], lease_seconds: int
 ) -> tuple[int, str, str, bool, list[str]]:
+    logger = get_logger()
     cmd = ["/bin/sh", "/tools/hugo-build.sh"]
     stdout_path = log_paths["stdout"]
     stderr_path = log_paths["stderr"]
@@ -105,28 +108,65 @@ def _run_hugo_until_done(
     with stdout_path.open("a", encoding="utf-8") as log_file:
         proc = subprocess.Popen(
             cmd,
-            stdout=log_file,
-            stderr=log_file,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
+            bufsize=1,
         )
-    canceled = False
-    last_heartbeat = 0.0
-    while True:
-        if is_job_canceled(conn, job_id):
-            canceled = True
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-            break
-        if proc.poll() is not None:
-            break
-        now = time.monotonic()
-        if now - last_heartbeat >= 15:
-            heartbeat_job(conn, job_id, builder_id, lease_seconds)
-            last_heartbeat = now
-        time.sleep(0.5)
+        line_queue: queue.Queue[str | None] = queue.Queue()
+
+        def _drain_stdout() -> None:
+            if proc.stdout is None:
+                line_queue.put(None)
+                return
+            for raw_line in proc.stdout:
+                line_queue.put(raw_line)
+            line_queue.put(None)
+
+        drain_thread = threading.Thread(target=_drain_stdout, daemon=True)
+        drain_thread.start()
+        canceled = False
+        last_heartbeat = 0.0
+        stream_closed = False
+        while True:
+            while True:
+                try:
+                    raw_line = line_queue.get_nowait()
+                except queue.Empty:
+                    break
+                if raw_line is None:
+                    stream_closed = True
+                    break
+                line = raw_line.rstrip("\n")
+                log_file.write(raw_line)
+                log_file.flush()
+                if not line.strip():
+                    continue
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "build_hugo_output",
+                    service="build_hugo",
+                    runner_type="build",
+                    job_id=job_id,
+                    line=line,
+                )
+            if is_job_canceled(conn, job_id):
+                canceled = True
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                break
+            if proc.poll() is not None and stream_closed:
+                break
+            now = time.monotonic()
+            if now - last_heartbeat >= 15:
+                heartbeat_job(conn, job_id, builder_id, lease_seconds)
+                last_heartbeat = now
+            time.sleep(0.5)
+        drain_thread.join(timeout=1)
     proc.wait()
     stdout = _tail_file(stdout_path)
     stderr = _tail_file(stderr_path)

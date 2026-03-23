@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
-from logging.handlers import RotatingFileHandler
 import os
 import socket
+import sys
 import time
-from datetime import datetime
-from zoneinfo import ZoneInfo
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,7 +23,7 @@ from ..services.ai_service import (
     load_provider_secret,
 )
 from ..config import load_runtime_config
-from ..utils import log_event
+from ..utils import build_json_handler, log_event
 
 STAGE_NAMES = [
     "summarize_article",
@@ -736,27 +734,12 @@ def _ensure_openai_http_logger() -> logging.Logger:
     if getattr(logger, "_sv_openai_log_ready", False):
         return logger
     log_path = os.environ.get("SV_OPENAI_LOG_FILE", "/log/openai_http.log")
-    max_bytes = int(os.environ.get("SV_OPENAI_LOG_MAX_BYTES", 5 * 1024 * 1024))
-    backup_count = int(os.environ.get("SV_OPENAI_LOG_BACKUPS", 1))
-    os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    handler = RotatingFileHandler(log_path, maxBytes=max_bytes, backupCount=backup_count)
-    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-    tz_name = os.environ.get("SV_LOG_TZ", "America/New_York")
-    try:
-        zone = ZoneInfo(tz_name)
-    except Exception:
-        zone = None
-
-    def _converter(timestamp: float) -> time.struct_time:
-        if zone is None:
-            return time.localtime(timestamp)
-        return datetime.fromtimestamp(timestamp, tz=zone).timetuple()
-
-    formatter.converter = _converter  # type: ignore[assignment]
-    handler.setFormatter(formatter)
-    handler.setLevel(logging.INFO)
     logger.setLevel(logging.INFO)
-    logger.addHandler(handler)
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stdout_handler.setLevel(logging.INFO)
+    stdout_handler.setFormatter(build_json_handler(log_path).formatter)
+    logger.addHandler(stdout_handler)
+    logger.addHandler(build_json_handler(log_path))
     logger.propagate = False
     logger._sv_openai_log_ready = True
     return logger

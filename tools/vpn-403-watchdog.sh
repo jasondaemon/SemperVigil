@@ -14,6 +14,21 @@ LOG_FILE="${LOG_FILE:-/nfs/website_cybernews.jasondaemon.net/log/vpn-403-watchdo
 
 mkdir -p "$(dirname "$STATE_FILE")" "$(dirname "$LOG_FILE")"
 
+log_json() {
+  local ts scope count403 queued restart reason ip
+  ts="$1"
+  scope="$2"
+  count403="$3"
+  queued="$4"
+  restart="$5"
+  reason="$6"
+  ip="$7"
+  local payload
+  payload=$(printf '{"ts":"%s","level":"INFO","service":"vpn_watchdog","runner_type":"fetch","event":"vpn_watchdog_status","source_scope":"%s","count_403":%s,"queued":%s,"restart":%s,"reason":"%s","ip":"%s"}' \
+    "$ts" "$scope" "$count403" "$queued" "$restart" "$reason" "$ip")
+  printf '%s\n' "$payload" | tee -a "$LOG_FILE" >/dev/stdout
+}
+
 last_restart_epoch=0
 if [[ -f "$STATE_FILE" ]]; then
   # shellcheck disable=SC1090
@@ -81,7 +96,11 @@ fi
 
 echo "last_restart_epoch=$last_restart_epoch" > "$STATE_FILE"
 
-printf '%s source_scope=%s window_min=%s count_403=%s queued=%s restart=%s reason=%s ip=%s
-' \
-  "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$source_scope" "$WINDOW_MIN" "${count_403:-na}" "${queued_count:-na}" "$restart" "$reason" "$new_ip" \
-  >> "$LOG_FILE"
+log_json \
+  "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+  "$source_scope" \
+  "${count_403:-0}" \
+  "${queued_count:-0}" \
+  "$restart" \
+  "$reason" \
+  "$new_ip"

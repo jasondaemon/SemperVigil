@@ -68,6 +68,7 @@ def _base_context(request: Request) -> dict[str, object]:
         "token_enabled": bool(os.environ.get("SV_ADMIN_TOKEN")),
         "is_authenticated": bool(request.cookies.get(ADMIN_COOKIE_NAME)),
         "site_url": site_url or None,
+        "grafana_logs_url": str(os.environ.get("SV_GRAFANA_LOGS_URL") or "").strip() or None,
         "timezone": str(app_cfg.get("timezone") or "").strip() or None,
         "watchlist_enabled": bool(personalization.get("watchlist_enabled")),
         "watchlist_exposure_mode": personalization.get("watchlist_exposure_mode") or "private_only",
