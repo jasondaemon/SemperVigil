@@ -39,6 +39,7 @@ from .worker import (
     _maybe_enqueue_auto_catchup,
     _maybe_enqueue_cve_sync,
     _maybe_enqueue_ingest_due_sources,
+    auto_catchup_types_for_queue,
 )
 
 _SCHEDULE_JOB_TYPES = {
@@ -303,6 +304,38 @@ def _tick_runner_launches(conn, logger: logging.Logger) -> int:
     return launched
 
 
+def _tick_auto_catchup(conn, config, logger: logging.Logger, orchestrator_id: str) -> int:
+    queues = _queue_summary(conn)
+    enqueued = 0
+
+    # Do not keep feeding fetch while it already has an active backlog.
+    fetch_state = queues.get("fetch", {})
+    fetch_busy = int(fetch_state.get("queued", 0)) + int(fetch_state.get("running", 0))
+    if fetch_busy <= int(os.environ.get("SV_ORCH_FETCH_CATCHUP_MAX_BACKLOG", "0") or 0):
+        enqueued += _maybe_enqueue_auto_catchup(
+            conn,
+            config,
+            logger,
+            orchestrator_id,
+            auto_catchup_types_for_queue("fetch"),
+        )
+
+    # Materialize local-LLM work independently of fetch backlog.
+    llm_state = queues.get("llm_local", {})
+    llm_busy = int(llm_state.get("queued", 0)) + int(llm_state.get("running", 0))
+    if llm_busy <= int(os.environ.get("SV_ORCH_LLM_CATCHUP_MAX_BACKLOG", "0") or 0):
+        enqueued += _maybe_enqueue_auto_catchup(
+            conn,
+            config,
+            logger,
+            orchestrator_id,
+            auto_catchup_types_for_queue("llm_local"),
+        )
+
+    # OpenAI jobs are scheduled explicitly today; keep auto-catchup off for that lane.
+    return enqueued
+
+
 def _drain_discovery_queue(
     conn,
     config,
@@ -386,7 +419,7 @@ def run_once(orchestrator_id: str) -> int:
             orchestrator_id,
             lease_seconds,
         )
-        _maybe_enqueue_auto_catchup(conn, config, logger, orchestrator_id, None)
+        _tick_auto_catchup(conn, config, logger, orchestrator_id)
         builds = _tick_build_admission(conn, config, logger)
         launches = _tick_runner_launches(conn, logger)
         _log_queue_stats(conn, logger)

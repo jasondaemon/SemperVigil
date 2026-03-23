@@ -80,6 +80,46 @@ def test_stale_lock_requeues_job(tmp_path):
     assert reclaimed.id == job_id
 
 
+def test_stale_control_launch_requeues_with_queue_filter(tmp_path):
+    conn = init_db()
+
+    job_id = enqueue_job(conn, "launch_fetch_worker", {"queue_name": "fetch"})
+    claimed = claim_next_job(
+        conn,
+        "runner-1",
+        allowed_types=["launch_fetch_worker"],
+        allowed_queues=["control"],
+        lock_timeout_seconds=30,
+        lease_seconds=30,
+    )
+    assert claimed is not None
+    assert claimed.id == job_id
+
+    stale_time = utc_now_iso_offset(seconds=-3600)
+    conn.execute(
+        """
+        UPDATE jobs
+        SET locked_at = %s,
+            lease_expires_at = %s,
+            status = 'running'
+        WHERE id = %s
+        """,
+        (stale_time, stale_time, job_id),
+    )
+    conn.commit()
+
+    reclaimed = claim_next_job(
+        conn,
+        "runner-2",
+        allowed_types=["launch_fetch_worker"],
+        allowed_queues=["control"],
+        lock_timeout_seconds=30,
+        lease_seconds=30,
+    )
+    assert reclaimed is not None
+    assert reclaimed.id == job_id
+
+
 def test_enqueue_job_sets_queue_name(tmp_path):
     conn = init_db()
 

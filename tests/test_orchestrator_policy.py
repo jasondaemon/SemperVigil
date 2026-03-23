@@ -71,3 +71,36 @@ def test_tick_runner_launches_enforces_single_openai_launch(monkeypatch):
     launched = orchestrator._tick_runner_launches(conn, logger)
 
     assert launched == 0
+
+
+def test_tick_auto_catchup_materializes_llm_even_when_fetch_is_backlogged(monkeypatch):
+    conn = init_db()
+    logger = orchestrator._setup_logging()
+    calls = []
+
+    def fake_queue_summary(_conn):
+        return {
+            "fetch": {"queued": 34, "running": 2},
+            "llm_local": {"queued": 0, "running": 0},
+            "openai": {"queued": 0, "running": 0},
+        }
+
+    def fake_auto_catchup(_conn, _config, _logger, _worker_id, allowed_types):
+        calls.append(tuple(allowed_types or ()))
+        return 1
+
+    monkeypatch.setattr(orchestrator, "_queue_summary", fake_queue_summary)
+    monkeypatch.setattr(orchestrator, "_maybe_enqueue_auto_catchup", fake_auto_catchup)
+    monkeypatch.setenv("SV_ORCH_FETCH_CATCHUP_MAX_BACKLOG", "0")
+    monkeypatch.setenv("SV_ORCH_LLM_CATCHUP_MAX_BACKLOG", "0")
+
+    class Jobs:
+        auto_catchup_enabled = True
+
+    class Config:
+        jobs = Jobs()
+
+    enqueued = orchestrator._tick_auto_catchup(conn, Config(), logger, "orch-1")
+
+    assert enqueued == 1
+    assert calls == [tuple(orchestrator.auto_catchup_types_for_queue("llm_local"))]

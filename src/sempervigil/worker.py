@@ -8142,24 +8142,20 @@ def _maybe_enqueue_auto_catchup(
     logger: logging.Logger,
     worker_id: str,
     allowed_types: list[str] | None,
-) -> None:
+) -> int:
     if not bool(getattr(config.jobs, "auto_catchup_enabled", False)):
-        return
+        return 0
     if allowed_types is None:
         allowed_auto_types = set(_AUTO_CATCHUP_JOB_TYPES)
     else:
         allowed_auto_types = {job for job in allowed_types if job in _AUTO_CATCHUP_JOB_TYPES}
     if not allowed_auto_types:
-        return
-    if _queued_job_total(conn, allowed_auto_types) > 0:
-        return
+        return 0
     lease_holder = f"{worker_id}:{uuid.uuid4().hex}"
     if not try_acquire_lease(conn, _AUTO_CATCHUP_LEASE, lease_holder, ttl_seconds=30):
-        return
+        return 0
+    queued_total = 0
     try:
-        if _queued_job_total(conn, allowed_auto_types) > 0:
-            return
-        queued_total = 0
         by_type: dict[str, int] = {}
 
         def _bump(job_type: str) -> None:
@@ -8321,6 +8317,15 @@ def _maybe_enqueue_auto_catchup(
             release_lease(conn, _AUTO_CATCHUP_LEASE, lease_holder)
         except Exception:
             pass
+    return queued_total
+
+
+def auto_catchup_types_for_queue(queue_name: str) -> list[str]:
+    return [
+        job_type
+        for job_type in QUEUE_WORKER_TYPES.get(queue_name, [])
+        if job_type in _AUTO_CATCHUP_JOB_TYPES
+    ]
 
 def _should_tick_ingest_due(allowed_types: list[str] | None) -> bool:
     if allowed_types is None:

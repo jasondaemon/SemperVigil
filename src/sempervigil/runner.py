@@ -116,6 +116,7 @@ def run_once(runner_id: str, runner_type: str) -> int:
         runner_id,
         allowed_types=[str(runner_cfg["launch_job_type"])],
         allowed_queues=["control"],
+        lock_timeout_seconds=lease_seconds,
         lease_seconds=lease_seconds,
     )
     if not job:
