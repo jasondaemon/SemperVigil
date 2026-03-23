@@ -258,6 +258,26 @@ def _job_is_pending(conn: Any, job_id: str) -> bool:
     return row is not None
 
 
+def _get_pending_source_ingest_job(conn: Any, source_id: str) -> tuple[str, str] | None:
+    row = conn.execute(
+        """
+        SELECT id, requested_at
+        FROM jobs
+        WHERE job_type = 'ingest_source'
+          AND status IN ('queued', 'running')
+          AND payload_json::json->>'source_id' = %s
+        ORDER BY
+            CASE status WHEN 'running' THEN 0 ELSE 1 END,
+            requested_at ASC
+        LIMIT 1
+        """,
+        (source_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return str(row[0]), str(row[1])
+
+
 def _source_due_at(
     conn: Any,
     source: Source,
@@ -287,6 +307,8 @@ def list_due_sources(conn: Any, now_iso: str) -> list[Source]:
             continue
         if source.ingest_job_id and _job_is_pending(conn, source.ingest_job_id):
             continue
+        if _get_pending_source_ingest_job(conn, source.id):
+            continue
         due_at = _source_due_at(conn, source, last_runs=last_runs)
         if due_at is None:
             due.append(source)
@@ -311,6 +333,21 @@ def enqueue_source_ingest_job(
     now_dt = _parse_iso(now)
     if source.ingest_job_id and _job_is_pending(conn, source.ingest_job_id):
         return source.ingest_job_id
+    existing_pending = _get_pending_source_ingest_job(conn, source.id)
+    if existing_pending:
+        existing_job_id, requested_at = existing_pending
+        conn.execute(
+            """
+            UPDATE sources
+            SET last_enqueued_at = COALESCE(last_enqueued_at, %s),
+                ingest_job_id = %s,
+                updated_at = %s
+            WHERE id = %s
+            """,
+            (requested_at, existing_job_id, now, source.id),
+        )
+        conn.commit()
+        return existing_job_id
     if source.ingest_job_id:
         conn.execute(
             """
