@@ -144,7 +144,10 @@ def _tick_build_admission(conn, config, logger: logging.Logger) -> int:
     job_id = enqueue_build_site_if_needed(
         conn,
         reason=reason or "orchestrator_build_dirty",
-        debounce_seconds=int(getattr(config.jobs, "build_debounce_seconds", 60)),
+        # Dirty-state is already the coalescing mechanism for site builds.
+        # Do not apply last_enqueued_at debounce here or a stale timestamp can
+        # strand the build state as dirty with no queued build job.
+        debounce_seconds=0,
     )
     if not job_id:
         return 0
