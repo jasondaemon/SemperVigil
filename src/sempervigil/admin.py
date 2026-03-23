@@ -736,9 +736,7 @@ def dashboard_reset_failures() -> dict[str, object]:
     conn = _get_conn()
     now = utc_now_iso()
     set_setting(conn, "dashboard_failures_since", now)
-    # Keep completion counts lifetime-based. Resetting failures should not
-    # also zero out succeeded/failed buckets across the worker dashboards.
-    set_setting(conn, "dashboard_job_counts_since", None)
+    set_setting(conn, "dashboard_job_counts_since", now)
     conn.commit()
     return {
         "status": "ok",
