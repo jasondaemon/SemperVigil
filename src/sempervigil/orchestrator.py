@@ -158,12 +158,7 @@ def _tick_build_admission(conn, config, logger: logging.Logger) -> int:
 
 
 def _log_queue_stats(conn, logger: logging.Logger) -> None:
-    stats = get_queue_stats(conn)
-    summary = {}
-    for row in stats:
-        queue_name = str(row.get("queue_name") or "default")
-        queue_summary = summary.setdefault(queue_name, {})
-        queue_summary[str(row.get("status") or "unknown")] = int(row.get("count") or 0)
+    summary = _queue_summary(conn)
     log_event(logger, logging.INFO, "orchestrator_queue_stats", queues=summary)
 
 
@@ -171,8 +166,10 @@ def _queue_summary(conn) -> dict[str, dict[str, int]]:
     summary: dict[str, dict[str, int]] = {}
     for row in get_queue_stats(conn):
         queue_name = str(row.get("queue_name") or "default")
-        queue_summary = summary.setdefault(queue_name, {})
-        queue_summary[str(row.get("status") or "unknown")] = int(row.get("count") or 0)
+        summary[queue_name] = {
+            "queued": int(row.get("queued") or 0),
+            "running": int(row.get("running") or 0),
+        }
     return summary
 
 

@@ -1069,6 +1069,7 @@ def cve_completeness(limit: int = 20) -> dict[str, object]:
 def ui_login(request: Request):
     token_enabled = bool(os.environ.get("SV_ADMIN_TOKEN"))
     return TEMPLATES.TemplateResponse(
+        request,
         "admin/login.html",
         {
             "request": request,
