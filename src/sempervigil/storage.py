@@ -2742,6 +2742,74 @@ def get_queue_worker_health(
     return rows
 
 
+def get_build_status(conn: Any, *, idle_after_seconds: int = 60) -> dict[str, object]:
+    state = get_build_state(conn)
+    dirty = bool(state.get("dirty"))
+    queue_health_rows = get_queue_worker_health(conn, idle_after_seconds=idle_after_seconds)
+    build_metrics = {
+        str(row.get("metric") or ""): int(row.get("count") or 0)
+        for row in queue_health_rows
+        if str(row.get("queue_name") or "") == "build"
+    }
+    queued = int(build_metrics.get("queued_jobs", 0))
+    running = int(build_metrics.get("running_jobs", 0))
+    active_runners = int(build_metrics.get("active_runners", 0))
+    idle_runners = int(build_metrics.get("idle_runners", 0))
+    stale_runners = int(build_metrics.get("stale_runners", 0))
+    blocked = int(build_metrics.get("blocked", 0))
+    idle_with_backlog = int(build_metrics.get("idle_with_backlog", 0))
+
+    latest_failed = None
+    if _table_exists(conn, "jobs"):
+        row = conn.execute(
+            """
+            SELECT id, finished_at, error
+            FROM jobs
+            WHERE job_type = 'build_site'
+              AND status = 'failed'
+            ORDER BY COALESCE(finished_at, started_at, requested_at) DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        if row:
+            latest_failed = {
+                "job_id": row[0],
+                "finished_at": row[1],
+                "error": row[2],
+            }
+
+    if running > 0 or active_runners > 0 or queued > 0:
+        status = "building"
+        reason = "build_in_progress" if running > 0 or active_runners > 0 else "build_queued"
+    elif dirty:
+        status = "error"
+        if stale_runners > 0:
+            reason = "stale_runner"
+        elif blocked > 0 or idle_with_backlog > 0:
+            reason = "build_blocked"
+        else:
+            reason = "dirty_without_admission"
+    else:
+        status = "idle"
+        reason = "idle"
+
+    return {
+        "status": status,
+        "reason": reason,
+        "dirty": dirty,
+        "queued": queued,
+        "running": running,
+        "active_runners": active_runners,
+        "idle_runners": idle_runners,
+        "stale_runners": stale_runners,
+        "blocked": blocked,
+        "idle_with_backlog": idle_with_backlog,
+        "last_built_at": state.get("last_built_at"),
+        "last_build_job_id": state.get("last_build_job_id"),
+        "latest_failed": latest_failed,
+    }
+
+
 def get_stale_job_stats(conn: Any, *, stale_after_seconds: int = 300) -> list[dict[str, object]]:
     if not _table_exists(conn, "jobs"):
         return []
@@ -2787,6 +2855,68 @@ def get_source_ingest_state_counts(conn: Any) -> dict[str, int]:
         "queued": int(row[0] or 0),
         "running": int(row[1] or 0),
     }
+
+
+def get_public_metrics_daily_counts(
+    conn: Any,
+    *,
+    days: int = 14,
+) -> list[dict[str, int | str]]:
+    if days < 1:
+        return []
+    if not _table_exists(conn, "articles") and not _table_exists(conn, "cves"):
+        return []
+    day_span = max(0, int(days) - 1)
+    cursor = conn.execute(
+        f"""
+        WITH days AS (
+          SELECT generate_series(
+            current_date - interval '{day_span} days',
+            current_date,
+            interval '1 day'
+          )::date AS day
+        ),
+        article_daily AS (
+          SELECT
+            date(COALESCE(NULLIF(published_at, ''), NULLIF(ingested_at, ''))::timestamptz) AS day,
+            count(*) AS cnt
+          FROM articles
+          WHERE COALESCE(NULLIF(published_at, ''), NULLIF(ingested_at, '')) IS NOT NULL
+            AND COALESCE(NULLIF(published_at, ''), NULLIF(ingested_at, ''))::timestamptz >= (current_date - interval '{day_span} days')
+          GROUP BY 1
+        ),
+        cve_daily AS (
+          SELECT
+            date(NULLIF(published_at, '')::timestamptz) AS day,
+            count(*) FILTER (WHERE upper(COALESCE(preferred_base_severity, '')) = 'HIGH') AS high_cnt,
+            count(*) FILTER (WHERE upper(COALESCE(preferred_base_severity, '')) = 'CRITICAL') AS critical_cnt
+          FROM cves
+          WHERE NULLIF(published_at, '') IS NOT NULL
+            AND NULLIF(published_at, '')::timestamptz >= (current_date - interval '{day_span} days')
+          GROUP BY 1
+        )
+        SELECT
+          to_char(d.day, 'YYYY-MM-DD') AS day_key,
+          COALESCE(a.cnt, 0) AS article_count,
+          COALESCE(c.high_cnt, 0) AS cve_high_count,
+          COALESCE(c.critical_cnt, 0) AS cve_critical_count
+        FROM days d
+        LEFT JOIN article_daily a USING(day)
+        LEFT JOIN cve_daily c USING(day)
+        ORDER BY d.day
+        """
+    )
+    rows: list[dict[str, int | str]] = []
+    for day_key, article_count, cve_high_count, cve_critical_count in cursor.fetchall():
+        rows.append(
+            {
+                "day": str(day_key),
+                "articles": int(article_count or 0),
+                "cves_high": int(cve_high_count or 0),
+                "cves_critical": int(cve_critical_count or 0),
+            }
+        )
+    return rows
 
 
 def has_pending_article_job(

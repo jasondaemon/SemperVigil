@@ -1,0 +1,134 @@
+{
+  "uid": "sempervigil-overview",
+  "title": "SemperVigil Overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "style": "dark",
+  "timezone": "browser",
+  "editable": false,
+  "graphTooltip": 0,
+  "time": {
+    "from": "now-14d",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 11,
+      "title": "Articles + High/Critical CVEs per Day (14d)",
+      "type": "barchart",
+      "datasource": "monitoring-prometheus",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "label_replace(sum by(day) (sv_articles_daily_count), \"day\", \"$1-$2\", \"day\", \"\\\\d{4}-(\\\\d{2})-(\\\\d{2})\")",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "expr": "label_replace(sum by(day) (sv_cves_high_daily_count), \"day\", \"$1-$2\", \"day\", \"\\\\d{4}-(\\\\d{2})-(\\\\d{2})\")",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "C",
+          "expr": "label_replace(sum by(day) (sv_cves_critical_daily_count), \"day\", \"$1-$2\", \"day\", \"\\\\d{4}-(\\\\d{2})-(\\\\d{2})\")",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "day",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "Value #A": "articles",
+              "Value #B": "cves_high",
+              "Value #C": "cves_critical"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "articles"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#60A5FA"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cves_high"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#F59E0B"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cves_critical"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#EF4444"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "orientation": "vertical",
+        "xField": "day",
+        "stacking": "normal",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "showValue": "never"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 12
+      }
+    }
+  ],
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  }
+}

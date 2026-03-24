@@ -54,3 +54,22 @@ def test_render_metrics_text_exposes_runner_health_and_queue_worker_health(tmp_p
     assert 'sempervigil_runner_health{health="active",runner_type="llm_local"} 0' in payload
     assert 'sempervigil_queue_worker_health{metric="active_runners",queue_name="fetch"} 1' in payload
     assert 'sempervigil_queue_worker_health{metric="running_jobs",queue_name="fetch"} 1' in payload
+
+
+def test_render_metrics_text_exposes_legacy_public_daily_metrics(monkeypatch):
+    conn = init_db()
+
+    monkeypatch.setattr(
+        "sempervigil.admin.get_public_metrics_daily_counts",
+        lambda _conn, days=14: [
+            {"day": "2026-03-10", "articles": 106, "cves_high": 209, "cves_critical": 34},
+            {"day": "2026-03-11", "articles": 87, "cves_high": 111, "cves_critical": 12},
+        ],
+    )
+
+    payload = _render_metrics_text(conn)
+
+    assert 'sv_articles_daily_count{day="2026-03-10"} 106' in payload
+    assert 'sv_cves_high_daily_count{day="2026-03-10"} 209' in payload
+    assert 'sv_cves_critical_daily_count{day="2026-03-10"} 34' in payload
+    assert 'sv_articles_daily_count{day="2026-03-11"} 87' in payload

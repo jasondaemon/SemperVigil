@@ -68,6 +68,7 @@ from .storage import (
     get_job,
     has_pending_job,
     get_build_state,
+    get_build_status,
     get_job_metrics,
     get_queue_stats,
     get_queue_worker_health,
@@ -75,6 +76,7 @@ from .storage import (
     get_runner_health_stats,
     get_source_ingest_state_counts,
     get_stale_job_stats,
+    get_public_metrics_daily_counts,
     mark_build_dirty,
 )
 from .cve_filters import CveSignals, matches_filters
@@ -654,6 +656,7 @@ def _build_dashboard_metrics_payload(conn: Any) -> dict[str, object]:
     metrics["job_types"] = visible_job_types
     metrics["job_groups"] = _dashboard_job_groups()
     metrics["build_state"] = get_build_state(conn)
+    metrics["build_status"] = get_build_status(conn)
     metrics["queue_stats"] = get_queue_stats(conn)
     metrics["runner_health"] = get_runner_health_stats(conn)
     metrics["queue_worker_health"] = get_queue_worker_health(conn)
@@ -788,12 +791,28 @@ def _render_metrics_text(conn: Any) -> str:
 
     dashboard_metrics = _build_dashboard_metrics_payload(conn)
     build_state = dashboard_metrics.get("build_state") or get_build_state(conn)
+    build_status = dashboard_metrics.get("build_status") or get_build_status(conn)
     counts_since = _prometheus_timestamp(dashboard_metrics.get("job_counts_since"))
     add_metric(
         "sempervigil_build_dirty",
         "Whether SemperVigil has a pending build request",
         "gauge",
         [({}, 1 if build_state.get("dirty") else 0)],
+    )
+    add_metric(
+        "sempervigil_build_status",
+        "Current SemperVigil build status by state label",
+        "gauge",
+        [
+            ({"status": status}, 1 if build_status.get("status") == status else 0)
+            for status in ("idle", "building", "error")
+        ],
+    )
+    add_metric(
+        "sempervigil_build_status_code",
+        "Current SemperVigil build status as a numeric code: 0=idle, 1=building, 2=error",
+        "gauge",
+        [({}, {"idle": 0, "building": 1, "error": 2}.get(str(build_status.get("status") or "idle"), 0))],
     )
     last_built_at = _prometheus_timestamp(build_state.get("last_built_at"))
     if last_built_at is not None:
@@ -931,6 +950,35 @@ def _render_metrics_text(conn: Any) -> str:
         [
             ({"state": "queued"}, int(source_counts.get("queued") or 0)),
             ({"state": "running"}, int(source_counts.get("running") or 0)),
+        ],
+    )
+
+    legacy_daily = get_public_metrics_daily_counts(conn, days=14)
+    add_metric(
+        "sv_articles_daily_count",
+        "Legacy SemperVigil public metrics: articles per day for the last 14 days",
+        "gauge",
+        [
+            ({"day": str(row.get("day") or "")}, int(row.get("articles") or 0))
+            for row in legacy_daily
+        ],
+    )
+    add_metric(
+        "sv_cves_high_daily_count",
+        "Legacy SemperVigil public metrics: high-severity CVEs per day for the last 14 days",
+        "gauge",
+        [
+            ({"day": str(row.get("day") or "")}, int(row.get("cves_high") or 0))
+            for row in legacy_daily
+        ],
+    )
+    add_metric(
+        "sv_cves_critical_daily_count",
+        "Legacy SemperVigil public metrics: critical-severity CVEs per day for the last 14 days",
+        "gauge",
+        [
+            ({"day": str(row.get("day") or "")}, int(row.get("cves_critical") or 0))
+            for row in legacy_daily
         ],
     )
 

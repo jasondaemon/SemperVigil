@@ -5,12 +5,14 @@ These dashboards are optional observability assets for SemperVigil.
 They are included with the project for operators who already run Grafana and compatible datasources, but Grafana is not a SemperVigil runtime dependency.
 
 Current dashboards:
+- `dashboards/sempervigil-overview.json`
 - `dashboards/sempervigil-queue-health.json`
 - `dashboards/sempervigil-runner-control-plane.json`
 - `dashboards/sempervigil-build-and-publish.json`
 - `dashboards/sempervigil-live-logs.json`
 
 Datasource expectations:
+- `SemperVigil Overview` expects the legacy public daily-count metrics exposed on SemperVigil's `/metrics` endpoint.
 - `Queue Health`, `Runner Control Plane`, and `Build And Publish` expect Prometheus metrics from SemperVigil's `/metrics` endpoint.
 - `Live Logs` expects a Loki datasource ingesting SemperVigil container stdout/stderr logs.
 
