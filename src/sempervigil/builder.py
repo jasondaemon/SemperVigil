@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import os
+import shutil
 from pathlib import Path
 import queue
 import subprocess
@@ -291,6 +292,23 @@ def _sanitize_product_pages(source_dir: str) -> int:
     return fixed
 
 
+def _prune_legacy_posts_tree(source_dir: str) -> int:
+    legacy_paths = [
+        Path(source_dir) / "content" / "posts" / "content",
+        Path(source_dir) / "content" / "posts" / "data",
+    ]
+    pruned = 0
+    for path in legacy_paths:
+        if not path.exists():
+            continue
+        try:
+            shutil.rmtree(path)
+        except OSError:
+            continue
+        pruned += 1
+    return pruned
+
+
 def _publish_daily_brief_assets(conn, source_dir: str, logger: logging.Logger) -> int:
     content_dir = Path(source_dir) / "content" / "daily"
     data_dir = Path(source_dir) / "data" / "briefs"
@@ -363,6 +381,15 @@ def run_once(builder_id: str) -> int:
             source_dir = None
     if source_dir:
         _sanitize_product_pages(source_dir)
+        pruned = _prune_legacy_posts_tree(source_dir)
+        if pruned:
+            log_event(
+                logger,
+                logging.INFO,
+                "legacy_posts_tree_pruned",
+                source_dir=source_dir,
+                count=pruned,
+            )
     lease_seconds = max(
         int(os.environ.get("SV_BUILDER_LEASE_SECONDS", "0") or 0),
         int(config.jobs.lock_timeout_seconds or 0),
