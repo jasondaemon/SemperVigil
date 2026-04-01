@@ -9,6 +9,7 @@ import queue
 import subprocess
 import threading
 import time
+import sys
 from datetime import datetime, timedelta, timezone
 
 from .config import ConfigError, load_runtime_config
@@ -158,7 +159,7 @@ def _run_hugo_until_done(
     stdout_path = log_paths["stdout"]
     stderr_path = log_paths["stderr"]
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
-    with stdout_path.open("a", encoding="utf-8") as log_file:
+    with stdout_path.open("w", encoding="utf-8") as log_file:
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -193,6 +194,8 @@ def _run_hugo_until_done(
                 line = raw_line.rstrip("\n")
                 log_file.write(raw_line)
                 log_file.flush()
+                sys.stdout.write(raw_line)
+                sys.stdout.flush()
                 if not line.strip():
                     continue
                 log_event(
@@ -288,9 +291,9 @@ def _sanitize_product_pages(source_dir: str) -> int:
     return fixed
 
 
-def _publish_daily_brief_assets(conn, site_root: str, logger: logging.Logger) -> int:
-    content_dir = Path(site_root) / "content" / "daily"
-    data_dir = Path(site_root) / "data" / "briefs"
+def _publish_daily_brief_assets(conn, source_dir: str, logger: logging.Logger) -> int:
+    content_dir = Path(source_dir) / "content" / "daily"
+    data_dir = Path(source_dir) / "data" / "briefs"
     content_dir.mkdir(parents=True, exist_ok=True)
     data_dir.mkdir(parents=True, exist_ok=True)
     for path in content_dir.glob("*.md"):
@@ -307,20 +310,35 @@ def _publish_daily_brief_assets(conn, site_root: str, logger: logging.Logger) ->
             pass
     rows = conn.execute("SELECT brief_day FROM daily_briefs ORDER BY brief_day ASC").fetchall()
     written = 0
+    expected_days = 0
+    missing_days: list[str] = []
     for row in rows:
         day = str(row[0] or "").strip()
         if not day:
             continue
+        expected_days += 1
         brief = get_daily_brief(conn, day)
         if not brief:
+            missing_days.append(day)
             continue
-        write_daily_brief(base_site_dir=site_root, day=day, payload=brief)
+        write_daily_brief(base_site_dir=source_dir, day=day, payload=brief)
         written += 1
+    if missing_days:
+        log_event(
+            logger,
+            logging.ERROR,
+            "daily_brief_assets_missing",
+            source_dir=source_dir,
+            missing_days=missing_days,
+        )
+        raise RuntimeError(f"missing daily brief payloads for: {', '.join(missing_days)}")
+    if written != expected_days:
+        raise RuntimeError(f"daily brief publish mismatch: wrote {written} of {expected_days} rows")
     log_event(
         logger,
         logging.INFO,
         "daily_brief_assets_published",
-        site_root=site_root,
+        source_dir=source_dir,
         count=written,
     )
     return written
@@ -365,10 +383,10 @@ def run_once(builder_id: str) -> int:
         return 0
 
     log_paths = _build_log_paths(config.paths.logs_dir, job.id)
-    site_root = _site_root_from_output_dir(config.paths.output_dir)
+    source_root = source_dir or _site_root_from_output_dir(config.paths.output_dir)
     _refresh_feed_data_files(conn, config, logger)
-    _publish_daily_brief_assets(conn, site_root, logger)
-    _refresh_feed_index_from_days(site_root, logger)
+    _publish_daily_brief_assets(conn, source_root, logger)
+    _refresh_feed_index_from_days(source_root, logger)
     log_event(
         logger,
         logging.INFO,

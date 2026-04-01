@@ -30,29 +30,18 @@ def write_daily_brief(
     content_dir.mkdir(parents=True, exist_ok=True)
     md_path = content_dir / f"{day}.md"
     desired_url = f"/daily-briefs/{day}/"
-    if not md_path.exists():
-        atomic_write_text(
-            md_path,
-            "\n".join(
-                [
-                    "---",
-                    f'title: "Daily Brief – {day}"',
-                    f"date: {day}",
-                    "type: daily",
-                    f'url: "{desired_url}"',
-                    "---",
-                    "",
-                ]
-            ),
-        )
-    else:
-        # Backfill legacy brief files that were created without explicit URL frontmatter.
-        existing = md_path.read_text(encoding="utf-8")
-        if existing.startswith("---\n"):
-            end_idx = existing.find("\n---", 4)
-            if end_idx != -1:
-                frontmatter = existing[4:end_idx]
-                if "url:" not in frontmatter:
-                    updated = existing[:end_idx] + f'\nurl: "{desired_url}"' + existing[end_idx:]
-                    atomic_write_text(md_path, updated)
+    atomic_write_text(
+        md_path,
+        "\n".join(
+            [
+                "---",
+                f'title: "Daily Brief – {day}"',
+                f"date: {day}",
+                "type: daily",
+                f'url: "{desired_url}"',
+                "---",
+                "",
+            ]
+        ),
+    )
     return {"json_path": str(json_path), "content_path": str(md_path)}
