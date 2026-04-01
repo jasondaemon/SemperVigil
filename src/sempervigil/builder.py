@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 from pathlib import Path
@@ -39,6 +40,44 @@ def _site_root_from_output_dir(output_dir: str) -> str:
     else:
         path = path.parent
     return str(path)
+
+
+def _refresh_feed_index_from_days(site_root: str, logger: logging.Logger) -> int:
+    feed_dir = Path(site_root) / "static" / "feed"
+    feed_days_dir = feed_dir / "days"
+    if not feed_days_dir.exists():
+        log_event(logger, logging.INFO, "feed_index_refresh_skipped", site_root=site_root, reason="missing_feed_days")
+        return 0
+
+    day_keys = sorted(
+        {
+            path.stem
+            for path in feed_days_dir.glob("*.json")
+            if path.is_file() and path.stem
+        },
+        reverse=True,
+    )
+    feed_index = {
+        "days": day_keys,
+        "latest_day": day_keys[0] if day_keys else "",
+        "oldest_day": day_keys[-1] if day_keys else "",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    feed_dir.mkdir(parents=True, exist_ok=True)
+    index_path = feed_dir / "index.json"
+    tmp_path = index_path.with_suffix(".json.tmp")
+    tmp_path.write_text(json.dumps(feed_index, indent=2), encoding="utf-8")
+    tmp_path.replace(index_path)
+    log_event(
+        logger,
+        logging.INFO,
+        "feed_index_refreshed",
+        site_root=site_root,
+        count=len(day_keys),
+        latest_day=feed_index["latest_day"],
+        oldest_day=feed_index["oldest_day"],
+    )
+    return len(day_keys)
 
 
 def _tail(text: str, max_lines: int = 120) -> str:
@@ -327,6 +366,7 @@ def run_once(builder_id: str) -> int:
     log_paths = _build_log_paths(config.paths.logs_dir, job.id)
     site_root = _site_root_from_output_dir(config.paths.output_dir)
     _publish_daily_brief_assets(conn, site_root, logger)
+    _refresh_feed_index_from_days(site_root, logger)
     log_event(
         logger,
         logging.INFO,
