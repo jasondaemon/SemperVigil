@@ -50,31 +50,31 @@ secrets:
 storage:
   data:
     enabled: true
-    existingClaim: ""
+    existingClaim: sempervigil-data-csi
     storageClassName: ""
     accessModes: ["ReadWriteMany"]
     size: 20Gi
   siteSrc:
     enabled: true
-    existingClaim: ""
+    existingClaim: sempervigil-site-src-csi
     storageClassName: ""
     accessModes: ["ReadWriteMany"]
     size: 10Gi
   sitePublic:
     enabled: true
-    existingClaim: ""
+    existingClaim: sempervigil-site-public-csi
     storageClassName: ""
     accessModes: ["ReadWriteMany"]
     size: 10Gi
   tools:
-    enabled: false
-    existingClaim: ""
+    enabled: true
+    existingClaim: sempervigil-tools-csi
     storageClassName: ""
     accessModes: ["ReadOnlyMany"]
     size: 1Gi
   logs:
-    enabled: false
-    existingClaim: ""
+    enabled: true
+    existingClaim: sempervigil-logs-csi
     storageClassName: ""
     accessModes: ["ReadWriteMany"]
     size: 10Gi

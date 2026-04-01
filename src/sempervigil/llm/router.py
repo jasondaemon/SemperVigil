@@ -733,13 +733,17 @@ def _ensure_openai_http_logger() -> logging.Logger:
     logger = logging.getLogger("sempervigil.llm.http")
     if getattr(logger, "_sv_openai_log_ready", False):
         return logger
-    log_path = os.environ.get("SV_OPENAI_LOG_FILE", "/log/openai_http.log")
+    log_path = os.environ.get("SV_OPENAI_LOG_FILE", "").strip()
     logger.setLevel(logging.INFO)
     stdout_handler = logging.StreamHandler(sys.stdout)
     stdout_handler.setLevel(logging.INFO)
-    stdout_handler.setFormatter(build_json_handler(log_path).formatter)
+    if log_path:
+        file_handler = build_json_handler(log_path)
+        stdout_handler.setFormatter(file_handler.formatter)
+        logger.addHandler(file_handler)
+    else:
+        stdout_handler.setFormatter(_log_formatter())
     logger.addHandler(stdout_handler)
-    logger.addHandler(build_json_handler(log_path))
     logger.propagate = False
     logger._sv_openai_log_ready = True
     return logger
