@@ -162,6 +162,10 @@ def _ensure_stdout_handler(level_name: str) -> None:
     root.addHandler(handler)
 
 
+def build_json_formatter() -> logging.Formatter:
+    return _log_formatter()
+
+
 def _log_formatter() -> logging.Formatter:
     return _JsonLogFormatter()
 

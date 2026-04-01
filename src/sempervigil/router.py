@@ -23,7 +23,7 @@ from ..services.ai_service import (
     load_provider_secret,
 )
 from ..config import load_runtime_config
-from ..utils import build_json_handler, log_event
+from ..utils import build_json_handler, build_json_formatter, log_event
 
 STAGE_NAMES = [
     "summarize_article",
@@ -742,7 +742,7 @@ def _ensure_openai_http_logger() -> logging.Logger:
         stdout_handler.setFormatter(file_handler.formatter)
         logger.addHandler(file_handler)
     else:
-        stdout_handler.setFormatter(_log_formatter())
+        stdout_handler.setFormatter(build_json_formatter())
     logger.addHandler(stdout_handler)
     logger.propagate = False
     logger._sv_openai_log_ready = True
