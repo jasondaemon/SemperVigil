@@ -11,12 +11,14 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from .config import ConfigError, load_runtime_config
+from .pipelines.daily_brief import write_daily_brief
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .storage import (
     clear_build_dirty,
     claim_next_job,
     complete_job,
     fail_job,
+    get_daily_brief,
     heartbeat_job,
     init_db,
     is_job_canceled,
@@ -26,6 +28,13 @@ from .utils import configure_logging, log_event
 
 def _setup_logging() -> logging.Logger:
     return configure_logging("sempervigil.hugo")
+
+
+def _site_root_from_output_dir(output_dir: str) -> str:
+    path = Path(output_dir).resolve()
+    if path.name in {"current", "public"}:
+        path = path.parent
+    return str(path)
 
 
 def _tail(text: str, max_lines: int = 120) -> str:
@@ -234,6 +243,45 @@ def _sanitize_product_pages(source_dir: str) -> int:
             fixed += 1
     return fixed
 
+
+def _publish_daily_brief_assets(conn, site_root: str, logger: logging.Logger) -> int:
+    content_dir = Path(site_root) / "content" / "daily"
+    data_dir = Path(site_root) / "data" / "briefs"
+    content_dir.mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    for path in content_dir.glob("*.md"):
+        if path.name == "_index.md":
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            pass
+    for path in data_dir.glob("*.json"):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+    rows = conn.execute("SELECT brief_day FROM daily_briefs ORDER BY brief_day ASC").fetchall()
+    written = 0
+    for row in rows:
+        day = str(row[0] or "").strip()
+        if not day:
+            continue
+        brief = get_daily_brief(conn, day)
+        if not brief:
+            continue
+        write_daily_brief(base_site_dir=site_root, day=day, payload=brief)
+        written += 1
+    log_event(
+        logger,
+        logging.INFO,
+        "daily_brief_assets_published",
+        site_root=site_root,
+        count=written,
+    )
+    return written
+
+
 def run_once(builder_id: str) -> int:
     logger = _setup_logging()
     try:
@@ -273,6 +321,8 @@ def run_once(builder_id: str) -> int:
         return 0
 
     log_paths = _build_log_paths(config.paths.logs_dir, job.id)
+    site_root = _site_root_from_output_dir(config.paths.output_dir)
+    _publish_daily_brief_assets(conn, site_root, logger)
     log_event(
         logger,
         logging.INFO,

@@ -38,7 +38,6 @@ from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .publish import write_article_markdown, write_events_index, write_events_markdown, write_json_index
 from .signals import build_cve_evidence, extract_cve_ids
 from .pipelines.content_fetch import fetch_article_content
-from .pipelines.daily_brief import write_daily_brief
 from .llm.router import run_profile, run_pipeline_stage
 from .services.ai_service import (
     get_active_profile_for_stage,
@@ -5222,28 +5221,16 @@ def _handle_build_daily_brief(
 
     if isinstance(profile_id, str):
         brief_payload["meta"]["profile_id"] = profile_id
-
-    site_root = _site_root_from_output_dir(config.paths.output_dir)
-    data_root = getattr(config.paths, "data_dir", None) or ""
-    result = write_daily_brief(
-        base_site_dir=site_root,
-        day=day,
-        payload=brief_payload,
-        data_root=data_root or None,
-        content_root=site_root + "/content",
-    )
     upsert_daily_brief(conn, brief_payload)
     log_event(
         logger,
         logging.INFO,
-        "daily_brief_written",
+        "daily_brief_persisted",
         day=day,
         count=len(articles),
-        json_path=result["json_path"],
-        content_path=result.get("content_path"),
     )
     mark_build_dirty(conn, reason="build_daily_brief")
-    return {"day": day, "count": len(articles), **result}
+    return {"day": day, "count": len(articles), "status": "db_persisted"}
 
 
 def _handle_smoke_test(conn, config, job, logger: logging.Logger) -> dict[str, object]:
