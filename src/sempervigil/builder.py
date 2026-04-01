@@ -101,7 +101,7 @@ def _run_hugo_until_done(
     conn, job_id: str, builder_id: str, log_paths: dict[str, Path], lease_seconds: int
 ) -> tuple[int, str, str, bool, list[str]]:
     logger = _setup_logging()
-    cmd = ["/bin/sh", "/tools/hugo-build.sh"]
+    cmd = ["/bin/sh", "/app/tools/hugo-build.sh"]
     stdout_path = log_paths["stdout"]
     stderr_path = log_paths["stderr"]
     stdout_path.parent.mkdir(parents=True, exist_ok=True)

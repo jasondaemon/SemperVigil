@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-sh /tools/ensure-dirs.sh
+sh /app/tools/ensure-dirs.sh
 
 SOURCE_DIR="${SV_HUGO_SOURCE_DIR:-/repo/site}"
 OUTPUT_DIR="${SV_HUGO_OUTPUT_DIR:-/site}"
@@ -139,7 +139,13 @@ while [ $attempt -le $max_attempts ]; do
   release_dir="${RELEASES_DIR}/${ts}"
   mkdir -p "$release_dir"
   build_config="${BUILD_CONFIG_DIR}/hugo-build-${ts}.$$-attempt${attempt}.toml"
-  printf 'resourceDir = "%s"\n' "$resource_dir" >"$build_config"
+  cat >"$build_config" <<EOF
+resourceDir = "$resource_dir"
+ignoreLogs = ["warning-goldmark-raw-html"]
+
+[markup.goldmark.renderer]
+unsafe = true
+EOF
 
   config_list=""
   for cfg in hugo.toml hugo.yaml hugo.yml hugo.json config.toml config.yaml config.yml config.json; do

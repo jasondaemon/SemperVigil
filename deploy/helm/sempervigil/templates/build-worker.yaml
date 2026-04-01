@@ -34,6 +34,8 @@ spec:
             - configMapRef:
                 name: {{ include "sempervigil.fullname" . }}-env
           env:
+            - name: SV_RUNNER_LEASE_SECONDS
+              value: "900"
             - name: SV_BUILDER_LEASE_SECONDS
               value: "3600"
             - name: SV_DB_URL
