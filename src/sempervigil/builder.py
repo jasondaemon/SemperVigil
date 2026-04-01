@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 from .config import ConfigError, load_runtime_config
 from .pipelines.daily_brief import write_daily_brief
+from .worker import _refresh_feed_data_files
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .storage import (
     clear_build_dirty,
@@ -365,6 +366,7 @@ def run_once(builder_id: str) -> int:
 
     log_paths = _build_log_paths(config.paths.logs_dir, job.id)
     site_root = _site_root_from_output_dir(config.paths.output_dir)
+    _refresh_feed_data_files(conn, config, logger)
     _publish_daily_brief_assets(conn, site_root, logger)
     _refresh_feed_index_from_days(site_root, logger)
     log_event(
