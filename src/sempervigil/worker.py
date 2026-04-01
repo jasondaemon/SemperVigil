@@ -2035,7 +2035,7 @@ def _write_cve_pages(conn, site_root: str, tz_name: str, logger: logging.Logger)
                 "vendor_products": vendor_products,
                 "product_versions": versions,
                 "articles": articles,
-                "threat_actors": cve_meta.get(cve_id, {}).get("threat_actors", []),
+                "threat_actors": get_cve_threat_actors(conn, cve_id),
                 "kev": kev if kev else {},
                 "kev_known_exploited": bool(kev),
                 "kev_due_date": kev.get("due_date") if kev else "",
