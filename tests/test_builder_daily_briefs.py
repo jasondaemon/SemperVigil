@@ -32,16 +32,19 @@ def test_publish_daily_brief_assets_backfills_source_tree(tmp_path):
     upsert_daily_brief(conn, _brief_payload(day))
 
     source_dir = tmp_path / "site-src"
+    data_root = tmp_path / "runtime-data"
     (source_dir / "content" / "daily").mkdir(parents=True)
     (source_dir / "data" / "briefs").mkdir(parents=True)
+    (data_root / "briefs").mkdir(parents=True)
     (source_dir / "content" / "daily" / f"{day}.md").write_text("stale markdown", encoding="utf-8")
     (source_dir / "data" / "briefs" / f"{day}.json").write_text("{}", encoding="utf-8")
+    (data_root / "briefs" / f"{day}.json").write_text("{}", encoding="utf-8")
 
-    written = _publish_daily_brief_assets(conn, str(source_dir), logging.getLogger("test"))
+    written = _publish_daily_brief_assets(conn, str(source_dir), str(data_root), logging.getLogger("test"))
 
     assert written == 1
     md_path = source_dir / "content" / "daily" / f"{day}.md"
-    json_path = source_dir / "data" / "briefs" / f"{day}.json"
+    json_path = data_root / "briefs" / f"{day}.json"
 
     assert md_path.exists()
     assert json_path.exists()

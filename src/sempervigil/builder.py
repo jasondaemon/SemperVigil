@@ -309,9 +309,14 @@ def _prune_legacy_posts_tree(source_dir: str) -> int:
     return pruned
 
 
-def _publish_daily_brief_assets(conn, source_dir: str, logger: logging.Logger) -> int:
+def _publish_daily_brief_assets(
+    conn,
+    source_dir: str,
+    data_root: str | None,
+    logger: logging.Logger,
+) -> int:
     content_dir = Path(source_dir) / "content" / "daily"
-    data_dir = Path(source_dir) / "data" / "briefs"
+    data_dir = Path(data_root) / "briefs" if data_root else Path(source_dir) / "data" / "briefs"
     content_dir.mkdir(parents=True, exist_ok=True)
     data_dir.mkdir(parents=True, exist_ok=True)
     for path in content_dir.glob("*.md"):
@@ -339,7 +344,7 @@ def _publish_daily_brief_assets(conn, source_dir: str, logger: logging.Logger) -
         if not brief:
             missing_days.append(day)
             continue
-        write_daily_brief(base_site_dir=source_dir, day=day, payload=brief)
+        write_daily_brief(base_site_dir=source_dir, day=day, payload=brief, data_root=data_root)
         written += 1
     if missing_days:
         log_event(
@@ -412,7 +417,7 @@ def run_once(builder_id: str) -> int:
     log_paths = _build_log_paths(config.paths.logs_dir, job.id)
     source_root = source_dir or _site_root_from_output_dir(config.paths.output_dir)
     _refresh_feed_data_files(conn, config, logger)
-    _publish_daily_brief_assets(conn, source_root, logger)
+    _publish_daily_brief_assets(conn, source_root, config.paths.data_dir, logger)
     _refresh_feed_index_from_days(source_root, logger)
     log_event(
         logger,
