@@ -243,9 +243,6 @@ _DASHBOARD_LLM_JOB_TYPES = [
     "cve_enrich_threat_actors",
     "event_report_llm",
 ]
-_DASHBOARD_OPENAI_JOB_TYPES = [
-    "build_daily_brief",
-]
 _DASHBOARD_FETCH_JOB_TYPES = [
     "fetch_article_content",
     "cve_sync",
@@ -258,8 +255,6 @@ _DASHBOARD_FETCH_JOB_TYPES = [
     "ingest_due_sources",
     "ingest_source",
     "rebuild_vendor_products",
-]
-_DASHBOARD_BUILD_JOB_TYPES = [
     "build_site",
 ]
 
@@ -287,23 +282,14 @@ _DASHBOARD_STATUS_COLUMNS = {
 
 
 def _dashboard_visible_job_types() -> list[str]:
-    return (
-        _DASHBOARD_LLM_JOB_TYPES
-        + _DASHBOARD_OPENAI_JOB_TYPES
-        + _DASHBOARD_FETCH_JOB_TYPES
-        + _DASHBOARD_BUILD_JOB_TYPES
-    )
+    return _DASHBOARD_LLM_JOB_TYPES + _DASHBOARD_FETCH_JOB_TYPES
 
 
 def _dashboard_job_group_id(job_type: str) -> str:
     if job_type in _DASHBOARD_LLM_JOB_TYPES:
         return "llm"
-    if job_type in _DASHBOARD_OPENAI_JOB_TYPES:
-        return "openai"
     if job_type in _DASHBOARD_FETCH_JOB_TYPES:
         return "fetch"
-    if job_type in _DASHBOARD_BUILD_JOB_TYPES:
-        return "build"
     return "all"
 
 
@@ -637,9 +623,7 @@ def _prometheus_timestamp(value: str | None) -> float | None:
 def _dashboard_job_groups() -> list[dict[str, object]]:
     return [
         {"id": "llm", "title": "LLM Worker", "job_types": _DASHBOARD_LLM_JOB_TYPES},
-        {"id": "openai", "title": "OpenAI Worker", "job_types": _DASHBOARD_OPENAI_JOB_TYPES},
         {"id": "fetch", "title": "Fetch Worker", "job_types": _DASHBOARD_FETCH_JOB_TYPES},
-        {"id": "build", "title": "Build / Publish", "job_types": _DASHBOARD_BUILD_JOB_TYPES},
     ]
 
 
@@ -762,7 +746,6 @@ def _build_dashboard_metrics_payload(conn: Any) -> dict[str, object]:
     cve_threat_ids = list_cve_ids_missing_threat_actors(conn, limit=None)
     pending_cve_threats = _pending_cve_ids("cve_enrich_threat_actors")
     queueable["cve_enrich_threat_actors"] = sum(1 for cve_id in cve_threat_ids if str(cve_id) not in pending_cve_threats)
-    queueable["build_daily_brief"] = int(metrics.get("daily_brief_missing_days_count") or 0)
     metrics["queueable_by_job_type"] = queueable
     metrics["dashboard_display_rows"] = _dashboard_display_rows(metrics)
     return metrics
