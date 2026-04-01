@@ -313,6 +313,9 @@ function wireDashboard() {
       }
       const section = document.createElement("section");
       section.className = "job-counts-section";
+      if (group.id === "build") {
+        section.classList.add("job-counts-section--full");
+      }
       const heading = document.createElement("h4");
       heading.className = "job-counts-heading";
       heading.textContent = group.title || group.id || "Jobs";
@@ -361,7 +364,7 @@ function wireDashboard() {
         body.appendChild(row);
       });
       section.appendChild(table);
-      if (group.id === "fetch" && buildState && typeof buildState === "object") {
+      if (group.id === "build" && buildState && typeof buildState === "object") {
         const meta = document.createElement("div");
         meta.className = "muted";
         const reasons = Array.isArray(buildState.reasons) && buildState.reasons.length

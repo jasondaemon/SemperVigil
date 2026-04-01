@@ -255,6 +255,8 @@ _DASHBOARD_FETCH_JOB_TYPES = [
     "ingest_due_sources",
     "ingest_source",
     "rebuild_vendor_products",
+]
+_DASHBOARD_BUILD_JOB_TYPES = [
     "build_site",
 ]
 
@@ -282,7 +284,7 @@ _DASHBOARD_STATUS_COLUMNS = {
 
 
 def _dashboard_visible_job_types() -> list[str]:
-    return _DASHBOARD_LLM_JOB_TYPES + _DASHBOARD_FETCH_JOB_TYPES
+    return _DASHBOARD_LLM_JOB_TYPES + _DASHBOARD_FETCH_JOB_TYPES + _DASHBOARD_BUILD_JOB_TYPES
 
 
 def _dashboard_job_group_id(job_type: str) -> str:
@@ -290,6 +292,8 @@ def _dashboard_job_group_id(job_type: str) -> str:
         return "llm"
     if job_type in _DASHBOARD_FETCH_JOB_TYPES:
         return "fetch"
+    if job_type in _DASHBOARD_BUILD_JOB_TYPES:
+        return "build"
     return "all"
 
 
@@ -624,6 +628,7 @@ def _dashboard_job_groups() -> list[dict[str, object]]:
     return [
         {"id": "llm", "title": "LLM Worker", "job_types": _DASHBOARD_LLM_JOB_TYPES},
         {"id": "fetch", "title": "Fetch Worker", "job_types": _DASHBOARD_FETCH_JOB_TYPES},
+        {"id": "build", "title": "Build / Publish", "job_types": _DASHBOARD_BUILD_JOB_TYPES},
     ]
 
 

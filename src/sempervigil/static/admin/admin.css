@@ -944,6 +944,9 @@ th, td {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
+.job-counts-section--full {
+  grid-column: 1 / -1;
+}
 .job-counts-table {
   font-size: 12px;
   table-layout: fixed;
