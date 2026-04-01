@@ -14,7 +14,6 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from .config import ConfigError, load_runtime_config
-from .pipelines.daily_brief import write_daily_brief
 from .worker import _refresh_feed_data_files
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .storage import (
@@ -22,7 +21,6 @@ from .storage import (
     claim_next_job,
     complete_job,
     fail_job,
-    get_daily_brief,
     heartbeat_job,
     init_db,
     is_job_canceled,
@@ -309,64 +307,6 @@ def _prune_legacy_posts_tree(source_dir: str) -> int:
     return pruned
 
 
-def _publish_daily_brief_assets(
-    conn,
-    source_dir: str,
-    data_root: str | None,
-    logger: logging.Logger,
-) -> int:
-    content_dir = Path(source_dir) / "content" / "daily"
-    data_dir = Path(data_root) / "briefs" if data_root else Path(source_dir) / "data" / "briefs"
-    content_dir.mkdir(parents=True, exist_ok=True)
-    data_dir.mkdir(parents=True, exist_ok=True)
-    for path in content_dir.glob("*.md"):
-        if path.name == "_index.md":
-            continue
-        try:
-            path.unlink()
-        except OSError:
-            pass
-    for path in data_dir.glob("*.json"):
-        try:
-            path.unlink()
-        except OSError:
-            pass
-    rows = conn.execute("SELECT brief_day FROM daily_briefs ORDER BY brief_day ASC").fetchall()
-    written = 0
-    expected_days = 0
-    missing_days: list[str] = []
-    for row in rows:
-        day = str(row[0] or "").strip()
-        if not day:
-            continue
-        expected_days += 1
-        brief = get_daily_brief(conn, day)
-        if not brief:
-            missing_days.append(day)
-            continue
-        write_daily_brief(base_site_dir=source_dir, day=day, payload=brief, data_root=data_root)
-        written += 1
-    if missing_days:
-        log_event(
-            logger,
-            logging.ERROR,
-            "daily_brief_assets_missing",
-            source_dir=source_dir,
-            missing_days=missing_days,
-        )
-        raise RuntimeError(f"missing daily brief payloads for: {', '.join(missing_days)}")
-    if written != expected_days:
-        raise RuntimeError(f"daily brief publish mismatch: wrote {written} of {expected_days} rows")
-    log_event(
-        logger,
-        logging.INFO,
-        "daily_brief_assets_published",
-        source_dir=source_dir,
-        count=written,
-    )
-    return written
-
-
 def run_once(builder_id: str) -> int:
     logger = _setup_logging()
     try:
@@ -417,7 +357,6 @@ def run_once(builder_id: str) -> int:
     log_paths = _build_log_paths(config.paths.logs_dir, job.id)
     source_root = source_dir or _site_root_from_output_dir(config.paths.output_dir)
     _refresh_feed_data_files(conn, config, logger)
-    _publish_daily_brief_assets(conn, source_root, config.paths.data_dir, logger)
     _refresh_feed_index_from_days(source_root, logger)
     log_event(
         logger,

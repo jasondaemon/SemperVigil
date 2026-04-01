@@ -163,6 +163,7 @@ workerFetch:
     userKey: PIA_USER
     passwordKey: PIA_PASS
     tunDeviceHostPath: /dev/net/tun
+    dnsAddress: 10.43.0.10
 
 workerLlm:
   enabled: true

@@ -205,9 +205,9 @@ EOF
     echo "Hugo version:"
     hugo version
     echo "Build start: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  } >"$log_file" 2>&1
+  }
   set +e
-  hugo -s "$SOURCE_DIR" -d "$release_dir" --baseURL "${SV_HUGO_BASEURL:-/}" --minify --cleanDestinationDir --logLevel info --cacheDir "$CACHE_DIR" "$config_flag" "$config_value" >>"$log_file" 2>&1
+  hugo -s "$SOURCE_DIR" -d "$release_dir" --baseURL "${SV_HUGO_BASEURL:-/}" --minify --cleanDestinationDir --logLevel info --cacheDir "$CACHE_DIR" "$config_flag" "$config_value"
   exit_code=$?
   set -e
 

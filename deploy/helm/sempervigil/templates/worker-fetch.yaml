@@ -51,6 +51,10 @@ spec:
               value: "on"
             - name: HTTPPROXY_LOG
               value: "on"
+            {{- with .Values.workerFetch.vpn.dnsAddress }}
+            - name: DNS_ADDRESS
+              value: {{ . | quote }}
+            {{- end }}
           volumeMounts:
             - name: tun-device
               mountPath: /dev/net/tun
