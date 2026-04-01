@@ -32,7 +32,11 @@ def _setup_logging() -> logging.Logger:
 
 def _site_root_from_output_dir(output_dir: str) -> str:
     path = Path(output_dir).resolve()
-    if path.name in {"current", "public"}:
+    if path.name == "posts" and path.parent.name == "content":
+        path = path.parent.parent
+    elif path.name in {"current", "public"}:
+        path = path.parent
+    else:
         path = path.parent
     return str(path)
 
