@@ -348,7 +348,7 @@ def _cve_page_url(cve_id: str | None) -> str:
     cve = str(cve_id or "").strip()
     if not cve:
         return ""
-    return f"/entities/?search={urlencode({'search': cve})}"
+    return f"https://nvd.nist.gov/vuln/detail/{cve}"
 
 
 def _format_human_ts(value: str | None, tz_name: str) -> str:
@@ -796,6 +796,48 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
             raw = raw.strip()
         return raw
 
+    def _build_facets(
+        vendors: list[dict[str, object]],
+        products: list[dict[str, object]],
+        threats: list[dict[str, object]],
+    ) -> list[dict[str, str]]:
+        facets: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+
+        def _add(kind: str, slug_value: object, display_value: object) -> None:
+            display_name = str(display_value or "").strip()
+            slug_text = str(slug_value or "").strip()
+            if not slug_text and display_name:
+                slug_text = slugify(display_name)
+            if not display_name and not slug_text:
+                return
+            key = (kind, (slug_text or display_name).lower())
+            if key in seen:
+                return
+            seen.add(key)
+            facets.append(
+                {
+                    "kind": kind,
+                    "slug": slug_text or slugify(display_name),
+                    "display_name": display_name or slug_text,
+                }
+            )
+
+        for vendor in vendors or []:
+            if isinstance(vendor, dict):
+                _add("vendor", vendor.get("slug"), vendor.get("display_name"))
+        for product in products or []:
+            if isinstance(product, dict):
+                _add("product", product.get("slug"), product.get("display_name"))
+        for threat in threats or []:
+            if isinstance(threat, dict):
+                _add(
+                    "threat",
+                    threat.get("slug") or threat.get("actor_key"),
+                    threat.get("display_name") or threat.get("actor_key"),
+                )
+        return facets
+
     items = []
     for row in recent_rows:
         if _is_article_suppressed(row.get("meta_json")):
@@ -883,6 +925,7 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
                 "product_items": product_items,
                 "products": product_labels,
                 "threat_actors": threat_actors,
+                "facets": _build_facets(vendors, product_items, threat_actors),
                 "event_keys": event_keys_map.get(row.get("id"), []),
                 "nist_family": nist_family or "",
                 "_sort": local or parsed or datetime.min.replace(tzinfo=timezone.utc),
@@ -936,7 +979,7 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
             vendor_products = list_cve_vendor_products(conn, str(cve_id))
             seen_vendors: set[str] = set()
             seen_products: set[str] = set()
-            for entry in vendor_products[:5]:
+            for entry in vendor_products:
                 vendor = str(entry.get("vendor_display") or "").strip()
                 product = str(entry.get("product_display") or "").strip()
                 if vendor and vendor.lower() == "unknown":
@@ -994,6 +1037,7 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
             "vendors": vendors,
             "vendor_products": vendor_products,
             "threat_actors": threat_actors,
+            "facets": _build_facets(vendors, product_items, threat_actors),
             "kev_due_date": kev_due_date,
             "kev_known_exploited": bool(kev),
         }
@@ -1078,7 +1122,14 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
                 "summary": article.get("summary") or "",
                 "summary_bullets": article.get("summary_bullets") or [],
                 "tags": article.get("tags") or [],
+                "vendors": article.get("vendors") or [],
+                "product_items": article.get("product_items") or [],
                 "products": article.get("products") or [],
+                "vendor_products": article.get("vendor_products") or [],
+                "threat_actors": article.get("threat_actors") or [],
+                "facets": article.get("facets") or [],
+                "event_keys": article.get("event_keys") or [],
+                "nist_family": article.get("nist_family") or "",
             }
         )
     for cve in recent_cve_items:
@@ -1091,10 +1142,18 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
                 "time_label": cve.get("time_label") or "",
                 "cve_id": cve.get("cve_id") or "",
                 "url": cve.get("url") or "",
+                "nvd_url": cve.get("nvd_url") or cve.get("url") or "",
                 "severity": cve.get("severity") or "",
                 "product_title": cve.get("product_title") or "",
                 "summary": cve.get("summary") or "",
+                "vendors": cve.get("vendors") or [],
+                "product_items": cve.get("product_items") or [],
                 "products": cve.get("products") or [],
+                "vendor_products": cve.get("vendor_products") or [],
+                "threat_actors": cve.get("threat_actors") or [],
+                "facets": cve.get("facets") or [],
+                "kev_due_date": cve.get("kev_due_date") or "",
+                "kev_known_exploited": bool(cve.get("kev_known_exploited")),
             }
         )
 
