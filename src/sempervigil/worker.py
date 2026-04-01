@@ -348,7 +348,7 @@ def _cve_page_url(cve_id: str | None) -> str:
     cve = str(cve_id or "").strip()
     if not cve:
         return ""
-    return f"/cves/{slugify(cve)}/"
+    return f"/entities/?search={urlencode({'search': cve})}"
 
 
 def _format_human_ts(value: str | None, tz_name: str) -> str:
@@ -1713,12 +1713,26 @@ def _write_vendor_product_indexes(
                         )
                         seen_product.add(product_slug)
                 kev = get_cve_kev(conn, cve_id)
+                product_title = ""
+                if vendors and products:
+                    product_title = f"{vendors[0]['display_name']} — {products[0]['display_name']}"
+                elif products:
+                    product_title = products[0]['display_name']
+                elif vendors:
+                    product_title = vendors[0]['display_name']
+                severity = (row[3] or "").strip()
+                if product_title and severity:
+                    product_title = f"{product_title} — {severity}"
+                elif severity:
+                    product_title = severity
                 cve_meta[cve_id] = {
                     "cve_id": cve_id,
-                    "severity": (row[3] or "").strip(),
+                    "severity": severity,
                     "published_at_iso": published_at,
                     "published_at_human": _format_human_ts(published_at, tz_name),
                     "summary": summary,
+                    "product_title": product_title,
+                    "title": product_title or cve_id,
                     "url": _cve_page_url(cve_id),
                     "nvd_url": f"https://nvd.nist.gov/vuln/detail/{cve_id}",
                     "vendors": vendors,
@@ -1812,6 +1826,7 @@ def _write_vendor_product_indexes(
     return {"vendors": len(vendors_index), "products": len(products_index)}
 
 
+
 def _write_cve_pages(conn, site_root: str, tz_name: str, logger: logging.Logger) -> dict[str, int]:
     if not _table_exists(conn, "cves"):
         return {"cves": 0}
@@ -1819,10 +1834,18 @@ def _write_cve_pages(conn, site_root: str, tz_name: str, logger: logging.Logger)
         "cve_id",
         "published_at",
         "last_modified_at",
+        "preferred_cvss_version",
         "preferred_base_score",
         "preferred_base_severity",
         "preferred_vector",
         "description_text",
+        "affected_products_json",
+        "affected_cpes_json",
+        "reference_domains_json",
+        "cvss_v31_json",
+        "cvss_v40_json",
+        "cvss_v31_list_json",
+        "cvss_v40_list_json",
         "updated_at",
     ]
     select_cols = [col for col in select_cols if column_exists(conn, "cves", col)]
@@ -1935,18 +1958,7 @@ def _write_cve_pages(conn, site_root: str, tz_name: str, logger: logging.Logger)
 
     kev_map = get_cve_kev_map(conn, cve_ids) if cve_ids else {}
 
-    content_dir = Path(site_root) / "content"
-    cves_dir = content_dir / "cves"
-    cves_dir.mkdir(parents=True, exist_ok=True)
-    _ensure_section_index(cves_dir / "_index.md", "CVEs", "cves")
-
-    keep = set(cve_ids)
-    for md_path in cves_dir.glob("*.md"):
-        if md_path.name == "_index.md":
-            continue
-        if md_path.stem not in keep:
-            md_path.unlink()
-
+    cve_records: list[dict[str, object]] = []
     for row in data_rows:
         cve_id = str(row.get("cve_id") or "")
         if not cve_id:
@@ -1961,10 +1973,18 @@ def _write_cve_pages(conn, site_root: str, tz_name: str, logger: logging.Logger)
         summary = description
         if len(summary) > 320:
             summary = summary[:317].rstrip() + "..."
+        affected_products = json.loads(row.get("affected_products_json") or "[]")
+        affected_cpes = json.loads(row.get("affected_cpes_json") or "[]")
+        reference_domains = json.loads(row.get("reference_domains_json") or "[]")
+        cvss_v31 = json.loads(row.get("cvss_v31_json") or "null")
+        cvss_v40 = json.loads(row.get("cvss_v40_json") or "null")
+        cvss_v31_list = json.loads(row.get("cvss_v31_list_json") or "[]")
+        cvss_v40_list = json.loads(row.get("cvss_v40_list_json") or "[]")
 
         date_value = published_at or last_modified_at or updated_at or utc_now_iso()
         parsed_date = _parse_ts(str(date_value)) if date_value else None
         date_string = (parsed_date or datetime.now(timezone.utc)).date().isoformat()
+        published_epoch = int(parsed_date.timestamp()) if parsed_date else 0
 
         vendors = vendor_map.get(cve_id, [])
         products = product_map.get(cve_id, [])
@@ -1973,110 +1993,78 @@ def _write_cve_pages(conn, site_root: str, tz_name: str, logger: logging.Logger)
         articles = article_map.get(cve_id, [])
         kev = kev_map.get(cve_id)
         nvd_url = f"https://nvd.nist.gov/vuln/detail/{cve_id}"
-        kev_url = (
-            "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
-            if kev
-            else ""
+        product_title = ""
+        if vendor_products:
+            first_vp = vendor_products[0]
+            vendor_name = str(first_vp.get("vendor") or "").strip()
+            product_name = str(first_vp.get("product") or "").strip()
+            if vendor_name and product_name:
+                product_title = f"{vendor_name} — {product_name}"
+            else:
+                product_title = product_name or vendor_name
+        elif vendors and products:
+            product_title = f"{vendors[0]['display_name']} — {products[0]['display_name']}"
+        elif products:
+            product_title = products[0]['display_name']
+        elif vendors:
+            product_title = vendors[0]['display_name']
+        if product_title and preferred_base_severity:
+            product_title = f"{product_title} — {preferred_base_severity}"
+        elif preferred_base_severity:
+            product_title = preferred_base_severity
+
+        cve_records.append(
+            {
+                "cve_id": cve_id,
+                "title": product_title or cve_id,
+                "product_title": product_title,
+                "description": description,
+                "summary": summary,
+                "date": date_string,
+                "published_at": published_at,
+                "last_modified_at": last_modified_at,
+                "published_epoch": published_epoch,
+                "published_at_human": _format_human_ts(published_at or last_modified_at or updated_at or "", tz_name),
+                "severity": preferred_base_severity,
+                "base_score": preferred_base_score,
+                "vector": preferred_vector,
+                "nvd_url": nvd_url,
+                "url": _cve_page_url(cve_id),
+                "vendors": vendors,
+                "products": products,
+                "vendor_products": vendor_products,
+                "product_versions": versions,
+                "articles": articles,
+                "threat_actors": cve_meta.get(cve_id, {}).get("threat_actors", []),
+                "kev": kev if kev else {},
+                "kev_known_exploited": bool(kev),
+                "kev_due_date": kev.get("due_date") if kev else "",
+                "affected_products": affected_products,
+                "affected_cpes": affected_cpes,
+                "reference_domains": reference_domains,
+                "preferred_cvss_version": row.get("preferred_cvss_version") or "",
+                "cvss_v31": cvss_v31,
+                "cvss_v40": cvss_v40,
+                "cvss_v31_list": cvss_v31_list,
+                "cvss_v40_list": cvss_v40_list,
+            }
         )
 
-        lines = [
-            "---",
-            f"title: {_yaml_escape_title(cve_id)}",
-            f"date: {date_string}",
-            "type: cves",
-            f"url: {_yaml_escape_value(_cve_page_url(cve_id))}",
-            "aliases:",
-            f"  - {_yaml_escape_value(f'/cves/{cve_id}/')}",
-            f"cve_id: {_yaml_escape_value(cve_id)}",
-            f"published_at: {_yaml_escape_value(published_at)}",
-            f"last_modified_at: {_yaml_escape_value(last_modified_at)}",
-            f"severity: {_yaml_escape_value(preferred_base_severity)}",
-            f"base_score: {_yaml_escape_value(preferred_base_score)}",
-            f"vector: {_yaml_escape_value(preferred_vector)}",
-            f"nvd_url: {_yaml_escape_value(nvd_url)}",
-        ]
+    cve_records.sort(
+        key=lambda item: (
+            int(item.get("published_epoch") or 0),
+            str(item.get("last_modified_at") or ""),
+            str(item.get("cve_id") or ""),
+        ),
+        reverse=True,
+    )
 
-        if summary:
-            lines.append("summary: |")
-            for line in summary.splitlines():
-                lines.append(f"  {line}")
-        else:
-            lines.append("summary: ''")
-
-        if description:
-            lines.append("description: |")
-            for line in description.splitlines():
-                lines.append(f"  {line}")
-        else:
-            lines.append("description: ''")
-
-        if vendors:
-            lines.append("vendors:")
-            for item in vendors:
-                lines.append(f"  - slug: {_yaml_escape_value(item.get('slug'))}")
-                lines.append(f"    display_name: {_yaml_escape_value(item.get('display_name'))}")
-        else:
-            lines.append("vendors: []")
-
-        if products:
-            lines.append("products:")
-            for item in products:
-                lines.append(f"  - slug: {_yaml_escape_value(item.get('slug'))}")
-                lines.append(f"    display_name: {_yaml_escape_value(item.get('display_name'))}")
-        else:
-            lines.append("products: []")
-
-        if vendor_products:
-            lines.append("vendor_products:")
-            for item in vendor_products:
-                lines.append(f"  - vendor: {_yaml_escape_value(item.get('vendor'))}")
-                lines.append(f"    product: {_yaml_escape_value(item.get('product'))}")
-                lines.append(f"    vendor_slug: {_yaml_escape_value(item.get('vendor_slug'))}")
-                lines.append(f"    product_slug: {_yaml_escape_value(item.get('product_slug'))}")
-        else:
-            lines.append("vendor_products: []")
-
-        if versions:
-            lines.append("product_versions:")
-            for value in versions:
-                lines.append(f"  - {_yaml_escape_value(value)}")
-        else:
-            lines.append("product_versions: []")
-
-        if kev:
-            lines.append("kev:")
-            lines.append("  known_exploited: true")
-            lines.append(f"  due_date: {_yaml_escape_value(kev.get('due_date'))}")
-            lines.append(f"  added_at: {_yaml_escape_value(kev.get('added_at'))}")
-            lines.append(f"  vendor_project: {_yaml_escape_value(kev.get('vendor_project'))}")
-            lines.append(f"  product: {_yaml_escape_value(kev.get('product'))}")
-            lines.append(f"  vulnerability_name: {_yaml_escape_value(kev.get('vulnerability_name'))}")
-            lines.append(f"  short_description: {_yaml_escape_value(kev.get('short_description'))}")
-            lines.append(f"  required_action: {_yaml_escape_value(kev.get('required_action'))}")
-            lines.append(f"  ransomware_use: {_yaml_escape_value(kev.get('ransomware_use'))}")
-            lines.append(f"  notes: {_yaml_escape_value(kev.get('notes'))}")
-            lines.append(f"  cisa_url: {_yaml_escape_value(kev_url)}")
-        else:
-            lines.append("kev: {}")
-
-        if articles:
-            lines.append("articles:")
-            for item in articles:
-                lines.append(f"  - title: {_yaml_escape_value(item.get('title'))}")
-                lines.append(f"    url: {_yaml_escape_value(item.get('url'))}")
-                lines.append(f"    source: {_yaml_escape_value(item.get('source'))}")
-                lines.append(f"    published_at: {_yaml_escape_value(item.get('published_at'))}")
-                lines.append(f"    published_at_human: {_yaml_escape_value(item.get('published_at_human'))}")
-                lines.append(f"    summary: {_yaml_escape_value(item.get('summary'))}")
-        else:
-            lines.append("articles: []")
-
-        lines.extend(["---", ""])
-        md_path = cves_dir / f"{cve_id}.md"
-        atomic_write_text(md_path, "\n".join(lines), encoding="utf-8")
+    data_root = Path(site_root) / "data"
+    data_root.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(data_root / "cves.json", cve_records, indent=2)
+    _purge_generated_entity_content(site_root, ("cves",))
 
     return {"cves": len(cve_ids)}
-
 
 def _write_threat_indexes(
     conn, site_root: str, tz_name: str, logger: logging.Logger
