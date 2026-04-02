@@ -4651,6 +4651,7 @@ def _handle_summarize_article_llm(
             summary_generated_at=utc_now_iso(),
             summary_error=None,
         )
+        mark_build_dirty(conn, reason="summarize_article_llm")
         insert_llm_run(
             conn,
             job_id=None,

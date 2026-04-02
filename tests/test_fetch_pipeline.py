@@ -2,7 +2,7 @@ import logging
 
 from sempervigil.config import load_runtime_config
 from sempervigil.pipelines.content_fetch import extract_published_at_from_html
-from sempervigil.storage import claim_next_job, enqueue_job, init_db
+from sempervigil.storage import claim_next_job, enqueue_job, get_build_state, init_db
 from sempervigil.services import ai_service
 from sempervigil import worker
 
@@ -150,6 +150,8 @@ def test_fetch_enqueues_publish_when_markdown_enabled(tmp_path, monkeypatch):
     rows = conn.execute("SELECT job_type FROM jobs").fetchall()
     types = [row[0] for row in rows]
     assert "write_article_markdown" in types
+    assert get_build_state(conn)["dirty"] is True
+    assert "summarize_article_llm" in get_build_state(conn)["reasons"]
 
 
 def test_summarize_enqueues_publish_when_markdown_enabled(tmp_path, monkeypatch):
@@ -174,6 +176,34 @@ def test_summarize_enqueues_publish_when_markdown_enabled(tmp_path, monkeypatch)
     rows = conn.execute("SELECT job_type FROM jobs").fetchall()
     types = [row[0] for row in rows]
     assert "write_article_markdown" in types
+    assert get_build_state(conn)["dirty"] is True
+    assert "summarize_article_llm" in get_build_state(conn)["reasons"]
+
+def test_summarize_marks_build_dirty_when_markdown_disabled(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("SV_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("SV_LLM_BASE_URL", "http://llm")
+    monkeypatch.setenv("SV_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("SV_ENABLE_ARTICLE_MARKDOWN", "0")
+    conn = init_db()
+    config = load_runtime_config(conn)
+    _seed_summarize_profile(conn)
+    article_id = _insert_article(conn, "https://example.com/d")
+
+    def _fake_summarize(**_kwargs):
+        return {"summary": "short", "model": "test"}
+
+    monkeypatch.setattr(worker, "summarize_with_llm", _fake_summarize)
+    logger = logging.getLogger("test")
+    worker._handle_summarize_article_llm(
+        conn, config, {"article_id": article_id, "source_id": "source-1"}, logger=logger
+    )
+
+    rows = conn.execute("SELECT job_type FROM jobs").fetchall()
+    types = [row[0] for row in rows]
+    assert "write_article_markdown" not in types
+    assert get_build_state(conn)["dirty"] is True
+    assert "summarize_article_llm" in get_build_state(conn)["reasons"]
 
 
 def test_extract_published_at_from_html_rejects_future_timestamp():
