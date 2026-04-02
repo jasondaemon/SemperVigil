@@ -128,6 +128,7 @@ def test_feed_json_keeps_all_relationship_facets(tmp_path: Path) -> None:
     article = next(item for item in payload["items"] if item.get("kind") == "article")
     cve = next(item for item in payload["items"] if item.get("kind") == "cve")
 
+    assert article["article_id"] == article_id
     assert len(article["vendors"]) == 2
     assert len(article["product_items"]) == 2
     assert len(article["threat_actors"]) == 2

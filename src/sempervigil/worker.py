@@ -907,6 +907,7 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
                 time_label = ""
         items.append(
             {
+                "article_id": article_id,
                 "id": row.get("id"),
                 "title": row.get("title") or "",
                 "source": row.get("source_name") or "",
@@ -1110,6 +1111,7 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
         feed_entries.append(
             {
                 "kind": "article",
+                "article_id": article.get("article_id") or article.get("id") or "",
                 "published_epoch": int(article.get("published_epoch") or 0),
                 "published_at_iso": article.get("published_at_iso") or "",
                 "published_at_human": article.get("published_at_human") or "",
