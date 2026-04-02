@@ -19,6 +19,33 @@ spec:
         app.kubernetes.io/component: worker-fetch
     spec:
       serviceAccountName: {{ include "sempervigil.serviceAccountName" . }}
+      initContainers:
+        - name: sempervigil-fix-perms
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          command: ["sh","-lc"]
+          args:
+            - >-
+              set -e;
+              umask {{ .Values.env.SV_UMASK | quote }};
+              SV_FIX_SITE_PERMS=1 SV_UID={{ .Values.env.SV_UID | quote }} SV_GID={{ .Values.env.SV_GID | quote }} sh /app/tools/ensure-dirs.sh
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: logs
+              mountPath: /log
+            {{- if .Values.storage.tools.enabled }}
+            - name: tools
+              mountPath: /tools
+              readOnly: true
+            {{- end }}
+            - name: site-src
+              mountPath: /site-src
+            - name: site-public
+              mountPath: /site
       containers:
         - name: sempervigil-vpn
           image: {{ .Values.workerFetch.vpn.image | quote }}
@@ -64,6 +91,9 @@ spec:
         - name: sempervigil-worker-fetch
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            runAsUser: {{ .Values.env.SV_UID | int }}
+            runAsGroup: {{ .Values.env.SV_GID | int }}
           command: ["sh","-lc"]
           args:
             - >-
@@ -133,6 +163,9 @@ spec:
         - name: site-src
           persistentVolumeClaim:
             claimName: {{ include "sempervigil.storageClaimName" (list . .Values.storage.siteSrc "siteSrc") }}
+        - name: site-public
+          persistentVolumeClaim:
+            claimName: {{ include "sempervigil.storageClaimName" (list . .Values.storage.sitePublic "sitePublic") }}
         - name: tun-device
           hostPath:
             path: {{ .Values.workerFetch.vpn.tunDeviceHostPath | quote }}

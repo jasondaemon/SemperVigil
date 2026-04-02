@@ -19,10 +19,40 @@ spec:
         app.kubernetes.io/component: build-worker
     spec:
       serviceAccountName: {{ include "sempervigil.serviceAccountName" . }}
+      initContainers:
+        - name: sempervigil-fix-perms
+          image: "{{ .Values.builderImage.repository }}:{{ .Values.builderImage.tag }}"
+          imagePullPolicy: {{ .Values.builderImage.pullPolicy }}
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          command: ["sh","-lc"]
+          args:
+            - >-
+              set -e;
+              umask {{ .Values.env.SV_UMASK | quote }};
+              SV_FIX_SITE_PERMS=1 SV_UID={{ .Values.env.SV_UID | quote }} SV_GID={{ .Values.env.SV_GID | quote }} sh /app/tools/ensure-dirs.sh
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: logs
+              mountPath: /log
+            {{- if .Values.storage.tools.enabled }}
+            - name: tools
+              mountPath: /tools
+              readOnly: true
+            {{- end }}
+            - name: site-src
+              mountPath: /site-src
+            - name: site-public
+              mountPath: /site
       containers:
         - name: sempervigil-build-worker
           image: "{{ .Values.builderImage.repository }}:{{ .Values.builderImage.tag }}"
           imagePullPolicy: {{ .Values.builderImage.pullPolicy }}
+          securityContext:
+            runAsUser: {{ .Values.env.SV_UID | int }}
+            runAsGroup: {{ .Values.env.SV_GID | int }}
           command: ["sh","-lc"]
           args:
             - >-

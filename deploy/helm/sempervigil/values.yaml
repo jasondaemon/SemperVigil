@@ -83,10 +83,10 @@ env:
   SV_ENV: prod
   SV_LOG_LEVEL: INFO
   SV_LOG_TZ: America/New_York
-  SV_FIX_SITE_PERMS: "0"
+  SV_FIX_SITE_PERMS: "1"
   SV_UMASK: "002"
-  SV_UID: "1000"
-  SV_GID: "1000"
+  SV_UID: "501"
+  SV_GID: "20"
   SV_HUGO_SOURCE_DIR: /site-src
   SV_HUGO_OUTPUT_DIR: /site
   SV_HUGO_CACHE_DIR: /data/hugo_cache
