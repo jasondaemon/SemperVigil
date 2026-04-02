@@ -4,18 +4,19 @@ set -euo pipefail
 # Rotates VPN IP when repeated fetch 403s indicate likely Cloudflare/IP blocking.
 # Intended to run from cron every few minutes.
 
-COMPOSE_DIR="${COMPOSE_DIR:-/nfs/website_cybernews.jasondaemon.net/sempervigil}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COMPOSE_DIR="${COMPOSE_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 WINDOW_MIN="${WINDOW_MIN:-10}"
 THRESHOLD_403="${THRESHOLD_403:-6}"
 COOLDOWN_S="${COOLDOWN_S:-1800}"
 SOURCE_ID="${SOURCE_ID:-}"
-STATE_FILE="${STATE_FILE:-/nfs/website_cybernews.jasondaemon.net/log/vpn-403-watchdog.state}"
-LOG_FILE="${LOG_FILE:-/nfs/website_cybernews.jasondaemon.net/log/vpn-403-watchdog.log}"
+STATE_FILE="${STATE_FILE:-$COMPOSE_DIR/.state/vpn-403-watchdog.state}"
+LOG_FILE="${LOG_FILE:-$COMPOSE_DIR/.state/vpn-403-watchdog.log}"
 
 mkdir -p "$(dirname "$STATE_FILE")" "$(dirname "$LOG_FILE")"
 
 log_json() {
-  local ts scope count403 queued restart reason ip
+  local ts scope count403 queued restart reason ip payload
   ts="$1"
   scope="$2"
   count403="$3"
@@ -23,7 +24,6 @@ log_json() {
   restart="$5"
   reason="$6"
   ip="$7"
-  local payload
   payload=$(printf '{"ts":"%s","level":"INFO","service":"vpn_watchdog","runner_type":"fetch","event":"vpn_watchdog_status","source_scope":"%s","count_403":%s,"queued":%s,"restart":%s,"reason":"%s","ip":"%s"}' \
     "$ts" "$scope" "$count403" "$queued" "$restart" "$reason" "$ip")
   printf '%s\n' "$payload" | tee -a "$LOG_FILE" >/dev/stdout

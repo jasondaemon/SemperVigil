@@ -21,14 +21,14 @@ ingest → publish (atomic writes) → hugo build → web serve
 
 ## Mount Expectations (Invariant)
 
-Defaults are repo-local:
+PVC-backed mounts are the default:
 
 - `${SV_DATA_DIR:-./data}` → `/data`
 - `${SV_SITE_SRC_DIR:-./site-src}` → `/site-src`
 - `${SV_SITE_PUBLIC_DIR:-./site-public}` → `/site` (builder) and `/usr/share/nginx/html` (web)
 
-External paths (NFS) are allowed **only** via `.env` overrides.
-**Never** hardcode `/nfs/...` paths in `docker-compose.yml`.
+The live cluster uses PVC claims provisioned by `nfs-csi`.
+**Never** hardcode legacy NFS-era paths in `docker-compose.yml` or deployment manifests.
 
 ---
 
@@ -47,7 +47,7 @@ External paths (NFS) are allowed **only** via `.env` overrides.
 
 ---
 
-## NFS / Synology Gotchas
+## Synology / Staging Gotchas
 
 Any config staging or copy/sync step **must** exclude:
 
@@ -55,7 +55,7 @@ Any config staging or copy/sync step **must** exclude:
 - `.DS_Store`
 - `._*` (AppleDouble)
 
-This prevents build failures and permission errors on Synology/NFS.
+This prevents build failures and permission errors on Synology-backed volumes.
 
 ---
 
@@ -72,7 +72,7 @@ This prevents build failures and permission errors on Synology/NFS.
 **Do not** make any of the following changes unless explicitly requested:
 
 - Do not change docker-compose mounts for `data`, `site-src`, or `site-public` without updating docs and running verification.
-- Do not reintroduce absolute `/nfs/...` paths in `docker-compose.yml`.
+- Do not reintroduce legacy NFS-era paths in `docker-compose.yml` or the k8s manifests.
 - Do not change `tools/hugo-build.sh` behavior (locks/retries/atomic-write assumptions) without a concrete failing log + explicit approval.
 - Do not add rsync staging or build dir relocations unless a reproducible issue requires it.
 

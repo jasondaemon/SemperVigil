@@ -20,15 +20,14 @@ Use it first when starting a new chat or debugging issues.
   - `build_worker` runner (claims control launch jobs and executes admitted `build_site`)
 - **Web**: nginx serving `/site-public` on `SV_WEB_PORT` (default 8080).
 
-Key volumes (NFS):
-- `/nfs/sempervigil/site-src` -> Hugo source
-- `/nfs/sempervigil/site-public` -> Hugo output
-- `/nfs/sempervigil/data` -> runtime data (articles, CVEs, reports)
-- `/nfs/sempervigil/log` -> logs (admin/worker/build)
+Key volumes (PVC-backed):
+- `sempervigil-site-src-csi` mounted at `/site-src` -> Hugo source
+- `sempervigil-site-public-csi` mounted at `/site` -> Hugo output
+- `sempervigil-data-csi` mounted at `/data` -> runtime data (articles, CVEs, reports)
+- `sempervigil-logs-csi` mounted at `/log` -> logs (admin/worker/build)
+- `sempervigil-tools-csi` mounted at `/tools` -> shared tooling
 
-The same share is mounted as:
-- `/Volumes/docker/sempervigil` on macOS (SMB)
-- `/nfs/sempervigil` on the server (NFS)
+The live stack is PVC-backed via `nfs-csi`; there is no runtime dependency on the old NFS share.
 
 ---
 
@@ -116,14 +115,14 @@ If builds are too frequent or CPU-pegged, verify both values in `.env`.
 
 2) Check output files:
    ```
-   ls -la /nfs/sempervigil/site-public/index.html
-   head -n 5 /nfs/sempervigil/site-public/index.html
+   ls -la /site-public/index.html
+   head -n 5 /site-public/index.html
    ```
 
 3) Verify data files (source):
    ```
-   ls -la /nfs/sempervigil/site-src/data/articles/today.json
-   ls -la /nfs/sempervigil/site-src/data/cves/today.json
+   ls -la /site-src/data/articles/today.json
+   ls -la /site-src/data/cves/today.json
    ```
 
 ---

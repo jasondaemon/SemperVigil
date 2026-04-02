@@ -265,11 +265,11 @@ curl -v http://<host>:8001/ui/
 ```
 
 Outputs are written to:
-- Hugo source (NFS): `${SV_SITE_SRC_DIR}` (content, layouts, themes, static)
+- Hugo source PVC: `${SV_SITE_SRC_DIR}` (content, layouts, themes, static)
 - Article lists (JSON): `${SV_SITE_SRC_DIR}/data/articles/`
 - JSON index (if enabled): `${SV_SITE_SRC_DIR}/static/sempervigil/index.json`
-- Site output: `${SV_SITE_PUBLIC_DIR}` (nginx serves this)
-- Logs: `/nfs/sempervigil/log` (admin/worker/hugo build logs)
+- Site output PVC: `${SV_SITE_PUBLIC_DIR}` (nginx serves this)
+- Logs PVC: `/log` (admin/worker/hugo build logs)
 
 ---
 
