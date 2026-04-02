@@ -284,7 +284,7 @@ _DASHBOARD_STATUS_COLUMNS = {
 
 
 def _dashboard_visible_job_types() -> list[str]:
-    return _DASHBOARD_LLM_JOB_TYPES + _DASHBOARD_FETCH_JOB_TYPES + _DASHBOARD_BUILD_JOB_TYPES
+    return _DASHBOARD_FETCH_JOB_TYPES + _DASHBOARD_LLM_JOB_TYPES + _DASHBOARD_BUILD_JOB_TYPES
 
 
 def _dashboard_job_group_id(job_type: str) -> str:
@@ -626,8 +626,8 @@ def _prometheus_timestamp(value: str | None) -> float | None:
 
 def _dashboard_job_groups() -> list[dict[str, object]]:
     return [
-        {"id": "llm", "title": "LLM Worker", "job_types": _DASHBOARD_LLM_JOB_TYPES},
         {"id": "fetch", "title": "Fetch Worker", "job_types": _DASHBOARD_FETCH_JOB_TYPES},
+        {"id": "llm", "title": "LLM Worker", "job_types": _DASHBOARD_LLM_JOB_TYPES},
         {"id": "build", "title": "Build / Publish", "job_types": _DASHBOARD_BUILD_JOB_TYPES},
     ]
 
