@@ -723,6 +723,31 @@ def _is_article_in_today_feed(
     return False
 
 
+def _build_cvss_payload(
+    *,
+    preferred_version: object,
+    preferred_base_score: object,
+    preferred_base_severity: object,
+    preferred_vector: object,
+    cvss_v31: object,
+    cvss_v40: object,
+    cvss_v31_list: object,
+    cvss_v40_list: object,
+) -> dict[str, object]:
+    return {
+        "preferred": {
+            "version": str(preferred_version or ""),
+            "base_score": preferred_base_score,
+            "base_severity": str(preferred_base_severity or ""),
+            "vector": str(preferred_vector or ""),
+        },
+        "v31": cvss_v31,
+        "v40": cvss_v40,
+        "v31_list": cvss_v31_list,
+        "v40_list": cvss_v40_list,
+    }
+
+
 def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, object]:
     site_root = _site_root_from_output_dir(config.paths.output_dir)
     data_root = getattr(config.paths, "data_dir", None) or ""
@@ -1021,6 +1046,20 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
         kev = get_cve_kev(conn, str(cve_id)) if cve_id else None
         kev_due_date = kev.get("due_date") if kev else ""
         cve_url = _cve_page_url(str(cve_id) if cve_id else "")
+        cvss_v31 = json.loads(cve.get("cvss_v31_json") or "null")
+        cvss_v40 = json.loads(cve.get("cvss_v40_json") or "null")
+        cvss_v31_list = json.loads(cve.get("cvss_v31_list_json") or "[]")
+        cvss_v40_list = json.loads(cve.get("cvss_v40_list_json") or "[]")
+        cvss_payload = _build_cvss_payload(
+            preferred_version=cve.get("preferred_cvss_version"),
+            preferred_base_score=cve.get("preferred_base_score"),
+            preferred_base_severity=cve.get("preferred_base_severity"),
+            preferred_vector=cve.get("preferred_vector"),
+            cvss_v31=cvss_v31,
+            cvss_v40=cvss_v40,
+            cvss_v31_list=cvss_v31_list,
+            cvss_v40_list=cvss_v40_list,
+        )
         return {
             "cve_id": cve_id,
             "product_title": product_title,
@@ -1039,6 +1078,7 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
             "vendor_products": vendor_products,
             "threat_actors": threat_actors,
             "facets": _build_facets(vendors, product_items, threat_actors),
+            "cvss": cvss_payload,
             "kev_due_date": kev_due_date,
             "kev_known_exploited": bool(kev),
         }
@@ -1148,6 +1188,7 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
                 "severity": cve.get("severity") or "",
                 "product_title": cve.get("product_title") or "",
                 "summary": cve.get("summary") or "",
+                "cvss": cve.get("cvss") or {},
                 "vendors": cve.get("vendors") or [],
                 "product_items": cve.get("product_items") or [],
                 "products": cve.get("products") or [],
@@ -2041,6 +2082,16 @@ def _write_cve_pages(conn, site_root: str, tz_name: str, logger: logging.Logger)
         cvss_v40 = json.loads(row.get("cvss_v40_json") or "null")
         cvss_v31_list = json.loads(row.get("cvss_v31_list_json") or "[]")
         cvss_v40_list = json.loads(row.get("cvss_v40_list_json") or "[]")
+        cvss_payload = _build_cvss_payload(
+            preferred_version=row.get("preferred_cvss_version"),
+            preferred_base_score=preferred_base_score,
+            preferred_base_severity=preferred_base_severity,
+            preferred_vector=preferred_vector,
+            cvss_v31=cvss_v31,
+            cvss_v40=cvss_v40,
+            cvss_v31_list=cvss_v31_list,
+            cvss_v40_list=cvss_v40_list,
+        )
 
         date_value = published_at or last_modified_at or updated_at or utc_now_iso()
         parsed_date = _parse_ts(str(date_value)) if date_value else None
@@ -2090,6 +2141,7 @@ def _write_cve_pages(conn, site_root: str, tz_name: str, logger: logging.Logger)
                 "base_score": preferred_base_score,
                 "vector": preferred_vector,
                 "nvd_url": nvd_url,
+                "cvss": cvss_payload,
                 "url": _cve_page_url(cve_id),
                 "vendors": vendors,
                 "products": products,

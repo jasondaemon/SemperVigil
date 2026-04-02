@@ -126,7 +126,7 @@ def test_feed_json_keeps_all_relationship_facets(tmp_path: Path) -> None:
     day_key = now.split("T", 1)[0]
     payload = json.loads((site_root / "static" / "feed" / "days" / f"{day_key}.json").read_text(encoding="utf-8"))
     article = next(item for item in payload["items"] if item.get("kind") == "article")
-    cve = next(item for item in payload["items"] if item.get("kind") == "cve")
+    cve = next(item for item in payload["items"] if item.get("kind") == "cve" and item.get("cve_id") == "CVE-2026-9999")
 
     assert article["article_id"] == article_id
     assert len(article["vendors"]) == 2
@@ -136,6 +136,10 @@ def test_feed_json_keeps_all_relationship_facets(tmp_path: Path) -> None:
     assert {facet["kind"] for facet in article["facets"]} == {"vendor", "product", "threat"}
     assert cve["url"].startswith("https://nvd.nist.gov/vuln/detail/")
     assert cve["nvd_url"].startswith("https://nvd.nist.gov/vuln/detail/")
+    assert cve["cvss"]["preferred"]["base_score"] == 8.8
+    assert cve["cvss"]["preferred"]["base_severity"] == "HIGH"
+    assert cve["cvss"]["v31"]["cvssData"]["baseScore"] == 8.8
+    assert cve["cvss"]["v40"] is None
     assert len(cve["vendor_products"]) == 2
     assert len(cve["vendors"]) == 2
     assert len(cve["product_items"]) == 2

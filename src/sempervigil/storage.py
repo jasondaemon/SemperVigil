@@ -899,7 +899,11 @@ def list_cves_for_day(conn: Any, day: str, limit: int = 200) -> list[dict[str, o
 
         SELECT c.cve_id, c.description_text, c.published_at, c.last_modified_at,
 
-               c.preferred_base_score, c.preferred_base_severity
+               c.preferred_cvss_version, c.preferred_base_score, c.preferred_base_severity,
+
+               c.preferred_vector, c.cvss_v31_json, c.cvss_v40_json, c.cvss_v31_list_json,
+
+               c.cvss_v40_list_json
 
         FROM cves c
 
@@ -931,9 +935,21 @@ def list_cves_for_day(conn: Any, day: str, limit: int = 200) -> list[dict[str, o
 
                 "last_modified_at": row[3],
 
-                "preferred_base_score": row[4],
+                "preferred_cvss_version": row[4] or "",
 
-                "preferred_base_severity": row[5] or "",
+                "preferred_base_score": row[5],
+
+                "preferred_base_severity": row[6] or "",
+
+                "preferred_vector": row[7] or "",
+
+                "cvss_v31_json": row[8],
+
+                "cvss_v40_json": row[9],
+
+                "cvss_v31_list_json": row[10],
+
+                "cvss_v40_list_json": row[11],
 
             }
 
@@ -8613,6 +8629,8 @@ def search_cves(
         "affected_products_json",
         "affected_cpes_json",
         "reference_domains_json",
+        "cvss_v31_json",
+        "cvss_v40_json",
         "cvss_v31_list_json",
         "cvss_v40_list_json",
         "kev_cve_id",
@@ -8664,6 +8682,8 @@ def search_cves(
                 "preferred_base_score": data.get("preferred_base_score"),
                 "preferred_base_severity": data.get("preferred_base_severity"),
                 "preferred_vector": data.get("preferred_vector"),
+                "cvss_v31_json": data.get("cvss_v31_json"),
+                "cvss_v40_json": data.get("cvss_v40_json"),
                 "summary": data.get("description_text"),
                 "updated_at": data.get("updated_at"),
                 "affected_products": json.loads(data.get("affected_products_json") or "[]"),
