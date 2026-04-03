@@ -403,6 +403,7 @@ def _http_request(
     provider_label = provider.get("name") or provider.get("id") or "provider"
     started_at = time.time()
     context = dict(context or {})
+    request_metrics = _estimate_request_metrics(payload)
     if log_http:
         log_event(
             logger,
@@ -418,6 +419,8 @@ def _http_request(
             url=url,
             timeout_s=timeout,
             payload_bytes=len(data) if data else 0,
+            request_chars=request_metrics["request_chars"],
+            request_tokens_estimate=request_metrics["request_tokens_estimate"],
         )
     while True:
         try:
@@ -550,6 +553,7 @@ def _http_request(
                     elapsed_ms=int((time.time() - started_at) * 1000),
                 )
             raise ValueError(f"timeout: {exc}") from exc
+    response_metrics = _extract_response_metrics(raw)
     if log_http:
         redacted_headers = {
             k: ("REDACTED" if k.lower() == "authorization" else v) for k, v in headers.items()
@@ -573,6 +577,11 @@ def _http_request(
             response_headers=json.dumps(resp_headers, ensure_ascii=False),
             response_body=raw,
             elapsed_ms=int((time.time() - started_at) * 1000),
+            request_chars=request_metrics["request_chars"],
+            request_tokens_estimate=request_metrics["request_tokens_estimate"],
+            response_prompt_tokens=response_metrics["prompt_tokens"],
+            response_completion_tokens=response_metrics["completion_tokens"],
+            response_total_tokens=response_metrics["total_tokens"],
         )
         log_event(
             logger,
@@ -589,11 +598,65 @@ def _http_request(
             status=status_code,
             elapsed_ms=int((time.time() - started_at) * 1000),
             response_bytes=len(raw.encode("utf-8", errors="ignore")),
+            request_tokens_estimate=request_metrics["request_tokens_estimate"],
+            response_prompt_tokens=response_metrics["prompt_tokens"],
+            response_completion_tokens=response_metrics["completion_tokens"],
+            response_total_tokens=response_metrics["total_tokens"],
         )
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         return {"raw": raw}
+
+
+def _estimate_request_metrics(payload: dict[str, Any] | None) -> dict[str, int]:
+    text_parts: list[str] = []
+    if isinstance(payload, dict):
+        messages = payload.get("messages")
+        if isinstance(messages, list):
+            for item in messages:
+                if isinstance(item, dict):
+                    content = item.get("content")
+                    if isinstance(content, str) and content.strip():
+                        text_parts.append(content)
+        contents = payload.get("contents")
+        if isinstance(contents, list):
+            for item in contents:
+                if not isinstance(item, dict):
+                    continue
+                parts = item.get("parts")
+                if isinstance(parts, list):
+                    for part in parts:
+                        if isinstance(part, dict):
+                            text = part.get("text")
+                            if isinstance(text, str) and text.strip():
+                                text_parts.append(text)
+    text = "\n".join(text_parts)
+    request_chars = len(text)
+    if not text:
+        return {"request_chars": 0, "request_tokens_estimate": 0}
+    request_tokens_estimate = max(1, int(round(request_chars / 4)))
+    return {
+        "request_chars": request_chars,
+        "request_tokens_estimate": request_tokens_estimate,
+    }
+
+
+def _extract_response_metrics(raw: str) -> dict[str, int]:
+    try:
+        response = json.loads(raw)
+    except json.JSONDecodeError:
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    if not isinstance(response, dict):
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    usage = response.get("usage")
+    if not isinstance(usage, dict):
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    return {
+        "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+        "completion_tokens": int(usage.get("completion_tokens") or 0),
+        "total_tokens": int(usage.get("total_tokens") or 0),
+    }
 
 
 def _read_openai(response: dict[str, Any]) -> str:

@@ -8764,13 +8764,16 @@ def _job_context_fields(conn, job) -> dict[str, object]:
             article = get_article_by_id(conn, int(article_id))
             if article:
                 article_url = article.get("original_url") or article.get("normalized_url")
-        return {
+        fields = {
             **base,
             "source_id": source_id,
             "source_name": source_name,
             "article_id": article_id,
             "article_url": article_url,
         }
+        if job.job_type != "summarize_article_llm":
+            return fields
+        base = fields
     if job.job_type in {"ingest_source", "test_source"}:
         payload = job.payload or {}
         source_id = str(payload.get("source_id") or "")
@@ -8779,7 +8782,24 @@ def _job_context_fields(conn, job) -> dict[str, object]:
     payload = job.payload or {}
     source_id = str(payload.get("source_id") or "")
     source_name = get_source_name(conn, source_id) or ""
-    return {**base, "source_id": source_id, "source_name": source_name}
+    fields = {**base, "source_id": source_id, "source_name": source_name}
+    if job.job_type in _LLM_JOB_TYPES:
+        fields.update(_job_llm_context_fields(conn, job))
+    return fields
+
+
+def _job_llm_context_fields(conn, job) -> dict[str, object]:
+    for profile_id in _resolve_profile_ids_for_job(conn, job):
+        profile = _coerce_profile(get_profile(conn, profile_id))
+        if not profile:
+            continue
+        labels = _llm_profile_labels(conn, profile)
+        return {
+            key: value
+            for key, value in labels.items()
+            if value is not None and value != ""
+        }
+    return {}
 
 
 def _maybe_enqueue_fetch(

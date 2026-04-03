@@ -82,6 +82,14 @@ dedupe_key
 """
 
 
+def _running_job_stale_seconds(default: int = 120) -> int:
+    try:
+        value = int(os.environ.get("SV_JOB_STALE_SECONDS", str(default)) or default)
+    except Exception:
+        value = default
+    return max(1, value)
+
+
 def init_db():
     return connect_db()
 
@@ -2491,14 +2499,22 @@ def has_pending_queue_job(conn: Any, queue_name: str) -> bool:
 
 
 def count_pending_jobs(conn: Any, job_type: str) -> int:
+    cutoff = utc_now_iso_offset(seconds=-_running_job_stale_seconds())
     cursor = conn.execute(
         """
         SELECT COUNT(*)
         FROM jobs
         WHERE job_type = %s
-          AND status IN ('queued', 'running')
+          AND (
+            status = 'queued'
+            OR (
+              status = 'running'
+              AND COALESCE(heartbeat_at, locked_at) IS NOT NULL
+              AND COALESCE(heartbeat_at, locked_at) >= %s
+            )
+          )
         """,
-        (job_type,),
+        (job_type, cutoff),
     )
     row = cursor.fetchone()
     return int(row[0] or 0) if row else 0
@@ -2625,6 +2641,7 @@ def get_runner_health_stats(
     }
     now = datetime.now(timezone.utc)
     counts: dict[tuple[str, str], int] = {}
+    stale_after_seconds = max(1, int(os.environ.get("SV_JOB_STALE_SECONDS", str(idle_after_seconds)) or idle_after_seconds))
     for _job_id, job_type, payload_json, locked_by, locked_at, heartbeat_at, lease_expires_at in launch_rows:
         runner_type = launch_to_runner.get(str(job_type or ""), "unknown")
         queue_name = runner_type
@@ -2659,21 +2676,18 @@ def get_runner_health_stats(
                 last_touch = _parse_iso(last_touch_raw)
             except Exception:
                 last_touch = None
-        lease_expires = None
-        if isinstance(lease_expires_at, str):
-            try:
-                lease_expires = _parse_iso(lease_expires_at)
-            except Exception:
-                lease_expires = None
-        if lease_expires is not None and lease_expires < now:
-            health = "stale"
-        elif stage_running > 0:
-            health = "active"
-        elif last_touch is None:
+        if last_touch is None:
             health = "starting"
         else:
             idle_age = max(0.0, (now - last_touch).total_seconds())
-            health = "idle" if idle_age >= max(1, int(idle_after_seconds or 1)) else "starting"
+            if idle_age >= stale_after_seconds:
+                health = "stale"
+            elif stage_running > 0:
+                health = "active"
+            elif idle_age >= max(1, int(idle_after_seconds or 1)):
+                health = "idle"
+            else:
+                health = "starting"
         counts[(runner_type, health)] = counts.get((runner_type, health), 0) + 1
     rows: list[dict[str, object]] = []
     known_runner_types = ["fetch", "llm_local", "openai", "build"]
@@ -2837,8 +2851,8 @@ def get_stale_job_stats(conn: Any, *, stale_after_seconds: int = 300) -> list[di
                COUNT(*) AS stale_count
         FROM jobs
         WHERE status = 'running'
-          AND COALESCE(lease_expires_at, locked_at) IS NOT NULL
-          AND COALESCE(lease_expires_at, locked_at) < %s
+          AND COALESCE(heartbeat_at, locked_at) IS NOT NULL
+          AND COALESCE(heartbeat_at, locked_at) < %s
         GROUP BY effective_queue_name
         ORDER BY effective_queue_name
         """,
@@ -3707,7 +3721,7 @@ def claim_next_job(
                 stale_queue_clause = f" AND {effective_queue_name} IN ({stale_placeholders})"
                 stale_params.extend(allowed_queues)
             if lock_timeout_seconds is not None:
-                cutoff = utc_now_iso_offset(seconds=-lock_timeout_seconds)
+                cutoff = utc_now_iso_offset(seconds=-_running_job_stale_seconds())
                 conn.execute(
                     f"""
                     UPDATE jobs
@@ -3720,8 +3734,8 @@ def claim_next_job(
                         available_at = COALESCE(available_at, requested_at, %s),
                         error = 'stale_lock_requeued'
                     WHERE status = 'running'
-                      AND COALESCE(lease_expires_at, locked_at) IS NOT NULL
-                      AND COALESCE(lease_expires_at, locked_at) < %s
+                      AND COALESCE(heartbeat_at, locked_at) IS NOT NULL
+                      AND COALESCE(heartbeat_at, locked_at) < %s
                       {stale_type_clause}
                       {stale_queue_clause}
                     """,

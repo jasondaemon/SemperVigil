@@ -79,6 +79,8 @@ spec:
               value: "1"
             - name: SV_WORKER_CONCURRENCY
               value: "1"
+            - name: SV_LLM_LOG_HTTP
+              value: "1"
             - name: SEMPERVIGIL_MASTER_KEY
               valueFrom:
                 secretKeyRef:
