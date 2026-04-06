@@ -400,70 +400,6 @@ def _looks_like_thn_teaser(source_id: str | None, content_text: str | None) -> b
     return "zero trust + ai: thrive in the ai era" in lowered and "zero trust everywhere" in lowered
 
 
-def _dark_reading_rss_summary_fallback(url: str, logger: logging.Logger) -> str:
-    try:
-        parsed = feedparser.parse("https://www.darkreading.com/rss.xml")
-    except Exception:  # noqa: BLE001
-        return ""
-    if getattr(parsed, "bozo", False):
-        return ""
-    target = _normalize_canonical_url(url).lower()
-    for entry in getattr(parsed, "entries", []) or []:
-        link = _normalize_canonical_url(str(getattr(entry, "link", "") or "")).lower()
-        if not link or link != target:
-            continue
-        summary = str(getattr(entry, "summary", "") or "").strip()
-        summary = re.sub(r"<[^>]+>", " ", summary)
-        summary = re.sub(r"\s+", " ", summary).strip()
-        if not summary:
-            return ""
-        return summary
-    log_event(
-        logger,
-        logging.INFO,
-        "dark_reading_rss_fallback_miss",
-        url=url,
-    )
-    return ""
-
-
-def _apply_dark_reading_403_fallback(
-    conn: DB,
-    config: RuntimeConfig,
-    logger: logging.Logger,
-    article_id: int,
-    article: dict[str, Any],
-    source_id: str | None,
-    url: str,
-) -> bool:
-    if (source_id or "").strip().lower() != "dark-reading":
-        return False
-    fallback_summary = _dark_reading_rss_summary_fallback(url, logger)
-    if not fallback_summary:
-        return False
-    update_article_content(
-        conn,
-        int(article_id),
-        content_text=fallback_summary,
-        content_html=None,
-        content_fetched_at=utc_now_iso(),
-        content_error="fallback:rss_summary_403",
-        has_full_content=True,
-    )
-    log_event(
-        logger,
-        logging.INFO,
-        "dark_reading_rss_fallback_applied",
-        article_id=article_id,
-        content_len=len(fallback_summary),
-    )
-    _maybe_enqueue_context_pack(conn, int(article_id), article["source_id"], logger)
-    if not _maybe_enqueue_summarize(conn, int(article_id), article["source_id"], logger):
-        _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
-    _maybe_enqueue_article_product_enrich(conn, int(article_id), article["source_id"], logger)
-    return True
-
-
 _LLM_JOB_TYPES = {
     "summarize_article_llm",
     "summarize_article_context_llm",
@@ -4485,16 +4421,6 @@ def _handle_fetch_article_content(
         )
     except urllib.error.HTTPError as exc:
         status_code = exc.code
-        if status_code == 403 and _apply_dark_reading_403_fallback(
-            conn,
-            config,
-            logger,
-            int(article_id),
-            article,
-            str(source_id) if source_id else None,
-            url,
-        ):
-            return {"article_id": article_id, "has_full_content": True}
         if status_code in (404, 410):
             update_article_content(
                 conn,
@@ -4527,16 +4453,6 @@ def _handle_fetch_article_content(
         raise
     except Exception as exc:  # noqa: BLE001
         err_text = str(exc)
-        if ("403" in err_text or "Forbidden" in err_text) and _apply_dark_reading_403_fallback(
-            conn,
-            config,
-            logger,
-            int(article_id),
-            article,
-            str(source_id) if source_id else None,
-            url,
-        ):
-            return {"article_id": article_id, "has_full_content": True}
         previous_failures = count_failed_article_jobs(conn, "fetch_article_content", int(article_id))
         is_timeout = _is_timeout_error(exc)
         is_terminal_timeout = is_timeout and (previous_failures + 1 >= 3)
