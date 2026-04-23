@@ -928,28 +928,214 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
     cve_items = []
     seen_cves: set[str] = set()
 
+    def _clean_text(value: object) -> str:
+        text = str(value or "").strip()
+        if not text or text.lower() == "unknown":
+            return ""
+        return text
+
+    def _truncate_text(value: object, limit: int = 96) -> str:
+        text = _clean_text(value)
+        if len(text) <= limit:
+            return text
+        return text[: max(limit - 3, 0)].rstrip() + "..."
+
+    def _unique_texts(values: list[object] | tuple[object, ...] | None) -> list[str]:
+        unique: list[str] = []
+        seen: set[str] = set()
+        for value in values or []:
+            text = _clean_text(value)
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(text)
+        return unique
+
+    def _json_list(value: object) -> list[object]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, tuple):
+            return list(value)
+        if isinstance(value, str):
+            text = value.strip()
+            if not text or text == "null":
+                return []
+            try:
+                parsed = json.loads(text)
+            except Exception:
+                return []
+            return parsed if isinstance(parsed, list) else []
+        return []
+
+    def _label_from_value(value: object) -> str:
+        if isinstance(value, dict):
+            for key in (
+                "display_name",
+                "product_display",
+                "vendor_display",
+                "name",
+                "label",
+                "title",
+                "version",
+                "product",
+                "vendor",
+                "cpe",
+                "cpe_name",
+            ):
+                label = _clean_text(value.get(key))
+                if label:
+                    return label
+            return ""
+        if isinstance(value, (list, tuple)):
+            parts = [_clean_text(item) for item in value]
+            return " ".join(part for part in parts if part)
+        return _clean_text(value)
+
+    def _format_list_bullet(prefix: str, values: list[str], item_limit: int = 3, value_limit: int = 80) -> str:
+        unique = _unique_texts(values)
+        if not unique:
+            return ""
+        visible = [_truncate_text(value, value_limit) for value in unique[:item_limit]]
+        text = ", ".join(visible)
+        if len(unique) > item_limit:
+            text += f" (+{len(unique) - item_limit} more)"
+        return f"{prefix}: {text}"
+
+    def _pick_cve_title_parts(
+        vendor_products: list[dict[str, object]],
+        vendors: list[dict[str, str]],
+        products: list[dict[str, str]],
+    ) -> tuple[str, str, str]:
+        candidates: list[tuple[str, str, str]] = []
+        for entry in vendor_products or []:
+            vendor = _clean_text(entry.get("vendor_display") or entry.get("vendor"))
+            product = _clean_text(entry.get("product_display") or entry.get("product"))
+            if vendor and vendor.lower() == "unknown":
+                vendor = ""
+            if product and product.lower() == "unknown":
+                product = ""
+            if vendor and product and vendor.lower() == product.lower():
+                product = ""
+                source = "vendor_products:deduped"
+            else:
+                source = "vendor_products"
+            if vendor or product:
+                candidates.append((vendor, product, source))
+        if not candidates and vendors and products:
+            vendor = _clean_text(vendors[0].get("display_name"))
+            product = _clean_text(products[0].get("display_name"))
+            if vendor and vendor.lower() == "unknown":
+                vendor = ""
+            if product and product.lower() == "unknown":
+                product = ""
+            if vendor and product and vendor.lower() == product.lower():
+                product = ""
+                source = "vendor_product_lists:deduped"
+            else:
+                source = "vendor_product_lists"
+            if vendor or product:
+                candidates.append((vendor, product, source))
+        if not candidates:
+            if products:
+                product = _clean_text(products[0].get("display_name"))
+                if product and product.lower() != "unknown":
+                    return "", product, "product_only"
+            if vendors:
+                vendor = _clean_text(vendors[0].get("display_name"))
+                if vendor and vendor.lower() != "unknown":
+                    return vendor, "", "vendor_only"
+            return "", "", "severity_only"
+        for vendor, product, source in candidates:
+            if vendor and product:
+                return vendor, product, source
+        return candidates[0]
+
+    def _build_cve_context_bullets(
+        *,
+        title_vendor: str,
+        title_product: str,
+        affected_products: list[object],
+        affected_cpes: list[object],
+        reference_domains: list[object],
+        versions: list[object],
+    ) -> list[str]:
+        bullets: list[str] = []
+        title_terms = {value.lower() for value in (title_vendor, title_product) if value}
+
+        product_labels = []
+        for value in affected_products or []:
+            label = _label_from_value(value)
+            if not label:
+                continue
+            if label.lower() in title_terms:
+                continue
+            product_labels.append(label)
+        if product_labels:
+            bullet = _format_list_bullet("Affected products", product_labels, item_limit=3, value_limit=80)
+            if bullet:
+                bullets.append(bullet)
+        elif affected_cpes:
+            cpe_labels = [_label_from_value(value) for value in affected_cpes]
+            bullet = _format_list_bullet("Affected CPEs", cpe_labels, item_limit=2, value_limit=90)
+            if bullet:
+                bullets.append(bullet)
+
+        version_labels = []
+        for version in versions or []:
+            text = _label_from_value(version)
+            if not text:
+                continue
+            if ":" in text:
+                text = text.rsplit(":", 1)[-1].strip()
+            if text:
+                version_labels.append(text)
+        bullet = _format_list_bullet("Affected versions", version_labels, item_limit=3, value_limit=40)
+        if bullet:
+            bullets.append(bullet)
+
+        domain_labels = [_label_from_value(value) for value in (reference_domains or [])]
+        bullet = _format_list_bullet("Reference domains", domain_labels, item_limit=3, value_limit=60)
+        if bullet:
+            bullets.append(bullet)
+
+        return bullets[:4]
+
     def _cve_item(cve: dict[str, object]) -> dict[str, object]:
         cve_id = cve.get("cve_id")
+        title_vendor = ""
+        title_product = ""
+        title_source = "severity_only"
         product_title = ""
-        title_seed = ""
         product_labels: list[str] = []
         vendors: list[dict[str, str]] = []
         product_items: list[dict[str, str]] = []
-        vendor_products = []
-        if cve_id:
-            vendor_products = list_cve_vendor_products(conn, str(cve_id))
+        vendor_products = _json_list(cve.get("vendor_products_json"))
+        product_versions = _json_list(cve.get("product_versions_json"))
+        affected_products = _json_list(cve.get("affected_products_json"))
+        affected_cpes = _json_list(cve.get("affected_cpes_json"))
+        reference_domains = _json_list(cve.get("reference_domains_json"))
+        if vendor_products:
             seen_vendors: set[str] = set()
             seen_products: set[str] = set()
             for entry in vendor_products:
-                vendor = str(entry.get("vendor_display") or "").strip()
-                product = str(entry.get("product_display") or "").strip()
-                if vendor and vendor.lower() == "unknown":
-                    vendor = ""
+                vendor = _clean_text(
+                    entry.get("vendor_display")
+                    or entry.get("vendor")
+                    or entry.get("vendor_norm")
+                )
+                product = _clean_text(
+                    entry.get("product_display")
+                    or entry.get("product")
+                    or entry.get("product_norm")
+                )
                 label = f"{vendor} — {product}" if vendor and product else (product or vendor)
                 if label:
                     product_labels.append(label)
-                if vendor and product and not title_seed:
-                    title_seed = f"{vendor} — {product}"
                 if vendor and vendor not in seen_vendors:
                     vendors.append({"slug": slugify(vendor), "display_name": vendor})
                     seen_vendors.add(vendor)
@@ -957,11 +1143,19 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
                     product_slug = slugify(f"{vendor} {product}".strip())
                     product_items.append({"slug": product_slug, "display_name": product})
                     seen_products.add(product)
-            if title_seed:
-                product_title = title_seed
+            title_vendor, title_product, title_source = _pick_cve_title_parts(
+                vendor_products,
+                vendors,
+                product_items,
+            )
+            if title_vendor and title_product:
+                product_title = f"{title_vendor} — {title_product}"
+            else:
+                product_title = title_product or title_vendor
         severity = (cve.get("preferred_base_severity") or "").strip()
         if not product_title:
             product_title = severity or "CVE"
+            title_source = "severity_only"
         elif severity:
             product_title = f"{product_title} — {severity}"
         desc = (cve.get("description_text") or cve.get("summary") or "").strip()
@@ -977,6 +1171,14 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
                 time_label = human_ts.split(" · ", 1)[1].strip()
             except Exception:
                 time_label = ""
+        context_bullets = _build_cve_context_bullets(
+            title_vendor=title_vendor,
+            title_product=title_product,
+            affected_products=affected_products,
+            affected_cpes=affected_cpes,
+            reference_domains=reference_domains,
+            versions=product_versions,
+        )
         threat_actors = get_cve_threat_actors(conn, str(cve_id)) if cve_id else []
         kev = get_cve_kev(conn, str(cve_id)) if cve_id else None
         kev_due_date = kev.get("due_date") if kev else ""
@@ -998,11 +1200,15 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
         return {
             "cve_id": cve_id,
             "product_title": product_title,
+            "title_vendor": title_vendor,
+            "title_product": title_product,
+            "title_source": title_source,
             "published_at_iso": published_at,
             "published_at_human": human_ts,
             "published_epoch": published_epoch,
             "time_label": time_label,
             "summary": desc,
+            "context_bullets": context_bullets,
             "base_score": cve.get("preferred_base_score"),
             "score": cve.get("preferred_base_score"),
             "epss_score": cve.get("epss_score"),
@@ -1127,7 +1333,11 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
                 "nvd_url": cve.get("nvd_url") or cve.get("url") or "",
                 "severity": cve.get("severity") or "",
                 "product_title": cve.get("product_title") or "",
+                "title_vendor": cve.get("title_vendor") or "",
+                "title_product": cve.get("title_product") or "",
+                "title_source": cve.get("title_source") or "",
                 "summary": cve.get("summary") or "",
+                "context_bullets": cve.get("context_bullets") or [],
                 "base_score": cve.get("base_score") or cve.get("score"),
                 "score": cve.get("score") or cve.get("base_score"),
                 "epss_score": cve.get("epss_score"),

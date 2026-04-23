@@ -146,3 +146,56 @@ def test_feed_json_keeps_all_relationship_facets(tmp_path: Path) -> None:
     assert len(cve["threat_actors"]) == 2
     assert len(cve["facets"]) == 6
     assert {facet["kind"] for facet in cve["facets"]} == {"vendor", "product", "threat"}
+
+
+def test_feed_json_dedupes_vendor_product_titles_and_adds_context(tmp_path: Path) -> None:
+    conn = init_db()
+    now = utc_now_iso()
+    site_root = tmp_path / "site"
+    output_dir = site_root / "content" / "posts"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    cve_item = {
+        "id": "CVE-2026-41040",
+        "published": now,
+        "lastModified": now,
+        "descriptions": [{"lang": "en", "value": "GROWI is vulnerable to a regular expression denial of service (ReDoS)."}],
+        "references": [
+            {"url": "https://growi.co.jp/advisory"},
+            {"url": "https://jvn.jp/vu/"},
+        ],
+        "metrics": {
+            "cvssMetricV31": [
+                {
+                    "cvssData": {
+                        "baseScore": 8.7,
+                        "baseSeverity": "HIGH",
+                        "vectorString": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+                    }
+                }
+            ]
+        },
+    }
+    process_cve_item(conn, cve_item, prefer_v4=True, filters={}, scope_min_cvss=None, watchlist_enabled=False)
+    link_cve_products_from_items(
+        conn,
+        cve_id="CVE-2026-41040",
+        items=[{"vendor": "GROWI", "product": "GROWI"}],
+    )
+    conn.commit()
+
+    config = SimpleNamespace(
+        paths=SimpleNamespace(output_dir=str(output_dir)),
+        app=SimpleNamespace(timezone="UTC"),
+    )
+    _refresh_feed_data_files(conn, config, logging.getLogger("test"))
+
+    day_key = now.split("T", 1)[0]
+    payload = json.loads((site_root / "static" / "feed" / "days" / f"{day_key}.json").read_text(encoding="utf-8"))
+    cve = next(item for item in payload["items"] if item.get("kind") == "cve" and item.get("cve_id") == "CVE-2026-41040")
+
+    assert cve["product_title"] == "GROWI — HIGH"
+    assert cve["title_vendor"] == "GROWI"
+    assert cve["title_product"] == ""
+    assert cve["title_source"].startswith("vendor_products")
+    assert any(bullet.startswith("Reference domains:") for bullet in cve["context_bullets"])

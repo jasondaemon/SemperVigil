@@ -904,13 +904,62 @@ def list_cves_for_day(conn: Any, day: str, limit: int = 200) -> list[dict[str, o
     epss_percentile = "c.epss_percentile" if "epss_percentile" in columns else "NULL"
     epss_date = "c.epss_date" if "epss_date" in columns else "NULL"
     epss_checked_at = "c.epss_checked_at" if "epss_checked_at" in columns else "NULL"
+    vendor_products_json = (
+        """
+        COALESCE((
+            SELECT json_agg(
+                json_build_object(
+                    'vendor_display', v.display_name,
+                    'vendor_norm', v.name_norm,
+                    'product_display', p.display_name,
+                    'product_norm', p.name_norm,
+                    'product_key', p.product_key
+                )
+                ORDER BY v.display_name, p.display_name
+            )
+            FROM cve_products cp
+            JOIN products p ON p.id = cp.product_id
+            JOIN vendors v ON v.id = p.vendor_id
+            WHERE cp.cve_id = c.cve_id
+        ), '[]'::json)
+        """
+        if _table_exists(conn, "cve_products") and _table_exists(conn, "products") and _table_exists(conn, "vendors")
+        else "'[]'::json"
+    )
+    product_versions_json = (
+        """
+        COALESCE((
+            SELECT json_agg(
+                json_build_object(
+                    'product_display', p.display_name,
+                    'product_norm', p.name_norm,
+                    'product_key', p.product_key,
+                    'version', cpv.version,
+                    'source', cpv.source
+                )
+                ORDER BY p.display_name, cpv.version
+            )
+            FROM cve_product_versions cpv
+            JOIN products p ON p.id = cpv.product_id
+            WHERE cpv.cve_id = c.cve_id
+        ), '[]'::json)
+        """
+        if _table_exists(conn, "cve_product_versions") and _table_exists(conn, "products")
+        else "'[]'::json"
+    )
+    affected_products_json = "c.affected_products_json" if "affected_products_json" in columns else "NULL"
+    affected_cpes_json = "c.affected_cpes_json" if "affected_cpes_json" in columns else "NULL"
+    reference_domains_json = "c.reference_domains_json" if "reference_domains_json" in columns else "NULL"
     cursor = conn.execute(
         f"""
         SELECT c.cve_id, c.description_text, c.published_at, c.last_modified_at,
                c.preferred_cvss_version, {preferred_base_score}, c.preferred_base_severity,
                c.preferred_vector, {epss_score}, {epss_percentile}, {epss_date},
                {epss_checked_at}, c.cvss_v31_json, c.cvss_v40_json, c.cvss_v31_list_json,
-               c.cvss_v40_list_json
+               c.cvss_v40_list_json, {vendor_products_json} AS vendor_products_json,
+               {product_versions_json} AS product_versions_json, {affected_products_json},
+               {affected_cpes_json},
+               {reference_domains_json}
         FROM cves c
         WHERE DATE(COALESCE(c.published_at, c.last_modified_at)) = %s
         ORDER BY COALESCE(c.published_at, c.last_modified_at) DESC
@@ -938,6 +987,11 @@ def list_cves_for_day(conn: Any, day: str, limit: int = 200) -> list[dict[str, o
                 "cvss_v40_json": row[13],
                 "cvss_v31_list_json": row[14],
                 "cvss_v40_list_json": row[15],
+                "vendor_products_json": row[16],
+                "product_versions_json": row[17],
+                "affected_products_json": row[18],
+                "affected_cpes_json": row[19],
+                "reference_domains_json": row[20],
             }
         )
     return rows
