@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import csv
+import gzip
+import io
 import hashlib
-import logging
 import json
+import logging
 import time
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -13,7 +16,9 @@ from urllib.request import Request, urlopen
 
 from .cve_filters import extract_signals, matches_filters, normalize_severity
 from .storage import (
+    get_setting,
     get_latest_cve_snapshot,
+    list_cve_ids,
     insert_cve_change,
     insert_cve_snapshot,
     link_cve_products_from_signals,
@@ -552,6 +557,87 @@ def preview_cves(
         "items": items,
     }
 
+
+@dataclass(frozen=True)
+class EpssRow:
+    cve_id: str
+    epss_score: float
+    epss_percentile: float
+    epss_date: str
+
+
+def sync_epss(conn, cve_ids: list[str] | None = None) -> dict[str, object]:
+    logger = logging.getLogger("sempervigil.cve_sync")
+    checked_at = utc_now_iso()
+    if cve_ids:
+        rows = _fetch_epss_api_rows(cve_ids)
+        if not rows:
+            return {"status": "skipped", "reason": "epss_not_found", "matched": 0, "updated": 0}
+        updated = _apply_epss_rows(conn, rows, checked_at=checked_at)
+        return {
+            "status": "ok",
+            "source": "api",
+            "matched": len(rows),
+            "updated": updated,
+            "epss_date": rows[0].epss_date,
+        }
+
+    today = datetime.now(timezone.utc).date()
+    today_utc = today.isoformat()
+    last_sync_date = str(get_setting(conn, "cve.epss.last_successful_sync_date", "") or "").strip()
+    if last_sync_date == today_utc:
+        return {
+            "status": "skipped",
+            "reason": "already_synced_today",
+            "matched": 0,
+            "updated": 0,
+            "epss_date": last_sync_date,
+        }
+
+    existing_ids = set(list_cve_ids(conn))
+    if not existing_ids:
+        return {"status": "skipped", "reason": "no_cves", "matched": 0, "updated": 0}
+
+    epss_rows: list[EpssRow] | None = None
+    epss_date = ""
+    for candidate in _epss_date_candidates(today):
+        epss_rows = _fetch_epss_csv_rows(candidate)
+        if epss_rows is not None:
+            epss_date = candidate.isoformat()
+            break
+    if epss_rows is None:
+        return {"status": "error", "reason": "epss_fetch_failed", "matched": 0, "updated": 0}
+
+    matched_rows = [row for row in epss_rows if row.cve_id in existing_ids]
+    if not matched_rows:
+        set_setting(conn, "cve.epss.last_successful_sync_date", epss_date)
+        return {
+            "status": "ok",
+            "source": "csv",
+            "matched": 0,
+            "updated": 0,
+            "epss_date": epss_date,
+        }
+
+    updated = _apply_epss_rows(conn, matched_rows, checked_at=checked_at)
+    set_setting(conn, "cve.epss.last_successful_sync_date", epss_date)
+    log_event(
+        logger,
+        logging.INFO,
+        "epss_sync_complete",
+        epss_date=epss_date,
+        matched=len(matched_rows),
+        updated=updated,
+    )
+    return {
+        "status": "ok",
+        "source": "csv",
+        "matched": len(matched_rows),
+        "updated": updated,
+        "epss_date": epss_date,
+    }
+
+
 def sync_cve_id(conn, api_key: str | None, cve_id: str) -> bool:
     if not cve_id:
         return False
@@ -579,3 +665,107 @@ def sync_cve_id(conn, api_key: str | None, cve_id: str) -> bool:
             updated = True
     return updated
 
+
+def _epss_date_candidates(today: date) -> list[date]:
+    return [today, date.fromordinal(today.toordinal() - 1), date.fromordinal(today.toordinal() - 2)]
+
+
+def _fetch_epss_api_rows(cve_ids: list[str]) -> list[EpssRow]:
+    ids = [str(cve_id).strip() for cve_id in cve_ids if str(cve_id).strip()]
+    if not ids:
+        return []
+    params = {"cve": ",".join(ids)}
+    url = f"https://api.first.org/data/v1/epss?{urlencode(params)}"
+    request = Request(url, headers={"User-Agent": "SemperVigil/0.1"})
+    try:
+        with urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, json.JSONDecodeError):
+        return []
+    rows: list[EpssRow] = []
+    for item in payload.get("data") or []:
+        if not isinstance(item, dict):
+            continue
+        cve_id = str(item.get("cve") or "").strip()
+        if not cve_id:
+            continue
+        try:
+            epss_score = float(item.get("epss"))
+            epss_percentile = float(item.get("percentile"))
+        except (TypeError, ValueError):
+            continue
+        rows.append(
+            EpssRow(
+                cve_id=cve_id,
+                epss_score=epss_score,
+                epss_percentile=epss_percentile,
+                epss_date=str(item.get("date") or "").strip(),
+            )
+        )
+    return rows
+
+
+def _fetch_epss_csv_rows(target_date: date) -> list[EpssRow] | None:
+    url = f"https://epss.empiricalsecurity.com/epss_scores-{target_date.isoformat()}.csv.gz"
+    request = Request(url, headers={"User-Agent": "SemperVigil/0.1"})
+    try:
+        with urlopen(request, timeout=60) as response:
+            raw = response.read()
+    except (HTTPError, URLError):
+        return None
+    try:
+        text = gzip.decompress(raw).decode("utf-8")
+    except Exception:
+        return None
+    filtered = "\n".join(line for line in text.splitlines() if not line.startswith("#"))
+    if not filtered.strip():
+        return []
+    reader = csv.DictReader(io.StringIO(filtered))
+    rows: list[EpssRow] = []
+    for item in reader:
+        if not isinstance(item, dict):
+            continue
+        cve_id = str(item.get("cve") or "").strip()
+        if not cve_id:
+            continue
+        try:
+            epss_score = float(item.get("epss") or 0)
+            epss_percentile = float(item.get("percentile") or 0)
+        except (TypeError, ValueError):
+            continue
+        rows.append(
+            EpssRow(
+                cve_id=cve_id,
+                epss_score=epss_score,
+                epss_percentile=epss_percentile,
+                epss_date=str(item.get("date") or target_date.isoformat()).strip(),
+            )
+        )
+    return rows
+
+
+def _apply_epss_rows(conn, rows: list[EpssRow], *, checked_at: str) -> int:
+    if not rows:
+        return 0
+    conn.executemany(
+        """
+        UPDATE cves
+        SET epss_score = %s,
+            epss_percentile = %s,
+            epss_date = %s,
+            epss_checked_at = %s
+        WHERE cve_id = %s
+        """,
+        [
+            (
+                row.epss_score,
+                row.epss_percentile,
+                row.epss_date,
+                checked_at,
+                row.cve_id,
+            )
+            for row in rows
+        ],
+    )
+    conn.commit()
+    return len(rows)

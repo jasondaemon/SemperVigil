@@ -896,73 +896,50 @@ def _meta_is_suppressed(meta_json: object) -> bool:
         return bool(parsed.get("suppressed"))
     return False
 def list_cves_for_day(conn: Any, day: str, limit: int = 200) -> list[dict[str, object]]:
-
     if not _table_exists(conn, "cves"):
-
         return []
-
+    columns = _table_columns(conn, "cves")
+    preferred_base_score = "c.preferred_base_score" if "preferred_base_score" in columns else "NULL"
+    epss_score = "c.epss_score" if "epss_score" in columns else "NULL"
+    epss_percentile = "c.epss_percentile" if "epss_percentile" in columns else "NULL"
+    epss_date = "c.epss_date" if "epss_date" in columns else "NULL"
+    epss_checked_at = "c.epss_checked_at" if "epss_checked_at" in columns else "NULL"
     cursor = conn.execute(
-
-        """
-
+        f"""
         SELECT c.cve_id, c.description_text, c.published_at, c.last_modified_at,
-
-               c.preferred_cvss_version, c.preferred_base_score, c.preferred_base_severity,
-
-               c.preferred_vector, c.cvss_v31_json, c.cvss_v40_json, c.cvss_v31_list_json,
-
+               c.preferred_cvss_version, {preferred_base_score}, c.preferred_base_severity,
+               c.preferred_vector, {epss_score}, {epss_percentile}, {epss_date},
+               {epss_checked_at}, c.cvss_v31_json, c.cvss_v40_json, c.cvss_v31_list_json,
                c.cvss_v40_list_json
-
         FROM cves c
-
         WHERE DATE(COALESCE(c.published_at, c.last_modified_at)) = %s
-
         ORDER BY COALESCE(c.published_at, c.last_modified_at) DESC
-
         LIMIT %s
-
         """,
-
         (day, limit),
-
     )
-
     rows = []
-
     for row in cursor.fetchall():
-
         rows.append(
-
             {
-
                 "cve_id": row[0],
-
                 "description_text": row[1] or "",
-
                 "published_at": row[2],
-
                 "last_modified_at": row[3],
-
                 "preferred_cvss_version": row[4] or "",
-
                 "preferred_base_score": row[5],
-
                 "preferred_base_severity": row[6] or "",
-
                 "preferred_vector": row[7] or "",
-
-                "cvss_v31_json": row[8],
-
-                "cvss_v40_json": row[9],
-
-                "cvss_v31_list_json": row[10],
-
-                "cvss_v40_list_json": row[11],
-
+                "epss_score": row[8],
+                "epss_percentile": row[9],
+                "epss_date": row[10],
+                "epss_checked_at": row[11],
+                "cvss_v31_json": row[12],
+                "cvss_v40_json": row[13],
+                "cvss_v31_list_json": row[14],
+                "cvss_v40_list_json": row[15],
             }
-
         )
-
     return rows
 
 
@@ -5222,11 +5199,16 @@ def get_product_cves(
     offset = max(page - 1, 0) * page_size
     kev_cve_expr = "c.kev_cve_id" if "kev_cve_id" in columns else "NULL"
     kev_due_expr = "k.due_date" if has_kev else "NULL"
+    epss_score_expr = "c.epss_score" if "epss_score" in columns else "NULL"
+    epss_percentile_expr = "c.epss_percentile" if "epss_percentile" in columns else "NULL"
+    epss_date_expr = "c.epss_date" if "epss_date" in columns else "NULL"
+    epss_checked_at_expr = "c.epss_checked_at" if "epss_checked_at" in columns else "NULL"
     cursor = conn.execute(
         f"""
         SELECT c.cve_id, c.published_at, c.last_modified_at, preferred_base_score,
                c.preferred_base_severity, c.description_text,
-               {kev_cve_expr}, {kev_due_expr}
+               {epss_score_expr}, {epss_percentile_expr}, {epss_date_expr},
+               {epss_checked_at_expr}, {kev_cve_expr}, {kev_due_expr}
         FROM cve_products cp
         JOIN cves c ON c.cve_id = cp.cve_id
         { "LEFT JOIN cve_kev k ON k.cve_id = c.kev_cve_id" if has_kev else "" }
@@ -5242,11 +5224,17 @@ def get_product_cves(
             "published_at": row[1],
             "last_modified_at": row[2],
             "preferred_base_score": row[3],
+            "score": row[3],
+            "base_score": row[3],
             "preferred_base_severity": row[4],
             "summary": (row[5] or "")[:240],
-            "kev_cve_id": row[6],
-            "kev_due_date": row[7],
-            "kev_known_exploited": bool(row[6]),
+            "epss_score": row[6],
+            "epss_percentile": row[7],
+            "epss_date": row[8],
+            "epss_checked_at": row[9],
+            "kev_cve_id": row[10],
+            "kev_due_date": row[11],
+            "kev_known_exploited": bool(row[10]),
         }
         for row in cursor.fetchall()
     ]
@@ -8424,6 +8412,10 @@ def get_cve(conn: Any, cve_id: str) -> dict[str, object] | None:
         "preferred_base_score",
         "preferred_base_severity",
         "preferred_vector",
+        "epss_score",
+        "epss_percentile",
+        "epss_date",
+        "epss_checked_at",
         "cvss_v31_json",
         "cvss_v40_json",
         "cvss_v31_list_json",
@@ -8476,6 +8468,10 @@ def get_cve(conn: Any, cve_id: str) -> dict[str, object] | None:
         "preferred_base_score": data.get("preferred_base_score"),
         "preferred_base_severity": data.get("preferred_base_severity"),
         "preferred_vector": data.get("preferred_vector"),
+        "epss_score": data.get("epss_score"),
+        "epss_percentile": data.get("epss_percentile"),
+        "epss_date": data.get("epss_date"),
+        "epss_checked_at": data.get("epss_checked_at"),
         "cvss_v31": cvss_v31,
         "cvss_v40": cvss_v40,
         "cvss_v31_list": cvss_v31_list,
@@ -8638,6 +8634,10 @@ def search_cves(
         "preferred_base_score",
         "preferred_base_severity",
         "preferred_vector",
+        "epss_score",
+        "epss_percentile",
+        "epss_date",
+        "epss_checked_at",
         "description_text",
         "updated_at",
         "affected_products_json",
@@ -8696,6 +8696,10 @@ def search_cves(
                 "preferred_base_score": data.get("preferred_base_score"),
                 "preferred_base_severity": data.get("preferred_base_severity"),
                 "preferred_vector": data.get("preferred_vector"),
+                "epss_score": data.get("epss_score"),
+                "epss_percentile": data.get("epss_percentile"),
+                "epss_date": data.get("epss_date"),
+                "epss_checked_at": data.get("epss_checked_at"),
                 "cvss_v31_json": data.get("cvss_v31_json"),
                 "cvss_v40_json": data.get("cvss_v40_json"),
                 "summary": data.get("description_text"),

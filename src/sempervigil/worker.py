@@ -32,7 +32,7 @@ from .config import (
 )
 from .ingest import process_source
 from .models import Article, Job
-from .cve_sync import CveSyncConfig, isoformat_utc, sync_cves, sync_cve_id
+from .cve_sync import CveSyncConfig, isoformat_utc, sync_cves, sync_cve_id, sync_epss
 from .kev_sync import ensure_kev_cache
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .publish import write_article_markdown, write_events_index, write_events_markdown, write_json_index
@@ -174,7 +174,6 @@ from .storage import (
     _table_exists,
     column_exists,
     delete_vendor_product_tags,
-    upsert_daily_brief,
     touch_job_lock,
 )
 from .utils import (
@@ -1005,6 +1004,11 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
             "time_label": time_label,
             "summary": desc,
             "base_score": cve.get("preferred_base_score"),
+            "score": cve.get("preferred_base_score"),
+            "epss_score": cve.get("epss_score"),
+            "epss_percentile": cve.get("epss_percentile"),
+            "epss_date": cve.get("epss_date"),
+            "epss_checked_at": cve.get("epss_checked_at"),
             "severity": severity or "",
             "url": cve_url,
             "nvd_url": f"https://nvd.nist.gov/vuln/detail/{cve_id}" if cve_id else "",
@@ -1124,6 +1128,12 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
                 "severity": cve.get("severity") or "",
                 "product_title": cve.get("product_title") or "",
                 "summary": cve.get("summary") or "",
+                "base_score": cve.get("base_score") or cve.get("score"),
+                "score": cve.get("score") or cve.get("base_score"),
+                "epss_score": cve.get("epss_score"),
+                "epss_percentile": cve.get("epss_percentile"),
+                "epss_date": cve.get("epss_date"),
+                "epss_checked_at": cve.get("epss_checked_at"),
                 "cvss": cve.get("cvss") or {},
                 "vendors": cve.get("vendors") or [],
                 "product_items": cve.get("product_items") or [],
@@ -1479,6 +1489,16 @@ def _cve_vendor_product_select_cols(columns: set[str]) -> list[str]:
     ]
     if "description_text" in columns:
         select_cols.append("description_text")
+    if "preferred_base_score" in columns:
+        select_cols.append("preferred_base_score")
+    if "epss_score" in columns:
+        select_cols.append("epss_score")
+    if "epss_percentile" in columns:
+        select_cols.append("epss_percentile")
+    if "epss_date" in columns:
+        select_cols.append("epss_date")
+    if "epss_checked_at" in columns:
+        select_cols.append("epss_checked_at")
     return select_cols
 
 
@@ -1876,6 +1896,10 @@ def _write_cve_pages(conn, site_root: str, tz_name: str, logger: logging.Logger)
         "preferred_base_score",
         "preferred_base_severity",
         "preferred_vector",
+        "epss_score",
+        "epss_percentile",
+        "epss_date",
+        "epss_checked_at",
         "description_text",
         "affected_products_json",
         "affected_cpes_json",
@@ -2007,6 +2031,10 @@ def _write_cve_pages(conn, site_root: str, tz_name: str, logger: logging.Logger)
         preferred_base_score = row.get("preferred_base_score")
         preferred_base_severity = (row.get("preferred_base_severity") or "").strip()
         preferred_vector = (row.get("preferred_vector") or "").strip()
+        epss_score = row.get("epss_score")
+        epss_percentile = row.get("epss_percentile")
+        epss_date = row.get("epss_date")
+        epss_checked_at = row.get("epss_checked_at")
         description = (row.get("description_text") or "").strip()
         summary = description
         if len(summary) > 320:
@@ -2075,7 +2103,12 @@ def _write_cve_pages(conn, site_root: str, tz_name: str, logger: logging.Logger)
                 "published_at_human": _format_human_ts(published_at or last_modified_at or updated_at or "", tz_name),
                 "severity": preferred_base_severity,
                 "base_score": preferred_base_score,
+                "score": preferred_base_score,
                 "vector": preferred_vector,
+                "epss_score": epss_score,
+                "epss_percentile": epss_percentile,
+                "epss_date": epss_date,
+                "epss_checked_at": epss_checked_at,
                 "nvd_url": nvd_url,
                 "cvss": cvss_payload,
                 "url": _cve_page_url(cve_id),
@@ -2247,6 +2280,15 @@ def _write_threat_indexes(
         cve_columns: set[str] = set()
         if column_exists(conn, "cves", "description_text"):
             cve_columns.add("description_text")
+        for col in (
+            "preferred_base_score",
+            "epss_score",
+            "epss_percentile",
+            "epss_date",
+            "epss_checked_at",
+        ):
+            if column_exists(conn, "cves", col):
+                cve_columns.add(col)
         chunk_size = 500
         for i in range(0, len(all_cve_ids), chunk_size):
             chunk = all_cve_ids[i : i + chunk_size]
@@ -2270,9 +2312,21 @@ def _write_threat_indexes(
                     summary = (row[4] or "").strip()
                 if len(summary) > 240:
                     summary = summary[:237].rstrip() + "..."
+                preferred_base_score = row[5] if "preferred_base_score" in cve_columns and len(row) > 5 else None
+                epss_offset = 6 if "preferred_base_score" in cve_columns else 5
+                epss_score = row[epss_offset] if "epss_score" in cve_columns and len(row) > epss_offset else None
+                epss_percentile = row[epss_offset + 1] if "epss_percentile" in cve_columns and len(row) > epss_offset + 1 else None
+                epss_date = row[epss_offset + 2] if "epss_date" in cve_columns and len(row) > epss_offset + 2 else None
+                epss_checked_at = row[epss_offset + 3] if "epss_checked_at" in cve_columns and len(row) > epss_offset + 3 else None
                 cve_meta[cve_id] = {
                     "cve_id": cve_id,
                     "severity": (row[3] or "").strip(),
+                    "score": preferred_base_score,
+                    "base_score": preferred_base_score,
+                    "epss_score": epss_score,
+                    "epss_percentile": epss_percentile,
+                    "epss_date": epss_date,
+                    "epss_checked_at": epss_checked_at,
                     "published_at_iso": published_at,
                     "published_at_human": _format_human_ts(published_at, tz_name),
                     "summary": summary,
@@ -4846,411 +4900,17 @@ def _handle_summarize_article_context_llm(
 def _handle_build_daily_brief(
     conn, config, job, logger: logging.Logger
 ) -> dict[str, object]:
-    tz_name = config.app.timezone or "UTC"
     payload: dict[str, object] = job.payload or {}
-    try:
-        tz = ZoneInfo(tz_name)
-    except Exception:
-        tz = timezone.utc
-    day = str(payload.get("date") or "")
-    if not day:
-        day = datetime.now(tz).strftime("%Y-%m-%d")
-    profile_id = payload.get("profile_id")
-
-    def _abort_if_canceled(stage: str) -> bool:
-        if is_job_canceled(conn, job.id):
-            log_event(
-                logger,
-                logging.INFO,
-                "job_canceled",
-                job_id=job.id,
-                stage=stage,
-                job_type=job.job_type,
-            )
-            return True
-        return False
-
-    if _abort_if_canceled("start"):
-        return {"canceled": True, "day": day}
-
-    def _run_stage_with_heartbeat(stage: str, payload_text: str, profile_id: str) -> dict[str, object]:
-        stop = threading.Event()
-
-        def _heartbeat() -> None:
-            while not stop.wait(30):
-                try:
-                    beat_conn = init_db()
-                    touch_job_lock(beat_conn, job.id)
-                    beat_conn.close()
-                except Exception:
-                    pass
-
-        thread = threading.Thread(target=_heartbeat, daemon=True)
-        thread.start()
-        try:
-            return run_pipeline_stage(
-                conn,
-                stage,
-                payload_text,
-                logger,
-                profile_id=profile_id,
-                context={"stage": stage, "job_type": job.job_type},
-            )
-        finally:
-            stop.set()
-            thread.join(timeout=1)
-
+    day = str(payload.get("date") or "") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     log_event(
         logger,
         logging.INFO,
-        "daily_brief_stage_start",
-        job_id=job.id,
-        stage="gather_articles",
-        day=day,
-    )
-    articles = _get_today_articles_for_brief(conn, day, logger)
-    log_event(
-        logger,
-        logging.INFO,
-        "daily_brief_stage_done",
-        job_id=job.id,
-        stage="gather_articles",
-        day=day,
-        count=len(articles),
-    )
-    if articles:
-        sample = []
-        for article in articles[:3]:
-            if not isinstance(article, dict):
-                continue
-            sample.append(
-                {
-                    "id": article.get("id"),
-                    "source_name": article.get("source_name"),
-                    "title": article.get("title"),
-                    "canonical_url": article.get("canonical_url"),
-                    "original_url": article.get("original_url"),
-                    "normalized_url": article.get("normalized_url"),
-                }
-            )
-        log_event(
-            logger,
-            logging.INFO,
-            "daily_brief_articles_sample",
-            job_id=job.id,
-            day=day,
-            sample=json.dumps(sample, ensure_ascii=True),
-        )
-    if not articles:
-        return {"status": "no_articles", "day": day}
-    if _abort_if_canceled("after_gather_articles"):
-        return {"canceled": True, "day": day}
-
-    citations, article_to_citation = _build_daily_brief_citations(articles)
-    if len(citations) != len(articles):
-        log_event(
-            logger,
-            logging.WARNING,
-            "daily_brief_citations_mismatch",
-            job_id=job.id,
-            day=day,
-            article_count=len(articles),
-            citation_count=len(citations),
-        )
-        citations, article_to_citation = _force_daily_brief_citations(articles)
-    if len(citations) != len(articles):
-        raise ValueError("daily_brief_citations_mismatch")
-    if not citations:
-        raise ValueError("daily_brief_citations_empty")
-    log_event(
-        logger,
-        logging.INFO,
-        "daily_brief_citations_ready",
+        "daily_brief_disabled",
         job_id=job.id,
         day=day,
-        citation_count=len(citations),
-        article_count=len(articles),
+        reason="feature_removed",
     )
-    citations_by_id = {item["id"]: item for item in citations if isinstance(item, dict)}
-
-    cluster_dropped = 0
-    topics: list[dict[str, object]] = []
-    articles_for_llm = []
-    for article in articles:
-        try:
-            article_id = int(article.get("id") or 0)
-        except Exception:
-            article_id = 0
-        context_raw = article.get("context_llm")
-        context_pack: object = ""
-        if context_raw:
-            if isinstance(context_raw, (dict, list)):
-                context_pack = context_raw
-            else:
-                try:
-                    context_pack = json.loads(str(context_raw))
-                except Exception:
-                    context_pack = _clean_summary_text(context_raw)
-        if not context_pack:
-            context_pack = _clean_summary_text(article.get("summary_llm")) or ""
-        articles_for_llm.append(
-            {
-                "id": article.get("id"),
-                "citation_id": article_to_citation.get(article_id),
-                "title": article.get("title"),
-                "source": article.get("source_name"),
-                "url": _normalize_canonical_url(str(article.get("canonical_url") or "")),
-                "published_at": article.get("published_at"),
-                "cves": article.get("cves") or [],
-                "tags": article.get("tags") or [],
-                "context_pack": context_pack,
-            }
-        )
-    overall_input = {
-        "day": day,
-        "citations": citations,
-        "articles": articles_for_llm,
-        "nist_families": [
-            {
-                "code": code,
-                "title": title,
-                "description": NIST_FAMILY_DETAILS.get(code, ""),
-            }
-            for code, title in NIST_FAMILY_TITLES.items()
-        ],
-    }
-    overall_profile_id = profile_id if isinstance(profile_id, str) else None
-    if not overall_profile_id:
-        overall_profile, overall_reason = get_active_profile_for_stage(
-            conn, "daily_brief_overall_synthesis"
-        )
-        if not overall_profile:
-            raise ValueError(f"llm_stage_{overall_reason}")
-        overall_profile_id = overall_profile["id"]
-    log_event(
-        logger,
-        logging.INFO,
-        "daily_brief_stage_start",
-        job_id=job.id,
-        stage="daily_brief_overall_synthesis",
-        day=day,
-    )
-    overall_result = _run_stage_with_heartbeat(
-        "daily_brief_overall_synthesis",
-        json.dumps(overall_input, indent=2),
-        overall_profile_id,
-    )
-    log_event(
-        logger,
-        logging.INFO,
-        "daily_brief_stage_done",
-        job_id=job.id,
-        stage="daily_brief_overall_synthesis",
-        day=day,
-    )
-    overall_payload = overall_result.get("parsed") if isinstance(overall_result, dict) else {}
-    raw_overall = overall_result.get("raw") if isinstance(overall_result, dict) else ""
-    if not isinstance(overall_payload, dict):
-        raise ValueError("daily_brief_overall_invalid")
-    if raw_overall:
-        overall_payload["raw"] = raw_overall
-    nist_breakdown = _normalize_nist_breakdown(overall_payload.get("families"), logger)
-    if not nist_breakdown:
-        raise ValueError("daily_brief_nist_empty")
-    nist_breakdown = _dedupe_nist_citation_assignments(nist_breakdown)
-    max_citation_id = len(citations)
-    raw_tldr = overall_payload.get("tldr")
-    if not isinstance(raw_tldr, list):
-        raise ValueError("daily_brief_tldr_invalid")
-    tldr_items: list[dict[str, object]] = []
-    for item in raw_tldr:
-        if isinstance(item, dict):
-            text = _remap_citations_in_text(
-                str(item.get("text") or ""), article_to_citation, max_citation_id
-            )
-            text = _strip_tldr_prefix(text)
-            item_citations = _remap_citation_ids(
-                item.get("citations"), article_to_citation, max_citation_id
-            )
-            if text.strip():
-                tldr_items.append({"text": text.strip(), "citations": item_citations})
-            continue
-        if isinstance(item, str):
-            text = _strip_tldr_prefix(
-                _remap_citations_in_text(item, article_to_citation, max_citation_id)
-            )
-            if text.strip():
-                tldr_items.append(
-                    {
-                        "text": text.strip(),
-                        "citations": _collect_citations_from_text(text),
-                    }
-                )
-    if not tldr_items:
-        raise ValueError("daily_brief_tldr_empty")
-    technical_synthesis = overall_payload.get("technical_synthesis")
-    if not isinstance(technical_synthesis, dict):
-        raise ValueError("daily_brief_technical_synthesis_invalid")
-    technical_synthesis["citations"] = _remap_citation_ids(
-        technical_synthesis.get("citations"), article_to_citation, max_citation_id
-    )
-    technical_synthesis["text"] = _remap_citations_in_text(
-        str(technical_synthesis.get("text") or ""), article_to_citation, max_citation_id
-    )
-    if not str(technical_synthesis.get("text") or "").strip():
-        raise ValueError("daily_brief_technical_synthesis_empty")
-    actions = overall_payload.get("actions")
-    if not isinstance(actions, list):
-        raise ValueError("daily_brief_actions_invalid")
-    actions = [
-        item
-        for item in actions
-        if isinstance(item, dict) and str(item.get("action") or "").strip()
-    ]
-    for item in actions:
-        item["citations"] = _remap_citation_ids(
-            item.get("citations"), article_to_citation, max_citation_id
-        )
-        item["action"] = _remap_citations_in_text(
-            str(item.get("action") or ""), article_to_citation, max_citation_id
-        )
-        item["why"] = _remap_citations_in_text(
-            str(item.get("why") or ""), article_to_citation, max_citation_id
-        )
-    if not actions:
-        raise ValueError("daily_brief_actions_empty")
-    low_value = overall_payload.get("low_value") if isinstance(overall_payload.get("low_value"), list) else []
-    for item in low_value:
-        if not isinstance(item, dict):
-            continue
-        item["citation_id"] = _remap_citation_ids(
-            [item.get("citation_id")], article_to_citation, max_citation_id
-        )[:1][0] if item.get("citation_id") is not None else item.get("citation_id")
-    detected_low_value = _detect_low_value_entries(articles, article_to_citation)
-    if detected_low_value:
-        low_value = detected_low_value
-    podcast_script = (
-        str(overall_payload.get("podcast_script") or "").strip()
-        if isinstance(overall_payload.get("podcast_script"), str)
-        else ""
-    )
-
-    for family in nist_breakdown:
-        if not isinstance(family, dict):
-            continue
-        family["summary"] = _remap_citations_in_text(
-            str(family.get("summary") or ""), article_to_citation, max_citation_id
-        )
-        for sub in family.get("subtopics") or []:
-            if not isinstance(sub, dict):
-                continue
-            sub["citations"] = _remap_citation_ids(
-                sub.get("citations"), article_to_citation, max_citation_id
-            )
-            sub["narrative"] = _remap_citations_in_text(
-                str(sub.get("narrative") or ""), article_to_citation, max_citation_id
-            )
-    low_value_ids: set[int] = set()
-    for item in low_value:
-        if not isinstance(item, dict):
-            continue
-        try:
-            low_value_ids.add(int(item.get("citation_id")))
-        except Exception:
-            continue
-    family_citations: set[int] = set()
-    for family in nist_breakdown:
-        if not isinstance(family, dict):
-            continue
-        for sub in family.get("subtopics") or []:
-            if not isinstance(sub, dict):
-                continue
-            for cid in sub.get("citations") or []:
-                try:
-                    family_citations.add(int(cid))
-                except Exception:
-                    continue
-    non_low_value = {cid for cid in range(1, max_citation_id + 1) if cid not in low_value_ids}
-    if not non_low_value:
-        non_low_value = set(range(1, max_citation_id + 1))
-    if len(family_citations) < len(non_low_value):
-        nist_breakdown = _build_fallback_families_from_articles(
-            articles=articles,
-            citations=citations,
-            article_to_citation=article_to_citation,
-            low_value_ids=low_value_ids,
-        )
-        nist_breakdown = _dedupe_nist_citation_assignments(nist_breakdown)
-    _format_technical_synthesis(technical_synthesis)
-    _ensure_min_technical_synthesis(technical_synthesis, nist_breakdown)
-    daily_cves = _get_daily_cves_for_brief(conn, day, limit=60)
-    brief_payload = {
-        "meta": {
-            "brief_day": day,
-            "generated_at": datetime.now(tz).isoformat(),
-            "article_count": len(articles),
-            "citation_count": len(citations),
-            "topic_count": len(topics),
-            "family_count": len(nist_breakdown),
-            "coverage": {
-                "cited_article_ids": [],
-                "uncited_article_ids": [],
-                "low_value_article_ids": [],
-            },
-            "dropped_topics": cluster_dropped,
-            "cluster_profile_id": None,
-            "summarize_profile_id": None,
-            "nist_profile_id": None,
-            "overall_profile_id": overall_result.get("profile_id"),
-            "cluster_raw": None,
-            "summarize_raw": None,
-            "nist_raw": None,
-            "overall_raw": raw_overall,
-        },
-        "tldr": tldr_items,
-        "technical_synthesis": technical_synthesis,
-        "actions": actions,
-        "families": nist_breakdown,
-        "low_value": low_value,
-        "daily_cves": daily_cves,
-        "podcast_script": podcast_script,
-        "citations": citations,
-    }
-    log_event(
-        logger,
-        logging.INFO,
-        "daily_brief_payload_ready",
-        job_id=job.id,
-        day=day,
-        citation_count=len(brief_payload.get("citations") or []),
-        article_count=len(articles),
-    )
-    if len(brief_payload.get("citations") or []) != len(articles):
-        raise ValueError("daily_brief_payload_citations_mismatch")
-
-    article_by_citation = {
-        cid: next(
-            (article for article in articles if int(article.get("id") or 0) == citations_by_id[cid].get("article_id")),
-            {},
-        )
-        for cid in citations_by_id
-    }
-    _ensure_daily_brief_coverage(brief_payload, citations, article_by_citation)
-
-    if isinstance(profile_id, str):
-        brief_payload["meta"]["profile_id"] = profile_id
-    upsert_daily_brief(conn, brief_payload)
-    log_event(
-        logger,
-        logging.INFO,
-        "daily_brief_persisted",
-        day=day,
-        count=len(articles),
-    )
-    mark_build_dirty(conn, reason="build_daily_brief")
-    return {"day": day, "count": len(articles), "status": "db_persisted"}
-
-
+    return {"status": "disabled", "day": day, "reason": "daily_brief_removed"}
 def _handle_smoke_test(conn, config, job, logger: logging.Logger) -> dict[str, object]:
     payload = job.payload or {}
     sources_limit = int(payload.get("sources_limit") or 2)
@@ -6963,8 +6623,17 @@ def _handle_cve_sync(
     if cve_id:
         log_event(logger, logging.INFO, "cve_enrich_start", cve_id=cve_id)
         updated = sync_cve_id(conn, api_key, cve_id)
+        epss_result = sync_epss(conn, [cve_id])
+        updated = bool(updated or (epss_result.get("updated") or 0))
         enqueue_job(conn, "cve_enrich_kev", {"cve_id": cve_id}, dedupe=True)
-        return {"status": "ok", "cve_id": cve_id, "updated": bool(updated)}
+        if updated:
+            mark_build_dirty(conn, reason="cve_sync_updated")
+        return {
+            "status": "ok",
+            "cve_id": cve_id,
+            "updated": bool(updated),
+            "epss": epss_result,
+        }
     if mode == "cve_description":
         return _handle_cve_description_fill(conn, api_key, logger)
     result = sync_cves(
@@ -6985,8 +6654,10 @@ def _handle_cve_sync(
         last_modified_end=end_iso,
         cve_id=cve_id,
     )
+    epss_result = sync_epss(conn)
     result["start"] = start_iso
     result["end"] = end_iso
+    result["epss"] = epss_result
     if cve_id:
         result["cve_id"] = cve_id
         log_event(
@@ -7001,7 +6672,7 @@ def _handle_cve_sync(
     events_settings = get_events_settings(conn)
     if events_settings.get("enabled", True):
         _publish_events(conn, config, logger)
-    if (result.get("processed") or 0) > 0 or (result.get("changes") or 0) > 0:
+    if (result.get("processed") or 0) > 0 or (result.get("changes") or 0) > 0 or (epss_result.get("updated") or 0) > 0:
         mark_build_dirty(conn, reason="cve_sync_updated")
         kev_limit = int(result.get("processed") or 0)
         kev_limit = min(kev_limit, 2000) if kev_limit else 500
@@ -7060,6 +6731,7 @@ def _handle_cve_enrich_llm(
         return {"status": "skipped", "reason": "cve_not_found"}
     existing_products = cve.get("affected_products") or []
     existing_versions = cve.get("product_versions") or []
+    existing_vendor_products = cve.get("vendor_products") or []
     if not force and existing_products and existing_versions:
         mark_cve_products_checked(conn, cve_id)
         return {"status": "skipped", "reason": "already_enriched"}
@@ -7077,6 +6749,15 @@ def _handle_cve_enrich_llm(
     if references:
         prompt_lines.append("Reference domains:")
         prompt_lines.extend([f"- {ref}" for ref in references])
+    if existing_products:
+        prompt_lines.append("Known affected products from CVE data:")
+        prompt_lines.append(json.dumps(existing_products, ensure_ascii=False))
+    if cve.get("affected_cpes"):
+        prompt_lines.append("Known affected CPEs from CVE data:")
+        prompt_lines.append(json.dumps(cve.get("affected_cpes"), ensure_ascii=False))
+    if existing_vendor_products:
+        prompt_lines.append("Existing vendor/product links:")
+        prompt_lines.append(json.dumps(existing_vendor_products, ensure_ascii=False))
     input_text = "\n".join(prompt_lines).strip()
     if not input_text:
         return {"status": "skipped", "reason": "no_input"}
@@ -7862,6 +7543,9 @@ def _handle_article_enrich_products(conn, config, job, logger: logging.Logger) -
     if not profile:
         return {"status": "skipped", "reason": f"no_profile_routed:{reason}"}
     source_name = get_source_name(conn, article["source_id"]) or ""
+    article_cves = list_article_cve_ids(conn, int(article_id))
+    article_summary = _summary_from_llm(article.get("summary_llm")) or str(article.get("summary") or "").strip()
+    context_facts, context_timeline = _event_article_context_parts(article.get("context_llm"))
     content_text = article.get("content_text") or ""
     if not content_text:
         return {"status": "skipped", "reason": "no_full_content"}
@@ -7874,6 +7558,28 @@ def _handle_article_enrich_products(conn, config, job, logger: logging.Logger) -
         f"Published: {article.get('published_at') or 'unknown'}",
         f"URL: {article.get('original_url') or article.get('normalized_url')}",
     ]
+    if article_summary:
+        lines.append("Article summary:")
+        lines.append(article_summary)
+    if context_facts:
+        lines.append("Article context facts:")
+        lines.extend([f"- {fact}" for fact in context_facts])
+    if context_timeline:
+        lines.append("Article context timeline:")
+        lines.extend([f"- {item}" for item in context_timeline])
+    if article_cves:
+        lines.append("Linked CVEs:")
+        lines.append(json.dumps(article_cves, ensure_ascii=False))
+        linked_products = []
+        if article_cves:
+            linked_products = [
+                item
+                for cve_id in article_cves
+                for item in list_product_keys_for_cve(conn, cve_id)
+            ]
+        if linked_products:
+            lines.append("Known product hints from linked CVEs:")
+            lines.append(json.dumps(sorted(set(linked_products)), ensure_ascii=False))
     if excerpt:
         lines.append("Content excerpt:")
         lines.append(excerpt)

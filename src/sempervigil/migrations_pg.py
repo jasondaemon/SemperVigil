@@ -148,6 +148,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_cve_prompt_009")
             applied.add("pg_cve_prompt_009")
+        if "pg_cve_prompt_017" not in applied:
+            _migrate_cve_enrich_prompt_v2(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_cve_prompt_017", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_cve_prompt_017")
+            applied.add("pg_cve_prompt_017")
         if "pg_vendor_product_tag_cleanup_010" not in applied:
             _migrate_vendor_product_tag_cleanup(conn)
             conn.execute(
@@ -166,6 +175,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_llm_vendor_product_prompts_011")
             applied.add("pg_llm_vendor_product_prompts_011")
+        if "pg_article_prompt_022" not in applied:
+            _migrate_article_enrich_prompt(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_article_prompt_022", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_article_prompt_022")
+            applied.add("pg_article_prompt_022")
         if "pg_llm_event_classify_012" not in applied:
             _migrate_llm_event_classify_prompts(conn)
             conn.execute(
@@ -328,6 +346,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_cve_kev_029")
             applied.add("pg_cve_kev_029")
+        if "pg_cve_epss_032" not in applied:
+            _migrate_cve_epss(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_cve_epss_032", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_cve_epss_032")
+            applied.add("pg_cve_epss_032")
         if "pg_jobs_indexes_030" not in applied:
             _migrate_jobs_indexes(conn)
             conn.execute(
@@ -473,6 +500,14 @@ def apply_migrations_pg(conn) -> None:
     conn.commit()
     logger.info("migration_applied version=pg_cve_prompt_009")
 
+    _migrate_cve_enrich_prompt_v2(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_cve_prompt_017", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_cve_prompt_017")
+
     _migrate_vendor_product_tag_cleanup(conn)
     conn.execute(
         "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
@@ -488,6 +523,14 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_llm_vendor_product_prompts_011")
+
+    _migrate_article_enrich_prompt(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_article_prompt_022", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_article_prompt_022")
 
     _migrate_llm_event_classify_prompts(conn)
     conn.execute(
@@ -750,6 +793,10 @@ def _bootstrap_schema(conn) -> None:
             preferred_base_score REAL NULL,
             preferred_base_severity TEXT NULL,
             preferred_vector TEXT NULL,
+            epss_score REAL NULL,
+            epss_percentile REAL NULL,
+            epss_date TEXT NULL,
+            epss_checked_at TEXT NULL,
             cvss_v40_json TEXT NULL,
             cvss_v31_json TEXT NULL,
             cvss_v31_list_json TEXT NULL,
@@ -1370,22 +1417,30 @@ def _migrate_cve_enrich_prompt(conn) -> None:
         return
     system_template = "\n".join(
         [
-            "You extract affected software vendor/product/version from CVE text.",
+            "You extract affected software vendor/product/version from CVE text and CVE hints.",
             "Return JSON only.",
             "",
             "Rules:",
-            "- Only return proper-noun product names.",
-            "- Do NOT use generic nouns as products (e.g., software, application, system, service, library) unless part of the proper name.",
+            "- Use the CVE description first, then any affected product/CPE/reference-domain hints supplied in the input.",
+            "- Output must be: {\"items\":[{\"vendor\":\"...\",\"product\":\"...\",\"versions\":[\"...\"]}]}",
+            "- versions must be [] if none. Do not guess versions.",
+            "- Vendor is the organization, project, or platform that makes or maintains the affected product.",
+            "- For plugins, extensions, packages, and platform add-ons, use the maintainer/project/platform name when it is named in the text or hints.",
+            "- For WordPress plugin or extension CVEs, use vendor=WordPress and product=<named plugin/project> unless the plugin author or maintainer is explicitly named.",
+            "- If the description says a product is for WordPress or similar platform phrasing, map it as vendor=WordPress and product=<named plugin/project>, not vendor=<plugin> and product=plugin.",
+            "- If the vendor name appears in non-Latin script and a standard English brand or transliteration is obvious, use the English form (for example, Baidu for 百度).",
+            "- Do not set product to generic wrapper words such as plugin, extension, add-on, or module; use the named software/project instead.",
+            "- Keep vendor/product names in the shortest canonical form that is clearly identifiable from the input.",
             "- Prefer evidence in this order:",
-            "  1) Explicit CPEs or affected product lists",
+            "  1) Explicit affected product/CPE lists",
             "  2) Sentences like \"affects X\" or \"vulnerability in X\"",
-            "  3) Proper nouns near words like software/product/library/RMM",
-            "- If vendor is unknown, set vendor to null.",
-            "- If product is unknown or missing, omit the item.",
+            "  3) Product/project names adjacent to platform or maintainer hints such as plugin, extension, package, module, library, service, app",
+            "- Do not omit an item if the vendor can be reasonably determined from the text or hints.",
+            "- If you cannot determine a product, return an empty items list.",
             "- Versions: keep raw strings; do not parse.",
             "",
             "Output schema:",
-            "{\"items\": [{\"vendor\": null|\"Vendor\", \"product\": \"Product\", \"versions\": [\"<string>\"]}]}",
+            "{\"items\": [{\"vendor\": \"Vendor\", \"product\": \"Product\", \"versions\": [\"<string>\"]}]}",
         ]
     )
     user_template = "{{input}}"
@@ -1401,11 +1456,15 @@ def _migrate_cve_enrich_prompt(conn) -> None:
         (
             system_template,
             user_template,
-            "2026-01-31",
-            "Hardened CVE vendor/product extraction prompt for smaller models.",
+            "2026-04-09",
+            "Broadened CVE vendor/product extraction prompt to use CVE hints and platform context.",
             prompt_id,
         ),
     )
+
+
+def _migrate_cve_enrich_prompt_v2(conn) -> None:
+    _migrate_cve_enrich_prompt(conn)
 
 
 def _migrate_vendor_product_tag_cleanup(conn) -> None:
@@ -1602,22 +1661,30 @@ def _migrate_llm_vendor_product_prompts(conn) -> None:
         conn,
         "prompt_article_enrich_products_v1",
         "Article Enrich Products",
-        "v1",
+        "v2",
         "\n".join(
             [
-                "Extract affected vendor/product from the article content.",
+                "Extract the main affected vendor/product pair from the article content.",
                 "Return JSON only.",
                 "",
                 "Rules:",
                 "- Output must be: {\"items\":[{\"vendor\":\"...\",\"product\":\"...\"}]}",
-                "- If vendor or product is not explicit, return an empty items list.",
-                "- product MUST be explicit; omit items without a clear product.",
+                "- Use the article title, summary, content excerpt, and any linked CVE/product hints supplied in the input.",
+                "- Vendor is the organization, project, or platform that is the subject of the article or owns the affected product.",
+                "- For security news, prefer the real vendor or victim organization over generic wrappers like \"plugin\", \"service\", or \"platform\".",
+                "- For new product announcements, vendor is the company or project making the product and product is the launched product or feature name.",
+                "- For vulnerabilities and breaches, vendor is the affected organization or software vendor, and product is the named product/service/platform if one is explicit.",
+                "- If the article is clearly about a WordPress plugin or extension, use vendor=WordPress and product=<named plugin/project> unless the author or maintainer is explicitly named.",
+                "- If a standard English brand/transliteration is obvious from non-Latin text, use the English form.",
+                "- Do not set product to generic wrapper words such as plugin, extension, add-on, module, service, or platform unless that wrapper is the actual proper name.",
+                "- If vendor or product is not reasonably identifiable from the article and hints, return an empty items list.",
+                "- Prefer the shortest canonical names that still clearly identify the vendor and product.",
                 "- Do not include tags, categories, NIST, or commentary.",
                 "- Do not hallucinate.",
             ]
         ),
         "{{input}}",
-        "Strict JSON-only vendor/product extraction for articles.",
+        "Article vendor/product extraction with article and CVE hints.",
     )
     _upsert_llm_prompt(
         conn,
@@ -1683,6 +1750,40 @@ def _migrate_llm_vendor_product_prompts(conn) -> None:
         "article_enrich_threat_actors",
         "prompt_threat_actor_extract_v1",
         "schema_threat_actors_v1",
+    )
+
+
+def _migrate_article_enrich_prompt(conn) -> None:
+    if not _table_exists(conn, "llm_prompts"):
+        return
+    _upsert_llm_prompt(
+        conn,
+        "prompt_article_enrich_products_v1",
+        "Article Enrich Products",
+        "v2",
+        "\n".join(
+            [
+                "Extract the main affected vendor/product pair from the article content.",
+                "Return JSON only.",
+                "",
+                "Rules:",
+                "- Output must be: {\"items\":[{\"vendor\":\"...\",\"product\":\"...\"}]}",
+                "- Use the article title, summary, content excerpt, and any linked CVE/product hints supplied in the input.",
+                "- Vendor is the organization, project, or platform that is the subject of the article or owns the affected product.",
+                "- For security news, prefer the real vendor or victim organization over generic wrappers like \"plugin\", \"service\", or \"platform\".",
+                "- For new product announcements, vendor is the company or project making the product and product is the launched product or feature name.",
+                "- For vulnerabilities and breaches, vendor is the affected organization or software vendor, and product is the named product/service/platform if one is explicit.",
+                "- If the article is clearly about a WordPress plugin or extension, use vendor=WordPress and product=<named plugin/project> unless the author or maintainer is explicitly named.",
+                "- If a standard English brand/transliteration is obvious from non-Latin text, use the English form.",
+                "- Do not set product to generic wrapper words such as plugin, extension, add-on, module, service, or platform unless that wrapper is the actual proper name.",
+                "- If vendor or product is not reasonably identifiable from the article and hints, return an empty items list.",
+                "- Prefer the shortest canonical names that still clearly identify the vendor and product.",
+                "- Do not include tags, categories, NIST, or commentary.",
+                "- Do not hallucinate.",
+            ]
+        ),
+        "{{input}}",
+        "Article vendor/product extraction with article and CVE hints.",
     )
     _update_stage_profile_prompt_schema(
         conn,
@@ -4957,6 +5058,19 @@ def _migrate_cve_kev(conn) -> None:
         )
         """
     )
+
+
+def _migrate_cve_epss(conn) -> None:
+    if not _table_exists(conn, "cves"):
+        return
+    if not _has_column(conn, "cves", "epss_score"):
+        conn.execute("ALTER TABLE cves ADD COLUMN epss_score REAL NULL")
+    if not _has_column(conn, "cves", "epss_percentile"):
+        conn.execute("ALTER TABLE cves ADD COLUMN epss_percentile REAL NULL")
+    if not _has_column(conn, "cves", "epss_date"):
+        conn.execute("ALTER TABLE cves ADD COLUMN epss_date TEXT NULL")
+    if not _has_column(conn, "cves", "epss_checked_at"):
+        conn.execute("ALTER TABLE cves ADD COLUMN epss_checked_at TEXT NULL")
 
 
 def _migrate_jobs_indexes(conn) -> None:
