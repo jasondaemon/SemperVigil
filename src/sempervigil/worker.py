@@ -1268,6 +1268,18 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
         seen_recent.add(str(cve_id))
         recent_cve_items.append(_cve_item(cve))
 
+    feed_cve_items_by_id: dict[str, dict[str, object]] = {}
+    for item in recent_cve_items:
+        cve_id = item.get("cve_id")
+        if not cve_id:
+            continue
+        feed_cve_items_by_id[str(cve_id)] = item
+    for item in cve_items:
+        cve_id = item.get("cve_id")
+        if not cve_id:
+            continue
+        feed_cve_items_by_id[str(cve_id)] = item
+
     if len(cve_items) < min_items:
         for item in recent_cve_items:
             if len(cve_items) >= min_items:
@@ -1320,7 +1332,7 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
                 "nist_family": article.get("nist_family") or "",
             }
         )
-    for cve in cve_items:
+    for cve in feed_cve_items_by_id.values():
         feed_entries.append(
             {
                 "kind": "cve",
