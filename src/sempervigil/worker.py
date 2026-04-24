@@ -1320,7 +1320,7 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
                 "nist_family": article.get("nist_family") or "",
             }
         )
-    for cve in recent_cve_items:
+    for cve in cve_items:
         feed_entries.append(
             {
                 "kind": "cve",
