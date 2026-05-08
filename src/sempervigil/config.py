@@ -251,7 +251,6 @@ DEFAULT_EVENTS_SETTINGS: dict[str, Any] = {
 DEFAULT_SCHEDULE_SETTINGS: dict[str, Any] = {
     "timezone": None,
     "tasks": {
-        "daily_brief": {"enabled": False, "time": "07:30", "last_run": None},
         "podcast": {"enabled": False, "time": "08:00", "last_run": None},
     },
 }

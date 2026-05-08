@@ -1,0 +1,813 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SemperVigil Platform Workflow</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07111f;
+      --bg2: #0d1730;
+      --panel: rgba(10, 18, 34, 0.84);
+      --panel-2: rgba(16, 26, 48, 0.92);
+      --line: rgba(154, 176, 216, 0.22);
+      --ink: #ecf4ff;
+      --muted: #aab9d7;
+      --cyan: #65d8ff;
+      --blue: #8fb7ff;
+      --green: #5fe0a6;
+      --amber: #ffd48a;
+      --orange: #ffb36b;
+      --red: #ff7f96;
+      --shadow: 0 22px 50px rgba(0, 0, 0, 0.38);
+      --radius: 22px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 15% 12%, rgba(101, 216, 255, 0.14), transparent 24%),
+        radial-gradient(circle at 85% 14%, rgba(95, 224, 166, 0.10), transparent 18%),
+        radial-gradient(circle at 50% 70%, rgba(255, 179, 107, 0.10), transparent 24%),
+        linear-gradient(180deg, var(--bg), var(--bg2));
+    }
+
+    .wrap {
+      max-width: 1880px;
+      margin: 0 auto;
+      padding: 32px 24px 56px;
+    }
+
+    .hero {
+      display: grid;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 3.4vw, 3.4rem);
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+    }
+
+    .lede {
+      max-width: 1180px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 1rem;
+      line-height: 1.6;
+    }
+
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 4px;
+    }
+
+    .badge {
+      padding: 8px 12px;
+      border: 1px solid rgba(154, 176, 216, 0.24);
+      border-radius: 999px;
+      background: rgba(8, 16, 30, 0.66);
+      color: var(--ink);
+      font-size: 0.86rem;
+      letter-spacing: 0.01em;
+      backdrop-filter: blur(8px);
+    }
+
+    .badge.accent {
+      border-color: rgba(101, 216, 255, 0.35);
+      background: rgba(12, 30, 44, 0.82);
+    }
+
+    .shell {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: linear-gradient(180deg, rgba(8, 15, 28, 0.88), rgba(10, 18, 34, 0.95));
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .shell-head {
+      padding: 18px 22px 0;
+    }
+
+    .shell-head p {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 0.93rem;
+      line-height: 1.5;
+    }
+
+    .diagram-scroller {
+      overflow-x: auto;
+      padding: 8px 14px 14px;
+    }
+
+    svg {
+      display: block;
+      min-width: 1600px;
+      width: 100%;
+      height: auto;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+      margin-top: 20px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(12, 19, 36, 0.92), rgba(9, 16, 30, 0.94));
+      padding: 16px 16px 18px;
+      box-shadow: 0 12px 24px rgba(0, 0, 0, 0.20);
+    }
+
+    .card h2 {
+      margin: 0 0 8px;
+      font-size: 1rem;
+      letter-spacing: 0.01em;
+    }
+
+    .card p, .card li {
+      color: var(--muted);
+      line-height: 1.52;
+      font-size: 0.92rem;
+      margin: 0;
+    }
+
+    .card ul {
+      margin: 10px 0 0 18px;
+      padding: 0;
+    }
+
+    .notes {
+      margin-top: 18px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(11, 18, 34, 0.82);
+      padding: 16px 18px;
+    }
+
+    .notes summary {
+      cursor: pointer;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+
+    .notes p, .notes li {
+      color: var(--muted);
+      line-height: 1.58;
+      font-size: 0.92rem;
+    }
+
+    .notes ul {
+      margin: 10px 0 0 18px;
+      padding: 0;
+    }
+
+    .footer {
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+
+    .legend-line {
+      display: inline-block;
+      width: 28px;
+      height: 0;
+      margin-right: 8px;
+      vertical-align: middle;
+      border-top-width: 3px;
+      border-top-style: solid;
+      border-radius: 999px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <h1>SemperVigil platform workflow and boundaries</h1>
+      <p class="lede">
+        This diagram is drawn from the SemperVigil docs, Helm layout, and runtime code paths. It models the documented public edge, the internal control plane, the worker lanes, and the storage / external-dependency boundaries. The public CDN box is labeled generically as <strong>Cloudflare / CloudFront edge</strong> to keep the diagram portable; the current docs identify Cloudflare as the live front door.
+      </p>
+      <div class="badges" aria-label="Key invariants">
+        <span class="badge accent">Database-orchestrated control plane</span>
+        <span class="badge">Public traffic is edge-filtered before app services</span>
+        <span class="badge">Runner pods claim control jobs, then spawn bounded worker passes</span>
+        <span class="badge">Fetch uses a VPN sidecar for egress</span>
+        <span class="badge">Build is dirty-state driven and publishes atomically</span>
+      </div>
+    </header>
+
+    <section class="shell">
+      <div class="shell-head">
+        <p>
+          Solid arrows show internal state, queue, and file flow. Dashed arrows show outbound or external dependencies. The central database is the system of record for jobs, prompts, content, build state, and configuration.
+        </p>
+      </div>
+      <div class="diagram-scroller">
+        <svg id="diagram" viewBox="0 0 2200 1600" role="img" aria-label="SemperVigil platform workflow diagram"></svg>
+      </div>
+    </section>
+
+    <section class="cards" aria-label="Workflow summary">
+      <article class="card">
+        <h2>1. Public ingress</h2>
+        <p>External readers hit the CDN / edge proxy, then the internal security stack before reaching the public site service.</p>
+      </article>
+      <article class="card">
+        <h2>2. Control plane</h2>
+        <p>The admin UI and orchestrator both read and write Postgres. The orchestrator decides when launch jobs and dirty builds should be admitted.</p>
+      </article>
+      <article class="card">
+        <h2>3. Fetch / enrich</h2>
+        <p>Fetch runners claim control jobs, run bounded passes, fetch from sources through the VPN sidecar, and write articles, CVEs, and job state back to the database.</p>
+      </article>
+      <article class="card">
+        <h2>4. LLM lanes</h2>
+        <p>LLM and OpenAI runners claim their queue lanes, resolve prompts and profiles from Postgres, and write structured enrichments back into the same system of record.</p>
+      </article>
+      <article class="card">
+        <h2>5. Build and publish</h2>
+        <p>The build worker reads the data and site source PVCs, runs Hugo, and updates the release output that nginx serves as the public site.</p>
+      </article>
+    </section>
+
+    <details class="notes" open>
+      <summary>Boundary notes</summary>
+      <ul>
+        <li>Public / Internet: untrusted browsers, readers, and crawlers.</li>
+        <li>CDN / Edge: Cloudflare / CloudFront label used for the public CDN front door.</li>
+        <li>Security tier: firewall, Traefik VIP, external-edge namespace, ModSecurity / CRS, and CrowdSec AppSec.</li>
+        <li>Internal control plane: admin, orchestrator, and Postgres.</li>
+        <li>Worker / data plane: fetch, llm_local, openai, build, and supporting services.</li>
+        <li>External dependencies: source sites, NVD / KEV, search backends, LLM providers, and VPN egress.</li>
+      </ul>
+    </details>
+
+    <details class="notes">
+      <summary>Source docs used</summary>
+      <ul>
+        <li><code>docs/ARCHITECTURE.md</code></li>
+        <li><code>docs/CURRENT_CONTEXT.md</code></li>
+        <li><code>docs/PIPELINES.md</code></li>
+        <li><code>docs/BUILD_PIPELINE.md</code></li>
+        <li><code>docs/public-facing/cybernews.md</code></li>
+        <li><code>docs/kubernetes/security/index.md</code></li>
+        <li><code>docs/kubernetes/networking.md</code></li>
+        <li><code>deploy/helm/sempervigil/templates/*.yaml</code></li>
+      </ul>
+    </details>
+
+    <p class="footer">
+      Legend: <span class="legend-line" style="border-top-color: var(--cyan)"></span>internal state / service flow
+      <span class="legend-line" style="border-top-color: var(--orange); border-top-style: dashed; margin-left: 14px;"></span>external dependency
+      <span class="legend-line" style="border-top-color: var(--green); margin-left: 14px;"></span>file / publish flow
+    </p>
+  </div>
+
+  <script>
+    const svg = document.getElementById("diagram");
+    const W = 2200;
+    const H = 1600;
+
+    function el(name, attrs = {}) {
+      const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+      for (const [key, value] of Object.entries(attrs)) {
+        if (value !== null && value !== undefined) {
+          node.setAttribute(key, String(value));
+        }
+      }
+      return node;
+    }
+
+    function add(parent, child) {
+      parent.appendChild(child);
+      return child;
+    }
+
+    function textLines(lines, x, y, opts = {}) {
+      const anchor = opts.anchor || "middle";
+      const size = opts.size || 15;
+      const weight = opts.weight || 500;
+      const fill = opts.fill || "#ecf4ff";
+      const leading = opts.leading || 1.26;
+      const text = el("text", {
+        x,
+        y,
+        "text-anchor": anchor,
+        "font-size": size,
+        "font-weight": weight,
+        fill,
+      });
+      lines.forEach((line, index) => {
+        const tspan = el("tspan", {
+          x,
+          dy: index === 0 ? 0 : `${leading}em`,
+        });
+        tspan.textContent = line;
+        text.appendChild(tspan);
+      });
+      return text;
+    }
+
+    function roundedCard(x, y, w, h, fill, stroke, radius = 18) {
+      return el("rect", {
+        x,
+        y,
+        width: w,
+        height: h,
+        rx: radius,
+        ry: radius,
+        fill,
+        stroke,
+        "stroke-width": 1.5,
+      });
+    }
+
+    function drawZone(zone) {
+      const group = el("g", { opacity: 1 });
+      add(group, el("rect", {
+        x: zone.x,
+        y: zone.y,
+        width: zone.w,
+        height: zone.h,
+        rx: 26,
+        ry: 26,
+        fill: zone.fill,
+        stroke: zone.stroke,
+        "stroke-width": 1.4,
+        "stroke-dasharray": zone.dash || "0",
+      }));
+      add(group, textLines([zone.title], zone.x + 24, zone.y + (zone.titleY || 34), {
+        anchor: "start",
+        size: 18,
+        weight: 700,
+        fill: zone.titleFill || "#ffffff",
+      }));
+      if (zone.note) {
+        add(group, textLines(zone.note, zone.x + 24, zone.y + (zone.noteY || 58), {
+          anchor: "start",
+          size: 12.5,
+          weight: 500,
+          fill: "rgba(236, 244, 255, 0.7)",
+          leading: 1.22,
+        }));
+      }
+      return group;
+    }
+
+    function drawNode(node) {
+      const group = el("g", { class: "node" });
+      add(group, roundedCard(node.x, node.y, node.w, node.h, node.fill, node.stroke, node.radius || 18));
+      if (node.accent) {
+        add(group, el("rect", {
+          x: node.x + 1,
+          y: node.y + 1,
+          width: 8,
+          height: node.h - 2,
+          rx: 8,
+          ry: 8,
+          fill: node.accent,
+          opacity: 0.9,
+        }));
+      }
+      add(group, textLines(node.lines, node.x + node.w / 2, node.y + 24, {
+        size: node.titleSize || 14,
+        weight: 700,
+        fill: "#f5f8ff",
+        leading: 1.12,
+      }));
+      if (node.sub) {
+        add(group, textLines(node.sub, node.x + node.w / 2, node.y + (node.subY || node.h - 26), {
+          size: node.subSize || 10.8,
+          weight: 500,
+          fill: "rgba(236, 244, 255, 0.72)",
+          leading: node.subLeading || 1.08,
+        }));
+      }
+      return group;
+    }
+
+    function anchor(node, side) {
+      if (side === "left") return { x: node.x, y: node.y + node.h / 2 };
+      if (side === "right") return { x: node.x + node.w, y: node.y + node.h / 2 };
+      if (side === "top") return { x: node.x + node.w / 2, y: node.y };
+      if (side === "bottom") return { x: node.x + node.w / 2, y: node.y + node.h };
+      return { x: node.x + node.w / 2, y: node.y + node.h / 2 };
+    }
+
+    function curvePath(a, b) {
+      const dx = Math.max(70, Math.abs(b.x - a.x) * 0.36);
+      const dir = b.x >= a.x ? 1 : -1;
+      return `M ${a.x} ${a.y} C ${a.x + dir * dx} ${a.y}, ${b.x - dir * dx} ${b.y}, ${b.x} ${b.y}`;
+    }
+
+    function drawLink(fromNode, toNode, opts = {}) {
+      const fromSide = opts.fromSide || "right";
+      const toSide = opts.toSide || "left";
+      const from = anchor(fromNode, fromSide);
+      const to = anchor(toNode, toSide);
+      const path = el("path", {
+        d: curvePath(from, to),
+        fill: "none",
+        stroke: opts.stroke || "rgba(101, 216, 255, 0.9)",
+        "stroke-width": opts.width || 2.4,
+        "stroke-linecap": "round",
+        "stroke-linejoin": "round",
+        "stroke-dasharray": opts.dash || "0",
+        "marker-end": `url(#${opts.marker || "arrow"})`,
+      });
+      return path;
+    }
+
+    function drawLabel(text, x, y, fill = "rgba(236, 244, 255, 0.8)") {
+      return textLines([text], x, y, {
+        anchor: "middle",
+        size: 11.4,
+        weight: 700,
+        fill,
+      });
+    }
+
+    // Background pattern.
+    const defs = el("defs");
+    add(defs, el("linearGradient", { id: "zoneGradient", x1: "0%", x2: "100%", y1: "0%", y2: "100%" }));
+    add(defs.firstChild || defs, el("stop", { offset: "0%", "stop-color": "#0b1630" }));
+    add(defs, el("marker", { id: "arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "8", markerHeight: "8", orient: "auto-start-reverse" }));
+    add(defs.lastChild, el("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: "#7ee2ff" }));
+    add(defs, el("marker", { id: "arrowGreen", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "8", markerHeight: "8", orient: "auto-start-reverse" }));
+    add(defs.lastChild, el("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: "#77e7a8" }));
+    add(defs, el("marker", { id: "arrowOrange", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "8", markerHeight: "8", orient: "auto-start-reverse" }));
+    add(defs.lastChild, el("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: "#ffb36b" }));
+    add(defs, el("pattern", { id: "grid", width: "34", height: "34", patternUnits: "userSpaceOnUse" }));
+    const pattern = defs.lastChild;
+    add(pattern, el("path", { d: "M 34 0 L 0 0 0 34", fill: "none", stroke: "rgba(154, 176, 216, 0.08)", "stroke-width": "1" }));
+    add(svg, defs);
+
+    const backdrop = el("rect", {
+      x: 0,
+      y: 0,
+      width: W,
+      height: H,
+      fill: "url(#grid)",
+      opacity: 0.55,
+    });
+    add(svg, backdrop);
+
+    const zones = [
+      {
+        title: "Public / Internet",
+        note: ["Untrusted browsers, readers, crawlers, and referrers."],
+        titleY: 28,
+        noteY: 54,
+        x: 34, y: 120, w: 2132, h: 170,
+        fill: "rgba(16, 24, 48, 0.34)",
+        stroke: "rgba(101, 216, 255, 0.22)",
+        titleFill: "#bfefff",
+      },
+      {
+        title: "Internal security stack",
+        note: ["Firewall, WAF, CrowdSec, and ingress are inside the cluster boundary."],
+        titleY: 28,
+        noteY: 54,
+        x: 34, y: 310, w: 2132, h: 150,
+        fill: "rgba(20, 24, 34, 0.40)",
+        stroke: "rgba(255, 127, 150, 0.20)",
+        titleFill: "#ffd5dd",
+      },
+      {
+        title: "Internal control plane",
+        note: ["Admin UI, scheduler, and database-backed coordination."],
+        titleY: 28,
+        noteY: 54,
+        x: 34, y: 480, w: 2132, h: 220,
+        fill: "rgba(15, 26, 42, 0.40)",
+        stroke: "rgba(143, 183, 255, 0.22)",
+        titleFill: "#d6e4ff",
+      },
+      {
+        title: "Workers / data plane",
+        note: ["Fetch, LLM, OpenAI, build, and supporting internal services."],
+        x: 34, y: 720, w: 2132, h: 590,
+        fill: "rgba(15, 22, 30, 0.42)",
+        stroke: "rgba(95, 224, 166, 0.18)",
+        titleFill: "#d0ffe6",
+      },
+      {
+        title: "Storage / release plane",
+        note: ["PVC-backed runtime state, source tree, release output, logs, and tools."],
+        titleY: 26,
+        noteY: 42,
+        x: 34, y: 1370, w: 2132, h: 190,
+        fill: "rgba(15, 18, 28, 0.50)",
+        stroke: "rgba(255, 179, 107, 0.18)",
+        titleFill: "#ffe4bf",
+      },
+    ];
+
+    zones.forEach((zone) => add(svg, drawZone(zone)));
+
+    const nodes = {
+      reader: {
+        x: 76, y: 188, w: 236, h: 86,
+        lines: ["External reader", "browser / crawler"],
+        sub: ["Human or automated", "public request origin"],
+        fill: "rgba(20, 32, 58, 0.96)",
+        stroke: "rgba(101, 216, 255, 0.35)",
+        accent: "#65d8ff",
+        tag: "public",
+      },
+      cdn: {
+        x: 352, y: 188, w: 284, h: 86,
+        lines: ["Cloudflare / CloudFront", "CDN front door"],
+        sub: ["Public edge proxy", "TLS termination / routing"],
+        fill: "rgba(18, 34, 52, 0.96)",
+        stroke: "rgba(101, 216, 255, 0.36)",
+        accent: "#7ce0ff",
+        tag: "edge",
+      },
+      firewall: {
+        x: 660, y: 324, w: 230, h: 124,
+        lines: ["Firewall"],
+        sub: ["Accepts inbound only from", "Cloudflare / CloudFront", "GeoIP filter", "Proofpoint CyberSecure"],
+        subY: 62,
+        subSize: 9.2,
+        subLeading: 0.96,
+        fill: "rgba(40, 19, 18, 0.96)",
+        stroke: "rgba(255, 127, 150, 0.42)",
+        accent: "#ff7f96",
+        tag: "edge",
+      },
+      waf: {
+        x: 920, y: 324, w: 210, h: 104,
+        lines: ["ModSecurity", "OWASP CRS"],
+        sub: ["HTTP request filtering", "tenant-specific tuning"],
+        fill: "rgba(33, 30, 18, 0.96)",
+        stroke: "rgba(255, 179, 107, 0.38)",
+        accent: "#ffb36b",
+        tag: "waf",
+      },
+      crowdsec: {
+        x: 1160, y: 324, w: 230, h: 104,
+        lines: ["CrowdSec", "AppSec / LAPI"],
+        sub: ["Behavioral decisions", "persistent bans / scoring"],
+        fill: "rgba(33, 30, 18, 0.96)",
+        stroke: "rgba(255, 179, 107, 0.38)",
+        accent: "#ffb36b",
+        tag: "security",
+      },
+      traefik: {
+        x: 1430, y: 328, w: 170, h: 96,
+        lines: ["Traefik", "cluster ingress"],
+        sub: ["Shared entrypoint", "routes to app services"],
+        fill: "rgba(18, 30, 56, 0.96)",
+        stroke: "rgba(143, 183, 255, 0.34)",
+        accent: "#8fb7ff",
+        tag: "ingress",
+      },
+      web: {
+        x: 1624, y: 328, w: 252, h: 96,
+        lines: ["sempervigil-web", "nginx-unprivileged"],
+        sub: ["Serves /usr/share/nginx/html", "static public site"],
+        fill: "rgba(17, 34, 27, 0.96)",
+        stroke: "rgba(95, 224, 166, 0.34)",
+        accent: "#5fe0a6",
+        tag: "public site",
+      },
+      publicSite: {
+        x: 1904, y: 328, w: 224, h: 96,
+        lines: ["CyberNews public host", "public release site"],
+        sub: ["SemperVigil release output", "visible to the reader"],
+        fill: "rgba(17, 24, 40, 0.96)",
+        stroke: "rgba(255, 255, 255, 0.16)",
+        accent: "#c0cfff",
+        tag: "published",
+      },
+      admin: {
+        x: 76, y: 544, w: 260, h: 104,
+        lines: ["sempervigil-admin", "internal control UI"],
+        sub: ["Sources, jobs, profiles", "metrics and operator actions"],
+        fill: "rgba(18, 30, 56, 0.96)",
+        stroke: "rgba(143, 183, 255, 0.34)",
+        accent: "#8fb7ff",
+        tag: "admin",
+      },
+      orch: {
+        x: 366, y: 544, w: 270, h: 104,
+        lines: ["sempervigil-orchestrator", "scheduler / launch policy"],
+        sub: ["Dirty-build admission", "due-source checks, leases"],
+        fill: "rgba(18, 30, 56, 0.96)",
+        stroke: "rgba(143, 183, 255, 0.34)",
+        accent: "#8fb7ff",
+        tag: "singleton",
+      },
+      db: {
+        x: 670, y: 514, w: 528, h: 160,
+        lines: ["sempervigil-db", "central coordination and state store"],
+        sub: ["Jobs, prompts, profiles, sources, articles, CVEs, events, build state"],
+        fill: "rgba(27, 31, 43, 0.98)",
+        stroke: "rgba(255, 255, 255, 0.18)",
+        accent: "#a8b8d6",
+        tag: "postgres",
+      },
+      searxng: {
+        x: 1244, y: 544, w: 286, h: 104,
+        lines: ["sempervigil-searxng", "internal search backend"],
+        sub: ["Discovery and enrichment helper", "optional but deployed"],
+        fill: "rgba(26, 25, 37, 0.96)",
+        stroke: "rgba(255, 179, 107, 0.24)",
+        accent: "#ffb36b",
+        tag: "search",
+      },
+      fetch: {
+        x: 72, y: 802, w: 332, h: 154,
+        lines: ["runner: fetch", "worker-fetch deployment"],
+        sub: ["launch_fetch_worker", "bounded fetch pass + gluetun VPN sidecar"],
+        fill: "rgba(18, 42, 32, 0.97)",
+        stroke: "rgba(95, 224, 166, 0.34)",
+        accent: "#5fe0a6",
+        tag: "2 replicas",
+      },
+      sources: {
+        x: 456, y: 778, w: 298, h: 94,
+        lines: ["Source sites", "RSS / HTML / feeds"],
+        sub: ["News sources, blogs, and pages", "fetches exit through VPN"],
+        fill: "rgba(41, 27, 14, 0.96)",
+        stroke: "rgba(255, 179, 107, 0.34)",
+        accent: "#ffb36b",
+        tag: "external",
+      },
+      nvd: {
+        x: 456, y: 892, w: 298, h: 94,
+        lines: ["CVE / KEV feeds", "NVD API + CISA KEV"],
+        sub: ["CVE sync and enrichment inputs", "external reference data"],
+        fill: "rgba(41, 27, 14, 0.96)",
+        stroke: "rgba(255, 179, 107, 0.34)",
+        accent: "#ffb36b",
+        tag: "external",
+      },
+      llm: {
+        x: 810, y: 802, w: 332, h: 154,
+        lines: ["runner: llm_local", "worker-llm deployment"],
+        sub: ["launch_llm_worker", "summaries and enrichment"],
+        fill: "rgba(24, 39, 52, 0.97)",
+        stroke: "rgba(101, 216, 255, 0.34)",
+        accent: "#65d8ff",
+        tag: "LLM lane",
+      },
+      provider: {
+        x: 1190, y: 778, w: 316, h: 94,
+        lines: ["LiteLLM -> Ollama", "Qwen model family"],
+        sub: ["OpenAI-compatible provider", "SV_LLM_BASE_URL and profiles"],
+        fill: "rgba(41, 27, 14, 0.96)",
+        stroke: "rgba(255, 179, 107, 0.34)",
+        accent: "#ffb36b",
+        tag: "external",
+      },
+      openai: {
+        x: 1448, y: 882, w: 332, h: 154,
+        lines: ["runner: openai", "worker-openai deployment"],
+        sub: ["launch_openai_worker", "OpenAI-backed editorial synthesis"],
+        fill: "rgba(32, 24, 48, 0.97)",
+        stroke: "rgba(194, 155, 255, 0.34)",
+        accent: "#c69cff",
+        tag: "OpenAI lane",
+      },
+      openaiApi: {
+        x: 1820, y: 882, w: 288, h: 94,
+        lines: ["OpenAI API / router", "external provider"],
+        sub: ["Paid or managed inference path", "not public traffic"],
+        fill: "rgba(41, 27, 14, 0.96)",
+        stroke: "rgba(255, 179, 107, 0.34)",
+        accent: "#ffb36b",
+        tag: "external",
+      },
+      build: {
+        x: 810, y: 1044, w: 332, h: 154,
+        lines: ["runner: build", "build-worker deployment"],
+        sub: ["launch_build_worker", "Hugo build and release swap"],
+        fill: "rgba(31, 31, 36, 0.98)",
+        stroke: "rgba(255, 255, 255, 0.18)",
+        accent: "#d9e2f5",
+        tag: "publish",
+      },
+      siteSrc: {
+        x: 1192, y: 1442, w: 304, h: 96,
+        lines: ["site-src PVC", "Hugo source tree"],
+        sub: ["layouts, data JSON, static assets", "build inputs"],
+        fill: "rgba(25, 31, 45, 0.96)",
+        stroke: "rgba(143, 183, 255, 0.26)",
+        accent: "#8fb7ff",
+        tag: "PVC",
+      },
+      sitePublic: {
+        x: 1532, y: 1442, w: 316, h: 96,
+        lines: ["site-public PVC", "release output"],
+        sub: ["nginx serves this tree", "atomic publish target"],
+        fill: "rgba(25, 31, 45, 0.96)",
+        stroke: "rgba(95, 224, 166, 0.26)",
+        accent: "#5fe0a6",
+        tag: "PVC",
+      },
+      data: {
+        x: 80, y: 1442, w: 320, h: 96,
+        lines: ["data PVC", "runtime content and state"],
+        sub: ["articles, CVEs, events, jobs", "DB-backed generated data"],
+        fill: "rgba(25, 31, 45, 0.96)",
+        stroke: "rgba(255, 255, 255, 0.18)",
+        accent: "#a8b8d6",
+        tag: "PVC",
+      },
+      logs: {
+        x: 436, y: 1442, w: 276, h: 96,
+        lines: ["logs PVC", "worker and build logs"],
+        sub: ["admin / worker / builder logs", "shared operator evidence"],
+        fill: "rgba(25, 31, 45, 0.96)",
+        stroke: "rgba(255, 255, 255, 0.18)",
+        accent: "#a8b8d6",
+        tag: "PVC",
+      },
+      tools: {
+        x: 1876, y: 1442, w: 244, h: 96,
+        lines: ["tools PVC", "shared scripts and helpers"],
+        sub: ["ensure-dirs.sh and build helpers", "read-mostly"],
+        fill: "rgba(25, 31, 45, 0.96)",
+        stroke: "rgba(255, 255, 255, 0.18)",
+        accent: "#a8b8d6",
+        tag: "PVC",
+      },
+    };
+
+    Object.values(nodes).forEach((node) => add(svg, drawNode(node)));
+
+    const links = [
+      { from: "reader", to: "cdn", stroke: "rgba(101, 216, 255, 0.92)", marker: "arrow" },
+      { from: "cdn", to: "firewall", stroke: "rgba(255, 127, 150, 0.92)", marker: "arrowOrange" },
+      { from: "firewall", to: "waf", stroke: "rgba(255, 179, 107, 0.92)", marker: "arrowOrange" },
+      { from: "waf", to: "crowdsec", stroke: "rgba(255, 179, 107, 0.92)", marker: "arrowOrange" },
+      { from: "crowdsec", to: "traefik", stroke: "rgba(143, 183, 255, 0.92)", marker: "arrow" },
+      { from: "traefik", to: "web", stroke: "rgba(95, 224, 166, 0.92)", marker: "arrowGreen" },
+      { from: "web", to: "publicSite", stroke: "rgba(95, 224, 166, 0.92)", marker: "arrowGreen", fromSide: "right", toSide: "left" },
+
+      { from: "admin", to: "db", stroke: "rgba(143, 183, 255, 0.94)", marker: "arrow" },
+      { from: "orch", to: "db", stroke: "rgba(143, 183, 255, 0.94)", marker: "arrow" },
+      { from: "db", to: "fetch", stroke: "rgba(95, 224, 166, 0.88)", marker: "arrowGreen", fromSide: "bottom", toSide: "top" },
+      { from: "db", to: "llm", stroke: "rgba(101, 216, 255, 0.88)", marker: "arrow", fromSide: "bottom", toSide: "top" },
+      { from: "db", to: "openai", stroke: "rgba(194, 155, 255, 0.88)", marker: "arrow", fromSide: "bottom", toSide: "top" },
+      { from: "db", to: "build", stroke: "rgba(217, 226, 245, 0.88)", marker: "arrow", fromSide: "bottom", toSide: "top" },
+      { from: "fetch", to: "data", stroke: "rgba(95, 224, 166, 0.88)", marker: "arrowGreen", fromSide: "bottom", toSide: "top" },
+      { from: "llm", to: "data", stroke: "rgba(101, 216, 255, 0.88)", marker: "arrow", fromSide: "bottom", toSide: "top" },
+      { from: "fetch", to: "sources", stroke: "rgba(255, 179, 107, 0.92)", dash: "8 7", marker: "arrowOrange", fromSide: "right", toSide: "left" },
+      { from: "fetch", to: "nvd", stroke: "rgba(255, 179, 107, 0.92)", dash: "8 7", marker: "arrowOrange", fromSide: "right", toSide: "left" },
+      { from: "fetch", to: "searxng", stroke: "rgba(255, 179, 107, 0.82)", dash: "6 7", marker: "arrowOrange", fromSide: "right", toSide: "bottom" },
+      { from: "llm", to: "provider", stroke: "rgba(255, 179, 107, 0.92)", dash: "8 7", marker: "arrowOrange", fromSide: "right", toSide: "left" },
+      { from: "openai", to: "openaiApi", stroke: "rgba(255, 179, 107, 0.92)", dash: "8 7", marker: "arrowOrange", fromSide: "right", toSide: "left" },
+      { from: "build", to: "siteSrc", stroke: "rgba(95, 224, 166, 0.92)", marker: "arrowGreen", fromSide: "bottom", toSide: "top" },
+      { from: "build", to: "sitePublic", stroke: "rgba(95, 224, 166, 0.92)", marker: "arrowGreen", fromSide: "bottom", toSide: "top" },
+      { from: "sitePublic", to: "web", stroke: "rgba(95, 224, 166, 0.82)", marker: "arrowGreen", fromSide: "top", toSide: "bottom" },
+      { from: "logs", to: "admin", stroke: "rgba(168, 184, 214, 0.62)", dash: "6 8", marker: "arrow", fromSide: "top", toSide: "bottom" },
+      { from: "tools", to: "build", stroke: "rgba(168, 184, 214, 0.62)", dash: "6 8", marker: "arrow", fromSide: "top", toSide: "bottom" },
+    ];
+
+    links.forEach((link) => {
+      const path = drawLink(nodes[link.from], nodes[link.to], {
+        stroke: link.stroke,
+        dash: link.dash,
+        marker: link.marker,
+        fromSide: link.fromSide,
+        toSide: link.toSide,
+      });
+      add(svg, path);
+    });
+
+    // Arrow labels placed after links so they sit above the strokes.
+    const labels = [
+      { text: "public request", x: 220, y: 160 },
+      { text: "ingress routing", x: 520, y: 160 },
+      { text: "security stack", x: 1040, y: 304 },
+      { text: "served content", x: 1540, y: 304 },
+      { text: "launch jobs", x: 530, y: 470 },
+      { text: "queue claims", x: 860, y: 770 },
+      { text: "external fetch", x: 612, y: 758 },
+      { text: "LLM provider", x: 1272, y: 758 },
+      { text: "OpenAI", x: 1646, y: 758 },
+      { text: "publish", x: 1062, y: 1320 },
+      { text: "release output", x: 1452, y: 1368 },
+    ];
+    labels.forEach((label) => add(svg, drawLabel(label.text, label.x, label.y)));
+  </script>
+</body>
+</html>

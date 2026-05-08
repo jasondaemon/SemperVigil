@@ -195,6 +195,7 @@ Optional token gate:
   - `X-Admin-Token: <token>` header (curl/scripts), or
   - an authenticated browser cookie from `/ui/login`
 - `/ui/static` assets remain public; UI pages still require auth when token is set
+- Read-only metrics export for the CyberNews site is available at `/admin/api/public-metrics/daily?days=14` and is used by the hourly site refresh job.
 
 Reverse proxy notes (Nginx Proxy Manager):
 - Forward `X-Forwarded-Proto`, `X-Forwarded-Host`, and `X-Forwarded-For`

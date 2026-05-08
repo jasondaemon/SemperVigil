@@ -1,9 +1,13 @@
 from uuid import uuid4
 
 from sempervigil.storage import (
+    get_product_id_by_vendor_name,
+    get_vendor_id_by_name,
     init_db,
     link_cve_products_from_items,
     list_cve_tags,
+    upsert_product,
+    upsert_vendor,
     upsert_cve,
 )
 from sempervigil.utils import utc_now_iso
@@ -44,3 +48,32 @@ def test_llm_vendor_product_persistence_no_tags():
     ).fetchone()
     assert int(row[0]) == 0
     assert list_cve_tags(conn, cve_id) == []
+
+
+def test_llm_vendor_product_persistence_accepts_non_latin_names():
+    conn = init_db()
+    vendor_display = "百度"
+    product_display = "站长合集"
+    vendor_id = upsert_vendor(conn, vendor_display)
+    product_id, product_key = upsert_product(conn, vendor_id, product_display)
+
+    assert vendor_id > 0
+    assert product_id > 0
+    assert product_key
+    assert get_vendor_id_by_name(conn, vendor_display) == vendor_id
+    assert get_product_id_by_vendor_name(conn, vendor_id, product_display) == product_id
+
+    vendor_row = conn.execute(
+        "SELECT display_name, name_norm FROM vendors WHERE id = %s",
+        (vendor_id,),
+    ).fetchone()
+    product_row = conn.execute(
+        "SELECT display_name, name_norm, product_key FROM products WHERE id = %s",
+        (product_id,),
+    ).fetchone()
+    assert vendor_row is not None
+    assert product_row is not None
+    assert vendor_row[0] == vendor_display
+    assert product_row[0] == product_display
+    assert str(vendor_row[1]).startswith("u_")
+    assert str(product_row[1]).startswith("u_")

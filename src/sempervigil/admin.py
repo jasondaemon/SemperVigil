@@ -1224,6 +1224,18 @@ def dashboard_metrics() -> dict[str, object]:
     conn = _get_conn()
     return _build_dashboard_metrics_payload(conn)
 
+
+@app.get("/admin/api/public-metrics/daily", dependencies=[Depends(_require_admin_token)])
+def public_metrics_daily(days: int = 14) -> dict[str, object]:
+    conn = _get_conn()
+    safe_days = max(1, min(int(days or 14), 90))
+    rows = get_public_metrics_daily_counts(conn, days=safe_days)
+    return {
+        "days": safe_days,
+        "generated_at": utc_now_iso(),
+        "rows": rows,
+    }
+
 @app.post("/admin/api/dashboard/reset_failures", dependencies=[Depends(_require_admin_token)])
 def dashboard_reset_failures() -> dict[str, object]:
     conn = _get_conn()
@@ -4326,7 +4338,6 @@ def build_daily_brief(payload: DailyBriefRequest) -> dict[str, str]:
 def build_brief(payload: DailyBriefRequest) -> dict[str, str]:
     conn = _get_conn()
     return _enqueue_daily_brief(conn, payload)
-
 
 
 @app.post("/admin/api/ai/test", dependencies=[Depends(_require_admin_token)])

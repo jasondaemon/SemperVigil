@@ -229,7 +229,10 @@ function wireDashboard() {
     }
   }
   function renderJobCounts(counts, jobTypes, jobGroups, countsSince, queueable, buildState) {
-    const allTypes = jobTypes && jobTypes.length ? jobTypes : Object.keys(counts).sort();
+    const hiddenJobTypes = new Set(["build_daily_brief"]);
+    const allTypes = (jobTypes && jobTypes.length ? jobTypes : Object.keys(counts).sort()).filter(
+      (type) => !hiddenJobTypes.has(type)
+    );
     const fallbackGroups = [
       { id: "all", title: "Job Queue", job_types: allTypes },
     ];

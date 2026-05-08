@@ -43,7 +43,6 @@ from .worker import (
 )
 
 _SCHEDULE_JOB_TYPES = {
-    "daily_brief": "build_daily_brief",
 }
 
 _RUNNER_LAUNCH_TYPES = {

@@ -1,3 +1,4 @@
+from sempervigil.normalize import normalize_name
 from sempervigil.utils import normalize_url
 
 
@@ -11,3 +12,9 @@ def test_normalize_url_keeps_tracking_when_disabled():
     url = "https://example.com/path?utm_source=news&b=2"
     normalized = normalize_url(url, strip_tracking_params=False, tracking_params=["utm_source"])
     assert normalized == "https://example.com/path?b=2&utm_source=news"
+
+
+def test_normalize_name_falls_back_for_non_latin_text():
+    key = normalize_name("百度")
+    assert key.startswith("u_")
+    assert normalize_name("百度") == key

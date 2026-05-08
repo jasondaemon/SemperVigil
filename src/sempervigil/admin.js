@@ -229,6 +229,7 @@ function wireDashboard() {
     }
   }
   function renderJobCounts(counts, jobTypes, countsSince, queueable) {
+    const hiddenJobTypes = new Set(["build_daily_brief"]);
     const pipelineOrder = [
       "fetch_article_content",
       "summarize_article_llm",
@@ -240,10 +241,11 @@ function wireDashboard() {
       "cve_enrich_kev",
       "cve_enrich_llm",
       "cve_enrich_threat_actors",
-      "build_daily_brief",
       "build_site",
     ];
-    const allTypes = jobTypes && jobTypes.length ? jobTypes : Object.keys(counts).sort();
+    const allTypes = (jobTypes && jobTypes.length ? jobTypes : Object.keys(counts).sort()).filter(
+      (type) => !hiddenJobTypes.has(type)
+    );
     const typeSet = new Set(allTypes);
     const types = [
       ...pipelineOrder.filter((type) => typeSet.has(type)),
@@ -316,11 +318,6 @@ function wireDashboard() {
         action: "cve_threats",
         limit: true,
       },
-      build_daily_brief: {
-        link: "/ui/jobs",
-        action: "daily_brief",
-        date: true,
-      },
     };
     const midpoint = Math.ceil(types.length / 2);
     const columns = [types.slice(0, midpoint), types.slice(midpoint)];
@@ -340,14 +337,7 @@ function wireDashboard() {
         const needsText = needsValue === null ? "—" : String(needsValue);
         const needsHtml = needsLink ? `<a href="${needsLink}">${needsText}</a>` : needsText;
         let controlHtml = "";
-        if (needsMeta?.action === "daily_brief") {
-          controlHtml = `
-            <span class="job-needs-controls">
-              <input type="date" class="dashboard-brief-date" />
-              <button class="btn tiny secondary dashboard-brief-queue">Queue</button>
-            </span>
-          `;
-        } else if (needsMeta?.action) {
+        if (needsMeta?.action) {
           const limitSelect = needsMeta.limit
             ? `<select class="dashboard-limit" data-kind="${needsMeta.action}">
                  <option value="50">50</option>
@@ -451,22 +441,6 @@ function wireDashboard() {
         showToast(err.message || String(err));
       }
     }
-    if (target.classList.contains("dashboard-brief-queue")) {
-      const row = target.closest("tr");
-      const dateInput = row ? row.querySelector(".dashboard-brief-date") : null;
-      const dateValue = dateInput ? dateInput.value : "";
-      const payload = dateValue ? { date: dateValue } : {};
-      try {
-        const result = await apiFetch("/admin/api/daily_brief/build", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
-        showToast(`Daily brief queued: ${result.job_id}`);
-        await loadMetrics();
-      } catch (err) {
-        showToast(err.message || String(err));
-      }
-    }
   });
   const resetFailuresBtn = document.getElementById("reset-failures");
   if (resetFailuresBtn) {
@@ -559,7 +533,6 @@ function wireLogs() {
     "cve_enrich_threat_actors",
     "derive_events_from_articles",
     "enrich_event_summary_llm",
-    "build_daily_brief",
     "article_threat_actors_backfill",
     "cve_threat_actors_backfill",
   ]);
@@ -568,7 +541,6 @@ function wireLogs() {
     "ingest_source",
     "fetch_article_content",
     "cve_sync",
-    "build_daily_brief",
     "source_acquire",
     "rebuild_vendor_products",
     "article_products_backfill",
@@ -1183,30 +1155,6 @@ function wireEnqueueButtons() {
       }
     });
   });
-  const briefBtn = document.getElementById("daily-brief-build");
-  if (briefBtn) {
-    const dateInput = document.getElementById("daily-brief-date");
-    if (dateInput && !dateInput.value) {
-      const today = new Date();
-      const yyyy = String(today.getFullYear());
-      const mm = String(today.getMonth() + 1).padStart(2, "0");
-      const dd = String(today.getDate()).padStart(2, "0");
-      dateInput.value = `${yyyy}-${mm}-${dd}`;
-    }
-    briefBtn.addEventListener("click", async () => {
-      const dateValue = dateInput ? dateInput.value : "";
-      const payload = dateValue ? { date: dateValue } : {};
-      try {
-        const result = await apiFetch("/admin/api/daily_brief/build", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
-        showToast(`Daily brief queued: ${result.job_id}`);
-      } catch (err) {
-        alert(err);
-      }
-    });
-  }
 }
 function wireSources() {
   const form = document.getElementById("source-form");
@@ -1877,7 +1825,6 @@ function wireJobs() {
     "article_products_backfill",
     "article_threat_actors_backfill",
     "enrich_event_summary_llm",
-    "build_daily_brief",
     "source_acquire",
     "smoke_test",
     "cve_enrich_threat_actors",
@@ -3437,14 +3384,11 @@ function wireScheduleSettings() {
     const settings = data.settings || {};
     document.getElementById("schedule-timezone").value = settings.timezone || "";
     const tasks = settings.tasks || {};
-    const brief = tasks.daily_brief || {};
     const podcast = tasks.podcast || {};
-    document.getElementById("schedule-brief-enabled").checked = brief.enabled ?? false;
-    document.getElementById("schedule-brief-time").value = brief.time || "07:30";
     document.getElementById("schedule-podcast-enabled").checked = podcast.enabled ?? false;
     document.getElementById("schedule-podcast-time").value = podcast.time || "08:00";
     if (note) {
-      const last = brief.last_run ? `Daily brief last run: ${brief.last_run}` : "";
+      const last = podcast.last_run ? `Podcast last run: ${podcast.last_run}` : "";
       note.textContent = last;
     }
   }
@@ -3454,10 +3398,6 @@ function wireScheduleSettings() {
     const settings = {
       timezone: document.getElementById("schedule-timezone").value.trim() || null,
       tasks: {
-        daily_brief: {
-          enabled: document.getElementById("schedule-brief-enabled").checked,
-          time: document.getElementById("schedule-brief-time").value || "07:30",
-        },
         podcast: {
           enabled: document.getElementById("schedule-podcast-enabled").checked,
           time: document.getElementById("schedule-podcast-time").value || "08:00",
@@ -3476,17 +3416,6 @@ function wireScheduleSettings() {
       error.style.display = "block";
     }
   });
-  const runBrief = document.getElementById("schedule-brief-run");
-  if (runBrief) {
-    runBrief.addEventListener("click", async () => {
-      try {
-        await apiFetch("/admin/api/daily_brief/build", { method: "POST", body: JSON.stringify({}) });
-        showToast("Daily brief enqueued");
-      } catch (err) {
-        showToast(err.message || String(err));
-      }
-    });
-  }
   load().catch((err) => {
     error.textContent = err.message || "Load failed";
     error.style.display = "block";
@@ -6177,28 +6106,6 @@ async function wireAnalytics() {
             </tr>`
         )
         .join("");
-    }
-    const dateBtn = document.getElementById("brief-date-run");
-    const dateField = document.getElementById("brief-date");
-    if (dateBtn && dateField) {
-      dateBtn.addEventListener("click", async () => {
-        if (!dateField.value) {
-          alert("Select a date");
-          return;
-        }
-        try {
-          await apiFetch("/admin/api/daily_brief/build", {
-            method: "POST",
-            body: JSON.stringify({ date: dateField.value }),
-          });
-          showToast("Brief job enqueued");
-        } catch (err) {
-          if (error) {
-            error.textContent = err.message || String(err);
-            error.style.display = "block";
-          }
-        }
-      });
     }
     if (error) {
       error.style.display = "none";
