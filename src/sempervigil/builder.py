@@ -21,9 +21,11 @@ from .storage import (
     claim_next_job,
     complete_job,
     fail_job,
+    get_build_state,
     heartbeat_job,
     init_db,
     is_job_canceled,
+    set_setting,
 )
 from .utils import configure_logging, log_event
 
@@ -79,6 +81,32 @@ def _refresh_feed_index_from_days(site_root: str, logger: logging.Logger) -> int
         oldest_day=feed_index["oldest_day"],
     )
     return len(day_keys)
+
+
+def _maybe_refresh_feed_archive_days(conn, config, logger: logging.Logger) -> dict[str, object] | None:
+    state = get_build_state(conn)
+    metadata = state.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    request = metadata.get("feed_archive_refresh")
+    if not isinstance(request, dict):
+        return None
+    mode = str(request.get("mode") or "dirty_only").strip().lower() or "dirty_only"
+    stats = _refresh_feed_archive_days(conn, config, logger, mode=mode)
+    next_metadata = dict(metadata)
+    next_metadata.pop("feed_archive_refresh", None)
+    state["metadata"] = next_metadata
+    set_setting(conn, "build_site.state", state)
+    log_event(
+        logger,
+        logging.INFO,
+        "feed_archive_refresh_consumed",
+        mode=mode,
+        updated=stats.get("updated"),
+        removed=stats.get("removed"),
+        missing=stats.get("missing"),
+    )
+    return stats
 
 
 def _tail(text: str, max_lines: int = 120) -> str:
@@ -356,6 +384,7 @@ def run_once(builder_id: str) -> int:
 
     log_paths = _build_log_paths(config.paths.logs_dir, job.id)
     source_root = source_dir or _site_root_from_output_dir(config.paths.output_dir)
+    _maybe_refresh_feed_archive_days(conn, config, logger)
     _refresh_feed_data_files(conn, config, logger)
     _refresh_feed_index_from_days(source_root, logger)
     log_event(

@@ -43,10 +43,6 @@ from .utils import parse_log_line, utc_now_iso
 from .worker import (
     WORKER_JOB_TYPES,
     _refresh_feed_data_files,
-    _refresh_feed_archive_days,
-    _site_root_from_output_dir,
-    _write_vendor_product_indexes,
-    _write_sources_data_files,
 )
 from .http_fetch import fetch_prefix
 from .source_overrides import get_http_fetch_settings, normalize_source_overrides
@@ -3886,27 +3882,24 @@ def api_rebuild_site_data(payload: ClearRequest, request: Request) -> dict[str, 
     if payload.confirm != "REBUILD_SITE_DATA":
         raise HTTPException(status_code=400, detail="confirm_required")
     conn = _get_conn()
-    config = load_runtime_config(conn)
     logger = logging.getLogger("sempervigil.admin")
-    article_stats = _refresh_feed_data_files(conn, config, logger)
-    site_root = _site_root_from_output_dir(config.paths.output_dir)
-    tz_name = config.app.timezone or "UTC"
-    vendor_stats = _write_vendor_product_indexes(conn, site_root, tz_name, logger)
-    data_root = getattr(config.paths, "data_dir", None) or str(Path(site_root) / "data")
-    sources_stats = _write_sources_data_files(conn, data_root, logger)
+    mark_build_dirty(
+        conn,
+        reason="site_data_refresh",
+        metadata={"site_data_refresh": {"requested_by": "admin"}},
+    )
+    build_job_id = enqueue_build_site_if_needed(conn, reason="site_data_refresh")
     log_event(
         logger,
         logging.WARNING,
         "admin_rebuild_site_data",
         client=request.client.host if request.client else "unknown",
+        build_job_id=build_job_id,
     )
     return {
         "status": "ok",
-        "stats": {
-            "articles": article_stats,
-            "vendor_product": vendor_stats,
-            "sources": sources_stats,
-        },
+        "build_job_id": build_job_id,
+        "build_state": get_build_state(conn),
     }
 
 
@@ -3915,15 +3908,16 @@ def api_rebuild_feed_days(request: Request, payload: dict[str, object] | None = 
     if not payload or str(payload.get("confirm") or "").strip() != "REBUILD_FEED_DAYS":
         raise HTTPException(status_code=400, detail="confirm_required")
     conn = _get_conn()
-    config = load_runtime_config(conn)
     logger = logging.getLogger("sempervigil.admin")
     mode = "dirty_only"
     if payload and isinstance(payload.get("mode"), str) and payload["mode"].strip():
         mode = payload["mode"].strip().lower()
-    stats = _refresh_feed_archive_days(conn, config, logger, mode=mode)
-    build_job_id = None
-    if int(stats.get("updated") or 0) > 0 or int(stats.get("removed") or 0) > 0:
-        build_job_id = enqueue_build_site_if_needed(conn, reason="feed_archive_refresh")
+    mark_build_dirty(
+        conn,
+        reason="feed_archive_refresh",
+        metadata={"feed_archive_refresh": {"mode": mode, "requested_by": "admin"}},
+    )
+    build_job_id = enqueue_build_site_if_needed(conn, reason="feed_archive_refresh")
     log_event(
         logger,
         logging.WARNING,
@@ -3934,8 +3928,8 @@ def api_rebuild_feed_days(request: Request, payload: dict[str, object] | None = 
     )
     return {
         "status": "ok",
-        "stats": stats,
         "build_job_id": build_job_id,
+        "build_state": get_build_state(conn),
         "mode": mode,
     }
 

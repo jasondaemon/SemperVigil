@@ -8,7 +8,7 @@
 
     <div class="danger-section" id="danger-site-data">
       <h3>Rebuild Site Data Exports</h3>
-      <p>Regenerates article JSON, product/vendor indexes, and sources dashboard data.</p>
+      <p>Queues the build worker to regenerate article JSON, product/vendor indexes, and source dashboard data.</p>
       <label class="checkbox">
         <input type="checkbox" class="danger-ack"> I understand this may take a while
       </label>
@@ -20,7 +20,7 @@
 
     <div class="danger-section" id="danger-feed-days">
       <h3>Rebuild Feed Day Archive</h3>
-      <p>Backfills missing or changed feed day JSON files without pruning the archive.</p>
+      <p>Queues the build worker to backfill missing or changed feed day JSON files without pruning the archive.</p>
       <label class="checkbox">
         <input type="checkbox" class="danger-ack"> I understand this may take a while
       </label>
