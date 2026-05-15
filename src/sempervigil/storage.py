@@ -595,14 +595,23 @@ def list_articles_for_day(conn: Any, day: str) -> list[dict[str, object]]:
         day_candidates = {day}
     day_values = sorted(day_candidates)
     placeholders = ", ".join(["%s"] * len(day_values))
+    tag_join = ""
+    tag_select = "'' AS tags"
+    if _table_exists(conn, "article_tags"):
+        tag_join = "LEFT JOIN article_tags t ON t.article_id = a.id"
+        tag_select = "COALESCE(string_agg(t.tag, ',' ORDER BY t.tag), '') AS tags"
     cursor = conn.execute(
         f"""
-        SELECT id, source_id, title, original_url, published_at, ingested_at, brief_day,
-               summary_llm, summary_model, summary_generated_at, meta_json,
-               context_llm, context_model, context_generated_at, context_error
+        SELECT a.id, a.source_id, s.name AS source_name, a.title, a.original_url, a.published_at, a.ingested_at, a.brief_day,
+               a.summary_llm, a.summary_model, a.summary_generated_at, a.meta_json,
+               a.context_llm, a.context_model, a.context_generated_at, a.context_error,
+               {tag_select}
         FROM articles
+        LEFT JOIN sources s ON s.id = a.source_id
+        {tag_join}
         WHERE COALESCE(brief_day, SUBSTR(published_at, 1, 10), SUBSTR(ingested_at, 1, 10)) IN ({placeholders})
-        ORDER BY COALESCE(published_at, ingested_at) DESC
+        GROUP BY a.id, s.name
+        ORDER BY COALESCE(a.published_at, a.ingested_at) DESC
         """,
         tuple(day_values),
     )
@@ -611,6 +620,7 @@ def list_articles_for_day(conn: Any, day: str) -> list[dict[str, object]]:
         (
             article_id,
             source_id,
+            source_name,
             title,
             original_url,
             published_at,
@@ -624,6 +634,7 @@ def list_articles_for_day(conn: Any, day: str) -> list[dict[str, object]]:
             context_model,
             context_generated_at,
             context_error,
+            tags,
         ) = row
         effective_day = brief_day
         if not effective_day:
@@ -636,6 +647,7 @@ def list_articles_for_day(conn: Any, day: str) -> list[dict[str, object]]:
             {
                 "id": article_id,
                 "source_id": source_id,
+                "source_name": source_name or "",
                 "title": title,
                 "original_url": original_url,
                 "published_at": published_at,
@@ -650,6 +662,7 @@ def list_articles_for_day(conn: Any, day: str) -> list[dict[str, object]]:
                 "context_model": context_model,
                 "context_generated_at": context_generated_at,
                 "context_error": context_error,
+                "tags": tags or "",
             }
         )
     return rows
@@ -3595,6 +3608,87 @@ def list_articles_per_day(conn: Any, since_day: str) -> list[dict[str, object]]:
         (since_day,),
     )
     return [{"day": row[0], "count": row[1]} for row in cursor.fetchall() if row[0]]
+
+
+def list_feed_day_stats(conn: Any) -> list[dict[str, object]]:
+    if not (_table_exists(conn, "articles") or _table_exists(conn, "cves")):
+        return []
+    stats: dict[str, dict[str, object]] = {}
+
+    def _bucket(day: str) -> dict[str, object]:
+        bucket = stats.get(day)
+        if bucket is None:
+            bucket = {
+                "day": day,
+                "article_count": 0,
+                "article_updated_at": "",
+                "cve_count": 0,
+                "cve_updated_at": "",
+            }
+            stats[day] = bucket
+        return bucket
+
+    if _table_exists(conn, "articles"):
+        columns = _table_columns(conn, "articles")
+        if "brief_day" in columns:
+            day_expr = "brief_day"
+        else:
+            published_expr = "substr(published_at, 1, 10)" if "published_at" in columns else "NULL"
+            ingested_expr = "substr(ingested_at, 1, 10)" if "ingested_at" in columns else "NULL"
+            created_expr = "substr(created_at, 1, 10)" if "created_at" in columns else "NULL"
+            day_expr = f"COALESCE({published_expr}, {ingested_expr}, {created_expr})"
+        updated_expr = (
+            "COALESCE(updated_at, published_at, ingested_at, created_at)"
+            if "updated_at" in columns
+            else "COALESCE(published_at, ingested_at, created_at)"
+        )
+        cursor = conn.execute(
+            f"""
+            SELECT day, COUNT(*) AS article_count, MAX(updated_at) AS article_updated_at
+            FROM (
+                SELECT {day_expr} AS day, {updated_expr} AS updated_at
+                FROM articles
+                WHERE {day_expr} IS NOT NULL
+            ) article_days
+            GROUP BY day
+            ORDER BY day
+            """
+        )
+        for day, count, updated_at in cursor.fetchall():
+            if not day:
+                continue
+            bucket = _bucket(str(day))
+            bucket["article_count"] = int(count or 0)
+            bucket["article_updated_at"] = str(updated_at or "")
+
+    if _table_exists(conn, "cves"):
+        columns = _table_columns(conn, "cves")
+        day_expr = "substr(COALESCE(published_at, last_modified_at), 1, 10)"
+        updated_expr = (
+            "COALESCE(updated_at, last_modified_at, published_at)"
+            if "updated_at" in columns
+            else "COALESCE(last_modified_at, published_at)"
+        )
+        cursor = conn.execute(
+            f"""
+            SELECT day, COUNT(*) AS cve_count, MAX(updated_at) AS cve_updated_at
+            FROM (
+                SELECT {day_expr} AS day, {updated_expr} AS updated_at
+                FROM cves
+                WHERE COALESCE(BTRIM(COALESCE(published_at, last_modified_at)), '') <> ''
+            ) cve_days
+            GROUP BY day
+            ORDER BY day
+            """
+        )
+        for day, count, updated_at in cursor.fetchall():
+            if not day:
+                continue
+            bucket = _bucket(str(day))
+            bucket["cve_count"] = int(count or 0)
+            bucket["cve_updated_at"] = str(updated_at or "")
+
+    return sorted(stats.values(), key=lambda row: str(row.get("day") or ""))
 
 
 def get_source_stats(

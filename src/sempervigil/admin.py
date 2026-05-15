@@ -43,6 +43,7 @@ from .utils import parse_log_line, utc_now_iso
 from .worker import (
     WORKER_JOB_TYPES,
     _refresh_feed_data_files,
+    _refresh_feed_archive_days,
     _site_root_from_output_dir,
     _write_vendor_product_indexes,
     _write_sources_data_files,
@@ -78,6 +79,7 @@ from .storage import (
     get_stale_job_stats,
     get_public_metrics_daily_counts,
     mark_build_dirty,
+    enqueue_build_site_if_needed,
 )
 from .cve_filters import CveSignals, matches_filters
 from .cve_sync import CveSyncConfig, isoformat_utc, preview_cves
@@ -3905,6 +3907,36 @@ def api_rebuild_site_data(payload: ClearRequest, request: Request) -> dict[str, 
             "vendor_product": vendor_stats,
             "sources": sources_stats,
         },
+    }
+
+
+@app.post("/admin/api/admin/rebuild/feed-days", dependencies=[Depends(_require_admin_token)])
+def api_rebuild_feed_days(request: Request, payload: dict[str, object] | None = Body(None)) -> dict[str, object]:
+    if not payload or str(payload.get("confirm") or "").strip() != "REBUILD_FEED_DAYS":
+        raise HTTPException(status_code=400, detail="confirm_required")
+    conn = _get_conn()
+    config = load_runtime_config(conn)
+    logger = logging.getLogger("sempervigil.admin")
+    mode = "dirty_only"
+    if payload and isinstance(payload.get("mode"), str) and payload["mode"].strip():
+        mode = payload["mode"].strip().lower()
+    stats = _refresh_feed_archive_days(conn, config, logger, mode=mode)
+    build_job_id = None
+    if int(stats.get("updated") or 0) > 0 or int(stats.get("removed") or 0) > 0:
+        build_job_id = enqueue_build_site_if_needed(conn, reason="feed_archive_refresh")
+    log_event(
+        logger,
+        logging.WARNING,
+        "admin_rebuild_feed_days",
+        client=request.client.host if request.client else "unknown",
+        mode=mode,
+        build_job_id=build_job_id,
+    )
+    return {
+        "status": "ok",
+        "stats": stats,
+        "build_job_id": build_job_id,
+        "mode": mode,
     }
 
 

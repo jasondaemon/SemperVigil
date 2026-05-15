@@ -5819,6 +5819,7 @@ function wireDangerZone() {
   setup("danger-events", "DELETE_ALL_EVENTS", "/admin/api/admin/clear/events", false);
   setup("danger-all", "DELETE_ALL_CONTENT", "/admin/api/admin/clear/all", true);
   setup("danger-site-data", "REBUILD_SITE_DATA", "/admin/api/admin/rebuild/site-data", false);
+  setup("danger-feed-days", "REBUILD_FEED_DAYS", "/admin/api/admin/rebuild/feed-days", false);
 }
 function wireDebug() {
   const cards = document.getElementById("debug-cards");

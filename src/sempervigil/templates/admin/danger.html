@@ -18,6 +18,18 @@
       <pre class="mono danger-result"></pre>
     </div>
 
+    <div class="danger-section" id="danger-feed-days">
+      <h3>Rebuild Feed Day Archive</h3>
+      <p>Backfills missing or changed feed day JSON files without pruning the archive.</p>
+      <label class="checkbox">
+        <input type="checkbox" class="danger-ack"> I understand this may take a while
+      </label>
+      <label>Type confirmation</label>
+      <input type="text" class="danger-confirm" placeholder="REBUILD_FEED_DAYS">
+      <button class="btn danger-btn" data-action="feed-days" disabled>Rebuild Feed Days</button>
+      <pre class="mono danger-result"></pre>
+    </div>
+
     <div class="danger-section" id="danger-articles">
       <h3>Clear Articles</h3>
       <p>Deletes all article rows and related tag/link tables.</p>

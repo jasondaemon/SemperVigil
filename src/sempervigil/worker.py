@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import feedparser
 import urllib.error
@@ -54,6 +55,7 @@ from .storage import (
     list_articles_for_day,
     list_articles_per_day,
     list_cves_for_day,
+    list_feed_day_stats,
     claim_next_job,
     complete_job,
     enqueue_job,
@@ -683,6 +685,712 @@ def _build_cvss_payload(
     }
 
 
+def _parse_feed_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _extract_summary_payload(value: object) -> dict[str, object]:
+    if not value:
+        return {}
+    if isinstance(value, dict):
+        return value
+    raw = str(value).strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```[a-zA-Z]*\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+        raw = raw.strip()
+    candidate = raw
+    if "{" in raw and "}" in raw:
+        candidate = raw[raw.find("{") : raw.rfind("}") + 1]
+    try:
+        parsed = json.loads(candidate)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        return {}
+    return {}
+
+
+def _extract_summary_text(value: object) -> str:
+    if not value:
+        return ""
+    payload = _extract_summary_payload(value)
+    if payload:
+        summary = str(payload.get("summary") or "").strip()
+        if summary:
+            return summary
+    raw = str(value).strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```[a-zA-Z]*\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+        raw = raw.strip()
+    return raw
+
+
+def _build_facets(
+    vendors: list[dict[str, object]],
+    products: list[dict[str, object]],
+    threats: list[dict[str, object]],
+) -> list[dict[str, str]]:
+    facets: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def _add(kind: str, slug_value: object, display_value: object) -> None:
+        display_name = str(display_value or "").strip()
+        slug_text = str(slug_value or "").strip()
+        if not slug_text and display_name:
+            slug_text = slugify(display_name)
+        if not display_name and not slug_text:
+            return
+        key = (kind, (slug_text or display_name).lower())
+        if key in seen:
+            return
+        seen.add(key)
+        facets.append(
+            {
+                "kind": kind,
+                "slug": slug_text or slugify(display_name),
+                "display_name": display_name or slug_text,
+            }
+        )
+
+    for vendor in vendors or []:
+        if isinstance(vendor, dict):
+            _add("vendor", vendor.get("slug"), vendor.get("display_name"))
+    for product in products or []:
+        if isinstance(product, dict):
+            _add("product", product.get("slug"), product.get("display_name"))
+    for threat in threats or []:
+        if isinstance(threat, dict):
+            _add(
+                "threat",
+                threat.get("slug") or threat.get("actor_key"),
+                threat.get("display_name") or threat.get("actor_key"),
+            )
+    return facets
+
+
+def _clean_feed_text(value: object) -> str:
+    text = str(value or "").strip()
+    if not text or text.lower() == "unknown":
+        return ""
+    return text
+
+
+def _truncate_feed_text(value: object, limit: int = 96) -> str:
+    text = _clean_feed_text(value)
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 3, 0)].rstrip() + "..."
+
+
+def _unique_feed_texts(values: list[object] | tuple[object, ...] | None) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        text = _clean_feed_text(value)
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(text)
+    return unique
+
+
+def _json_list(value: object) -> list[object]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text or text == "null":
+            return []
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            return []
+        return parsed if isinstance(parsed, list) else []
+    return []
+
+
+def _label_from_value(value: object) -> str:
+    if isinstance(value, dict):
+        for key in (
+            "display_name",
+            "product_display",
+            "vendor_display",
+            "name",
+            "label",
+            "title",
+            "version",
+            "product",
+            "vendor",
+            "cpe",
+            "cpe_name",
+        ):
+            label = _clean_feed_text(value.get(key))
+            if label:
+                return label
+        return ""
+    if isinstance(value, (list, tuple)):
+        parts = [_clean_feed_text(item) for item in value]
+        return " ".join(part for part in parts if part)
+    return _clean_feed_text(value)
+
+
+def _format_list_bullet(
+    prefix: str,
+    values: list[str],
+    item_limit: int = 3,
+    value_limit: int = 80,
+) -> str:
+    unique = _unique_feed_texts(values)
+    if not unique:
+        return ""
+    visible = [_truncate_feed_text(value, value_limit) for value in unique[:item_limit]]
+    text = ", ".join(visible)
+    if len(unique) > item_limit:
+        text += f" (+{len(unique) - item_limit} more)"
+    return f"{prefix}: {text}"
+
+
+def _pick_cve_title_parts(
+    vendor_products: list[dict[str, object]],
+    vendors: list[dict[str, str]],
+    products: list[dict[str, str]],
+) -> tuple[str, str, str]:
+    candidates: list[tuple[str, str, str]] = []
+    for entry in vendor_products or []:
+        vendor = _clean_feed_text(entry.get("vendor_display") or entry.get("vendor"))
+        product = _clean_feed_text(entry.get("product_display") or entry.get("product"))
+        if vendor and vendor.lower() == "unknown":
+            vendor = ""
+        if product and product.lower() == "unknown":
+            product = ""
+        if vendor and product and vendor.lower() == product.lower():
+            product = ""
+            source = "vendor_products:deduped"
+        else:
+            source = "vendor_products"
+        if vendor or product:
+            candidates.append((vendor, product, source))
+    if not candidates and vendors and products:
+        vendor = _clean_feed_text(vendors[0].get("display_name"))
+        product = _clean_feed_text(products[0].get("display_name"))
+        if vendor and vendor.lower() == "unknown":
+            vendor = ""
+        if product and product.lower() == "unknown":
+            product = ""
+        if vendor and product and vendor.lower() == product.lower():
+            product = ""
+            source = "vendor_product_lists:deduped"
+        else:
+            source = "vendor_product_lists"
+        if vendor or product:
+            candidates.append((vendor, product, source))
+    if not candidates:
+        if products:
+            product = _clean_feed_text(products[0].get("display_name"))
+            if product and product.lower() != "unknown":
+                return "", product, "product_only"
+        if vendors:
+            vendor = _clean_feed_text(vendors[0].get("display_name"))
+            if vendor and vendor.lower() != "unknown":
+                return vendor, "", "vendor_only"
+        return "", "", "severity_only"
+    for vendor, product, source in candidates:
+        if vendor and product:
+            return vendor, product, source
+    return candidates[0]
+
+
+def _build_cve_context_bullets(
+    *,
+    title_vendor: str,
+    title_product: str,
+    affected_products: list[object],
+    affected_cpes: list[object],
+    reference_domains: list[object],
+    versions: list[object],
+) -> list[str]:
+    bullets: list[str] = []
+    title_terms = {value.lower() for value in (title_vendor, title_product) if value}
+
+    product_labels = []
+    for value in affected_products or []:
+        label = _label_from_value(value)
+        if not label:
+            continue
+        if label.lower() in title_terms:
+            continue
+        product_labels.append(label)
+    if product_labels:
+        bullet = _format_list_bullet("Affected products", product_labels, item_limit=3, value_limit=80)
+        if bullet:
+            bullets.append(bullet)
+    elif affected_cpes:
+        cpe_labels = [_label_from_value(value) for value in affected_cpes]
+        bullet = _format_list_bullet("Affected CPEs", cpe_labels, item_limit=2, value_limit=90)
+        if bullet:
+            bullets.append(bullet)
+
+    version_labels = []
+    for version in versions or []:
+        text = _label_from_value(version)
+        if not text:
+            continue
+        if ":" in text:
+            text = text.rsplit(":", 1)[-1].strip()
+        if text:
+            version_labels.append(text)
+    bullet = _format_list_bullet("Affected versions", version_labels, item_limit=3, value_limit=40)
+    if bullet:
+        bullets.append(bullet)
+
+    domain_labels = [_label_from_value(value) for value in (reference_domains or [])]
+    bullet = _format_list_bullet("Reference domains", domain_labels, item_limit=3, value_limit=60)
+    if bullet:
+        bullets.append(bullet)
+
+    return bullets[:4]
+
+
+def _serialize_feed_article_item(
+    conn,
+    row: dict[str, object],
+    *,
+    tz,
+    tz_name: str,
+    site_root: str,
+    event_keys_map: dict[int, list[str]] | None = None,
+    cve_tags_map: dict[int, list[str]] | None = None,
+) -> dict[str, object]:
+    def _parse_ts(value: str | None) -> datetime | None:
+        return _parse_feed_ts(value)
+
+    published_at = row.get("published_at") or row.get("ingested_at")
+    parsed = _parse_ts(published_at if isinstance(published_at, str) else str(published_at or ""))
+    local = parsed.astimezone(tz) if parsed else None
+    nist_family = None
+    summary_text = ""
+    summary_bullets: list[str] = []
+    summary_llm = row.get("summary_llm")
+    if summary_llm:
+        parsed_summary = _extract_summary_payload(summary_llm)
+        if parsed_summary:
+            nist_family = parsed_summary.get("nist_family")
+            summary_text = str(parsed_summary.get("summary") or "").strip()
+            bullets = (
+                parsed_summary.get("bullets")
+                or parsed_summary.get("key_points")
+                or parsed_summary.get("tldr")
+                or []
+            )
+            if isinstance(bullets, list):
+                summary_bullets = [
+                    str(item).strip() for item in bullets if str(item).strip()
+                ][:8]
+    if not summary_text:
+        summary_text = _extract_summary_text(summary_llm)
+    article_id = int(row.get("id") or 0)
+    product_links = list_products_for_article(conn, article_id) if article_id else []
+    vendors: list[dict[str, str]] = []
+    product_items: list[dict[str, str]] = []
+    product_labels: list[str] = []
+    seen_vendor: set[str] = set()
+    seen_product: set[str] = set()
+    for product in product_links:
+        vendor_name = str(product.get("vendor_display") or product.get("vendor") or "").strip()
+        product_name = str(product.get("product_display") or product.get("product") or "").strip()
+        if vendor_name and vendor_name not in seen_vendor:
+            vendors.append({"slug": slugify(vendor_name), "display_name": vendor_name})
+            seen_vendor.add(vendor_name)
+        if product_name and product_name not in seen_product:
+            product_slug = slugify(f"{vendor_name} {product_name}".strip())
+            product_items.append({"slug": product_slug, "display_name": product_name})
+            seen_product.add(product_name)
+        label = f"{vendor_name} — {product_name}".strip(" —") if vendor_name or product_name else ""
+        if label:
+            product_labels.append(label)
+    threat_actors = get_article_threat_actors(conn, article_id) if article_id else []
+    source_id = str(row.get("source_id") or "").strip()
+    source_icon = "/img/source-default-news.svg"
+    if source_id and (Path(site_root) / "static" / "img" / f"{source_id}.png").exists():
+        source_icon = f"/img/{source_id}.png"
+    published_epoch = int(parsed.timestamp()) if parsed else 0
+    time_label = ""
+    human_ts = _format_human_ts(published_at, tz_name)
+    if " · " in human_ts:
+        try:
+            time_label = human_ts.split(" · ", 1)[1].strip()
+        except Exception:
+            time_label = ""
+    if event_keys_map is None:
+        event_keys_map = {}
+    if cve_tags_map is None:
+        cve_tags_map = {}
+    return {
+        "article_id": article_id,
+        "id": row.get("id"),
+        "title": row.get("title") or "",
+        "source": row.get("source_name") or "",
+        "source_id": source_id,
+        "source_icon": source_icon,
+        "published_at_iso": published_at or "",
+        "published_at_human": human_ts,
+        "published_epoch": published_epoch,
+        "time_label": time_label,
+        "url": row.get("original_url") or "",
+        "summary": summary_text,
+        "summary_bullets": summary_bullets,
+        "tags": sorted({t for t in (row.get("tags") or "").split(",") if t} | set(cve_tags_map.get(row.get("id"), []))),
+        "vendor_products": product_links,
+        "vendors": vendors,
+        "product_items": product_items,
+        "products": product_labels,
+        "threat_actors": threat_actors,
+        "facets": _build_facets(vendors, product_items, threat_actors),
+        "event_keys": event_keys_map.get(row.get("id"), []),
+        "nist_family": nist_family or "",
+        "_sort": local or parsed or datetime.min.replace(tzinfo=timezone.utc),
+    }
+
+
+def _serialize_feed_cve_item(
+    conn,
+    cve: dict[str, object],
+    *,
+    tz_name: str,
+) -> dict[str, object]:
+    cve_id = cve.get("cve_id")
+    title_vendor = ""
+    title_product = ""
+    title_source = "severity_only"
+    product_title = ""
+    product_labels: list[str] = []
+    vendors: list[dict[str, str]] = []
+    product_items: list[dict[str, str]] = []
+    vendor_products = _json_list(cve.get("vendor_products_json"))
+    product_versions = _json_list(cve.get("product_versions_json"))
+    affected_products = _json_list(cve.get("affected_products_json"))
+    affected_cpes = _json_list(cve.get("affected_cpes_json"))
+    reference_domains = _json_list(cve.get("reference_domains_json"))
+    if vendor_products:
+        seen_vendors: set[str] = set()
+        seen_products: set[str] = set()
+        for entry in vendor_products:
+            vendor = _clean_feed_text(
+                entry.get("vendor_display")
+                or entry.get("vendor")
+                or entry.get("vendor_norm")
+            )
+            product = _clean_feed_text(
+                entry.get("product_display")
+                or entry.get("product")
+                or entry.get("product_norm")
+            )
+            label = f"{vendor} — {product}" if vendor and product else (product or vendor)
+            if label:
+                product_labels.append(label)
+            if vendor and vendor not in seen_vendors:
+                vendors.append({"slug": slugify(vendor), "display_name": vendor})
+                seen_vendors.add(vendor)
+            if product and product not in seen_products:
+                product_slug = slugify(f"{vendor} {product}".strip())
+                product_items.append({"slug": product_slug, "display_name": product})
+                seen_products.add(product)
+        title_vendor, title_product, title_source = _pick_cve_title_parts(
+            vendor_products,
+            vendors,
+            product_items,
+        )
+        if title_vendor and title_product:
+            product_title = f"{title_vendor} — {title_product}"
+        else:
+            product_title = title_product or title_vendor
+    severity = str(cve.get("preferred_base_severity") or "").strip()
+    if not product_title:
+        product_title = severity or "CVE"
+        title_source = "severity_only"
+    elif severity:
+        product_title = f"{product_title} — {severity}"
+    desc = str(cve.get("description_text") or cve.get("summary") or "").strip()
+    if len(desc) > 220:
+        desc = desc[:217].rstrip() + "..."
+    published_at = cve.get("published_at") or cve.get("last_modified_at") or ""
+    parsed_published = _parse_feed_ts(str(published_at)) if published_at else None
+    published_epoch = int(parsed_published.timestamp()) if parsed_published else 0
+    human_ts = _format_human_ts(published_at, tz_name)
+    time_label = ""
+    if " · " in human_ts:
+        try:
+            time_label = human_ts.split(" · ", 1)[1].strip()
+        except Exception:
+            time_label = ""
+    context_bullets = _build_cve_context_bullets(
+        title_vendor=title_vendor,
+        title_product=title_product,
+        affected_products=affected_products,
+        affected_cpes=affected_cpes,
+        reference_domains=reference_domains,
+        versions=product_versions,
+    )
+    threat_actors = get_cve_threat_actors(conn, str(cve_id)) if cve_id else []
+    kev = get_cve_kev(conn, str(cve_id)) if cve_id else None
+    kev_due_date = kev.get("due_date") if kev else ""
+    cve_url = _cve_page_url(str(cve_id) if cve_id else "")
+    cvss_v31 = json.loads(cve.get("cvss_v31_json") or "null")
+    cvss_v40 = json.loads(cve.get("cvss_v40_json") or "null")
+    cvss_v31_list = json.loads(cve.get("cvss_v31_list_json") or "[]")
+    cvss_v40_list = json.loads(cve.get("cvss_v40_list_json") or "[]")
+    cvss_payload = _build_cvss_payload(
+        preferred_version=cve.get("preferred_cvss_version"),
+        preferred_base_score=cve.get("preferred_base_score"),
+        preferred_base_severity=cve.get("preferred_base_severity"),
+        preferred_vector=cve.get("preferred_vector"),
+        cvss_v31=cvss_v31,
+        cvss_v40=cvss_v40,
+        cvss_v31_list=cvss_v31_list,
+        cvss_v40_list=cvss_v40_list,
+    )
+    return {
+        "cve_id": cve_id,
+        "product_title": product_title,
+        "title_vendor": title_vendor,
+        "title_product": title_product,
+        "title_source": title_source,
+        "published_at_iso": published_at,
+        "published_at_human": human_ts,
+        "published_epoch": published_epoch,
+        "time_label": time_label,
+        "summary": desc,
+        "context_bullets": context_bullets,
+        "base_score": cve.get("preferred_base_score"),
+        "score": cve.get("preferred_base_score"),
+        "epss_score": cve.get("epss_score"),
+        "epss_percentile": cve.get("epss_percentile"),
+        "epss_date": cve.get("epss_date"),
+        "epss_checked_at": cve.get("epss_checked_at"),
+        "severity": severity or "",
+        "url": cve_url,
+        "nvd_url": f"https://nvd.nist.gov/vuln/detail/{cve_id}" if cve_id else "",
+        "products": product_labels,
+        "product_items": product_items,
+        "vendors": vendors,
+        "vendor_products": vendor_products,
+        "threat_actors": threat_actors,
+        "facets": _build_facets(vendors, product_items, threat_actors),
+        "cvss": cvss_payload,
+        "kev_due_date": kev_due_date,
+        "kev_known_exploited": bool(kev),
+    }
+
+
+def _feed_day_state_key(
+    *,
+    article_count: int,
+    article_updated_at: str,
+    cve_count: int,
+    cve_updated_at: str,
+) -> str:
+    payload = {
+        "article_count": int(article_count or 0),
+        "article_updated_at": str(article_updated_at or ""),
+        "cve_count": int(cve_count or 0),
+        "cve_updated_at": str(cve_updated_at or ""),
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def _load_json_file(path: Path) -> dict[str, object]:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    try:
+        parsed = json.loads(raw or "{}")
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp_path.replace(path)
+
+
+def _build_feed_day_payload(
+    conn,
+    *,
+    day_key: str,
+    site_root: str,
+    tz,
+    tz_name: str,
+) -> dict[str, object]:
+    articles = list_articles_for_day(conn, day_key)
+    article_ids = [int(article["id"]) for article in articles if article.get("id") is not None]
+    event_keys_map = list_event_keys_for_articles(conn, article_ids) if article_ids else {}
+    cve_tags_map = list_article_cve_tags(conn, article_ids) if article_ids else {}
+    article_items = [
+        _serialize_feed_article_item(
+            conn,
+            article,
+            tz=tz,
+            tz_name=tz_name,
+            site_root=site_root,
+            event_keys_map=event_keys_map,
+            cve_tags_map=cve_tags_map,
+        )
+        for article in articles
+    ]
+    article_items.sort(key=lambda item: item["_sort"], reverse=True)
+    for item in article_items:
+        item.pop("_sort", None)
+    cves = list_cves_for_day(conn, day_key, limit=500)
+    seen_cves: set[str] = set()
+    cve_items = []
+    for cve in cves:
+        cve_id = cve.get("cve_id")
+        if not cve_id or str(cve_id) in seen_cves:
+            continue
+        seen_cves.add(str(cve_id))
+        cve_items.append(_serialize_feed_cve_item(conn, cve, tz_name=tz_name))
+    items = article_items + cve_items
+    items.sort(key=lambda item: int(item.get("published_epoch") or 0), reverse=True)
+    return {
+        "day": day_key,
+        "items": items,
+        "counts": {
+            "article": len(article_items),
+            "cve": len(cve_items),
+        },
+    }
+
+
+def _refresh_feed_archive_days(
+    conn,
+    config,
+    logger: logging.Logger,
+    *,
+    mode: str = "dirty_only",
+) -> dict[str, object]:
+    site_root = _site_root_from_output_dir(config.paths.output_dir)
+    tz_name = config.app.timezone or "UTC"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = timezone.utc
+    feed_dir = Path(site_root) / "static" / "feed"
+    feed_days_dir = feed_dir / "days"
+    feed_days_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = feed_dir / "day-manifest.json"
+    manifest = _load_json_file(manifest_path)
+    manifest_days = manifest.get("days") if isinstance(manifest.get("days"), dict) else {}
+    current_stats = {str(row["day"]): row for row in list_feed_day_stats(conn)}
+    current_days = set(current_stats.keys())
+    existing_days = {path.stem for path in feed_days_dir.glob("*.json") if path.is_file() and path.stem}
+    target_days = sorted(current_days | existing_days, reverse=True)
+    updated = 0
+    removed = 0
+    skipped = 0
+
+    def _entry_state(row: dict[str, object]) -> dict[str, object]:
+        return {
+            "article_count": int(row.get("article_count") or 0),
+            "article_updated_at": str(row.get("article_updated_at") or ""),
+            "cve_count": int(row.get("cve_count") or 0),
+            "cve_updated_at": str(row.get("cve_updated_at") or ""),
+            "signature": _feed_day_state_key(
+                article_count=int(row.get("article_count") or 0),
+                article_updated_at=str(row.get("article_updated_at") or ""),
+                cve_count=int(row.get("cve_count") or 0),
+                cve_updated_at=str(row.get("cve_updated_at") or ""),
+            ),
+        }
+
+    for day_key in target_days:
+        stats = current_stats.get(day_key)
+        existing_path = feed_days_dir / f"{day_key}.json"
+        manifest_entry = manifest_days.get(day_key) if isinstance(manifest_days, dict) else None
+        should_write = False
+        if stats:
+            state = _entry_state(stats)
+            if mode == "full":
+                should_write = True
+            elif mode == "missing_only":
+                should_write = not existing_path.exists()
+            else:
+                if not existing_path.exists() or not manifest_entry:
+                    should_write = True
+                elif any(str(manifest_entry.get(k) or "") != str(v or "") for k, v in state.items()):
+                    should_write = True
+        else:
+            if existing_path.exists():
+                try:
+                    existing_path.unlink()
+                    removed += 1
+                except Exception:
+                    pass
+            if isinstance(manifest_days, dict) and day_key in manifest_days:
+                manifest_days.pop(day_key, None)
+            continue
+
+        if not should_write and existing_path.exists():
+            skipped += 1
+            continue
+
+        payload = _build_feed_day_payload(
+            conn,
+            day_key=day_key,
+            site_root=site_root,
+            tz=tz,
+            tz_name=tz_name,
+        )
+        _write_json_atomic(existing_path, payload)
+        if not isinstance(manifest_days, dict):
+            manifest_days = {}
+        manifest_days[day_key] = _entry_state(stats)
+        updated += 1
+
+    manifest["days"] = manifest_days if isinstance(manifest_days, dict) else {}
+    manifest["generated_at"] = datetime.now(timezone.utc).isoformat()
+    _write_json_atomic(manifest_path, manifest)
+    log_event(
+        logger,
+        logging.INFO,
+        "feed_archive_refreshed",
+        site_root=site_root,
+        updated=updated,
+        removed=removed,
+        skipped=skipped,
+        days=len(target_days),
+        mode=mode,
+    )
+    return {
+        "updated": updated,
+        "removed": removed,
+        "skipped": skipped,
+        "days": len(target_days),
+        "mode": mode,
+    }
+
+
 def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, object]:
     site_root = _site_root_from_output_dir(config.paths.output_dir)
     data_root = getattr(config.paths, "data_dir", None) or ""
@@ -1298,11 +2006,6 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
     feed_dir = Path(site_root) / "static" / "feed"
     feed_days_dir = feed_dir / "days"
     feed_days_dir.mkdir(parents=True, exist_ok=True)
-    for old in feed_days_dir.glob("*.json"):
-        try:
-            old.unlink()
-        except Exception:
-            pass
 
     feed_entries: list[dict[str, object]] = []
     for article in items:
@@ -1390,14 +2093,6 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
             },
         }
         (feed_days_dir / f"{day_key}.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
-    feed_index = {
-        "days": day_keys,
-        "latest_day": day_keys[0] if day_keys else "",
-        "oldest_day": day_keys[-1] if day_keys else "",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-    }
-    (feed_dir / "index.json").write_text(json.dumps(feed_index, indent=2), encoding="utf-8")
     _write_product_data_files(conn, site_root, tz_name, logger)
     _write_sources_data_files(conn, data_root, logger)
     _write_cve_pages(conn, site_root, tz_name, logger)
