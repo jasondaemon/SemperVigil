@@ -1043,6 +1043,7 @@ def _serialize_feed_article_item(
     if cve_tags_map is None:
         cve_tags_map = {}
     return {
+        "kind": "article",
         "article_id": article_id,
         "id": row.get("id"),
         "title": row.get("title") or "",
@@ -1167,6 +1168,7 @@ def _serialize_feed_cve_item(
         cvss_v40_list=cvss_v40_list,
     )
     return {
+        "kind": "cve",
         "cve_id": cve_id,
         "product_title": product_title,
         "title_vendor": title_vendor,
@@ -1199,6 +1201,9 @@ def _serialize_feed_cve_item(
     }
 
 
+ARCHIVE_SCHEMA_VERSION = 2
+
+
 def _feed_day_state_key(
     *,
     article_count: int,
@@ -1207,6 +1212,7 @@ def _feed_day_state_key(
     cve_updated_at: str,
 ) -> str:
     payload = {
+        "schema_version": ARCHIVE_SCHEMA_VERSION,
         "article_count": int(article_count or 0),
         "article_updated_at": str(article_updated_at or ""),
         "cve_count": int(cve_count or 0),
