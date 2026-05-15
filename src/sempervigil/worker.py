@@ -1290,7 +1290,7 @@ def _refresh_feed_archive_days(
     *,
     mode: str = "dirty_only",
 ) -> dict[str, object]:
-    site_root = _site_root_from_output_dir(config.paths.output_dir)
+    site_root = os.environ.get("SV_HUGO_SOURCE_DIR") or _site_root_from_output_dir(config.paths.output_dir)
     tz_name = config.app.timezone or "UTC"
     try:
         tz = ZoneInfo(tz_name)
