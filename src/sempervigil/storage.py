@@ -606,7 +606,7 @@ def list_articles_for_day(conn: Any, day: str) -> list[dict[str, object]]:
                a.summary_llm, a.summary_model, a.summary_generated_at, a.meta_json,
                a.context_llm, a.context_model, a.context_generated_at, a.context_error,
                {tag_select}
-        FROM articles
+        FROM articles a
         LEFT JOIN sources s ON s.id = a.source_id
         {tag_join}
         WHERE COALESCE(brief_day, SUBSTR(published_at, 1, 10), SUBSTR(ingested_at, 1, 10)) IN ({placeholders})
