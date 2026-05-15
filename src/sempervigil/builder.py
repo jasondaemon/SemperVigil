@@ -14,7 +14,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from .config import ConfigError, load_runtime_config
-from .worker import _refresh_feed_data_files
+from .worker import _refresh_feed_archive_days, _refresh_feed_data_files
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .storage import (
     clear_build_dirty,
