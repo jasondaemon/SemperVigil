@@ -3909,9 +3909,11 @@ def api_rebuild_feed_days(request: Request, payload: dict[str, object] | None = 
         raise HTTPException(status_code=400, detail="confirm_required")
     conn = _get_conn()
     logger = logging.getLogger("sempervigil.admin")
-    mode = "dirty_only"
+    mode = "missing_only"
     if payload and isinstance(payload.get("mode"), str) and payload["mode"].strip():
         mode = payload["mode"].strip().lower()
+    if mode not in {"missing_only", "dirty_only", "full"}:
+        raise HTTPException(status_code=400, detail="invalid_mode")
     mark_build_dirty(
         conn,
         reason="feed_archive_refresh",

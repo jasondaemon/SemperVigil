@@ -5985,6 +5985,7 @@ function wireDangerZone() {
     const btn = panel.querySelector(".danger-btn");
     const result = panel.querySelector(".danger-result");
     const deleteFiles = panel.querySelector(".danger-delete-files");
+    const modeSelect = panel.querySelector(".danger-mode");
     function updateState() {
       const ok = ack.checked && confirmInput.value.trim() === confirmToken;
       btn.disabled = !ok;
@@ -5997,6 +5998,9 @@ function wireDangerZone() {
         const payload = { confirm: confirmToken };
         if (allowFiles && deleteFiles) {
           payload.delete_files = deleteFiles.checked;
+        }
+        if (modeSelect) {
+          payload.mode = modeSelect.value;
         }
         const data = await apiFetch(endpoint, {
           method: "POST",

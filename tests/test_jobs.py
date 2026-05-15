@@ -157,8 +157,9 @@ def test_claim_next_job_can_filter_by_queue(tmp_path):
 def test_mark_build_dirty_tracks_state(tmp_path):
     conn = init_db()
 
-    mark_build_dirty(conn, reason="article_updated")
+    mark_build_dirty(conn, reason="article_updated", metadata={"site_data_refresh": {"requested_by": "admin"}})
     mark_build_dirty(conn, reason="daily_brief")
+    mark_build_dirty(conn, metadata={"feed_archive_refresh": {"mode": "missing_only", "requested_by": "admin"}})
 
     state = get_build_state(conn)
 
@@ -166,6 +167,10 @@ def test_mark_build_dirty_tracks_state(tmp_path):
     assert state["requested_at"]
     assert state["last_dirty_at"]
     assert state["reasons"] == ["article_updated", "daily_brief"]
+    assert state["metadata"] == {
+        "site_data_refresh": {"requested_by": "admin"},
+        "feed_archive_refresh": {"mode": "missing_only", "requested_by": "admin"},
+    }
 
 
 def test_due_source_enqueue_sets_pending_state_and_blocks_duplicate_schedule(tmp_path):

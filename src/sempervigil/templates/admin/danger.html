@@ -26,6 +26,12 @@
       </label>
       <label>Type confirmation</label>
       <input type="text" class="danger-confirm" placeholder="REBUILD_FEED_DAYS">
+      <label>Mode</label>
+      <select class="danger-mode">
+        <option value="missing_only" selected>missing_only</option>
+        <option value="dirty_only">dirty_only</option>
+        <option value="full">full</option>
+      </select>
       <button class="btn danger-btn" data-action="feed-days" disabled>Rebuild Feed Days</button>
       <pre class="mono danger-result"></pre>
     </div>

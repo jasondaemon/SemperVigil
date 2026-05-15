@@ -2499,7 +2499,11 @@ def mark_build_dirty(
         }
     )
     if metadata:
-        current["metadata"] = metadata
+        current_metadata = current.get("metadata")
+        if not isinstance(current_metadata, dict):
+            current_metadata = {}
+        current_metadata.update(metadata)
+        current["metadata"] = current_metadata
     set_setting(conn, "build_site.state", current)
 
 
@@ -2522,6 +2526,7 @@ def clear_build_dirty(
             "last_built_at": finished_at or utc_now_iso(),
             "last_build_job_id": build_job_id,
             "reasons": [],
+            "metadata": {},
         }
     )
     set_setting(conn, "build_site.state", state)
