@@ -78,8 +78,12 @@ spec:
               value: "on"
             - name: HTTPPROXY_LOG
               value: "on"
-            {{- with .Values.workerFetch.vpn.dnsAddress }}
-            - name: DNS_ADDRESS
+            {{- with .Values.workerFetch.vpn.dnsUpstreamPlainAddresses }}
+            - name: DNS_UPSTREAM_PLAIN_ADDRESSES
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.workerFetch.vpn.dnsRebindingProtectionExemptHostnames }}
+            - name: DNS_REBINDING_PROTECTION_EXEMPT_HOSTNAMES
               value: {{ . | quote }}
             {{- end }}
           volumeMounts:

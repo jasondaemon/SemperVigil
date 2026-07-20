@@ -163,7 +163,8 @@ workerFetch:
     userKey: PIA_USER
     passwordKey: PIA_PASS
     tunDeviceHostPath: /dev/net/tun
-    dnsAddress: 10.43.0.10
+    dnsUpstreamPlainAddresses: 10.43.0.10:53
+    dnsRebindingProtectionExemptHostnames: media-postgres.media-postgres.svc.cluster.local,sempervigil-searxng.sempervigil.svc.cluster.local,sempervigil-admin.sempervigil.svc.cluster.local,sempervigil-web.sempervigil.svc.cluster.local
 
 workerLlm:
   enabled: true

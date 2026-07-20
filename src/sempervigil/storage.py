@@ -3851,7 +3851,13 @@ def claim_next_job(
                 stale_queue_clause = f" AND {effective_queue_name} IN ({stale_placeholders})"
                 stale_params.extend(allowed_queues)
             if lock_timeout_seconds is not None:
-                cutoff = utc_now_iso_offset(seconds=-_running_job_stale_seconds())
+                # Use the caller's lock timeout. LLM jobs can legitimately run much
+                # longer than the global stale default while waiting on a provider.
+                try:
+                    stale_seconds = max(1, int(lock_timeout_seconds))
+                except Exception:
+                    stale_seconds = _running_job_stale_seconds()
+                cutoff = utc_now_iso_offset(seconds=-stale_seconds)
                 conn.execute(
                     f"""
                     UPDATE jobs
