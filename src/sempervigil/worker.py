@@ -2062,8 +2062,9 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
     (cve_dir / "recent.json").write_text(json.dumps(recent_cve_items[: max(min_items, len(cve_items))], indent=2), encoding="utf-8")
 
     # Build per-day front-page feed JSON for client-side day pagination.
-    # Write under static so Hugo publishes it to /feed/...
-    feed_dir = Path(site_root) / "static" / "feed"
+    # Keep the historical feed archive outside Hugo static to avoid recopying
+    # thousands of immutable JSON files on every atomic publish.
+    feed_dir = _feed_archive_dir(config)
     feed_days_dir = feed_dir / "days"
     feed_days_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2163,6 +2164,7 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
         today=len(today_items),
         recent=len(recent_items),
         path=str(data_dir),
+        feed_dir=str(feed_dir),
     )
     return {"today": len(today_items), "recent": len(recent_items)}
 

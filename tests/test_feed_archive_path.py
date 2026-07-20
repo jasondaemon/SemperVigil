@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import inspect
 from types import SimpleNamespace
 
-from sempervigil.worker import _feed_archive_dir
+from sempervigil.worker import _feed_archive_dir, _refresh_feed_data_files
 
 
 def test_feed_archive_dir_uses_env_override(tmp_path, monkeypatch) -> None:
@@ -20,3 +21,10 @@ def test_feed_archive_dir_defaults_to_hugo_static_feed(tmp_path, monkeypatch) ->
     config = SimpleNamespace(paths=SimpleNamespace(output_dir=str(tmp_path / "site" / "content" / "posts")))
 
     assert _feed_archive_dir(config) == source_dir / "static" / "feed"
+
+
+def test_feed_data_refresh_uses_shared_feed_archive_path() -> None:
+    source = inspect.getsource(_refresh_feed_data_files)
+
+    assert "feed_dir = _feed_archive_dir(config)" in source
+    assert 'Path(site_root) / "static" / "feed"' not in source
