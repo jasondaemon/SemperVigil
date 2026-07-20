@@ -234,7 +234,9 @@ def _run_hugo_until_done(
                     job_id=job_id,
                     line=line,
                 )
-            if is_job_canceled(conn, job_id):
+            canceled_now = is_job_canceled(conn, job_id)
+            conn.commit()
+            if canceled_now:
                 canceled = True
                 proc.terminate()
                 try:

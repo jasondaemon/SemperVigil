@@ -4654,7 +4654,9 @@ def _process_claimed_job(
     *,
     lease_seconds: int | None = None,
 ) -> int:
-    if is_job_canceled(conn, job.id):
+    canceled_now = is_job_canceled(conn, job.id)
+    conn.commit()
+    if canceled_now:
         log_event(logger, logging.INFO, "job_canceled", job_id=job.id)
         if job.job_type == "ingest_source":
             source_id = str((job.payload or {}).get("source_id") or "")
@@ -4677,7 +4679,9 @@ def _process_claimed_job(
             result = run_claimed_job(conn, config, job, logger)
     except Exception as exc:  # noqa: BLE001
         conn.rollback()
-        if is_job_canceled(conn, job.id):
+        canceled_now = is_job_canceled(conn, job.id)
+        conn.commit()
+        if canceled_now:
             log_event(logger, logging.INFO, "job_canceled", job_id=job.id)
             return 0
         if job.job_type in llm_job_types and _is_timeout_error(exc):
@@ -4814,7 +4818,9 @@ def _process_claimed_job(
         )
         return 0
 
-    if is_job_canceled(conn, job.id):
+    canceled_now = is_job_canceled(conn, job.id)
+    conn.commit()
+    if canceled_now:
         log_event(logger, logging.INFO, "job_canceled", job_id=job.id)
         return 0
 

@@ -60,7 +60,9 @@ def _run_subprocess_until_done(
     last_heartbeat = 0.0
     started = time.monotonic()
     while True:
-        if is_job_canceled(conn, launch_job_id):
+        canceled_now = is_job_canceled(conn, launch_job_id)
+        conn.commit()
+        if canceled_now:
             canceled = True
             proc.terminate()
             try:
