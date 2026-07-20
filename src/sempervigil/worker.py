@@ -176,6 +176,7 @@ from .storage import (
     _table_exists,
     column_exists,
     delete_vendor_product_tags,
+    heartbeat_job,
     touch_job_lock,
 )
 from .utils import (
@@ -413,6 +414,51 @@ _LLM_JOB_TYPES = {
     "event_report_llm",
     "build_daily_brief",
 }
+
+
+class _JobHeartbeat:
+    def __init__(self, job: Job, lease_seconds: int | None) -> None:
+        self.job = job
+        self.lease_seconds = int(lease_seconds or 0)
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self):
+        if self.lease_seconds <= 0 or not self.job.locked_by:
+            return self
+        interval = max(5.0, min(60.0, self.lease_seconds / 3.0))
+        self._thread = threading.Thread(
+            target=self._run,
+            args=(interval,),
+            name=f"job-heartbeat-{self.job.id}",
+            daemon=True,
+        )
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+
+    def _run(self, interval: float) -> None:
+        conn = None
+        try:
+            conn = init_db()
+            while not self._stop.wait(interval):
+                try:
+                    heartbeat_job(conn, self.job.id, str(self.job.locked_by), self.lease_seconds)
+                except Exception:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
 
 def _llm_lock_timeout_seconds(conn, config, allowed_types: list[str] | None) -> int:
@@ -4568,6 +4614,7 @@ def run_once(
     lock_timeout = _llm_lock_timeout_seconds(conn, config, claim_types)
     provider_scope = os.environ.get("SV_WORKER_PROVIDER_SCOPE", "any").lower().strip()
     for _ in range(10):
+        conn.commit()
         job = claim_next_job(
             conn,
             worker_id,
@@ -4577,7 +4624,9 @@ def run_once(
             lease_seconds=lease_seconds,
         )
         if not job:
+            conn.close()
             return _RUN_ONCE_IDLE
+        conn.commit()
         if not queue_name and provider_scope in {"openai", "non_openai"} and job.job_type in _LLM_JOB_TYPES:
             uses_openai = _job_uses_openai(conn, job)
             if provider_scope == "openai" and not uses_openai:
@@ -4590,11 +4639,21 @@ def run_once(
                     conn, job.id, delay_seconds=15, reason="provider_scope_openai_only"
                 )
                 continue
-        return _process_claimed_job(conn, config, job, logger)
+        result_code = _process_claimed_job(conn, config, job, logger, lease_seconds=lease_seconds)
+        conn.close()
+        return result_code
+    conn.close()
     return 0
 
 
-def _process_claimed_job(conn, config, job, logger: logging.Logger) -> int:
+def _process_claimed_job(
+    conn,
+    config,
+    job,
+    logger: logging.Logger,
+    *,
+    lease_seconds: int | None = None,
+) -> int:
     if is_job_canceled(conn, job.id):
         log_event(logger, logging.INFO, "job_canceled", job_id=job.id)
         if job.job_type == "ingest_source":
@@ -4614,7 +4673,8 @@ def _process_claimed_job(conn, config, job, logger: logging.Logger) -> int:
 
     llm_job_types = _LLM_JOB_TYPES
     try:
-        result = run_claimed_job(conn, config, job, logger)
+        with _JobHeartbeat(job, lease_seconds if job.job_type in llm_job_types else None):
+            result = run_claimed_job(conn, config, job, logger)
     except Exception as exc:  # noqa: BLE001
         conn.rollback()
         if is_job_canceled(conn, job.id):
@@ -4766,7 +4826,11 @@ def _process_claimed_job(conn, config, job, logger: logging.Logger) -> int:
     return 0
 
 
-def _process_claimed_job_thread(worker_id: str, job: Job) -> int:
+def _process_claimed_job_thread(
+    worker_id: str,
+    job: Job,
+    lease_seconds: int | None = None,
+) -> int:
     logger = _setup_logging()
     try:
         conn = init_db()
@@ -4778,7 +4842,9 @@ def _process_claimed_job_thread(worker_id: str, job: Job) -> int:
         return 1
     set_umask_from_env()
     ensure_runtime_dirs(build_default_paths(config.paths.data_dir, config.paths.output_dir, config.paths.logs_dir))
-    return _process_claimed_job(conn, config, job, logger)
+    result_code = _process_claimed_job(conn, config, job, logger, lease_seconds=lease_seconds)
+    conn.close()
+    return result_code
 
 
 def run_loop(
@@ -4839,6 +4905,7 @@ def run_loop(
                     _maybe_enqueue_cve_sync(conn, logger)
                     _maybe_enqueue_auto_catchup(conn, config, logger, worker_id, allowed_types)
                 lock_timeout = _llm_lock_timeout_seconds(conn, config, WORKER_JOB_TYPES if allowed_types is None else allowed_types)
+                conn.commit()
                 job = claim_next_job(
                     conn,
                     worker_id,
@@ -4847,10 +4914,11 @@ def run_loop(
                     lock_timeout_seconds=lock_timeout,
                     lease_seconds=lease_seconds,
                 )
+                conn.commit()
                 conn.close()
                 if not job:
                     break
-                futures.add(executor.submit(_process_claimed_job_thread, worker_id, job))
+                futures.add(executor.submit(_process_claimed_job_thread, worker_id, job, lease_seconds))
                 claimed_jobs += 1
                 if max_jobs is not None and claimed_jobs >= max_jobs:
                     break

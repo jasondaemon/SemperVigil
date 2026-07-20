@@ -53,10 +53,12 @@ def _run_subprocess_until_done(
     runner_id: str,
     command: list[str],
     lease_seconds: int,
+    max_runtime_seconds: int,
 ) -> tuple[int, bool]:
     proc = subprocess.Popen(command)
     canceled = False
     last_heartbeat = 0.0
+    started = time.monotonic()
     while True:
         if is_job_canceled(conn, launch_job_id):
             canceled = True
@@ -66,6 +68,14 @@ def _run_subprocess_until_done(
             except subprocess.TimeoutExpired:
                 proc.kill()
             break
+        if max_runtime_seconds > 0 and (time.monotonic() - started) >= max_runtime_seconds:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            return int(proc.returncode or 124), canceled
         if proc.poll() is not None:
             break
         now = time.monotonic()
@@ -77,7 +87,12 @@ def _run_subprocess_until_done(
     return int(proc.returncode or 0), canceled
 
 
-def _worker_command(queue_name: str, max_jobs: int, max_runtime_seconds: int) -> list[str]:
+def _worker_command(
+    queue_name: str,
+    max_jobs: int,
+    max_runtime_seconds: int,
+    lease_seconds: int,
+) -> list[str]:
     return [
         sys.executable,
         "-m",
@@ -90,6 +105,8 @@ def _worker_command(queue_name: str, max_jobs: int, max_runtime_seconds: int) ->
         str(max_jobs),
         "--max-runtime-seconds",
         str(max_runtime_seconds),
+        "--lease-seconds",
+        str(lease_seconds),
     ]
 
 
@@ -133,7 +150,12 @@ def run_once(runner_id: str, runner_type: str) -> int:
     command = (
         _build_command(runner_id)
         if runner_type == "build"
-        else _worker_command(queue_name, max_jobs=max_jobs, max_runtime_seconds=max_runtime_seconds)
+        else _worker_command(
+            queue_name,
+            max_jobs=max_jobs,
+            max_runtime_seconds=max_runtime_seconds,
+            lease_seconds=lease_seconds,
+        )
     )
     log_event(
         logger,
@@ -152,6 +174,7 @@ def run_once(runner_id: str, runner_type: str) -> int:
         runner_id,
         command,
         lease_seconds,
+        max_runtime_seconds,
     )
 
     if canceled:
