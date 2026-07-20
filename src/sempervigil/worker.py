@@ -346,6 +346,14 @@ def _site_root_from_output_dir(output_dir: str) -> str:
     return str(output_path.parent)
 
 
+def _feed_archive_dir(config) -> Path:
+    override = str(os.environ.get("SV_FEED_ARCHIVE_DIR") or "").strip()
+    if override:
+        return Path(override)
+    site_root = os.environ.get("SV_HUGO_SOURCE_DIR") or _site_root_from_output_dir(config.paths.output_dir)
+    return Path(site_root) / "static" / "feed"
+
+
 def _cve_page_url(cve_id: str | None) -> str:
     cve = str(cve_id or "").strip()
     if not cve:
@@ -1348,7 +1356,7 @@ def _refresh_feed_archive_days(
         tz = ZoneInfo(tz_name)
     except Exception:
         tz = timezone.utc
-    feed_dir = Path(site_root) / "static" / "feed"
+    feed_dir = _feed_archive_dir(config)
     feed_days_dir = feed_dir / "days"
     feed_days_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = feed_dir / "day-manifest.json"

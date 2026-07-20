@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
-from sempervigil.builder import _prune_legacy_posts_tree
+from sempervigil.builder import _migrate_legacy_static_feed, _prune_legacy_posts_tree
 
 
 def _touch(path: Path, content: str = "x") -> None:
@@ -24,3 +25,23 @@ def test_prune_legacy_posts_tree_removes_nested_posts_artifacts(tmp_path: Path) 
     assert (source_dir / "data" / "briefs" / "2026-03-31.json").exists()
     assert not (source_dir / "content" / "posts" / "content").exists()
     assert not (source_dir / "content" / "posts" / "data").exists()
+
+
+def test_migrate_legacy_static_feed_moves_archive_out_of_hugo_static(tmp_path) -> None:
+    source_dir = tmp_path / "site-src"
+    shared_feed = tmp_path / "site-public" / "shared" / "feed"
+    _touch(source_dir / "static" / "feed" / "index.json", '{"days":["2026-03-31"]}')
+    _touch(source_dir / "static" / "feed" / "day-manifest.json", '{"days":{}}')
+    _touch(source_dir / "static" / "feed" / "days" / "2026-03-31.json", '{"items":[]}')
+    _touch(source_dir / "static" / "feed" / "extra.txt", "preserve")
+
+    result = _migrate_legacy_static_feed(str(source_dir), shared_feed, logging.getLogger("test"))
+
+    assert result["errors"] == 0
+    assert (shared_feed / "index.json").read_text(encoding="utf-8") == '{"days":["2026-03-31"]}'
+    assert (shared_feed / "day-manifest.json").read_text(encoding="utf-8") == '{"days":{}}'
+    assert (shared_feed / "days" / "2026-03-31.json").read_text(encoding="utf-8") == '{"items":[]}'
+    assert not (source_dir / "static" / "feed" / "index.json").exists()
+    assert not (source_dir / "static" / "feed" / "day-manifest.json").exists()
+    assert not (source_dir / "static" / "feed" / "days").exists()
+    assert (source_dir / "static" / "feed" / "extra.txt").exists()

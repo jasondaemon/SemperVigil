@@ -375,9 +375,12 @@ Overrides let us tune discovery + content extraction for problematic sources wit
 ### 6.4 Daily Brief (Topic-First)
 Daily Briefs are generated from **today’s accepted articles** and clustered into topics.
 The brief is synthesized from topics (not raw per-article summaries) and grouped by
-NIST 800-53 families. Output is published to Hugo as:
+NIST 800-53 families. Output is published to Hugo / nginx as:
 - daily brief content pages under `content/daily-briefs/YYYY-MM-DD.md`
-- homepage feed data under `data/feed/index.json` and `data/feed/days/YYYY-MM-DD.json`
+- homepage feed data exposed at `/feed/index.json` and `/feed/days/YYYY-MM-DD.json`
+- historical feed JSON stored outside the Hugo release tree under `SV_FEED_ARCHIVE_DIR`
+  (production: `/site/shared/feed`) so unchanged day files are reused instead of copied
+  into every atomic Hugo release
 
 Pipeline stages (via Admin > AI Config) are the **only** control plane for prompts:
 - `daily_brief_cluster_topics`

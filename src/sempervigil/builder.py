@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import filecmp
 import json
 import logging
 import os
@@ -14,7 +15,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from .config import ConfigError, load_runtime_config
-from .worker import _refresh_feed_archive_days, _refresh_feed_data_files
+from .worker import _feed_archive_dir, _refresh_feed_archive_days, _refresh_feed_data_files
 from .fsinit import build_default_paths, ensure_runtime_dirs, set_umask_from_env
 from .storage import (
     clear_build_dirty,
@@ -45,11 +46,16 @@ def _site_root_from_output_dir(output_dir: str) -> str:
     return str(path)
 
 
-def _refresh_feed_index_from_days(site_root: str, logger: logging.Logger) -> int:
-    feed_dir = Path(site_root) / "static" / "feed"
+def _refresh_feed_index_from_days(feed_dir: Path, logger: logging.Logger) -> int:
     feed_days_dir = feed_dir / "days"
     if not feed_days_dir.exists():
-        log_event(logger, logging.INFO, "feed_index_refresh_skipped", site_root=site_root, reason="missing_feed_days")
+        log_event(
+            logger,
+            logging.INFO,
+            "feed_index_refresh_skipped",
+            feed_dir=str(feed_dir),
+            reason="missing_feed_days",
+        )
         return 0
 
     day_keys = sorted(
@@ -75,7 +81,7 @@ def _refresh_feed_index_from_days(site_root: str, logger: logging.Logger) -> int
         logger,
         logging.INFO,
         "feed_index_refreshed",
-        site_root=site_root,
+        feed_dir=str(feed_dir),
         count=len(day_keys),
         latest_day=feed_index["latest_day"],
         oldest_day=feed_index["oldest_day"],
@@ -337,6 +343,96 @@ def _prune_legacy_posts_tree(source_dir: str) -> int:
     return pruned
 
 
+def _same_path(left: Path, right: Path) -> bool:
+    try:
+        return left.resolve() == right.resolve()
+    except OSError:
+        return left.absolute() == right.absolute()
+
+
+def _copy_file_atomic(src: Path, dst: Path) -> bool:
+    try:
+        if dst.exists():
+            src_stat = src.stat()
+            dst_stat = dst.stat()
+            if src_stat.st_size == dst_stat.st_size and filecmp.cmp(src, dst, shallow=False):
+                return False
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = dst.with_name(f".{dst.name}.tmp")
+        shutil.copy2(src, tmp_path)
+        tmp_path.replace(dst)
+        return True
+    except OSError:
+        raise
+
+
+def _migrate_legacy_static_feed(source_root: str, feed_dir: Path, logger: logging.Logger) -> dict[str, int]:
+    legacy_feed_dir = Path(source_root) / "static" / "feed"
+    if _same_path(legacy_feed_dir, feed_dir) or not legacy_feed_dir.exists():
+        return {"copied": 0, "removed": 0, "errors": 0}
+
+    copied = 0
+    errors = 0
+    for src in legacy_feed_dir.rglob("*"):
+        if not src.is_file():
+            continue
+        rel_path = src.relative_to(legacy_feed_dir)
+        try:
+            if _copy_file_atomic(src, feed_dir / rel_path):
+                copied += 1
+        except OSError as exc:
+            errors += 1
+            log_event(
+                logger,
+                logging.WARNING,
+                "legacy_feed_copy_failed",
+                source=str(src),
+                destination=str(feed_dir / rel_path),
+                error=str(exc),
+            )
+
+    removed = 0
+    if errors == 0:
+        for path in (
+            legacy_feed_dir / "days",
+            legacy_feed_dir / "index.json",
+            legacy_feed_dir / "day-manifest.json",
+        ):
+            if not path.exists():
+                continue
+            try:
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+                removed += 1
+            except OSError as exc:
+                errors += 1
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "legacy_feed_prune_failed",
+                    path=str(path),
+                    error=str(exc),
+                )
+        try:
+            legacy_feed_dir.rmdir()
+        except OSError:
+            pass
+
+    log_event(
+        logger,
+        logging.INFO,
+        "legacy_feed_archive_migrated",
+        legacy_feed_dir=str(legacy_feed_dir),
+        feed_dir=str(feed_dir),
+        copied=copied,
+        removed=removed,
+        errors=errors,
+    )
+    return {"copied": copied, "removed": removed, "errors": errors}
+
+
 def run_once(builder_id: str) -> int:
     logger = _setup_logging()
     try:
@@ -386,9 +482,11 @@ def run_once(builder_id: str) -> int:
 
     log_paths = _build_log_paths(config.paths.logs_dir, job.id)
     source_root = source_dir or _site_root_from_output_dir(config.paths.output_dir)
+    feed_dir = _feed_archive_dir(config)
+    _migrate_legacy_static_feed(source_root, feed_dir, logger)
     _maybe_refresh_feed_archive_days(conn, config, logger)
     _refresh_feed_data_files(conn, config, logger)
-    _refresh_feed_index_from_days(source_root, logger)
+    _refresh_feed_index_from_days(feed_dir, logger)
     log_event(
         logger,
         logging.INFO,

@@ -8,6 +8,7 @@ DATA_DIR="${SV_DATA_DIR:-/data}"
 LOGS_DIR="${SV_LOG_DIR:-/log}"
 SITE_SRC_DIR="${SV_HUGO_SOURCE_DIR:-/site-src}"
 SITE_PUBLIC_DIR="${SV_HUGO_OUTPUT_DIR:-/site}"
+FEED_ARCHIVE_DIR="${SV_FEED_ARCHIVE_DIR:-${SITE_PUBLIC_DIR}/shared/feed}"
 HUGO_CACHE_DIR="${SV_HUGO_CACHE_DIR:-${DATA_DIR}/hugo_cache}"
 HUGO_MODULES_DIR="${SV_HUGO_MODULES_DIR:-${DATA_DIR}/hugo_modules}"
 SV_UID="${SV_UID:-1000}"
@@ -46,6 +47,8 @@ ensure_if_mounted_or_writable "${SITE_SRC_DIR}/data/daily"
 ensure_if_mounted_or_writable "${SITE_PUBLIC_DIR}"
 ensure_if_mounted_or_writable "${SITE_PUBLIC_DIR}/releases"
 ensure_if_mounted_or_writable "${SITE_PUBLIC_DIR}/standby"
+ensure_if_mounted_or_writable "${FEED_ARCHIVE_DIR}"
+ensure_if_mounted_or_writable "${FEED_ARCHIVE_DIR}/days"
 
 fix_perms_tree() {
   target="$1"
@@ -67,4 +70,5 @@ if [ "${SV_FIX_SITE_PERMS}" != "0" ]; then
   fix_perms_tree "${LOGS_DIR}"
   fix_perms_tree "${SITE_SRC_DIR}"
   fix_perms_tree "${SITE_PUBLIC_DIR}"
+  fix_perms_tree "${FEED_ARCHIVE_DIR}"
 fi

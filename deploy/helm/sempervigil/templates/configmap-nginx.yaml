@@ -14,6 +14,11 @@ data:
     
         root /usr/share/nginx/html/current;
         index index.html;
+
+        location ^~ /feed/ {
+            root /usr/share/nginx/html;
+            try_files /shared$uri /current$uri =404;
+        }
     
         location ^~ /vendor/ {
             rewrite ^/vendor/([^/]+)/?$ /entities/?search=$1 permanent;

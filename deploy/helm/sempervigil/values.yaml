@@ -89,6 +89,7 @@ env:
   SV_GID: "20"
   SV_HUGO_SOURCE_DIR: /site-src
   SV_HUGO_OUTPUT_DIR: /site
+  SV_FEED_ARCHIVE_DIR: /site/shared/feed
   SV_HUGO_CACHE_DIR: /data/hugo_cache
   SV_HUGO_MODULES_DIR: /data/hugo_modules
   SV_HTTP_TIMEOUT_SECONDS: "20"

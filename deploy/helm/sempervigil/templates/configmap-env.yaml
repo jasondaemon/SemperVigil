@@ -16,6 +16,7 @@ data:
   SV_LOG_DIR: /log
   SV_HUGO_SOURCE_DIR: {{ .Values.env.SV_HUGO_SOURCE_DIR | quote }}
   SV_HUGO_OUTPUT_DIR: {{ .Values.env.SV_HUGO_OUTPUT_DIR | quote }}
+  SV_FEED_ARCHIVE_DIR: {{ .Values.env.SV_FEED_ARCHIVE_DIR | quote }}
   SV_HUGO_CACHE_DIR: {{ .Values.env.SV_HUGO_CACHE_DIR | quote }}
   SV_HUGO_MODULES_DIR: {{ .Values.env.SV_HUGO_MODULES_DIR | quote }}
   SV_HTTP_TIMEOUT_SECONDS: {{ .Values.env.SV_HTTP_TIMEOUT_SECONDS | quote }}
