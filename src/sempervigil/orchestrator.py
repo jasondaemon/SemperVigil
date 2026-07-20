@@ -190,7 +190,7 @@ def _launch_policy() -> dict[str, dict[str, int]]:
             "max_active": int(os.environ.get("SV_LLM_MAX_ACTIVE", "1") or 1),
             "max_jobs": int(os.environ.get("SV_LLM_LAUNCH_MAX_JOBS", "3") or 3),
             "max_runtime_seconds": int(
-                os.environ.get("SV_LLM_LAUNCH_MAX_RUNTIME_SECONDS", "900") or 900
+                os.environ.get("SV_LLM_LAUNCH_MAX_RUNTIME_SECONDS", "1500") or 1500
             ),
         },
         "openai": {

@@ -39,6 +39,13 @@ STAGE_NAMES = [
 ]
 
 
+def _commit_before_provider_io(conn) -> None:
+    try:
+        conn.commit()
+    except Exception:
+        pass
+
+
 def run_pipeline_stage(
     conn,
     stage_name: str,
@@ -246,6 +253,7 @@ def _call_with_profile(
         stage=ctx.get("stage") or "",
         job_type=ctx.get("job_type") or "",
     )
+    _commit_before_provider_io(conn)
     raw = _call_provider(
         provider["type"],
         base_url,
@@ -277,6 +285,7 @@ def _call_with_profile(
                 prompt,
                 text + "\n\nReturn valid JSON only. Fix schema violations.",
             )
+            _commit_before_provider_io(conn)
             raw = _call_provider(
                 provider["type"],
                 base_url,

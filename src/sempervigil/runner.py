@@ -21,8 +21,8 @@ _RUNNER_TYPES: dict[str, dict[str, object]] = {
         "launch_job_type": "launch_llm_worker",
         "queue_name": "llm_local",
         "default_max_jobs": 5,
-        "default_max_runtime_seconds": 900,
-        "default_lease_seconds": 1200,
+        "default_max_runtime_seconds": 1500,
+        "default_lease_seconds": 1800,
     },
     "openai": {
         "launch_job_type": "launch_openai_worker",
