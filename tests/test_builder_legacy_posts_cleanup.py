@@ -66,11 +66,15 @@ def test_prune_legacy_entity_render_inputs_removes_heavy_hugo_data(tmp_path: Pat
     _touch(source_dir / "layouts" / "entities" / "list.html", '{{ readFile "data/product_map.json" }}')
     _touch(source_dir / "layouts" / "partials" / "header" / "basic.html", '<a href="/entities/">Search</a>')
     _touch(source_dir / "layouts" / "partials" / "home" / "custom.html", '<a href="/entities/?search=x">x</a>')
+    _touch(
+        source_dir / "assets" / "css" / "custom.css",
+        'body { color: white; }\n\na[href="/entities/"] {\n  display: none !important;\n}\n\n.front-tabs {}\n',
+    )
     _touch(source_dir / "layouts" / "metrics" / "list.html", "metrics")
 
     result = _prune_legacy_entity_render_inputs(str(source_dir))
 
-    assert result["files"] == 10
+    assert result["files"] == 11
     assert not (source_dir / "data" / "product_map.json").exists()
     assert not (source_dir / "data" / "product_map.json.tmp.31.example").exists()
     assert not (source_dir / "data" / "vendor_map.json").exists()
@@ -84,4 +88,7 @@ def test_prune_legacy_entity_render_inputs_removes_heavy_hugo_data(tmp_path: Pat
     assert not (source_dir / "static" / "js" / "word_cloud.js").exists()
     assert not (source_dir / "layouts" / "partials" / "header" / "basic.html").exists()
     assert not (source_dir / "layouts" / "partials" / "home" / "custom.html").exists()
+    assert 'href="/entities/"' not in (source_dir / "assets" / "css" / "custom.css").read_text(
+        encoding="utf-8"
+    )
     assert (source_dir / "layouts" / "metrics" / "list.html").exists()

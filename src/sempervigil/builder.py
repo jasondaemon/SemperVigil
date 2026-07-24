@@ -441,6 +441,20 @@ def _prune_legacy_entity_render_inputs(source_dir: str) -> dict[str, int]:
         except OSError:
             continue
 
+    custom_css = source_root / "assets" / "css" / "custom.css"
+    if custom_css.exists() and custom_css.is_file():
+        try:
+            css_text = custom_css.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            css_text = ""
+        retired_selector = 'a[href="/entities/"] {\n  display: none !important;\n}\n\n'
+        if retired_selector in css_text:
+            try:
+                custom_css.write_text(css_text.replace(retired_selector, ""), encoding="utf-8")
+                removed_files += 1
+            except OSError:
+                pass
+
     entities_layout = source_root / "layouts" / "entities" / "list.html"
     if entities_layout.exists() and entities_layout.is_file():
         try:
