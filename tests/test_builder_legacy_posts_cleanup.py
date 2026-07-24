@@ -60,12 +60,17 @@ def test_prune_legacy_entity_render_inputs_removes_heavy_hugo_data(tmp_path: Pat
     _touch(source_dir / "data" / "articles" / "today.json", "[]")
     _touch(source_dir / "static" / "sempervigil" / "entities" / "products.json", "[]")
     _touch(source_dir / "static" / "js" / "entities.js", "entities")
+    _touch(source_dir / "static" / "js" / "search-fix.js", "search")
+    _touch(source_dir / "static" / "js" / "vendor_product.js", "vendor")
+    _touch(source_dir / "static" / "js" / "word_cloud.js", "word")
     _touch(source_dir / "layouts" / "entities" / "list.html", '{{ readFile "data/product_map.json" }}')
+    _touch(source_dir / "layouts" / "partials" / "header" / "basic.html", '<a href="/entities/">Search</a>')
+    _touch(source_dir / "layouts" / "partials" / "home" / "custom.html", '<a href="/entities/?search=x">x</a>')
     _touch(source_dir / "layouts" / "metrics" / "list.html", "metrics")
 
     result = _prune_legacy_entity_render_inputs(str(source_dir))
 
-    assert result["files"] == 6
+    assert result["files"] == 10
     assert not (source_dir / "data" / "product_map.json").exists()
     assert not (source_dir / "data" / "product_map.json.tmp.31.example").exists()
     assert not (source_dir / "data" / "vendor_map.json").exists()
@@ -74,4 +79,9 @@ def test_prune_legacy_entity_render_inputs_removes_heavy_hugo_data(tmp_path: Pat
     assert (source_dir / "data" / "articles" / "today.json").exists()
     assert not (source_dir / "static" / "sempervigil" / "entities").exists()
     assert not (source_dir / "static" / "js" / "entities.js").exists()
+    assert not (source_dir / "static" / "js" / "search-fix.js").exists()
+    assert not (source_dir / "static" / "js" / "vendor_product.js").exists()
+    assert not (source_dir / "static" / "js" / "word_cloud.js").exists()
+    assert not (source_dir / "layouts" / "partials" / "header" / "basic.html").exists()
+    assert not (source_dir / "layouts" / "partials" / "home" / "custom.html").exists()
     assert (source_dir / "layouts" / "metrics" / "list.html").exists()

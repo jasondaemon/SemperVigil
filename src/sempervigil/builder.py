@@ -425,7 +425,12 @@ def _prune_legacy_entity_render_inputs(source_dir: str) -> dict[str, int]:
             continue
 
     retired_entity_files = [
+        source_root / "layouts" / "partials" / "header" / "basic.html",
+        source_root / "layouts" / "partials" / "home" / "custom.html",
         source_root / "static" / "js" / "entities.js",
+        source_root / "static" / "js" / "search-fix.js",
+        source_root / "static" / "js" / "vendor_product.js",
+        source_root / "static" / "js" / "word_cloud.js",
     ]
     for path in retired_entity_files:
         if not path.exists() or not path.is_file():
