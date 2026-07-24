@@ -21,12 +21,12 @@
 
 ---
 
-## Entity Search Verification
+## Site Data Verification
 
 Scriptable check:
 
 ```bash
 docker compose up -d --build
 docker compose exec build_worker sh -lc 'ls -la /site/data/feed/index.json'
-curl -I http://localhost:${SV_WEB_PORT:-8080}/entities/
+curl -I http://localhost:${SV_WEB_PORT:-8080}/
 ```

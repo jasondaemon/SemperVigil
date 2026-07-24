@@ -1,6 +1,6 @@
 # Vendor + Product Pages Plan (Refined, Historical)
 
-> Superseded by unified entity search at `/entities/`.
+> Public vendor/product/entity browsing has been retired.
 > Keep this document as implementation history only.
 
 ## Purpose
@@ -33,8 +33,9 @@ Maps provide drill-down:
 - `/vendor/<vendor_slug>/` (single vendor, lists)
 - `/product/<product_slug>/` (single product, lists)
 
-Current implementation replaced this with:
-- `/entities/` (merged vendors/products/threats search + cloud)
+Current implementation:
+- No public vendor/product/threat directory or merged entity search surface.
+- Vendor/product/threat data is internal enrichment metadata and may be shown as non-linked daily feed chips.
 
 ## Behavior
 - Empty search: show popular word cloud.

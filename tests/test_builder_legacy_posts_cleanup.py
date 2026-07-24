@@ -58,16 +58,18 @@ def test_prune_legacy_entity_render_inputs_removes_heavy_hugo_data(tmp_path: Pat
     _touch(source_dir / "data" / "cves.json", "[]")
     _touch(source_dir / "data" / "articles" / "today.json", "[]")
     _touch(source_dir / "static" / "sempervigil" / "entities" / "products.json", "[]")
+    _touch(source_dir / "static" / "js" / "entities.js", "entities")
     _touch(source_dir / "layouts" / "entities" / "list.html", '{{ readFile "data/product_map.json" }}')
     _touch(source_dir / "layouts" / "metrics" / "list.html", "metrics")
 
     result = _prune_legacy_entity_render_inputs(str(source_dir))
 
-    assert result["files"] == 4
+    assert result["files"] == 5
     assert not (source_dir / "data" / "product_map.json").exists()
     assert not (source_dir / "data" / "vendor_map.json").exists()
     assert not (source_dir / "data" / "cves.json").exists()
     assert not (source_dir / "layouts" / "entities" / "list.html").exists()
     assert (source_dir / "data" / "articles" / "today.json").exists()
-    assert (source_dir / "static" / "sempervigil" / "entities" / "products.json").exists()
+    assert not (source_dir / "static" / "sempervigil" / "entities").exists()
+    assert not (source_dir / "static" / "js" / "entities.js").exists()
     assert (source_dir / "layouts" / "metrics" / "list.html").exists()

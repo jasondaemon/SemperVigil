@@ -8,6 +8,7 @@ import urllib.error
 import re
 import logging
 import os
+import shutil
 import time
 import threading
 import uuid
@@ -2341,7 +2342,32 @@ def _entity_static_data_root(site_root: str) -> Path:
     return Path(site_root) / "static" / "sempervigil" / "entities"
 
 
+def _purge_public_entity_artifacts(site_root: str) -> None:
+    """Remove the retired public entity search surface from persistent site-src."""
+    root = Path(site_root)
+    for target in (
+        root / "static" / "sempervigil" / "entities",
+        root / "content" / "entities",
+        root / "layouts" / "entities",
+    ):
+        if target.exists() and target.is_dir():
+            shutil.rmtree(target, ignore_errors=True)
+    entities_js = root / "static" / "js" / "entities.js"
+    if entities_js.exists() and entities_js.is_file():
+        try:
+            entities_js.unlink()
+        except OSError:
+            pass
+
+
 def _write_product_data_files(conn, site_root: str, tz_name: str, logger: logging.Logger) -> dict[str, int]:
+    # Public entity/product search pages are retired. Keep the count-producing
+    # jobs callable, but do not write high-cardinality data into the Hugo tree.
+    _purge_public_entity_artifacts(site_root)
+    stats = _write_vendor_product_indexes(conn, site_root, tz_name, logger)
+    stats.update(_write_threat_indexes(conn, site_root, tz_name, logger))
+    return stats
+
     data_dir = _entity_static_data_root(site_root) / "products"
     data_dir.mkdir(parents=True, exist_ok=True)
     index_path = data_dir / "index.json"
@@ -2485,14 +2511,9 @@ def _cve_vendor_product_select_cols(columns: set[str]) -> list[str]:
 def _write_vendor_product_indexes(
     conn, site_root: str, tz_name: str, logger: logging.Logger
 ) -> dict[str, int]:
-    data_root = _entity_static_data_root(site_root)
-    data_root.mkdir(parents=True, exist_ok=True)
-    vendors_path = data_root / "vendors.json"
-    products_path = data_root / "products.json"
+    _purge_public_entity_artifacts(site_root)
 
     if not (_table_exists(conn, "products") and _table_exists(conn, "vendors")):
-        atomic_write_json(vendors_path, [], indent=2)
-        atomic_write_json(products_path, [], indent=2)
         return {"vendors": 0, "products": 0}
 
     cursor = conn.execute(
@@ -2587,11 +2608,7 @@ def _write_vendor_product_indexes(
     vendors_index.sort(key=lambda item: int(item.get("total_count") or 0), reverse=True)
     filtered_products.sort(key=lambda item: int(item.get("total_count") or 0), reverse=True)
 
-    atomic_write_json(vendors_path, vendors_index, indent=2)
-    atomic_write_json(products_path, filtered_products, indent=2)
-
-    # Entity pages are deprecated in favor of /entities search. Keep only compact
-    # static indexes so Hugo does not parse high-cardinality maps as site.Data.
+    # Public entity pages/search are retired; ensure stale generated pages are gone.
     _purge_generated_entity_content(site_root, ("vendor", "vendors", "product", "products"))
 
     return {"vendors": len(vendors_index), "products": len(products_index)}
@@ -2895,7 +2912,7 @@ def _write_vendor_product_indexes(
     atomic_write_json(vendor_map_path, vendor_map, indent=2)
     atomic_write_json(product_map_path, product_map, indent=2)
 
-    # Entity pages are deprecated in favor of /entities search. Keep only JSON data.
+    # Public entity/CVE pages are retired. Keep legacy generation disabled.
     _purge_generated_entity_content(site_root, ("vendor", "vendors", "product", "products"))
 
     return {"vendors": len(vendors_index), "products": len(products_index)}
@@ -2903,6 +2920,7 @@ def _write_vendor_product_indexes(
 
 
 def _write_cve_pages(conn, site_root: str, tz_name: str, logger: logging.Logger) -> dict[str, int]:
+    _purge_public_entity_artifacts(site_root)
     if not _table_exists(conn, "cves"):
         return {"cves": 0}
     select_cols = [
@@ -2929,6 +2947,8 @@ def _write_cve_pages(conn, site_root: str, tz_name: str, logger: logging.Logger)
     cve_ids = [str(row.get("cve_id") or "") for row in data_rows if row.get("cve_id")]
     if not cve_ids:
         return {"cves": 0}
+    _purge_generated_entity_content(site_root, ("cves",))
+    return {"cves": len(cve_ids)}
 
     vendor_map: dict[str, list[dict[str, str]]] = {}
     product_map: dict[str, list[dict[str, str]]] = {}
@@ -3241,12 +3261,9 @@ def _write_cve_pages(conn, site_root: str, tz_name: str, logger: logging.Logger)
 def _write_threat_indexes(
     conn, site_root: str, tz_name: str, logger: logging.Logger
 ) -> dict[str, int]:
-    data_root = _entity_static_data_root(site_root)
-    data_root.mkdir(parents=True, exist_ok=True)
-    threats_path = data_root / "threats.json"
+    _purge_public_entity_artifacts(site_root)
 
     if not _table_exists(conn, "threat_actors"):
-        atomic_write_json(threats_path, [], indent=2)
         return {"threats": 0}
 
     cursor = conn.execute(
@@ -3296,10 +3313,7 @@ def _write_threat_indexes(
             "actor_type": row[3] or "",
         }
 
-    atomic_write_json(threats_path, threat_index, indent=2)
-
-    # Threat pages are deprecated in favor of /entities search. Keep only compact
-    # static indexes so Hugo does not parse high-cardinality maps as site.Data.
+    # Public entity pages/search are retired; ensure stale generated pages are gone.
     _purge_generated_entity_content(site_root, ("threat", "threats"))
 
     return {"threats": len(threat_index)}
@@ -3452,7 +3466,7 @@ def _write_threat_indexes(
     atomic_write_json(threats_path, threat_index, indent=2)
     atomic_write_json(threat_map_path, threat_map, indent=2)
 
-    # Threat pages are deprecated in favor of /entities search. Keep only JSON data.
+    # Public threat pages are retired. Keep legacy generation disabled.
     _purge_generated_entity_content(site_root, ("threat", "threats"))
 
     return {"threats": len(threat_index)}

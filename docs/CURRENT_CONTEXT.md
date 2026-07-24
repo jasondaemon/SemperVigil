@@ -63,8 +63,8 @@ If builds are too frequent or CPU-pegged, verify both values in `.env`.
 - Articles include tags, products, and optional `nist_family`.
 - Article export now includes `summary_bullets` for list/search rendering.
 - CVEs include `product_title`, severity, and a list of products.
-- Entity search is unified at `/entities/` (vendors/products/threats merged into one search surface).
-- Product/vendor/threat detail page generation is disabled; links resolve to `/entities/?search=<term>`.
+- Product/vendor/threat detail page and public entity-search generation is disabled.
+- Vendor/product/threat data remains internal enrichment metadata unless explicitly rendered in the daily feed JSON.
 
 ---
 

@@ -26,9 +26,8 @@ The system ingests Articles + CVEs into a DB, correlates and enriches them, then
 - `/daily-briefs/YYYY-MM-DD/` — Daily brief page
 - `/events/` — Security Events index (sorted by last_modified desc)
 - `/events/<event-id>/` — Event dossier page (updated over time)
-- `/cves/` — CVE index (optional; Search-first is fine)
-- `/cves/CVE-YYYY-NNNN/` — CVE detail page
-- `/entities/` — Unified entity search (vendors/products/threats)
+- CVEs are rendered in the daily feed and link externally to NVD.
+- Public product/vendor/threat/entity directory pages are not part of the current site.
 
 ---
 
@@ -108,8 +107,8 @@ Event inclusion rule:
 
 ---
 
-## Search News `/entities/`
-**Goal:** investigation console.
+## Search News
+**Goal:** investigation console, if reintroduced later.
 
 Result ordering:
 1) Events
@@ -204,8 +203,8 @@ MVP deterministic clustering:
 - `/site/content/posts/*.md` — articles (optional to publish all; can publish only “selected” later)
 - `/site/content/daily-briefs/YYYY-MM-DD.md` — daily briefs
 - `/site/content/events/<event-id>.md` — events
-- `/site/content/cves/<cve-id>.md` — CVEs (optional, but recommended)
-- Product/vendor/threat detail pages are not required; entity links resolve to `/entities/?search=<term>`.
+- Product/vendor/threat/CVE detail pages are not required.
+- CVE links resolve externally to NVD from the daily feed.
 
 ### JSON indexes (for Search + front page data)
 Under a single namespace directory:
@@ -215,7 +214,6 @@ Under a single namespace directory:
 - `/site/static/sempervigil/index/daily.json` (optional aggregate index)
 - `/site/static/sempervigil/index/events.json`
 - `/site/static/sempervigil/index/cves.json`
-- `/site/static/sempervigil/index/entities.json`
 
 Index payload design:
 - small, fast, searchable
@@ -237,7 +235,6 @@ Index payload design:
 ### Admin sections
 - Content Browser (Articles, CVEs)
 - Events (browse, drilldown, rebuild)
-- Entity Search (unified vendors/products/threats)
 - Sources / Health / Jobs
 - AI Config (providers/models/prompts/schemas)
 - Runtime Config (form-driven)
@@ -293,7 +290,7 @@ Index payload design:
 - Produce daily brief JSON and publish
 - Produce event markdown and publish (already close)
 - Produce CVE markdown and publish
-- Produce JSON indexes: articles/events/cves/daily/entities
+- Produce JSON indexes: articles/events/cves/daily
 
 ### Phase C: Public UX (front page + search)
 - Hugo templates consume indexes and render:
@@ -305,6 +302,6 @@ Index payload design:
 ### Phase D: Enrichment (entity quality, exploit signals)
 - Parse version ranges where possible
 - Add exploit-signal classifier
-- Improve entity search ranking and add “all high/critical for product” filtered views in `/entities/`
+- Improve vendor/product/threat extraction quality for feed context and future search work.
 
 ### Development stages.

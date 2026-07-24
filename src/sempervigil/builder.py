@@ -367,6 +367,7 @@ def _prune_legacy_entity_render_inputs(source_dir: str) -> dict[str, int]:
         source_root / "content" / "vendors",
         source_root / "content" / "threat",
         source_root / "content" / "threats",
+        source_root / "content" / "entities",
         source_root / "layouts" / "cves",
         source_root / "layouts" / "product",
         source_root / "layouts" / "products",
@@ -374,6 +375,8 @@ def _prune_legacy_entity_render_inputs(source_dir: str) -> dict[str, int]:
         source_root / "layouts" / "vendors",
         source_root / "layouts" / "threat",
         source_root / "layouts" / "threats",
+        source_root / "layouts" / "entities",
+        source_root / "static" / "sempervigil" / "entities",
     ]
     legacy_template_markers = (
         'readFile "data/vendor_map.json"',
@@ -400,6 +403,18 @@ def _prune_legacy_entity_render_inputs(source_dir: str) -> dict[str, int]:
         try:
             shutil.rmtree(path)
             removed_dirs += 1
+        except OSError:
+            continue
+
+    retired_entity_files = [
+        source_root / "static" / "js" / "entities.js",
+    ]
+    for path in retired_entity_files:
+        if not path.exists() or not path.is_file():
+            continue
+        try:
+            path.unlink()
+            removed_files += 1
         except OSError:
             continue
 

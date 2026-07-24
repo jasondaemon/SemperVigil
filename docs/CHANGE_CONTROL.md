@@ -44,6 +44,30 @@ If you (Codex) propose edits affecting pipeline stability, you must:
 
 ## Entries
 
+- Date: 2026-07-24 16:25 EDT
+- Author: Codex
+- Summary: Retired the public `/entities/` search surface and removed stale entity redirect/static generation paths.
+- Motivation / Problem: The site does not expose or use public entity browsing, and stale `/entities/` links/exports contradicted the daily-feed-only model while adding persistent site artifacts.
+- Files changed:
+  - src/sempervigil/worker.py
+  - src/sempervigil/builder.py
+  - deploy/helm/sempervigil/templates/configmap-nginx.yaml
+  - docker/nginx/default.conf
+  - tests/test_vendor_product_indexes.py
+  - tests/test_builder_legacy_posts_cleanup.py
+  - docs/CURRENT_CONTEXT.md
+  - docs/PIPELINES.md
+  - docs/TARGET-STATE.md
+  - docs/VENDOR_PRODUCT_PAGES_PLAN.md
+  - docs/CHANGE_CONTROL.md
+- Risk / Impact: med
+- Verification steps run:
+  - python3 -m py_compile src/sempervigil/worker.py src/sempervigil/builder.py
+  - python3 -m pytest tests/test_vendor_product_indexes.py tests/test_builder_legacy_posts_cleanup.py
+  - pending: production build through SemperVigil build worker/API
+- Outcome: pending; pytest collection requires SV_DB_URL in this environment.
+- Rollback plan: Revert this entry and the listed app/Hugo cleanup changes, rebuild the previous builder image tag, restore the previous platform image tag if deployed, and redeploy the build worker.
+
 - Date: 2026-07-24 15:59 EDT
 - Author: Codex
 - Summary: Moved deprecated entity/CVE aggregate exports out of Hugo data loading and added builder cleanup for stale high-cardinality render inputs.
