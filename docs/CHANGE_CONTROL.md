@@ -56,9 +56,10 @@ If you (Codex) propose edits affecting pipeline stability, you must:
   - docs/CHANGE_CONTROL.md
 - Risk / Impact: med
 - Verification steps run:
-  - pending: pytest targeted tests
-  - pending: production build through SemperVigil build worker/API
-- Outcome: pending
+  - python3 -m py_compile src/sempervigil/worker.py src/sempervigil/builder.py
+  - python3 -m pytest tests/test_vendor_product_indexes.py tests/test_builder_legacy_posts_cleanup.py
+  - production build through SemperVigil build worker/API: job_38ede24a38fd405f8abd754335591685
+- Outcome: success; pytest collection requires SV_DB_URL in this environment, so production build-worker execution was used as the representative runtime validation.
 - Rollback plan: Revert this entry and the listed code/test files, rebuild the prior builder image tag, restore the previous platform image tag, and redeploy the build worker.
 
 - Date: 2026-01-31 00:00 (local)
