@@ -358,6 +358,15 @@ def _prune_legacy_entity_render_inputs(source_dir: str) -> dict[str, int]:
         source_root / "data" / "threats.json",
         source_root / "data" / "threat_map.json",
     ]
+    legacy_data_patterns = [
+        source_root / "data" / "vendors.json.tmp.*",
+        source_root / "data" / "products.json.tmp.*",
+        source_root / "data" / "vendor_map.json.tmp.*",
+        source_root / "data" / "product_map.json.tmp.*",
+        source_root / "data" / "cves.json.tmp.*",
+        source_root / "data" / "threats.json.tmp.*",
+        source_root / "data" / "threat_map.json.tmp.*",
+    ]
     legacy_dirs = [
         source_root / "data" / "products",
         source_root / "content" / "cves",
@@ -396,6 +405,15 @@ def _prune_legacy_entity_render_inputs(source_dir: str) -> dict[str, int]:
             removed_files += 1
         except OSError:
             continue
+    for pattern in legacy_data_patterns:
+        for path in pattern.parent.glob(pattern.name):
+            if not path.exists() or not path.is_file():
+                continue
+            try:
+                path.unlink()
+                removed_files += 1
+            except OSError:
+                continue
 
     for path in legacy_dirs:
         if not path.exists() or not path.is_dir():

@@ -54,6 +54,7 @@ def test_migrate_legacy_static_feed_moves_archive_out_of_hugo_static(tmp_path) -
 def test_prune_legacy_entity_render_inputs_removes_heavy_hugo_data(tmp_path: Path) -> None:
     source_dir = tmp_path / "site-src"
     _touch(source_dir / "data" / "product_map.json", "{}")
+    _touch(source_dir / "data" / "product_map.json.tmp.31.example", "{}")
     _touch(source_dir / "data" / "vendor_map.json", "{}")
     _touch(source_dir / "data" / "cves.json", "[]")
     _touch(source_dir / "data" / "articles" / "today.json", "[]")
@@ -64,8 +65,9 @@ def test_prune_legacy_entity_render_inputs_removes_heavy_hugo_data(tmp_path: Pat
 
     result = _prune_legacy_entity_render_inputs(str(source_dir))
 
-    assert result["files"] == 5
+    assert result["files"] == 6
     assert not (source_dir / "data" / "product_map.json").exists()
+    assert not (source_dir / "data" / "product_map.json.tmp.31.example").exists()
     assert not (source_dir / "data" / "vendor_map.json").exists()
     assert not (source_dir / "data" / "cves.json").exists()
     assert not (source_dir / "layouts" / "entities" / "list.html").exists()
