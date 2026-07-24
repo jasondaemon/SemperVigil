@@ -3,7 +3,11 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from sempervigil.builder import _migrate_legacy_static_feed, _prune_legacy_posts_tree
+from sempervigil.builder import (
+    _migrate_legacy_static_feed,
+    _prune_legacy_entity_render_inputs,
+    _prune_legacy_posts_tree,
+)
 
 
 def _touch(path: Path, content: str = "x") -> None:
@@ -45,3 +49,25 @@ def test_migrate_legacy_static_feed_moves_archive_out_of_hugo_static(tmp_path) -
     assert not (source_dir / "static" / "feed" / "day-manifest.json").exists()
     assert not (source_dir / "static" / "feed" / "days").exists()
     assert (source_dir / "static" / "feed" / "extra.txt").exists()
+
+
+def test_prune_legacy_entity_render_inputs_removes_heavy_hugo_data(tmp_path: Path) -> None:
+    source_dir = tmp_path / "site-src"
+    _touch(source_dir / "data" / "product_map.json", "{}")
+    _touch(source_dir / "data" / "vendor_map.json", "{}")
+    _touch(source_dir / "data" / "cves.json", "[]")
+    _touch(source_dir / "data" / "articles" / "today.json", "[]")
+    _touch(source_dir / "static" / "sempervigil" / "entities" / "products.json", "[]")
+    _touch(source_dir / "layouts" / "entities" / "list.html", '{{ readFile "data/product_map.json" }}')
+    _touch(source_dir / "layouts" / "metrics" / "list.html", "metrics")
+
+    result = _prune_legacy_entity_render_inputs(str(source_dir))
+
+    assert result["files"] == 4
+    assert not (source_dir / "data" / "product_map.json").exists()
+    assert not (source_dir / "data" / "vendor_map.json").exists()
+    assert not (source_dir / "data" / "cves.json").exists()
+    assert not (source_dir / "layouts" / "entities" / "list.html").exists()
+    assert (source_dir / "data" / "articles" / "today.json").exists()
+    assert (source_dir / "static" / "sempervigil" / "entities" / "products.json").exists()
+    assert (source_dir / "layouts" / "metrics" / "list.html").exists()

@@ -44,6 +44,23 @@ If you (Codex) propose edits affecting pipeline stability, you must:
 
 ## Entries
 
+- Date: 2026-07-24 15:59 EDT
+- Author: Codex
+- Summary: Moved deprecated entity/CVE aggregate exports out of Hugo data loading and added builder cleanup for stale high-cardinality render inputs.
+- Motivation / Problem: Production builds were still loading legacy `product_map.json`, `cves.json`, `vendor_map.json`, and related templates from persistent `/site-src`, driving Hugo memory toward the 24Gi safety limit even after the feed archive fix.
+- Files changed:
+  - src/sempervigil/worker.py
+  - src/sempervigil/builder.py
+  - tests/test_vendor_product_indexes.py
+  - tests/test_builder_legacy_posts_cleanup.py
+  - docs/CHANGE_CONTROL.md
+- Risk / Impact: med
+- Verification steps run:
+  - pending: pytest targeted tests
+  - pending: production build through SemperVigil build worker/API
+- Outcome: pending
+- Rollback plan: Revert this entry and the listed code/test files, rebuild the prior builder image tag, restore the previous platform image tag, and redeploy the build worker.
+
 - Date: 2026-01-31 00:00 (local)
 - Author: Codex
 - Summary: Stabilized Hugo build/serve pipeline and publishing writes.

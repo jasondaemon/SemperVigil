@@ -2337,8 +2337,12 @@ def _purge_generated_entity_content(site_root: str, folders: tuple[str, ...]) ->
             md_path.unlink()
 
 
+def _entity_static_data_root(site_root: str) -> Path:
+    return Path(site_root) / "static" / "sempervigil" / "entities"
+
+
 def _write_product_data_files(conn, site_root: str, tz_name: str, logger: logging.Logger) -> dict[str, int]:
-    data_dir = Path(site_root) / "data" / "products"
+    data_dir = _entity_static_data_root(site_root) / "products"
     data_dir.mkdir(parents=True, exist_ok=True)
     index_path = data_dir / "index.json"
 
@@ -2424,22 +2428,19 @@ def _write_product_data_files(conn, site_root: str, tz_name: str, logger: loggin
                     "kev_known_exploited": bool(cve.get("kev_known_exploited")),
                 }
             )
-        data_path = data_dir / f"{safe_key}.json"
-        data_path.write_text(
-            json.dumps(
-                {
-                    "product_key": product_key,
-                    "safe_key": safe_key,
-                    "product_name": product.get("product_name") or "",
-                    "vendor_name": product.get("vendor_name") or "",
-                    "articles": article_items,
-                    "cves": cve_items,
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
+        atomic_write_json(
+            data_dir / f"{safe_key}.json",
+            {
+                "product_key": product_key,
+                "safe_key": safe_key,
+                "product_name": product.get("product_name") or "",
+                "vendor_name": product.get("vendor_name") or "",
+                "articles": article_items,
+                "cves": cve_items,
+            },
+            indent=2,
         )
-    index_path.write_text(json.dumps(index_items, indent=2), encoding="utf-8")
+    atomic_write_json(index_path, index_items, indent=2)
     _write_vendor_product_indexes(conn, site_root, tz_name, logger)
     _write_threat_indexes(conn, site_root, tz_name, logger)
     return {"products": len(index_items)}
@@ -2484,18 +2485,14 @@ def _cve_vendor_product_select_cols(columns: set[str]) -> list[str]:
 def _write_vendor_product_indexes(
     conn, site_root: str, tz_name: str, logger: logging.Logger
 ) -> dict[str, int]:
-    data_root = Path(site_root) / "data"
+    data_root = _entity_static_data_root(site_root)
     data_root.mkdir(parents=True, exist_ok=True)
     vendors_path = data_root / "vendors.json"
     products_path = data_root / "products.json"
-    vendor_map_path = data_root / "vendor_map.json"
-    product_map_path = data_root / "product_map.json"
 
     if not (_table_exists(conn, "products") and _table_exists(conn, "vendors")):
         atomic_write_json(vendors_path, [], indent=2)
         atomic_write_json(products_path, [], indent=2)
-        atomic_write_json(vendor_map_path, {}, indent=2)
-        atomic_write_json(product_map_path, {}, indent=2)
         return {"vendors": 0, "products": 0}
 
     cursor = conn.execute(
@@ -2557,6 +2554,47 @@ def _write_vendor_product_indexes(
                 "total_count": article_count + cve_count,
             }
         )
+
+    vendor_counts: dict[str, dict[str, object]] = {}
+    for product in products_index:
+        vendor_slug = str(product.get("vendor_slug") or "")
+        if not vendor_slug:
+            continue
+        vendor = vendor_counts.setdefault(
+            vendor_slug,
+            {
+                "slug": vendor_slug,
+                "display_name": product.get("vendor_name") or vendor_display_by_slug.get(vendor_slug, ""),
+                "article_count": 0,
+                "cve_count": 0,
+                "total_count": 0,
+            },
+        )
+        vendor["article_count"] = int(vendor.get("article_count") or 0) + int(product.get("article_count") or 0)
+        vendor["cve_count"] = int(vendor.get("cve_count") or 0) + int(product.get("cve_count") or 0)
+        vendor["total_count"] = int(vendor.get("article_count") or 0) + int(vendor.get("cve_count") or 0)
+
+    vendors_index = [
+        vendor
+        for vendor in vendor_counts.values()
+        if int(vendor.get("total_count") or 0) > 0
+    ]
+    filtered_products = [
+        product
+        for product in products_index
+        if int(product.get("total_count") or 0) > 0
+    ]
+    vendors_index.sort(key=lambda item: int(item.get("total_count") or 0), reverse=True)
+    filtered_products.sort(key=lambda item: int(item.get("total_count") or 0), reverse=True)
+
+    atomic_write_json(vendors_path, vendors_index, indent=2)
+    atomic_write_json(products_path, filtered_products, indent=2)
+
+    # Entity pages are deprecated in favor of /entities search. Keep only compact
+    # static indexes so Hugo does not parse high-cardinality maps as site.Data.
+    _purge_generated_entity_content(site_root, ("vendor", "vendors", "product", "products"))
+
+    return {"vendors": len(vendors_index), "products": len(products_index)}
 
     product_article_ids: dict[int, set[int]] = {}
     vendor_article_ids: dict[str, set[int]] = {}
@@ -2871,22 +2909,12 @@ def _write_cve_pages(conn, site_root: str, tz_name: str, logger: logging.Logger)
         "cve_id",
         "published_at",
         "last_modified_at",
-        "preferred_cvss_version",
         "preferred_base_score",
         "preferred_base_severity",
-        "preferred_vector",
         "epss_score",
         "epss_percentile",
         "epss_date",
         "epss_checked_at",
-        "description_text",
-        "affected_products_json",
-        "affected_cpes_json",
-        "reference_domains_json",
-        "cvss_v31_json",
-        "cvss_v40_json",
-        "cvss_v31_list_json",
-        "cvss_v40_list_json",
         "updated_at",
     ]
     select_cols = [col for col in select_cols if column_exists(conn, "cves", col)]
@@ -2954,6 +2982,89 @@ def _write_cve_pages(conn, site_root: str, tz_name: str, logger: logging.Logger)
             if not cve_id or not vendor_name or not product_name or not version:
                 continue
             version_map.setdefault(cve_id, []).append(f"{vendor_name}:{product_name}:{version}")
+
+    kev_map = get_cve_kev_map(conn, cve_ids) if cve_ids else {}
+
+    cve_records: list[dict[str, object]] = []
+    for row in data_rows:
+        cve_id = str(row.get("cve_id") or "")
+        if not cve_id:
+            continue
+        published_at = row.get("published_at") or ""
+        last_modified_at = row.get("last_modified_at") or ""
+        updated_at = row.get("updated_at") or ""
+        severity = (row.get("preferred_base_severity") or "").strip()
+        vendor_products = vendor_product_map.get(cve_id, [])
+        vendors = vendor_map.get(cve_id, [])
+        products = product_map.get(cve_id, [])
+        product_title = ""
+        if vendor_products:
+            first_vp = vendor_products[0]
+            vendor_name = str(first_vp.get("vendor") or "").strip()
+            product_name = str(first_vp.get("product") or "").strip()
+            product_title = (
+                f"{vendor_name} — {product_name}"
+                if vendor_name and product_name
+                else product_name or vendor_name
+            )
+        elif vendors and products:
+            product_title = f"{vendors[0]['display_name']} — {products[0]['display_name']}"
+        elif products:
+            product_title = products[0]["display_name"]
+        elif vendors:
+            product_title = vendors[0]["display_name"]
+        if product_title and severity:
+            product_title = f"{product_title} — {severity}"
+        elif severity:
+            product_title = severity
+
+        date_value = published_at or last_modified_at or updated_at or utc_now_iso()
+        parsed_date = _parse_ts(str(date_value)) if date_value else None
+        published_epoch = int(parsed_date.timestamp()) if parsed_date else 0
+        kev = kev_map.get(cve_id)
+        nvd_url = f"https://nvd.nist.gov/vuln/detail/{cve_id}"
+        cve_records.append(
+            {
+                "cve_id": cve_id,
+                "title": product_title or cve_id,
+                "product_title": product_title,
+                "published_at": published_at,
+                "last_modified_at": last_modified_at,
+                "published_epoch": published_epoch,
+                "published_at_human": _format_human_ts(published_at or last_modified_at or updated_at or "", tz_name),
+                "severity": severity,
+                "base_score": row.get("preferred_base_score"),
+                "score": row.get("preferred_base_score"),
+                "epss_score": row.get("epss_score"),
+                "epss_percentile": row.get("epss_percentile"),
+                "epss_date": row.get("epss_date"),
+                "epss_checked_at": row.get("epss_checked_at"),
+                "url": nvd_url,
+                "nvd_url": nvd_url,
+                "vendors": vendors,
+                "products": products,
+                "vendor_products": vendor_products,
+                "product_versions": version_map.get(cve_id, []),
+                "kev": kev if kev else {},
+                "kev_known_exploited": bool(kev),
+                "kev_due_date": kev.get("due_date") if kev else "",
+            }
+        )
+
+    cve_records.sort(
+        key=lambda item: (
+            int(item.get("published_epoch") or 0),
+            str(item.get("last_modified_at") or ""),
+            str(item.get("cve_id") or ""),
+        ),
+        reverse=True,
+    )
+    data_root = _entity_static_data_root(site_root)
+    data_root.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(data_root / "cves.json", cve_records, indent=2)
+    _purge_generated_entity_content(site_root, ("cves",))
+
+    return {"cves": len(cve_ids)}
 
     article_map: dict[str, list[dict[str, object]]] = {}
     if _table_exists(conn, "article_cves") and _table_exists(conn, "articles"):
@@ -3130,14 +3241,12 @@ def _write_cve_pages(conn, site_root: str, tz_name: str, logger: logging.Logger)
 def _write_threat_indexes(
     conn, site_root: str, tz_name: str, logger: logging.Logger
 ) -> dict[str, int]:
-    data_root = Path(site_root) / "data"
+    data_root = _entity_static_data_root(site_root)
     data_root.mkdir(parents=True, exist_ok=True)
     threats_path = data_root / "threats.json"
-    threat_map_path = data_root / "threat_map.json"
 
     if not _table_exists(conn, "threat_actors"):
         atomic_write_json(threats_path, [], indent=2)
-        atomic_write_json(threat_map_path, {}, indent=2)
         return {"threats": 0}
 
     cursor = conn.execute(
@@ -3186,6 +3295,14 @@ def _write_threat_indexes(
             "display_name": display_name,
             "actor_type": row[3] or "",
         }
+
+    atomic_write_json(threats_path, threat_index, indent=2)
+
+    # Threat pages are deprecated in favor of /entities search. Keep only compact
+    # static indexes so Hugo does not parse high-cardinality maps as site.Data.
+    _purge_generated_entity_content(site_root, ("threat", "threats"))
+
+    return {"threats": len(threat_index)}
 
     threat_article_ids: dict[int, set[int]] = {}
     if _table_exists(conn, "article_threat_actors") and actor_ids:

@@ -343,6 +343,86 @@ def _prune_legacy_posts_tree(source_dir: str) -> int:
     return pruned
 
 
+def _prune_legacy_entity_render_inputs(source_dir: str) -> dict[str, int]:
+    """Remove deprecated high-cardinality entity inputs from persistent site-src."""
+    source_root = Path(source_dir)
+    removed_files = 0
+    removed_dirs = 0
+
+    legacy_data_files = [
+        source_root / "data" / "vendors.json",
+        source_root / "data" / "products.json",
+        source_root / "data" / "vendor_map.json",
+        source_root / "data" / "product_map.json",
+        source_root / "data" / "cves.json",
+        source_root / "data" / "threats.json",
+        source_root / "data" / "threat_map.json",
+    ]
+    legacy_dirs = [
+        source_root / "data" / "products",
+        source_root / "content" / "cves",
+        source_root / "content" / "product",
+        source_root / "content" / "products",
+        source_root / "content" / "vendor",
+        source_root / "content" / "vendors",
+        source_root / "content" / "threat",
+        source_root / "content" / "threats",
+        source_root / "layouts" / "cves",
+        source_root / "layouts" / "product",
+        source_root / "layouts" / "products",
+        source_root / "layouts" / "vendor",
+        source_root / "layouts" / "vendors",
+        source_root / "layouts" / "threat",
+        source_root / "layouts" / "threats",
+    ]
+    legacy_template_markers = (
+        'readFile "data/vendor_map.json"',
+        'readFile "data/product_map.json"',
+        'readFile "data/threat_map.json"',
+        "site.Data.cves",
+        "site.Data.product_map",
+        "site.Data.vendor_map",
+        "site.Data.threat_map",
+    )
+
+    for path in legacy_data_files:
+        if not path.exists() or not path.is_file():
+            continue
+        try:
+            path.unlink()
+            removed_files += 1
+        except OSError:
+            continue
+
+    for path in legacy_dirs:
+        if not path.exists() or not path.is_dir():
+            continue
+        try:
+            shutil.rmtree(path)
+            removed_dirs += 1
+        except OSError:
+            continue
+
+    entities_layout = source_root / "layouts" / "entities" / "list.html"
+    if entities_layout.exists() and entities_layout.is_file():
+        try:
+            text = entities_layout.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        if any(marker in text for marker in legacy_template_markers):
+            try:
+                entities_layout.unlink()
+                removed_files += 1
+                try:
+                    entities_layout.parent.rmdir()
+                except OSError:
+                    pass
+            except OSError:
+                pass
+
+    return {"files": removed_files, "dirs": removed_dirs}
+
+
 def _same_path(left: Path, right: Path) -> bool:
     try:
         return left.resolve() == right.resolve()
@@ -460,6 +540,16 @@ def run_once(builder_id: str) -> int:
                 "legacy_posts_tree_pruned",
                 source_dir=source_dir,
                 count=pruned,
+            )
+        entity_pruned = _prune_legacy_entity_render_inputs(source_dir)
+        if entity_pruned["files"] or entity_pruned["dirs"]:
+            log_event(
+                logger,
+                logging.INFO,
+                "legacy_entity_render_inputs_pruned",
+                source_dir=source_dir,
+                files=entity_pruned["files"],
+                dirs=entity_pruned["dirs"],
             )
     lease_seconds = max(
         int(os.environ.get("SV_BUILDER_LEASE_SECONDS", "0") or 0),

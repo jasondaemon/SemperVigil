@@ -81,8 +81,10 @@ def test_rebuild_vendor_products_without_article_tags(tmp_path: Path) -> None:
         stats = _write_vendor_product_indexes(conn, str(tmp_path), "UTC", logging.getLogger("test"))
         assert stats["vendors"] >= 1
         assert stats["products"] >= 1
-        assert (tmp_path / "data" / "vendors.json").exists()
-        assert (tmp_path / "data" / "products.json").exists()
+        assert (tmp_path / "static" / "sempervigil" / "entities" / "vendors.json").exists()
+        assert (tmp_path / "static" / "sempervigil" / "entities" / "products.json").exists()
+        assert not (tmp_path / "data" / "vendor_map.json").exists()
+        assert not (tmp_path / "data" / "product_map.json").exists()
     finally:
         _ensure_article_tags_table(conn)
 
