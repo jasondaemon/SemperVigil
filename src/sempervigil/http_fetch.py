@@ -87,7 +87,12 @@ def _fetch_python(
     request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         if max_bytes is None:
-            body = response.read()
+            content_length = response.headers.get("Content-Length")
+            try:
+                expected_bytes = int(content_length) if content_length else None
+            except ValueError:
+                expected_bytes = None
+            body = response.read(expected_bytes) if expected_bytes else response.read()
         else:
             body = response.read(max_bytes)
         body = body or b""
