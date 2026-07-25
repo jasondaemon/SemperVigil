@@ -45,7 +45,11 @@ from .worker import (
     _refresh_feed_data_files,
 )
 from .http_fetch import fetch_prefix
-from .source_overrides import get_http_fetch_settings, normalize_source_overrides
+from .source_overrides import (
+    get_http_fetch_compressed,
+    get_http_fetch_settings,
+    normalize_source_overrides,
+)
 from .pipelines.content_fetch import fetch_article_content
 from bs4 import BeautifulSoup
 from .storage import (
@@ -2361,6 +2365,7 @@ def sources_test(
     fetcher, fetch_timeout_seconds, fetch_headers = get_http_fetch_settings(
         overrides, config.ingest.http.timeout_seconds
     )
+    fetch_compressed = get_http_fetch_compressed(overrides)
     result = process_source(
         source=source_to_model(source),
         config=config,
@@ -2429,6 +2434,7 @@ def sources_test(
                 timeout_seconds=fetch_timeout_seconds,
                 max_bytes=8192,
                 fetcher=fetcher,
+                compressed=fetch_compressed,
             )
             prefix_bytes = prefix_bytes.lstrip()
             prefix_text = prefix_bytes.decode("utf-8", errors="ignore")

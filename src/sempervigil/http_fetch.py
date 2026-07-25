@@ -10,8 +10,9 @@ def fetch_bytes(
     headers: dict[str, str],
     timeout_seconds: int,
     fetcher: str = "python",
+    compressed: bool = True,
 ) -> tuple[int | None, str | None, dict[str, str], bytes, str]:
-    return _fetch(url, headers, timeout_seconds, fetcher, max_bytes=None)
+    return _fetch(url, headers, timeout_seconds, fetcher, max_bytes=None, compressed=compressed)
 
 
 def fetch_prefix(
@@ -20,8 +21,11 @@ def fetch_prefix(
     timeout_seconds: int,
     max_bytes: int = 8192,
     fetcher: str = "python",
+    compressed: bool = True,
 ) -> tuple[int | None, str | None, dict[str, str], bytes, str]:
-    return _fetch(url, headers, timeout_seconds, fetcher, max_bytes=max_bytes)
+    return _fetch(
+        url, headers, timeout_seconds, fetcher, max_bytes=max_bytes, compressed=compressed
+    )
 
 
 def _fetch(
@@ -30,14 +34,15 @@ def _fetch(
     timeout_seconds: int,
     fetcher: str,
     max_bytes: int | None,
+    compressed: bool,
 ) -> tuple[int | None, str | None, dict[str, str], bytes, str]:
     if fetcher == "curl":
-        return _fetch_curl(url, headers, timeout_seconds, max_bytes)
+        return _fetch_curl(url, headers, timeout_seconds, max_bytes, compressed=compressed)
     if fetcher == "python_then_curl":
         try:
             return _fetch_python(url, headers, timeout_seconds, max_bytes, "python_then_curl")
         except Exception:
-            return _fetch_curl(url, headers, timeout_seconds, max_bytes)
+            return _fetch_curl(url, headers, timeout_seconds, max_bytes, compressed=compressed)
     return _fetch_python(url, headers, timeout_seconds, max_bytes, fetcher)
 
 
@@ -66,13 +71,15 @@ def _fetch_curl(
     headers: dict[str, str],
     timeout_seconds: int,
     max_bytes: int | None,
+    *,
+    compressed: bool = True,
 ) -> tuple[int | None, str | None, dict[str, str], bytes, str]:
     curl_headers = dict(headers or {})
     if max_bytes is not None:
         if "range" not in {k.lower() for k in curl_headers}:
             curl_headers["Range"] = f"bytes=0-{max_bytes - 1}"
         headers_dict, body, final_url, status_code = _run_curl(
-            url, curl_headers, timeout_seconds
+            url, curl_headers, timeout_seconds, compressed=compressed
         )
         body = body[:max_bytes]
         return status_code, final_url, headers_dict, body, "curl"
@@ -88,7 +95,7 @@ def _fetch_curl(
         range_headers = dict(curl_headers)
         range_headers["Range"] = f"bytes={total}-{total + chunk_size - 1}"
         headers_dict, body, chunk_final_url, chunk_status = _run_curl(
-            url, range_headers, timeout_seconds
+            url, range_headers, timeout_seconds, compressed=compressed
         )
         if chunk_status == 416:
             break
@@ -111,12 +118,13 @@ def _run_curl(
     url: str,
     headers: dict[str, str],
     timeout_seconds: int,
+    *,
+    compressed: bool = True,
 ) -> tuple[dict[str, str], bytes, str | None, int | None]:
     args = [
         "curl",
         "-4",
         "-fsSL",
-        "--compressed",
         "--max-time",
         str(timeout_seconds),
         "-D",
@@ -124,6 +132,8 @@ def _run_curl(
         "-w",
         "\nSVFINAL:%{url_effective}\nSVSTATUS:%{http_code}\n",
     ]
+    if compressed:
+        args.append("--compressed")
     for key, value in headers.items():
         args.extend(["-H", f"{key}: {value}"])
     args.append(url)

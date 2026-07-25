@@ -19,6 +19,7 @@ from .models import Article, Decision, Source, SourceTactic
 from .policy import resolve_policy
 from .source_overrides import (
     compile_pattern,
+    get_http_fetch_compressed,
     get_http_fetch_settings,
     normalize_source_overrides,
     should_allow_url,
@@ -396,6 +397,7 @@ def _run_tactic(
     fetcher, fetch_timeout_seconds, fetch_headers = get_http_fetch_settings(
         overrides, http_cfg.timeout_seconds
     )
+    fetch_compressed = get_http_fetch_compressed(overrides)
     fetch_cfg = overrides.get("fetch", {}) if isinstance(overrides, dict) else {}
     use_vpn = bool(fetch_cfg.get("use_vpn", True)) if isinstance(fetch_cfg, dict) else True
     request_headers = {"User-Agent": http_cfg.user_agent}
@@ -652,6 +654,7 @@ def _run_tactic(
                 headers=request_headers,
                 timeout_seconds=fetch_timeout_seconds,
                 fetcher=fetcher,
+                compressed=fetch_compressed,
             )
         except Exception as exc:  # noqa: BLE001
             http_status = None

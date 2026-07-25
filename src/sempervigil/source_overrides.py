@@ -25,6 +25,7 @@ DEFAULT_FETCH = {
     "use_vpn": True,
     "http_fetcher": "python_then_curl",
     "http_timeout_seconds": None,
+    "http_compressed": True,
     "http_headers": {},
 }
 
@@ -75,6 +76,9 @@ def normalize_source_overrides(
         "use_vpn": _normalize_bool(fetch_raw.get("use_vpn"), DEFAULT_FETCH["use_vpn"]),
         "http_fetcher": _normalize_fetcher(fetch_raw.get("http_fetcher")),
         "http_timeout_seconds": _normalize_optional_int(fetch_raw.get("http_timeout_seconds")),
+        "http_compressed": _normalize_bool(
+            fetch_raw.get("http_compressed"), DEFAULT_FETCH["http_compressed"]
+        ),
         "http_headers": _normalize_dict(fetch_raw.get("http_headers")),
     }
     return {"discovery": discovery, "content": content, "fetch": fetch}
@@ -94,6 +98,12 @@ def get_http_fetch_settings(
         timeout_seconds = default_timeout_seconds
     headers_dict = _normalize_dict(headers)
     return fetcher, timeout_seconds, headers_dict
+
+
+def get_http_fetch_compressed(overrides: dict[str, Any] | None) -> bool:
+    fetch_cfg = overrides.get("fetch", {}) if isinstance(overrides, dict) else {}
+    compressed = fetch_cfg.get("http_compressed") if isinstance(fetch_cfg, dict) else None
+    return _normalize_bool(compressed, DEFAULT_FETCH["http_compressed"])
 
 
 def normalize_discovery_mode(
