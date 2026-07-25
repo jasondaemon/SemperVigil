@@ -170,6 +170,7 @@ workerFetch:
 workerFetchPublic:
   enabled: false
   replicaCount: 1
+  nodeSelector: {}
   resources: {}
 
 workerLlm:

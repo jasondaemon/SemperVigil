@@ -19,6 +19,10 @@ spec:
         app.kubernetes.io/component: worker-fetch-public
     spec:
       serviceAccountName: {{ include "sempervigil.serviceAccountName" . }}
+      {{- with .Values.workerFetchPublic.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       initContainers:
         - name: sempervigil-fix-perms
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
