@@ -171,6 +171,7 @@ from .storage import (
     mark_source_ingest_started,
     finalize_source_ingest_state,
     enqueue_source_ingest_job,
+    source_fetch_queue_name,
     get_pending_job_id_for_cve,
     list_queued_job_stats,
     search_cves,
@@ -231,6 +232,10 @@ QUEUE_WORKER_TYPES = {
         "validate_event_web_source",
         "promote_event_web_source_to_article",
         "rebuild_vendor_products",
+    ],
+    "fetch_public": [
+        "ingest_source",
+        "fetch_article_content",
     ],
     "llm_local": [
         "summarize_article_llm",
@@ -9604,7 +9609,14 @@ def _maybe_enqueue_fetch(
         delay = backoff[min(attempts - 1, len(backoff) - 1)]
         payload["not_before"] = utc_now_iso_offset(seconds=delay)
     priority = _article_priority(article)
-    enqueue_job(conn, "fetch_article_content", payload, priority=priority)
+    source = get_source(conn, source_id)
+    enqueue_job(
+        conn,
+        "fetch_article_content",
+        payload,
+        priority=priority,
+        queue_name=source_fetch_queue_name(source),
+    )
 
 
 def _is_terminal_content_error(content_error: str) -> bool:

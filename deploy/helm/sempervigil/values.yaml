@@ -167,6 +167,11 @@ workerFetch:
     dnsUpstreamPlainAddresses: 10.43.0.10:53
     dnsRebindingProtectionExemptHostnames: media-postgres.media-postgres.svc.cluster.local,sempervigil-searxng.sempervigil.svc.cluster.local,sempervigil-admin.sempervigil.svc.cluster.local,sempervigil-web.sempervigil.svc.cluster.local
 
+workerFetchPublic:
+  enabled: false
+  replicaCount: 1
+  resources: {}
+
 workerLlm:
   enabled: true
   replicaCount: 1

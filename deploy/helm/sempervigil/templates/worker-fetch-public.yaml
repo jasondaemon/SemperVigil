@@ -1,0 +1,124 @@
+{{- if .Values.workerFetchPublic.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sempervigil.componentFullname" (list . "worker-fetch-public") }}
+  labels:
+    {{- include "sempervigil.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker-fetch-public
+spec:
+  replicas: {{ .Values.workerFetchPublic.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "sempervigil.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker-fetch-public
+  template:
+    metadata:
+      labels:
+        {{- include "sempervigil.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker-fetch-public
+    spec:
+      serviceAccountName: {{ include "sempervigil.serviceAccountName" . }}
+      initContainers:
+        - name: sempervigil-fix-perms
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          command: ["sh","-lc"]
+          args:
+            - >-
+              set -e;
+              umask {{ .Values.env.SV_UMASK | quote }};
+              SV_FIX_SITE_PERMS=1 SV_UID={{ .Values.env.SV_UID | quote }} SV_GID={{ .Values.env.SV_GID | quote }} sh /app/tools/ensure-dirs.sh
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: logs
+              mountPath: /log
+            {{- if .Values.storage.tools.enabled }}
+            - name: tools
+              mountPath: /tools
+              readOnly: true
+            {{- end }}
+            - name: site-src
+              mountPath: /site-src
+            - name: site-public
+              mountPath: /site
+      containers:
+        - name: sempervigil-worker-fetch-public
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            runAsUser: {{ .Values.env.SV_UID | int }}
+            runAsGroup: {{ .Values.env.SV_GID | int }}
+          command: ["sh","-lc"]
+          args:
+            - >-
+              set -e;
+              umask {{ .Values.env.SV_UMASK | quote }};
+              sh /app/tools/ensure-dirs.sh;
+              PYTHONPATH=/app/src python -m sempervigil.worker --queue fetch_public --sleep 5 --lease-seconds 900
+          envFrom:
+            - configMapRef:
+                name: {{ include "sempervigil.fullname" . }}-env
+          env:
+            - name: SV_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (include "sempervigil.secretName" .) .Values.externalDatabase.existingSecret }}
+                  key: {{ default "url" .Values.externalDatabase.urlKey }}
+            - name: SV_WORKER_QUEUE
+              value: "fetch_public"
+            - name: SV_WORKER_SCHEDULER_HOOKS_ENABLED
+              value: "0"
+            - name: SEMPERVIGIL_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sempervigil.appSecretName" . }}
+                  key: SEMPERVIGIL_MASTER_KEY
+            - name: SEMPERVIGIL_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sempervigil.appSecretName" . }}
+                  key: SEMPERVIGIL_KEY_ID
+            - name: NVD_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sempervigil.appSecretName" . }}
+                  key: NVD_API_KEY
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: logs
+              mountPath: /log
+            {{- if .Values.storage.tools.enabled }}
+            - name: tools
+              mountPath: /tools
+              readOnly: true
+            {{- end }}
+            - name: site-src
+              mountPath: /site-src
+            - name: site-public
+              mountPath: /site
+          resources:
+            {{- toYaml .Values.workerFetchPublic.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "sempervigil.storageClaimName" (list . .Values.storage.data "data") }}
+        - name: logs
+          {{- include "sempervigil.logsVolume" . | nindent 10 }}
+        {{- if .Values.storage.tools.enabled }}
+        - name: tools
+          persistentVolumeClaim:
+            claimName: {{ include "sempervigil.storageClaimName" (list . .Values.storage.tools "tools") }}
+        {{- end }}
+        - name: site-src
+          persistentVolumeClaim:
+            claimName: {{ include "sempervigil.storageClaimName" (list . .Values.storage.siteSrc "siteSrc") }}
+        - name: site-public
+          persistentVolumeClaim:
+            claimName: {{ include "sempervigil.storageClaimName" (list . .Values.storage.sitePublic "sitePublic") }}
+{{- end }}

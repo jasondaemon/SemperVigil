@@ -98,6 +98,14 @@ def get_queue_name_for_job_type(job_type: str) -> str:
     return _QUEUE_NAME_BY_JOB_TYPE.get(job_type, "default")
 
 
+def source_fetch_queue_name(source: Source | None) -> str:
+    if source is None:
+        return "fetch"
+    overrides = source.overrides if isinstance(source.overrides, dict) else {}
+    fetch_cfg = overrides.get("fetch") if isinstance(overrides.get("fetch"), dict) else {}
+    return "fetch" if bool(fetch_cfg.get("use_vpn", True)) else "fetch_public"
+
+
 def _queue_name_case_sql(job_type_expr: str = "job_type") -> str:
     parts = ["CASE"]
     for job_type, queue_name in sorted(_QUEUE_NAME_BY_JOB_TYPE.items()):
@@ -379,6 +387,7 @@ def enqueue_source_ingest_job(
         payload["limit"] = limit
     job_id = _new_job_id()
     payload_json = json_dumps(payload)
+    queue_name = source_fetch_queue_name(source)
     conn.execute(
         """
         INSERT INTO jobs
@@ -400,7 +409,7 @@ def enqueue_source_ingest_job(
             None,
             None,
             None,
-            "fetch",
+            queue_name,
             0,
             0,
             now,
@@ -2739,7 +2748,7 @@ def get_runner_health_stats(
                 health = "starting"
         counts[(runner_type, health)] = counts.get((runner_type, health), 0) + 1
     rows: list[dict[str, object]] = []
-    known_runner_types = ["fetch", "llm_local", "openai", "build"]
+    known_runner_types = ["fetch", "fetch_public", "llm_local", "openai", "build"]
     known_health_states = ["active", "starting", "idle", "stale"]
     for runner_type in known_runner_types:
         for health in known_health_states:
@@ -2767,7 +2776,7 @@ def get_queue_worker_health(
         SELECT {effective_queue_name} AS effective_queue_name, COUNT(*)
         FROM jobs
         WHERE status = 'running'
-          AND {effective_queue_name} IN ('fetch', 'llm_local', 'openai', 'build')
+          AND {effective_queue_name} IN ('fetch', 'fetch_public', 'llm_local', 'openai', 'build')
         GROUP BY effective_queue_name
         """
     ).fetchall() if _table_exists(conn, "jobs") else []
@@ -2789,7 +2798,7 @@ def get_queue_worker_health(
         }.get(health)
         if target is not None:
             target[runner_type] = target.get(runner_type, 0) + count
-    queue_names = ["fetch", "llm_local", "openai", "build"]
+    queue_names = ["fetch", "fetch_public", "llm_local", "openai", "build"]
     rows: list[dict[str, object]] = []
     for queue_name in queue_names:
         queued = int((queue_rows.get(queue_name) or {}).get("queued") or 0)
