@@ -20,6 +20,7 @@ from .policy import resolve_policy
 from .source_overrides import (
     compile_pattern,
     get_http_fetch_compressed,
+    get_http_fetch_range_chunks,
     get_http_fetch_settings,
     normalize_source_overrides,
     should_allow_url,
@@ -398,6 +399,7 @@ def _run_tactic(
         overrides, http_cfg.timeout_seconds
     )
     fetch_compressed = get_http_fetch_compressed(overrides)
+    fetch_range_chunks = get_http_fetch_range_chunks(overrides)
     fetch_cfg = overrides.get("fetch", {}) if isinstance(overrides, dict) else {}
     use_vpn = bool(fetch_cfg.get("use_vpn", True)) if isinstance(fetch_cfg, dict) else True
     request_headers = {"User-Agent": http_cfg.user_agent}
@@ -655,6 +657,7 @@ def _run_tactic(
                 timeout_seconds=fetch_timeout_seconds,
                 fetcher=fetcher,
                 compressed=fetch_compressed,
+                range_chunks=fetch_range_chunks,
             )
         except Exception as exc:  # noqa: BLE001
             http_status = None

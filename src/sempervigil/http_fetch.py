@@ -11,8 +11,17 @@ def fetch_bytes(
     timeout_seconds: int,
     fetcher: str = "python",
     compressed: bool = True,
+    range_chunks: bool = True,
 ) -> tuple[int | None, str | None, dict[str, str], bytes, str]:
-    return _fetch(url, headers, timeout_seconds, fetcher, max_bytes=None, compressed=compressed)
+    return _fetch(
+        url,
+        headers,
+        timeout_seconds,
+        fetcher,
+        max_bytes=None,
+        compressed=compressed,
+        range_chunks=range_chunks,
+    )
 
 
 def fetch_prefix(
@@ -22,9 +31,16 @@ def fetch_prefix(
     max_bytes: int = 8192,
     fetcher: str = "python",
     compressed: bool = True,
+    range_chunks: bool = True,
 ) -> tuple[int | None, str | None, dict[str, str], bytes, str]:
     return _fetch(
-        url, headers, timeout_seconds, fetcher, max_bytes=max_bytes, compressed=compressed
+        url,
+        headers,
+        timeout_seconds,
+        fetcher,
+        max_bytes=max_bytes,
+        compressed=compressed,
+        range_chunks=range_chunks,
     )
 
 
@@ -35,14 +51,29 @@ def _fetch(
     fetcher: str,
     max_bytes: int | None,
     compressed: bool,
+    range_chunks: bool,
 ) -> tuple[int | None, str | None, dict[str, str], bytes, str]:
     if fetcher == "curl":
-        return _fetch_curl(url, headers, timeout_seconds, max_bytes, compressed=compressed)
+        return _fetch_curl(
+            url,
+            headers,
+            timeout_seconds,
+            max_bytes,
+            compressed=compressed,
+            range_chunks=range_chunks,
+        )
     if fetcher == "python_then_curl":
         try:
             return _fetch_python(url, headers, timeout_seconds, max_bytes, "python_then_curl")
         except Exception:
-            return _fetch_curl(url, headers, timeout_seconds, max_bytes, compressed=compressed)
+            return _fetch_curl(
+                url,
+                headers,
+                timeout_seconds,
+                max_bytes,
+                compressed=compressed,
+                range_chunks=range_chunks,
+            )
     return _fetch_python(url, headers, timeout_seconds, max_bytes, fetcher)
 
 
@@ -73,8 +104,16 @@ def _fetch_curl(
     max_bytes: int | None,
     *,
     compressed: bool = True,
+    range_chunks: bool = True,
 ) -> tuple[int | None, str | None, dict[str, str], bytes, str]:
     curl_headers = dict(headers or {})
+    if not range_chunks:
+        headers_dict, body, final_url, status_code = _run_curl(
+            url, curl_headers, timeout_seconds, compressed=compressed
+        )
+        if max_bytes is not None:
+            body = body[:max_bytes]
+        return status_code, final_url, headers_dict, body, "curl"
     if max_bytes is not None:
         if "range" not in {k.lower() for k in curl_headers}:
             curl_headers["Range"] = f"bytes=0-{max_bytes - 1}"

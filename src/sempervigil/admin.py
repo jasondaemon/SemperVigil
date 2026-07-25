@@ -47,6 +47,7 @@ from .worker import (
 from .http_fetch import fetch_prefix
 from .source_overrides import (
     get_http_fetch_compressed,
+    get_http_fetch_range_chunks,
     get_http_fetch_settings,
     normalize_source_overrides,
 )
@@ -2366,6 +2367,7 @@ def sources_test(
         overrides, config.ingest.http.timeout_seconds
     )
     fetch_compressed = get_http_fetch_compressed(overrides)
+    fetch_range_chunks = get_http_fetch_range_chunks(overrides)
     result = process_source(
         source=source_to_model(source),
         config=config,
@@ -2435,6 +2437,7 @@ def sources_test(
                 max_bytes=8192,
                 fetcher=fetcher,
                 compressed=fetch_compressed,
+                range_chunks=fetch_range_chunks,
             )
             prefix_bytes = prefix_bytes.lstrip()
             prefix_text = prefix_bytes.decode("utf-8", errors="ignore")
