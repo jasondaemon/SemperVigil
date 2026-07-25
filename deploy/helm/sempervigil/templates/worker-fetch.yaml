@@ -151,6 +151,8 @@ spec:
             {{- end }}
             - name: site-src
               mountPath: /site-src
+            - name: site-public
+              mountPath: /site
           resources:
             {{- toYaml .Values.workerFetch.resources | nindent 12 }}
       volumes:
