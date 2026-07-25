@@ -27,6 +27,7 @@ DEFAULT_FETCH = {
     "http_timeout_seconds": None,
     "http_compressed": True,
     "http_range_chunks": True,
+    "http_version": None,
     "http_headers": {},
 }
 
@@ -83,6 +84,7 @@ def normalize_source_overrides(
         "http_range_chunks": _normalize_bool(
             fetch_raw.get("http_range_chunks"), DEFAULT_FETCH["http_range_chunks"]
         ),
+        "http_version": _normalize_http_version(fetch_raw.get("http_version")),
         "http_headers": _normalize_dict(fetch_raw.get("http_headers")),
     }
     return {"discovery": discovery, "content": content, "fetch": fetch}
@@ -114,6 +116,12 @@ def get_http_fetch_range_chunks(overrides: dict[str, Any] | None) -> bool:
     fetch_cfg = overrides.get("fetch", {}) if isinstance(overrides, dict) else {}
     range_chunks = fetch_cfg.get("http_range_chunks") if isinstance(fetch_cfg, dict) else None
     return _normalize_bool(range_chunks, DEFAULT_FETCH["http_range_chunks"])
+
+
+def get_http_fetch_version(overrides: dict[str, Any] | None) -> str | None:
+    fetch_cfg = overrides.get("fetch", {}) if isinstance(overrides, dict) else {}
+    version = fetch_cfg.get("http_version") if isinstance(fetch_cfg, dict) else None
+    return _normalize_http_version(version)
 
 
 def normalize_discovery_mode(
@@ -220,6 +228,15 @@ def _normalize_fetcher(value: Any) -> str:
     if raw in {"python", "curl", "python_then_curl"}:
         return raw
     return DEFAULT_FETCH["http_fetcher"]
+
+
+def _normalize_http_version(value: Any) -> str | None:
+    raw = str(value or "").strip().lower()
+    if raw in {"1", "1.1", "http1", "http1.1", "http/1.1"}:
+        return "1.1"
+    if raw in {"2", "2.0", "http2", "http/2", "http/2.0"}:
+        return "2"
+    return None
 
 
 def _normalize_dict(value: Any) -> dict[str, str]:

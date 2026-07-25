@@ -49,6 +49,7 @@ from .source_overrides import (
     get_http_fetch_compressed,
     get_http_fetch_range_chunks,
     get_http_fetch_settings,
+    get_http_fetch_version,
     normalize_source_overrides,
 )
 from .pipelines.content_fetch import fetch_article_content
@@ -2368,6 +2369,7 @@ def sources_test(
     )
     fetch_compressed = get_http_fetch_compressed(overrides)
     fetch_range_chunks = get_http_fetch_range_chunks(overrides)
+    fetch_http_version = get_http_fetch_version(overrides)
     result = process_source(
         source=source_to_model(source),
         config=config,
@@ -2438,6 +2440,7 @@ def sources_test(
                 fetcher=fetcher,
                 compressed=fetch_compressed,
                 range_chunks=fetch_range_chunks,
+                http_version=fetch_http_version,
             )
             prefix_bytes = prefix_bytes.lstrip()
             prefix_text = prefix_bytes.decode("utf-8", errors="ignore")

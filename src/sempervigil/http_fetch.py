@@ -12,6 +12,7 @@ def fetch_bytes(
     fetcher: str = "python",
     compressed: bool = True,
     range_chunks: bool = True,
+    http_version: str | None = None,
 ) -> tuple[int | None, str | None, dict[str, str], bytes, str]:
     return _fetch(
         url,
@@ -21,6 +22,7 @@ def fetch_bytes(
         max_bytes=None,
         compressed=compressed,
         range_chunks=range_chunks,
+        http_version=http_version,
     )
 
 
@@ -32,6 +34,7 @@ def fetch_prefix(
     fetcher: str = "python",
     compressed: bool = True,
     range_chunks: bool = True,
+    http_version: str | None = None,
 ) -> tuple[int | None, str | None, dict[str, str], bytes, str]:
     return _fetch(
         url,
@@ -41,6 +44,7 @@ def fetch_prefix(
         max_bytes=max_bytes,
         compressed=compressed,
         range_chunks=range_chunks,
+        http_version=http_version,
     )
 
 
@@ -52,6 +56,7 @@ def _fetch(
     max_bytes: int | None,
     compressed: bool,
     range_chunks: bool,
+    http_version: str | None,
 ) -> tuple[int | None, str | None, dict[str, str], bytes, str]:
     if fetcher == "curl":
         return _fetch_curl(
@@ -61,6 +66,7 @@ def _fetch(
             max_bytes,
             compressed=compressed,
             range_chunks=range_chunks,
+            http_version=http_version,
         )
     if fetcher == "python_then_curl":
         try:
@@ -73,6 +79,7 @@ def _fetch(
                 max_bytes,
                 compressed=compressed,
                 range_chunks=range_chunks,
+                http_version=http_version,
             )
     return _fetch_python(url, headers, timeout_seconds, max_bytes, fetcher)
 
@@ -110,11 +117,12 @@ def _fetch_curl(
     *,
     compressed: bool = True,
     range_chunks: bool = True,
+    http_version: str | None = None,
 ) -> tuple[int | None, str | None, dict[str, str], bytes, str]:
     curl_headers = dict(headers or {})
     if not range_chunks:
         headers_dict, body, final_url, status_code = _run_curl(
-            url, curl_headers, timeout_seconds, compressed=compressed
+            url, curl_headers, timeout_seconds, compressed=compressed, http_version=http_version
         )
         if max_bytes is not None:
             body = body[:max_bytes]
@@ -123,7 +131,7 @@ def _fetch_curl(
         if "range" not in {k.lower() for k in curl_headers}:
             curl_headers["Range"] = f"bytes=0-{max_bytes - 1}"
         headers_dict, body, final_url, status_code = _run_curl(
-            url, curl_headers, timeout_seconds, compressed=compressed
+            url, curl_headers, timeout_seconds, compressed=compressed, http_version=http_version
         )
         body = body[:max_bytes]
         return status_code, final_url, headers_dict, body, "curl"
@@ -139,7 +147,11 @@ def _fetch_curl(
         range_headers = dict(curl_headers)
         range_headers["Range"] = f"bytes={total}-{total + chunk_size - 1}"
         headers_dict, body, chunk_final_url, chunk_status = _run_curl(
-            url, range_headers, timeout_seconds, compressed=compressed
+            url,
+            range_headers,
+            timeout_seconds,
+            compressed=compressed,
+            http_version=http_version,
         )
         if chunk_status == 416:
             break
@@ -164,6 +176,7 @@ def _run_curl(
     timeout_seconds: int,
     *,
     compressed: bool = True,
+    http_version: str | None = None,
 ) -> tuple[dict[str, str], bytes, str | None, int | None]:
     args = [
         "curl",
@@ -178,6 +191,10 @@ def _run_curl(
     ]
     if compressed:
         args.append("--compressed")
+    if http_version == "1.1":
+        args.append("--http1.1")
+    elif http_version == "2":
+        args.append("--http2")
     for key, value in headers.items():
         args.extend(["-H", f"{key}: {value}"])
     args.append(url)
