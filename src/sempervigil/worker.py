@@ -5022,10 +5022,10 @@ def run_loop(
             )
             if result != _RUN_ONCE_IDLE:
                 claimed_jobs += 1
-            elif claimed_jobs == 0 and max_jobs is None and max_runtime_seconds is None:
-                time.sleep(sleep_seconds)
-                continue
             elif result == _RUN_ONCE_IDLE:
+                if max_jobs is None and max_runtime_seconds is None:
+                    time.sleep(sleep_seconds)
+                    continue
                 return 0
             if max_jobs is not None and claimed_jobs >= max_jobs:
                 return 0
