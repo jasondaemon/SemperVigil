@@ -136,6 +136,35 @@ body {
   padding: 20px;
 }
 
+.vpn-health-banner {
+  margin: 12px 20px 0;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #f59e0b;
+  background: #fff7ed;
+  color: #7c2d12;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.vpn-health-banner.down {
+  border-color: #dc2626;
+  background: #fef2f2;
+  color: #7f1d1d;
+}
+
+.vpn-health-banner.degraded {
+  border-color: #f59e0b;
+  background: #fffbeb;
+  color: #78350f;
+}
+
+.vpn-health-banner[hidden] {
+  display: none;
+}
+
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));

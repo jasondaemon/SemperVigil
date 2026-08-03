@@ -202,6 +202,42 @@ function wireActionMenus(root = document) {
     }
   });
 }
+function wireVpnHealthBanner() {
+  const banner = document.getElementById("vpn-health-banner");
+  if (!banner) {
+    return;
+  }
+  async function refresh() {
+    try {
+      const payload = await apiFetch("/admin/api/health/vpn");
+      const status = payload.status || "ok";
+      if (status === "ok") {
+        banner.hidden = true;
+        banner.textContent = "";
+        banner.className = "vpn-health-banner";
+        return;
+      }
+      const affected = Number(payload.recent_503_sources || 0);
+      const paused = Number(payload.paused_503_sources || 0);
+      const samples = Array.isArray(payload.sample_sources) ? payload.sample_sources.slice(0, 4) : [];
+      const details = [];
+      if (affected > 0) details.push(`${affected} recent VPN-backed source failures`);
+      if (paused > 0) details.push(`${paused} VPN-backed sources auto-paused`);
+      if (samples.length > 0) details.push(`examples: ${samples.join(", ")}`);
+      banner.className = `vpn-health-banner ${status}`;
+      banner.innerHTML = `
+        <strong>VPN fetch path ${esc(status)}</strong>
+        <span>${esc(details.join(" · ") || "Source fetches are reporting proxy failures.")}</span>
+      `;
+      banner.hidden = false;
+    } catch (err) {
+      console.error("vpn health check failed", err);
+      banner.hidden = true;
+    }
+  }
+  refresh();
+  setInterval(refresh, 60000);
+}
 function wireDashboard() {
   const jobCountsContainer = document.getElementById("dashboard-job-counts-table");
   const jobsPanel = document.getElementById("dashboard-job-counts");
@@ -6434,6 +6470,7 @@ function wireUtilities() {
 }
 document.addEventListener("DOMContentLoaded", () => {
   wireNavDropdowns();
+  wireVpnHealthBanner();
   wireEnqueueButtons();
   wireDashboard();
   wireUtilities();

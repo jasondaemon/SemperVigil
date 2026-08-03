@@ -1229,6 +1229,60 @@ def dashboard_metrics() -> dict[str, object]:
     return _build_dashboard_metrics_payload(conn)
 
 
+@app.get("/admin/api/health/vpn", dependencies=[Depends(_require_admin_token)])
+def vpn_health() -> dict[str, object]:
+    conn = _get_conn()
+    recent = conn.execute(
+        """
+        SELECT COUNT(DISTINCT h.source_id), MAX(h.ts::timestamptz)
+        FROM source_health_history h
+        JOIN sources s ON s.id = h.source_id
+        WHERE h.ok = 0
+          AND h.ts::timestamptz >= NOW() - INTERVAL '60 minutes'
+          AND COALESCE(h.last_error, '') ILIKE '%503%'
+          AND COALESCE(LOWER(s.overrides #>> '{fetch,use_vpn}') <> 'false', TRUE)
+        """
+    ).fetchone()
+    paused = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM sources
+        WHERE enabled = 0
+          AND COALESCE(paused_reason, '') LIKE 'auto_pause:error_streak:%'
+          AND COALESCE(last_error, '') ILIKE '%503%'
+          AND COALESCE(LOWER(overrides #>> '{fetch,use_vpn}') <> 'false', TRUE)
+        """
+    ).fetchone()
+    sample_rows = conn.execute(
+        """
+        SELECT DISTINCT s.name
+        FROM source_health_history h
+        JOIN sources s ON s.id = h.source_id
+        WHERE h.ok = 0
+          AND h.ts::timestamptz >= NOW() - INTERVAL '60 minutes'
+          AND COALESCE(h.last_error, '') ILIKE '%503%'
+          AND COALESCE(LOWER(s.overrides #>> '{fetch,use_vpn}') <> 'false', TRUE)
+        ORDER BY s.name
+        LIMIT 8
+        """
+    ).fetchall()
+    recent_failures = int(recent[0] or 0) if recent else 0
+    paused_sources = int(paused[0] or 0) if paused else 0
+    last_failure_at = recent[1].isoformat() if recent and recent[1] else None
+    status = "ok"
+    if paused_sources >= 5 or recent_failures >= 5:
+        status = "down"
+    elif paused_sources > 0 or recent_failures > 0:
+        status = "degraded"
+    return {
+        "status": status,
+        "recent_503_sources": recent_failures,
+        "paused_503_sources": paused_sources,
+        "last_failure_at": last_failure_at,
+        "sample_sources": [row[0] for row in sample_rows],
+    }
+
+
 @app.get("/admin/api/public-metrics/daily", dependencies=[Depends(_require_admin_token)])
 def public_metrics_daily(days: int = 14) -> dict[str, object]:
     conn = _get_conn()

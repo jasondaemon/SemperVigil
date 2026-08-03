@@ -4,15 +4,16 @@
     <meta charset="utf-8">
     <title>{% if nav_active %}SV {{ nav_active|capitalize }}{% if nav_subactive %} — {{ nav_subactive|replace('_', ' ')|title }}{% endif %}{% else %}SemperVigil Admin{% endif %}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="/ui/static/admin/admin.css?v=20260217-05">
+    <link rel="stylesheet" href="/ui/static/admin/admin.css?v=20260803-01">
   </head>
   <body data-timezone="{{ timezone or '' }}" data-queue-stale-minutes="{{ queue_stale_minutes or '' }}">
     {% if show_nav|default(true) %}
       {% include "admin/_nav.html" %}
     {% endif %}
+    <div id="vpn-health-banner" class="vpn-health-banner" hidden></div>
     <main class="container">
       {% block content %}{% endblock %}
     </main>
-    <script src="/ui/static/admin/admin.js?v=20260408-01"></script>
+    <script src="/ui/static/admin/admin.js?v=20260803-01"></script>
   </body>
 </html>

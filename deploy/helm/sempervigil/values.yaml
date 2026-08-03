@@ -152,6 +152,7 @@ orchestrator:
 workerFetch:
   enabled: true
   replicaCount: 2
+  nodeSelector: {}
   resources: {}
   noProxy: "localhost,127.0.0.1,sempervigil-admin,sempervigil-web,sempervigil-searxng,sempervigil-db"
   vpn:
