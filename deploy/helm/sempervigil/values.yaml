@@ -133,6 +133,10 @@ admin:
   enabled: true
   replicaCount: 1
   nodeSelector: {}
+  image:
+    repository: ""
+    tag: ""
+    pullPolicy: ""
   service:
     type: ClusterIP
     port: 8000

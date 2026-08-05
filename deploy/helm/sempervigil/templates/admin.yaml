@@ -1,4 +1,7 @@
 {{- if .Values.admin.enabled }}
+{{- $adminImageRepository := default .Values.image.repository .Values.admin.image.repository }}
+{{- $adminImageTag := default .Values.image.tag .Values.admin.image.tag }}
+{{- $adminImagePullPolicy := default .Values.image.pullPolicy .Values.admin.image.pullPolicy }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -25,8 +28,8 @@ spec:
       {{- end }}
       initContainers:
         - name: sempervigil-fix-perms
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: "{{ $adminImageRepository }}:{{ $adminImageTag }}"
+          imagePullPolicy: {{ $adminImagePullPolicy }}
           securityContext:
             runAsUser: 0
             runAsGroup: 0
@@ -52,8 +55,8 @@ spec:
               mountPath: /site
       containers:
         - name: sempervigil-admin
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: "{{ $adminImageRepository }}:{{ $adminImageTag }}"
+          imagePullPolicy: {{ $adminImagePullPolicy }}
           securityContext:
             runAsUser: {{ .Values.env.SV_UID | int }}
             runAsGroup: {{ .Values.env.SV_GID | int }}
