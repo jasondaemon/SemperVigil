@@ -1249,11 +1249,11 @@ def vpn_health() -> dict[str, object]:
         SELECT COUNT(*)
         FROM sources
         WHERE enabled = 0
-          AND COALESCE(paused_reason, '') LIKE 'auto_pause:error_streak:%'
+          AND COALESCE(paused_reason, '') LIKE %s
           AND COALESCE(last_error, '') ILIKE %s
           AND COALESCE(LOWER(overrides #>> '{fetch,use_vpn}') <> 'false', TRUE)
         """,
-        ("%503%",),
+        ("auto_pause:error_streak:%", "%503%"),
     ).fetchone()
     sample_rows = conn.execute(
         """
