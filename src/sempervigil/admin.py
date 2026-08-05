@@ -1239,9 +1239,10 @@ def vpn_health() -> dict[str, object]:
         JOIN sources s ON s.id = h.source_id
         WHERE h.ok = 0
           AND h.ts::timestamptz >= NOW() - INTERVAL '60 minutes'
-          AND COALESCE(h.last_error, '') ILIKE '%503%'
+          AND COALESCE(h.last_error, '') ILIKE %s
           AND COALESCE(LOWER(s.overrides #>> '{fetch,use_vpn}') <> 'false', TRUE)
-        """
+        """,
+        ("%503%",),
     ).fetchone()
     paused = conn.execute(
         """
@@ -1249,9 +1250,10 @@ def vpn_health() -> dict[str, object]:
         FROM sources
         WHERE enabled = 0
           AND COALESCE(paused_reason, '') LIKE 'auto_pause:error_streak:%'
-          AND COALESCE(last_error, '') ILIKE '%503%'
+          AND COALESCE(last_error, '') ILIKE %s
           AND COALESCE(LOWER(overrides #>> '{fetch,use_vpn}') <> 'false', TRUE)
-        """
+        """,
+        ("%503%",),
     ).fetchone()
     sample_rows = conn.execute(
         """
@@ -1260,11 +1262,12 @@ def vpn_health() -> dict[str, object]:
         JOIN sources s ON s.id = h.source_id
         WHERE h.ok = 0
           AND h.ts::timestamptz >= NOW() - INTERVAL '60 minutes'
-          AND COALESCE(h.last_error, '') ILIKE '%503%'
+          AND COALESCE(h.last_error, '') ILIKE %s
           AND COALESCE(LOWER(s.overrides #>> '{fetch,use_vpn}') <> 'false', TRUE)
         ORDER BY s.name
         LIMIT 8
-        """
+        """,
+        ("%503%",),
     ).fetchall()
     recent_failures = int(recent[0] or 0) if recent else 0
     paused_sources = int(paused[0] or 0) if paused else 0

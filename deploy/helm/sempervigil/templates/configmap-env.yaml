@@ -54,3 +54,4 @@ data:
   SV_LLM_MAX_TOKENS: {{ .Values.env.SV_LLM_MAX_TOKENS | quote }}
   SV_LLM_MAX_INFLIGHT: {{ .Values.env.SV_LLM_MAX_INFLIGHT | quote }}
   SV_LLM_MAX_TIMEOUT_RETRIES: {{ .Values.env.SV_LLM_MAX_TIMEOUT_RETRIES | quote }}
+  SV_GRAFANA_LOGS_URL: {{ .Values.env.SV_GRAFANA_LOGS_URL | quote }}
