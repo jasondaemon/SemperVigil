@@ -51,7 +51,7 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 <details open><summary><span>0 / Baseline and export contract</span><span class="badge active">In progress</span></summary>
 <ul>
 <li><span class="badge done">Verified</span> Read-only queue, inference, and build measurement tool.</li>
-<li><span class="badge done">Verified</span> 58 offline checks; complete-day selection, dates, CVE-only operation, interruption safety, fingerprints, bounded catch-up, shared locking, and chart wiring.</li>
+<li><span class="badge done">Verified</span> 84 offline checks; export correctness, archive locking, chart wiring, and read-only public release checks.</li>
 <li><span class="badge done">Verified</span> Initial public samples parse and counts match their contents.</li>
 <li><span class="badge done">Deployed</span> Serializer parity, atomic day replacement, archive locking, and dependency-aware invalidation.</li>
 <li><span class="badge active">Working</span> Sampled production completeness passes; full historical repair remains paused.</li>
@@ -59,7 +59,7 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 <li><span class="badge">Pending</span> 30-50 curated event evaluation cases and measured latency budgets.</li>
 </ul><p class="gate">Exit: completeness issues understood and tested; queue behavior explained; safe Events capacity established. A query covering 72 hours is not a sustained 72-hour observation.</p></details>
 <details open><summary><span>1 / Stability and security</span><span class="badge active">Started</span></summary>
-<ul><li>Offline test separation delivered; repair older integration test collection and add release checks.</li><li>Validate publication activation, historical retention, enrichment invalidation, and public freshness.</li><li>Harden admin authentication, sessions, fetch destinations, and service network access in separate releases.</li><li>Measure resource needs before setting Ollama limits; lock tested dependencies and reconcile architecture docs.</li></ul>
+<ul><li><span class="badge done">Verified live</span> Read-only release checker covers five public pages, linked local assets, feed index freshness, and sampled daily JSON. <a href="PUBLICATION_CHECKS.md">Operator instructions</a>.</li><li>Browser interaction checks and disposable-database integration gates remain pending.</li><li>Validate publication activation, historical retention, enrichment invalidation, and public freshness.</li><li>Harden admin authentication, sessions, fetch destinations, and service network access in separate releases.</li><li>Measure resource needs before setting Ollama limits; lock tested dependencies and reconcile architecture docs.</li></ul>
 <p class="gate">Exit: site regression checks pass; runtime paths remain functional; no build-time, resource, or fresh-content regression. Roll back each change independently.</p></details>
 <details open><summary><span>2 / Evidence and incident correctness</span><span class="badge">Planned</span></summary>
 <ul><li>Claims linked to sources and passages, with uncertainty and date precision.</li><li>Incident-aware matching; repeated breaches at one organization remain separate.</li><li>Independent evidence assessment, immutable revisions, and correction history.</li><li>Reject malformed reports and unsupported dates; preserve stable public URLs and last validated reports.</li></ul>
@@ -91,6 +91,7 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 <tr><td>Legacy integration tests</td><td>Existing syntax/stale-import problems and missing local dependencies; no full-suite pass claimed.</td><td>Stage 1</td></tr>
 </tbody></table></div></section>
 <section id="history"><h2>Change record</h2>
+<p><span class="badge done">September 18 / release checks</span> Added operator-run public checks and 26 offline regression cases. Live check passed at 16:33 UTC: five pages, 11 assets, index, and four day downloads. No runtime deployment, build, restart, or extra inference requested. Historical repair remains paused; browser execution and database completeness are separate gates.</p>
 <p><span class="badge done">06e047b</span> September 18: initial plan, audio feature scope, offline export checks, and read-only baseline collector committed and pushed. No runtime deployment.</p>
 <p><span class="badge done">76f724e</span> HTML tracker, representative serializer parity, completeness regression, and atomic daily JSON replacement.</p>
 <p><span class="badge done">1a4349c</span> Complete-day exports replace limited-window writes; archive CVE cap removed and suppressed articles filtered. Scoped manifest refresh preserves unrelated history.</p>

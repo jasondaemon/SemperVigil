@@ -317,3 +317,21 @@ working certificate validation, not disabled TLS validation.
 
 Retain previous images and the rollback snapshot. The next step is an observation
 window, then a small historical batch; full-backlog completeness is not claimed.
+
+## Read-only release gate (2026-09-18)
+
+Added `tools/check-publication.py` and `docs/PUBLICATION_CHECKS.md` without
+changing production images, configuration, scheduling, or application code.
+The previous `tools/hugo-smoke.sh` is unchanged and was not invoked.
+
+Live checks at 16:33 UTC passed: homepage, search, metrics, Events index, one
+linked event, 11 local CSS/JS assets, the 5,059-day index, and four downloads.
+September 18 contained 63 articles / 132 CVEs; September 8 contained 105 / 1,031;
+October 9, 2017 contained 2 / 0; May 1, 1990 contained 0 / 1. These are sampled
+contract checks, not a repeat DB-completeness audit. Feed generation time was
+16:33:15 UTC. Another normal production build had succeeded at 16:30:29 UTC.
+
+Offline suite: 84 passed, including 26 new checks for failures, malformed indices,
+incorrect units/counts/dates/links, and missing assets. Browser behavior, chart
+data freshness, integration tests, and a sustained observation window remain
+pending. Historical catch-up stays disabled during the observation window.
