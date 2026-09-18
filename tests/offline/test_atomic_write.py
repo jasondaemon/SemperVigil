@@ -4,8 +4,11 @@ import threading
 import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import pytest
 
 from sempervigil.utils import atomic_write_json, atomic_write_text
+
+pytestmark = pytest.mark.offline
 
 
 def test_atomic_write_text_no_partial_reads() -> None:

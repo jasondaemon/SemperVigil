@@ -1,4 +1,7 @@
 from sempervigil.worker import _derive_confidence, _has_event_qualifier, _non_event_reason
+import pytest
+
+pytestmark = pytest.mark.offline
 
 
 def test_non_event_reason_blocks_surveys():

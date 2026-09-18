@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import inspect
 from types import SimpleNamespace
+import pytest
 
 from sempervigil.worker import _feed_archive_dir, _refresh_feed_data_files
+
+pytestmark = pytest.mark.offline
 
 
 def test_feed_archive_dir_uses_env_override(tmp_path, monkeypatch) -> None:

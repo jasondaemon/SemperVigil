@@ -44,3 +44,5 @@ sempervigil = ["templates/**/*.html", "static/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
+markers = ["offline: isolated tests with no database connection"]
