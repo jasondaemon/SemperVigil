@@ -23,7 +23,7 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 <main>
 <nav aria-label="Tracker navigation"><a href="#now">Current work</a><a href="#stages">Implementation stages</a><a href="#risks">Open findings</a><a href="#history">Change record</a><a href="EVENTS_STAGED_IMPLEMENTATION_PLAN.md">Detailed plan</a><a href="STABILIZATION_VERIFICATION.md">Verification evidence</a></nav>
 <div class="grid">
-<div class="card"><span class="meta">VERIFIED BASELINE</span><strong>37 passing checks</strong>Offline suite. Complete-day, midnight-date, and CVE-only regressions pass; database integration and production rollout remain pending.</div>
+<div class="card"><span class="meta">VERIFIED BASELINE</span><strong>55 passing checks</strong>Offline suite, plus 12 read-only PostgreSQL mutation simulations. Production rollout remains pending.</div>
 <div class="card"><span class="meta">OBSERVED BUILD TIME</span><strong>21.7s / 27.5s</strong>Mean / p95 across 44 successful jobs. Whole-job duration, not Hugo alone.</div>
 <div class="card"><span class="meta">INFERENCE CONSTRAINT</span><strong>One job at a time</strong>Qwen 2.5 7B · 16K context · RTX 3060 12 GiB. Preserve serialization.</div>
 </div>
@@ -35,8 +35,8 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 <p><strong>Verified locally:</strong> recent-day exports now use the full-day serializer without the 500-CVE cap, honor article suppression, and reuse unchanged files. The historical article ID alias is retained. Atomic replacement and a 1,031-CVE fixture pass. No production deployment.</p>
 <p><strong>Read-only production evidence:</strong> inventory of 5,084 database dates took 0.40s; uncapped selections returned 1,031 and 982 unique CVEs in 0.14s and 0.06s. These timings exclude serialization and publishing.</p>
 <p><strong>Latest:</strong> stored article dates, midnight CVE dates, and CVE-only exports are corrected locally. In-memory serialization of the two large dates took 0.55s and 0.36s, excluding disk writes and publishing.</p>
-<p><strong>Release blocker:</strong> 50,540 CVEs have EPSS checks newer than their base timestamp, which is used for archive invalidation. Other enrichment dependencies have the same gap. This does not prove every public record is stale.</p>
-<p><strong>Next:</strong> dependency-aware historical invalidation, including removals and two articles without brief dates, with unchanged-file reuse. Then bounded repair and API-driven rollout. Historical repair has not run.</p>
+<p><strong>Freshness correction prepared:</strong> content fingerprints cover enrichment dependencies and removals instead of relying on base timestamps. The full scan measured 2.68-4.17s. Historical catch-up is bounded to 25 days per normal refresh with a soft five-second background budget; unchanged files are reused.</p>
+<p><strong>Next:</strong> verify shared-writer concurrency and coordinated image rollout, then API-driven publishing, public JSON comparisons, and actual build measurements. Historical production repair has not run.</p>
 </section>
 <h2>Release invariants</h2>
 <ul>
@@ -51,7 +51,7 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 <details open><summary><span>0 / Baseline and export contract</span><span class="badge active">In progress</span></summary>
 <ul>
 <li><span class="badge done">Verified</span> Read-only queue, inference, and build measurement tool.</li>
-<li><span class="badge done">Verified</span> 37 passing offline checks; complete-day selection, suppression, midnight dates, CVE-only operation, interruption safety, unchanged-file reuse; explicit disposable-database opt-in.</li>
+<li><span class="badge done">Verified</span> 55 passing offline checks; complete-day selection, suppression, midnight dates, CVE-only operation, interruption safety, dependency fingerprints, bounded historical catch-up, and unchanged-file reuse.</li>
 <li><span class="badge done">Verified</span> Initial public samples parse and counts match their contents.</li>
 <li><span class="badge done">Verified</span> Representative recent/history serializer parity; interrupted-write correction tested locally.</li>
 <li><span class="badge active">Working</span> Database-to-export completeness and invalidation.</li>
@@ -94,7 +94,8 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 <p><span class="badge done">06e047b</span> September 18: initial plan, audio feature scope, offline export checks, and read-only baseline collector committed and pushed. No runtime deployment.</p>
 <p><span class="badge done">76f724e</span> HTML tracker, representative serializer parity, completeness regression, and atomic daily JSON replacement.</p>
 <p><span class="badge done">1a4349c</span> Complete-day exports replace limited-window writes; archive CVE cap removed and suppressed articles filtered. Scoped manifest refresh preserves unrelated history.</p>
-<p><span class="badge active">Current slice</span> Stored article dates, midnight CVE date targeting, and CVE-only exports corrected locally. 37 offline checks pass. Full serialization measured read-only. Enrichment invalidation remains a release blocker; no production deployment.</p>
+<p><span class="badge done">caea3b0</span> Stored article dates, midnight CVE date targeting, and CVE-only exports corrected locally. Full serialization measured read-only.</p>
+<p><span class="badge active">Current slice</span> Dependency-aware fingerprints and bounded historical catch-up implemented. 55 offline checks and 12 read-only PostgreSQL simulations pass. Production deployment and repair remain pending.</p>
 </section>
 <footer>This is a repository-maintained status document, not live telemetry. Refresh this local file after updates. The assistant updates statuses, evidence, blockers, and release records with each implementation slice. No external assets, server, or network access are needed to read it.</footer>
 </main>

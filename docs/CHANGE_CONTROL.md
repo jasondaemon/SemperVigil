@@ -46,6 +46,27 @@ If you (Codex) propose edits affecting pipeline stability, you must:
 
 - Date: 2026-09-18
 - Author: Codex
+- Summary: Prepare dependency-aware feed invalidation and bounded historical repair.
+- Motivation / Problem: Base timestamps miss exported enrichment changes. Read-only
+  audit counted 50,540 CVEs with newer EPSS check timestamps; linked-data removals
+  also cannot be detected reliably by maximum base timestamps.
+- Files changed: feed_inventory.py; storage.py; worker.py; offline inventory and
+  archive tests; .env.example; build/verification/tracker documentation.
+- Risk / Impact: medium. Adds a read-only database fingerprint scan (observed
+  2.68-4.17s), not historical payload generation. Changed historical dates are
+  repaired in batches of at most 25 during normal refresh with a soft five-second
+  background budget. Explicit archive jobs retain full catch-up capability.
+- Verification: 55 offline tests; 12 PostgreSQL read-only synthetic mutation
+  simulations, including deletions and bookkeeping-only changes. No direct Hugo
+  invocation, production write, deployment, or LLM concurrency change.
+- Outcome: local implementation only. Coordinated writer rollout, concurrency
+  review, API publishing verification and actual build measurements remain.
+- Rollback plan: revert this commit before release. At rollout preserve previous
+  images and manifest snapshot; pause background repair with
+  SV_FEED_ARCHIVE_BACKGROUND_DAYS=0 if necessary. No production rollback needed now.
+
+- Date: 2026-09-18
+- Author: Codex
 - Summary: Correct daily refresh targeting and CVE-only exports locally.
 - Motivation / Problem: Recent exports returned before CVE processing when no
   articles existed; localized CVE timestamps could select the preceding archive

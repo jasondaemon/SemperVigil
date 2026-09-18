@@ -235,3 +235,36 @@ claim that adding checked-at timestamps handles all dependency changes. Compare 
 content-based day signature with transactional dirty-day tracking, measure the
 chosen mechanism, and preserve unchanged file bytes/mtime. Then repair historical
 omissions in a bounded job and validate publication through the API.
+
+## Dependency-aware refresh implemented locally
+
+`feed_inventory.py` now computes per-day content fingerprints in PostgreSQL.
+It covers exported base fields, products/vendors/versions, actors and aliases,
+event keys, tags, sources/icon availability, and KEV membership/due dates. Counts
+and signatures include removals; changes do not depend on base update timestamps.
+Missing article brief dates use the existing application-timezone fallback. Empty
+brief dates are also normalized in the corresponding article selection query.
+
+The archive now consumes this inventory, includes the rendering timezone and
+serializer version in its manifest state, and checks historical dates outside the
+recent selection. Normal refresh repairs at most 25 background days, with a soft
+five-second budget checked between days. Deferred dates retain their previous
+files and manifest state; subsequent refreshes resume. The explicit archive task
+still supports full catch-up. Unchanged payload files retain bytes and mtime.
+
+Verification: **55 offline tests passed**. Additional read-only PostgreSQL CTE
+simulations verified 12 cases: EPSS, KEV deadline, vendor name, actor alias, source
+label, event key, bookkeeping-only base timestamp, and removals of article/CVE
+product links, aliases, KEV membership, and event links. Fixtures shadowed tables
+within SELECT statements; no production rows/files were changed.
+
+Full database fingerprint scan: 5,084 dates, 35,187 articles, 50,673 CVEs. Initial
+run 4.173s; final query including icon availability 2.683s. These two observations
+are not a sustained latency distribution. No complete historical JSON dataset was
+loaded into Python or Hugo, and no LLM job was invoked.
+
+Release remains pending: verify coordinated writer rollout and shared-file
+concurrency, build through the platform API, compare published counts and fields,
+measure complete build duration and memory, and observe resumable historical
+repair. Production still runs its prior images. The freshness correction is
+implemented and tested, not yet a production recovery claim.

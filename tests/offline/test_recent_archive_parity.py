@@ -21,7 +21,7 @@ def export_case(tmp_path, monkeypatch, request):
     monkeypatch.setenv("SV_FEED_ARCHIVE_DIR", str(root))
     stats = [dict(day=day, article_count=1, article_updated_at=day + "T12:00:00Z",
                   cve_count=1, cve_updated_at=day + "T13:00:00Z")]
-    monkeypatch.setattr(worker, "list_feed_day_stats", lambda *a: stats)
+    monkeypatch.setattr(worker, "list_feed_content_inventory", lambda *a: stats)
     article = dict(id=7, source_id="example", source_name="Example",
                    title="Patch released", original_url="https://example.com/patch",
                    published_at=day + "T12:00:00Z", tags="security",
@@ -115,6 +115,7 @@ def test_recent_refresh_reuses_unchanged_day(export_case, monkeypatch):
 
 
 def test_refresh_does_not_rebuild_unrelated_history_on_version_change(export_case, monkeypatch):
+    monkeypatch.setenv("SV_FEED_ARCHIVE_BACKGROUND_DAYS", "0")
     day, path, source, refresh, stats = export_case
     refresh()
     old_path = path.parent / "1990-05-01.json"

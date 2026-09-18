@@ -97,6 +97,36 @@ These are safe **only if they do not modify the pipeline**:
 
 ## How to Verify (Exact Commands)
 
+### Incremental feed freshness (prepared September 2026)
+
+The staged upgrade branch uses database content fingerprints rather than only
+record counts and maximum update timestamps. Fingerprints include feed fields,
+linked products/vendors/versions, threat actors and aliases, event keys, article
+tags, source names/icon availability, and KEV membership/due dates. EPSS's public
+checked-at field is included; unrelated job/check timestamps are excluded.
+
+All dates are inspected, but only changed/missing days are serialized. Historical
+JSON stays outside Hugo input. Normal refresh prioritizes recent dates and repairs
+up to `SV_FEED_ARCHIVE_BACKGROUND_DAYS` historical dates (default 25). A five-second
+background budget is checked between days, not inside an individual day. Remaining
+work is reported as `deferred` and resumes on a subsequent refresh. Set the limit
+to 0 to pause background catch-up; the explicit archive job remains available.
+Existing manifests without content signatures are migrated through the same
+bounded process. Do not seed signatures for unverified old files.
+
+The database scan adds measured work even when nothing needs regeneration; initial
+read-only observations were 2.68-4.17 seconds. This is not a deployed build-time
+measurement. Monitor full job duration after release. Use the platform API to
+request a build; never run Hugo directly for validation.
+
+Multiple worker handlers also call the feed exporter. Release all affected writer
+images coherently; a builder-only rollout would leave old writers able to replace
+complete files with partial results. This branch has not yet been deployed.
+
+Offline verification: `python3 -m pytest -m offline --strict-markers -q`.
+
+### Existing container checks
+
 ```bash
 docker compose up -d --build
 docker compose exec build_worker sh -lc 'ls -la /site/index.html'

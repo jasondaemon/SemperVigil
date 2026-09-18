@@ -23,6 +23,8 @@ from urllib.parse import urlparse, parse_qsl, urlencode, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
 
+from .feed_inventory import list_feed_content_inventory
+
 from .config import (
     ConfigError,
     bootstrap_cve_settings,
@@ -56,7 +58,6 @@ from .storage import (
     list_articles_for_day,
     list_articles_per_day,
     list_cves_for_day,
-    list_feed_day_stats,
     claim_next_job,
     complete_job,
     enqueue_job,
@@ -1372,17 +1373,22 @@ def _refresh_feed_archive_days(
     manifest_path = feed_dir / "day-manifest.json"
     manifest = _load_json_file(manifest_path)
     manifest_days = manifest.get("days") if isinstance(manifest.get("days"), dict) else {}
-    current_stats = {str(row["day"]): row for row in list_feed_day_stats(conn)}
+    source_icons = tuple(sorted(path.stem for path in (Path(site_root) / "static" / "img").glob("*.png")))
+    current_stats = {str(row["day"]): row for row in list_feed_content_inventory(conn, source_icons)}
     current_days = set(current_stats.keys())
     existing_days = {path.stem for path in feed_days_dir.glob("*.json") if path.is_file() and path.stem}
     target_days = sorted(current_days | existing_days, reverse=True)
-    if days is not None:
-        target_days = [day for day in target_days if day in days]
     updated = 0
     removed = 0
     skipped = 0
 
     def _entry_state(row: dict[str, object]) -> dict[str, object]:
+        if row.get("content_signature"):
+            return {
+                "content_signature": row["content_signature"],
+                "schema_version": ARCHIVE_SCHEMA_VERSION,
+                "timezone": tz_name,
+            }
         return {
             "article_count": int(row.get("article_count") or 0),
             "article_updated_at": str(row.get("article_updated_at") or ""),
@@ -1396,7 +1402,28 @@ def _refresh_feed_archive_days(
             ),
         }
 
-    for day_key in target_days:
+    deferred = 0
+    background_days: set[str] = set()
+    background_started = None
+    if days is not None:
+        foreground = [day for day in target_days if day in days]
+        background = [day for day in target_days if day not in days and (
+            day not in current_stats or not (feed_days_dir / f"{day}.json").exists()
+            or manifest_days.get(day) != _entry_state(current_stats[day])
+        )]
+        limit = max(0, int(os.environ.get("SV_FEED_ARCHIVE_BACKGROUND_DAYS", "25")))
+        deferred = max(0, len(background) - limit)
+        background = background[:limit]
+        background_days = set(background)
+        target_days = foreground + background
+
+    for position, day_key in enumerate(target_days):
+        if day_key in background_days:
+            if background_started is None:
+                background_started = time.monotonic()
+            elif time.monotonic() - background_started >= 5:
+                deferred += len(target_days) - position
+                break
         stats = current_stats.get(day_key)
         existing_path = feed_days_dir / f"{day_key}.json"
         manifest_entry = manifest_days.get(day_key) if isinstance(manifest_days, dict) else None
@@ -1451,6 +1478,7 @@ def _refresh_feed_archive_days(
         updated=updated,
         removed=removed,
         skipped=skipped,
+        deferred=deferred,
         days=len(target_days),
         mode=mode,
     )
@@ -1458,6 +1486,7 @@ def _refresh_feed_archive_days(
         "updated": updated,
         "removed": removed,
         "skipped": skipped,
+        "deferred": deferred,
         "days": len(target_days),
         "mode": mode,
     }

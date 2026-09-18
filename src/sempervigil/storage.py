@@ -618,7 +618,7 @@ def list_articles_for_day(conn: Any, day: str) -> list[dict[str, object]]:
         FROM articles a
         LEFT JOIN sources s ON s.id = a.source_id
         {tag_join}
-        WHERE COALESCE(brief_day, SUBSTR(published_at, 1, 10), SUBSTR(ingested_at, 1, 10)) IN ({placeholders})
+        WHERE COALESCE(NULLIF(brief_day, ''), NULLIF(SUBSTR(published_at, 1, 10), ''), SUBSTR(ingested_at, 1, 10)) IN ({placeholders})
         GROUP BY a.id, s.name
         ORDER BY COALESCE(a.published_at, a.ingested_at) DESC
         """,
