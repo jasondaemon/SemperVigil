@@ -46,6 +46,23 @@ If you (Codex) propose edits affecting pipeline stability, you must:
 
 - Date: 2026-09-18
 - Author: Codex
+- Summary: Guarded production rollout of runtime 889b2de and chart 7eb3d14.
+- Scope: affected application workers/orchestrator only; retained old image
+  dependency layers, resource limits and Hugo commands. Background catch-up 0.
+- Verification: 58 offline tests; cross-node lock; runtime source hashes; rendered
+  runtime diffs limited to images/one environment setting; API build 42.725s and
+  next normal build 24.125s. First peak 428 MiB; 5,059 archive files retained.
+  Sampled public IDs exactly match DB. 85 public availability checks passed.
+  No new host OOM; API/etcd ready; no updated-pod restarts.
+- Incident: temporary rollback snapshot under /data caused one pre-rollout Hugo
+  build failure. Moved it to /log before verification; prior release stayed live.
+- Outcome: guarded rollout verified, historical background repair still paused.
+- Rollback: previous image tags retained in environment repo history; feed snapshot
+  retained outside Hugo inputs. Drain writers before restoring images/files; use
+  the API for publication. No database rollback or recurring backup introduced.
+
+- Date: 2026-09-18
+- Author: Codex
 - Summary: Serialize archive writers before the staged production rollout.
 - Motivation / Problem: The Hugo lock starts after JSON export; archive writers
   could otherwise race on day temporary files and manifest replacement.

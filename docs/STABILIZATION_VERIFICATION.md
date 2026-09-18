@@ -268,3 +268,52 @@ concurrency, build through the platform API, compare published counts and fields
 measure complete build duration and memory, and observe resumable historical
 repair. Production still runs its prior images. The freshness correction is
 implemented and tested, not yet a production recovery claim.
+
+## Guarded production rollout completed (September 18)
+
+This section supersedes the earlier not-deployed status. Runtime source revision
+`889b2de` is deployed to build, fetch/public-fetch, LLM/OpenAI, and orchestrator
+workers. Chart revision `7eb3d14` exposes the background-repair control; production
+sets it to **0**. Admin, web, database, Hugo commands/caches, memory limits, and
+single-LLM-job policy were not changed.
+
+Release images reused the verified production dependency layers through the
+source-only overlay recipe. Live source comparison found no runtime source drift
+against the old revision, only packaging metadata/OS metadata. Rendered server-side
+diffs contained image replacements and the single environment setting only.
+Cross-node filesystem locking passed before rollout. Job admission was paused and
+workers drained before replacement, then resumed. New runtime source hashes and
+the guarded setting match the repository on all six application roles.
+
+- Offline suite: **58 passed**; two Helm rendering cases confirm limit 0 is carried
+  into the runtime ConfigMap. A values-only addition would have been ignored.
+- API build `job_a9f9a8490ce9429dba15174198ea357b`: succeeded in **42.725s**;
+  Hugo reported **2.130s**. First pass regenerated 38 dates.
+- Next normal build `job_58014e4ea3b54c01988873f3d55a14ce`: succeeded in **24.125s**;
+  one changed date regenerated, 37 skipped. Compare cautiously to the prior
+  44-job mean of 21.70s: these are two new observations, not a new distribution.
+- Peak container memory during first validation: **448,327,680 bytes (428 MiB)**,
+  below the unchanged 16 GiB limit.
+- All **5,059** archive files retained. After first build, **5,021** retained both
+  byte hash and mtime. No historical background repair ran.
+- Public September 8: 105 articles / **1,031 CVEs**; September 15: 36 articles /
+  **982 CVEs**. Article/CVE ID sets exactly matched read-only database selection.
+- Historical samples October 9, 2017 and May 1, 1990 remained accessible.
+- Homepage, metrics, search, and sampled downloads returned HTTP 200; declared
+  counts and NVD-only CVE links passed. **85** cache-busted homepage samples over
+  about three minutes had no failures (maximum observed request 0.251s).
+- No new kernel OOM events on the build host; nodes reported no memory pressure;
+  Kubernetes API and etcd readiness passed. Updated pods had zero restarts.
+
+Operational error during preparation: the temporary rollback snapshot was first
+placed under `/data`, which Hugo consumes. A scheduled old-version build failed
+on its text metadata file. The prior release remained live. The snapshot was moved
+to `/log/release-snapshots/889b2de`, the `/data` staging directory removed, and both
+subsequent builds passed. This was an operator staging mistake, not a new-code
+failure; do not put rollback artifacts under Hugo data inputs again. No database
+backup or recurring backup task was added. Initial Python HTTP monitoring also
+encountered a local CA-store error; the reported availability samples use curl's
+working certificate validation, not disabled TLS validation.
+
+Retain previous images and the rollback snapshot. The next step is an observation
+window, then a small historical batch; full-backlog completeness is not claimed.

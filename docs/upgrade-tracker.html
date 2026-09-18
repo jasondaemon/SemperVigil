@@ -18,25 +18,25 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 <div class="eyebrow">Engineering roadmap / Living record</div>
 <h1>SemperVigil, next.</h1>
 <p>Keep the site available. Preserve the data contract. Turn incident coverage into something worth following.</p>
-<div class="eyebrow">Updated September 18, 2026 · Baseline and JSON verification in progress</div>
+<div class="eyebrow">Updated September 18, 2026 · Guarded production rollout verified</div>
 </header>
 <main>
 <nav aria-label="Tracker navigation"><a href="#now">Current work</a><a href="#stages">Implementation stages</a><a href="#risks">Open findings</a><a href="#history">Change record</a><a href="EVENTS_STAGED_IMPLEMENTATION_PLAN.md">Detailed plan</a><a href="STABILIZATION_VERIFICATION.md">Verification evidence</a></nav>
 <div class="grid">
-<div class="card"><span class="meta">VERIFIED BASELINE</span><strong>55 passing checks</strong>Offline suite, plus 12 read-only PostgreSQL mutation simulations. Production rollout remains pending.</div>
-<div class="card"><span class="meta">OBSERVED BUILD TIME</span><strong>21.7s / 27.5s</strong>Mean / p95 across 44 successful jobs. Whole-job duration, not Hugo alone.</div>
+<div class="card"><span class="meta">VERIFIED CHECKS</span><strong>58 passing checks</strong>Offline suite, plus 12 read-only PostgreSQL simulations and cross-node archive locking. Runtime 889b2de deployed.</div>
+<div class="card"><span class="meta">PRODUCTION BUILD TIME</span><strong>42.7s / 24.1s</strong>First repair build / next normal build. Previous 44-job mean: 21.7s. Peak container memory: 428 MiB.</div>
 <div class="card"><span class="meta">INFERENCE CONSTRAINT</span><strong>One job at a time</strong>Qwen 2.5 7B · 16K context · RTX 3060 12 GiB. Preserve serialization.</div>
 </div>
 <section id="now" class="notice">
 <span class="badge active">Current priority</span>
 <h2>Prove that every daily download is complete.</h2>
 <p>Initial checks established valid JSON and matching declared counts. A deeper audit found that valid JSON can still omit database records. Export completeness now takes precedence over adding event features.</p>
-<p>September 8: database inventory 1,031 CVEs; public download 10. September 15: inventory 982; download 5. The running exporter can overwrite a day from a limited recent selection; attribution of each existing discrepancy is still under investigation.</p>
-<p><strong>Verified locally:</strong> recent-day exports now use the full-day serializer without the 500-CVE cap, honor article suppression, and reuse unchanged files. The historical article ID alias is retained. Atomic replacement and a 1,031-CVE fixture pass. No production deployment.</p>
+<p><strong>Repaired in production:</strong> September 8 now has 1,031 CVEs (previously 10); September 15 has 982 (previously 5). Exact exported article/CVE ID sets match the database on both days.</p>
+<p><strong>Deployed:</strong> complete-day serialization, uncapped CVE downloads, suppression filtering, dependency fingerprints, and locked atomic archive writes. The first build refreshed 38 dates and retained all 5,059 files; 5,021 files retained identical bytes and timestamps.</p>
 <p><strong>Read-only production evidence:</strong> inventory of 5,084 database dates took 0.40s; uncapped selections returned 1,031 and 982 unique CVEs in 0.14s and 0.06s. These timings exclude serialization and publishing.</p>
-<p><strong>Latest:</strong> stored article dates, midnight CVE dates, and CVE-only exports are corrected locally. In-memory serialization of the two large dates took 0.55s and 0.36s, excluding disk writes and publishing.</p>
-<p><strong>Freshness correction prepared:</strong> content fingerprints cover enrichment dependencies and removals instead of relying on base timestamps. The full scan measured 2.68-4.17s. Historical catch-up is bounded to 25 days per normal refresh with a soft five-second background budget; unchanged files are reused.</p>
-<p><strong>Next:</strong> verify shared-writer concurrency and coordinated image rollout, then API-driven publishing, public JSON comparisons, and actual build measurements. Historical production repair has not run.</p>
+<p><strong>Availability:</strong> 85 public samples found no outage; homepage, metrics, search, and representative downloads passed. No new build-host OOM events; Kubernetes/etcd readiness passed.</p>
+<p><strong>Guard retained:</strong> historical catch-up is disabled in production (limit 0). The following normal build refreshed only one changed date and reused 37. Observe this release before enabling a small historical batch; the full backlog is not repaired yet.</p>
+<p><strong>Preparation incident:</strong> a rollback snapshot was mistakenly placed in Hugo's /data input and caused one pre-rollout build failure. It was moved to /log before validation; the prior published release remained live. No database backup or recurring backup task was added.</p>
 </section>
 <h2>Release invariants</h2>
 <ul>
@@ -51,10 +51,10 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 <details open><summary><span>0 / Baseline and export contract</span><span class="badge active">In progress</span></summary>
 <ul>
 <li><span class="badge done">Verified</span> Read-only queue, inference, and build measurement tool.</li>
-<li><span class="badge done">Verified</span> 55 passing offline checks; complete-day selection, suppression, midnight dates, CVE-only operation, interruption safety, dependency fingerprints, bounded historical catch-up, and unchanged-file reuse.</li>
+<li><span class="badge done">Verified</span> 58 offline checks; complete-day selection, dates, CVE-only operation, interruption safety, fingerprints, bounded catch-up, shared locking, and chart wiring.</li>
 <li><span class="badge done">Verified</span> Initial public samples parse and counts match their contents.</li>
-<li><span class="badge done">Verified</span> Representative recent/history serializer parity; interrupted-write correction tested locally.</li>
-<li><span class="badge active">Working</span> Database-to-export completeness and invalidation.</li>
+<li><span class="badge done">Deployed</span> Serializer parity, atomic day replacement, archive locking, and dependency-aware invalidation.</li>
+<li><span class="badge active">Working</span> Sampled production completeness passes; full historical repair remains paused.</li>
 <li><span class="badge">Pending</span> At least 72 hours of observations; stage attribution and GPU/RAM measurements.</li>
 <li><span class="badge">Pending</span> 30-50 curated event evaluation cases and measured latency budgets.</li>
 </ul><p class="gate">Exit: completeness issues understood and tested; queue behavior explained; safe Events capacity established. A query covering 72 hours is not a sustained 72-hour observation.</p></details>
@@ -80,10 +80,10 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 <section id="risks"><h2>Open findings</h2><div class="scroll"><table>
 <thead><tr><th>Finding</th><th>Evidence / consequence</th><th>State</th></tr></thead>
 <tbody>
-<tr><td>Missing daily CVEs</td><td>Public downloads differ substantially from database inventory on two sampled days.</td><td><span class="badge risk">Priority</span></td></tr>
-<tr><td>Limited recent-day rewrite</td><td>Offline test reproduces removal of a previously exported article.</td><td><span class="badge risk">Reproduced / open</span></td></tr>
-<tr><td>Interrupted public JSON write</td><td>Fault injection reproduced partial JSON. Existing atomic helper now used locally.</td><td><span class="badge active">Tested / not deployed</span></td></tr>
-<tr><td>Export limits and parity</td><td>200-CVE recent and 500-CVE historical selections; duplicate serializers need compatibility checks.</td><td>Investigating</td></tr>
+<tr><td>Missing daily CVEs</td><td>Two affected public days repaired and compared by exact ID sets; historical backlog not yet repaired.</td><td><span class="badge active">Partial recovery</span></td></tr>
+<tr><td>Limited recent-day rewrite</td><td>Complete-day export deployed; unchanged historical files retained.</td><td><span class="badge done">Corrected</span></td></tr>
+<tr><td>Interrupted public JSON write</td><td>Atomic helper and cross-node archive lock deployed.</td><td><span class="badge done">Corrected</span></td></tr>
+<tr><td>Export limits and parity</td><td>Daily download cap removed; UI query defaults retained; shared serializer tested.</td><td><span class="badge done">Verified samples</span></td></tr>
 <tr><td>Publication boundaries</td><td>Release activation and shared JSON updates require separate atomicity checks.</td><td>Pending</td></tr>
 <tr><td>Event contamination</td><td>Published Odido narrative contains unrelated roundup content.</td><td>Stage 2</td></tr>
 <tr><td>Inference attribution</td><td>Initial 122 inference samples do not join to jobs.</td><td>Stage 0</td></tr>
@@ -95,7 +95,8 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 <p><span class="badge done">76f724e</span> HTML tracker, representative serializer parity, completeness regression, and atomic daily JSON replacement.</p>
 <p><span class="badge done">1a4349c</span> Complete-day exports replace limited-window writes; archive CVE cap removed and suppressed articles filtered. Scoped manifest refresh preserves unrelated history.</p>
 <p><span class="badge done">caea3b0</span> Stored article dates, midnight CVE date targeting, and CVE-only exports corrected locally. Full serialization measured read-only.</p>
-<p><span class="badge active">Current slice</span> Dependency-aware fingerprints and bounded historical catch-up implemented. 55 offline checks and 12 read-only PostgreSQL simulations pass. Production deployment and repair remain pending.</p>
+<p><span class="badge done">e2833d4</span> Dependency-aware fingerprints and bounded historical catch-up implemented.</p>
+<p><span class="badge done">889b2de / 7eb3d14</span> Shared archive locking and chart wiring. Runtime 889b2de rolled out coherently; API build and subsequent normal build passed. Web/admin/database workloads were not replaced. Production background repair remains disabled.</p>
 </section>
 <footer>This is a repository-maintained status document, not live telemetry. Refresh this local file after updates. The assistant updates statuses, evidence, blockers, and release records with each implementation slice. No external assets, server, or network access are needed to read it.</footer>
 </main>

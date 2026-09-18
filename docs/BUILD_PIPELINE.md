@@ -121,7 +121,13 @@ request a build; never run Hugo directly for validation.
 
 Multiple worker handlers also call the feed exporter. Release all affected writer
 images coherently; a builder-only rollout would leave old writers able to replace
-complete files with partial results. This branch has not yet been deployed.
+complete files with partial results. Runtime 889b2de was deployed September 18
+with background catch-up disabled; see STABILIZATION_VERIFICATION.md for evidence.
+
+Archive day/manifest writes hold a shared filesystem lock. Retain this lock across
+inventory and replacement; public reads do not acquire it. Rollback artifacts
+must live outside Hugo data inputs (including `/data` in production). The guarded
+release snapshot is under `/log/release-snapshots/`, not a recurring backup.
 
 Offline verification: `python3 -m pytest -m offline --strict-markers -q`.
 
