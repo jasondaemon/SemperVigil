@@ -78,7 +78,11 @@ class Page(HTMLParser):
         self.links = []
         self.has_title = False
         self.has_chart = False
+        self.text = []
         self.feed(body.decode("utf-8"))
+
+    def handle_data(self, data):
+        self.text.append(data)
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
@@ -116,7 +120,22 @@ def fetch(url: str) -> bytes:
     return body
 
 
-def check_site(base: str, *, historic_days: list[str], max_age_hours: float, get=fetch, now=None) -> dict:
+def validate_metrics_age(page: Page, now: datetime, max_age_hours: float) -> dict:
+    text = " ".join(" ".join(page.text).split())
+    match = re.search(
+        r"Updated from SemperVigil DB at (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
+        r"(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))", text,
+    )
+    require(match is not None, "Missing metrics timestamp with timezone")
+    timestamp = match.group(1)
+    generated = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    age = (now - generated).total_seconds() / 3600
+    require(-0.0834 <= age <= max_age_hours, "Metrics data is stale or future-dated")
+    return {"generated_at": timestamp, "age_hours": round(age, 3)}
+
+
+def check_site(base: str, *, historic_days: list[str], max_age_hours: float,
+               max_metrics_age_hours: float = 3, get=fetch, now=None) -> dict:
     now = now or datetime.now(timezone.utc)
     results = []
     pages = {}
@@ -138,15 +157,17 @@ def check_site(base: str, *, historic_days: list[str], max_age_hours: float, get
             "/search/": {"sv-feed-search-form", "sv-feed-search-results"},
         }.get(path, set())
         require(required <= parsed.ids, "Missing expected page controls")
+        details = {}
         if path == "/metrics/":
             require(parsed.has_chart, "Missing metrics chart")
+            details = validate_metrics_age(parsed, now, max_metrics_age_hours)
         require(any(kind == "css" for _, kind in parsed.assets), "Missing stylesheet link")
         for ref, kind in parsed.assets:
             asset = local_url(url, ref)
             if asset:
                 assets[asset] = kind
         pages[path] = parsed
-        return {"local_assets": len(assets)}
+        return {"local_assets": len(assets), **details}
 
     for path in ("/", "/search/", "/metrics/", "/events/"):
         check(path, lambda path=path: page(path))
@@ -185,13 +206,18 @@ def main() -> int:
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--historic-day", action="append", default=[], type=day_key)
     parser.add_argument("--max-index-age-hours", type=float, default=24)
+    parser.add_argument("--max-metrics-age-hours", type=float, default=3)
     args = parser.parse_args()
     url = urlsplit(args.base_url)
     if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment or url.path not in ("", "/"):
         parser.error("--base-url must be an HTTPS origin without credentials, path, query, or fragment")
     if not math.isfinite(args.max_index_age_hours) or args.max_index_age_hours <= 0:
         parser.error("--max-index-age-hours must be positive and finite")
-    report = check_site(args.base_url, historic_days=args.historic_day, max_age_hours=args.max_index_age_hours)
+    if not math.isfinite(args.max_metrics_age_hours) or args.max_metrics_age_hours <= 0:
+        parser.error("--max-metrics-age-hours must be positive and finite")
+    report = check_site(args.base_url, historic_days=args.historic_day,
+                        max_age_hours=args.max_index_age_hours,
+                        max_metrics_age_hours=args.max_metrics_age_hours)
     print(json.dumps(report, indent=2))
     return 0 if report["ok"] else 1
 

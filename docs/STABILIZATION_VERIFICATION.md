@@ -436,3 +436,38 @@ seconds. Background refresh can repair or remove dates according to current DB
 state; it does not rewrite every file or push history back into Hugo input.
 Rollback: set the builder override to 0, render/compare, drain the build runner,
 and apply only its Deployment. Preserve correctly regenerated JSON.
+
+## Desktop interactions and metrics freshness (2026-09-18)
+
+Read-only production follow-up: sampled builds succeeded in 23.587s, 23.865s,
+and 31.235s. Consecutive sampled export logs decreased deferred history from
+5,050 to 5,047; new enrichment can also dirty previously repaired dates, so this
+is not a fixed completion ETA. The interrupted context task rerun
+`job_677f3b9b03234135b0105c7f94f65d82` succeeded at 18:25:11 UTC.
+
+In-app desktop browser acceptance:
+
+- Homepage initially selected News and rendered articles; CVE selection replaced
+  the feed with CVE cards linking to NVD.
+- Settings menu exposed Summary/Bullets and High/Critical controls. Stored
+  preferences were not changed; their behavior remains a separate gate.
+- Calendar selection of August 15 rendered the repaired CVE feed including
+  CVSS/EPSS pills. Switching to News rendered that day's articles. Prev Day moved
+  to August 14 and updated content and date.
+- Searching `CVE-2026-74767` completed across 90 days, returning one Pandora result
+  dated August 15 and linking to NVD, with CVSS 8.7 and EPSS 0.003.
+- Metrics screenshot showed populated colored bars and a full-width sources table.
+  Its visible export timestamp was September 18 at 20:17:01 UTC.
+
+The operator release checker now independently rejects missing, stale, naive, or
+future metrics timestamps. Default tolerance is three hours for hourly metrics;
+feed index retains its separate 24-hour default. Seven regression cases cover
+timezone offsets, threshold boundaries, missing values, and stale metrics with a
+fresh feed. **103 offline tests passed**; live public check passed all 21 checks.
+No runtime deployment, scheduling, model, or public JSON changes in this slice.
+
+Observed content-quality finding: some newly ingested CVEs still have severity-only
+titles. Browser rendering alone cannot distinguish absent enrichment from serializer
+loss; retain this for a targeted data-path investigation, not a speculative UI fix.
+Mobile, keyboard-only, stored preference execution, and automated browser coverage
+are not claimed complete.

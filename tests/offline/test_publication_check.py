@@ -71,7 +71,8 @@ def fake_site():
     return {
         "/": html(''.join(f'<div id="{id}"></div>' for id in ["front-feed-list", "front-view-news", "front-view-cves", "front-day-prev", "front-day-next"])),
         "/search/": html('<form id="sv-feed-search-form"></form><div id="sv-feed-search-results"></div>'),
-        "/metrics/": html('<svg aria-label="Articles and CVEs per day chart"></svg>'),
+        "/metrics/": html('<svg aria-label="Articles and CVEs per day chart"></svg>'
+                          f'<p>Updated from SemperVigil DB at {NOW.isoformat()}.</p>'),
         "/events/": html('<a href="/events/example/">Event</a>'),
         "/events/example/": html(), "/style.css": b"body { color: white; }", "/app.js": b"void 0;",
         "/feed/index.json": json.dumps(INDEX).encode(),
@@ -99,3 +100,25 @@ def test_release_check_and_failure_exit_report(broken):
 def test_external_and_non_http_references_not_requested():
     for ref in ("https://other.test/a", "//other.test/a", "javascript:alert(1)", "data:text/plain,test"):
         assert checker.local_url("https://example.test", ref) is None
+
+
+@pytest.mark.parametrize("stamp,ok", [
+    ("2026-09-18T12:00:00Z", True),
+    ("2026-09-18T08:00:00-04:00", True),
+    ("2026-09-18T09:00:00.000000+00:00", True),
+    ("2026-09-18T08:59:59+00:00", False),
+    ("2026-09-18T13:00:00Z", False),
+    ("2026-09-18T12:00:00", False),
+    ("", False),
+])
+def test_metrics_freshness_independent_of_fresh_feed(stamp, ok):
+    bodies = fake_site()
+    bodies["/metrics/"] = (f'<title>Metrics</title><link rel="stylesheet" href="/style.css">'
+                           f'<svg aria-label="Articles and CVEs per day chart"></svg>'
+                           f'<p>Updated from SemperVigil DB at {stamp}.</p>').encode()
+    report = checker.check_site("https://example.test", historic_days=[], max_age_hours=24,
+                               get=lambda url: bodies[url.removeprefix("https://example.test")], now=NOW)
+    assert report["ok"] is ok
+    metric = next(row for row in report["checks"] if row["path"] == "/metrics/")
+    assert metric["ok"] is ok
+    assert next(row for row in report["checks"] if row["path"] == "/feed/index.json")["ok"]
