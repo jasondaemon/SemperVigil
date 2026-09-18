@@ -471,3 +471,28 @@ titles. Browser rendering alone cannot distinguish absent enrichment from serial
 loss; retain this for a targeted data-path investigation, not a speculative UI fix.
 Mobile, keyboard-only, stored preference execution, and automated browser coverage
 are not claimed complete.
+
+## Isolated Events evidence foundation (2026-09-18)
+
+Inspected current derivation and report handlers: organization-plus-kind keys
+remain active and report assembly still consumes article summaries/context and
+promoted web sources. No changes to either path in this slice.
+
+Added `event_evidence.py`, a pure module with frozen evidence/citation/claim
+records, deterministic snapshot hashes, and sorted validation errors. It checks
+trusted incident binding, exact Unicode-code-point citation spans, provenance
+presence, source URL schemes, date roles/precision, stale snapshots, unique claim
+identities, and correction references. It performs no I/O or inference.
+
+**147 offline tests passed**, including **44 new checks** and 31 named synthetic
+claim cases. Cross-incident references, stale evidence, fabricated quotes, invalid
+dates, malformed URLs, Unicode spans, identity reuse, and correction targets are
+covered. A deliberate unsupported-statement example passes the structural check
+to document that this is NOT an entailment or publication gate.
+
+No runtime imports of the new module exist; nothing was deployed. No migration,
+public JSON, job admission, prompt, or model changes. See
+EVENT_EVIDENCE_FOUNDATION.md for trusted-input requirements, remaining corpus work,
+and the next disabled shadow-integration release gate. Do not label the full
+Events evaluation corpus, incident matching, immutable persistence, or factual
+validation complete based on this contract suite.
