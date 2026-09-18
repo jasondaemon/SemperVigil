@@ -29,8 +29,30 @@ citations automatically promotes a claim to confirmed.
 The trusted caller must supply evidence snapshots, incident assignments, and the
 prior claim-to-incident map. They must not come from the same untrusted model
 candidate being checked. Roundups need separately scoped evidence passages; an
-article-wide incident label is insufficient. This module does not yet perform
-that segmentation or incident matching.
+article-wide incident label is insufficient.
+
+## Trusted passage and matching helpers
+
+`event_matching.py` remains isolated from production. `extract_passage` slices
+explicitly approved source offsets, preserves the source URL/origin and document
+identity, and hashes the entire document snapshot. Passage IDs also bind the
+offsets and incident assignment. Citations use passage-relative offsets; the
+returned Passage retains document-relative offsets. No text normalization occurs.
+These helpers do NOT decide where an incident begins or ends in a roundup:
+trusted scope selection still needs an ingestion/evaluation integration.
+
+`match_incident` requires a canonical entity ID and an exact, namespaced,
+incident-specific reference shared with exactly one known candidate. Duplicate
+registries, conflicting entities, ambiguous references, and missing references
+abstain. A new unmatched reference does not automatically create an incident.
+Company-name similarity, a shared CVE, publication dates, or event kind are not
+matching signals. An alias resolver and reference provenance checks remain
+integration prerequisites; never pass a model-invented reference as trusted.
+No URL fetching or public URL replacement occurs.
+
+Synthetic multi-document checks cover repeat incidents, follow-ups, roundups,
+Unicode offsets, changed snapshots, and syndicated copies retaining the same
+origin. Different origin strings alone do not establish editorial independence.
 
 ## Evaluation corpus
 
@@ -51,8 +73,9 @@ are carried but their independence is not established by this validator.
 
 ## Next integration gate
 
-1. Build trusted passage extraction and incident-aware candidate matching with
-   fixed multi-document examples, preserving existing public URLs.
+1. Integrate independently established passage scopes, canonical entity aliases,
+   and incident-specific references with the tested extraction/matching helpers.
+   Curate real multi-document examples, preserving existing public URLs.
 2. Add a bounded raw-input parser; typed dataclasses are not a JSON schema or an
    untrusted-input boundary. Limit candidate sizes before constructing objects.
 3. Add immutable persistence and evidence-version comparison within a transaction.

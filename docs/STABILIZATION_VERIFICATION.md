@@ -496,3 +496,22 @@ EVENT_EVIDENCE_FOUNDATION.md for trusted-input requirements, remaining corpus wo
 and the next disabled shadow-integration release gate. Do not label the full
 Events evaluation corpus, incident matching, immutable persistence, or factual
 validation complete based on this contract suite.
+
+## Isolated passage and matching contracts (2026-09-18)
+
+Added exact passage slicing with full-document snapshot hashes, stable passage
+identities, source URLs/origins, and document-relative offsets. Added a
+conservative matcher requiring canonical entity IDs and trusted namespaced
+incident references. Company similarity or publication chronology cannot merge
+incidents. Ambiguous references and inconsistent registries abstain.
+
+**172 offline tests passed**, including 25 new checks covering repeat incidents,
+roundup scope, follow-up documents, syndication provenance, Unicode, changed
+snapshots, invalid spans/URLs, and deterministic candidate ordering. These are
+synthetic contract tests, not an adjudicated real reporting/model evaluation.
+Trusted semantic scope selection and reference provenance are still required;
+the helper cannot validate a caller's incorrect incident assignment.
+
+No runtime imports, deployment, migration, job changes, model calls, or public
+JSON changes. Next work is the bounded input boundary and trusted integration
+design before a disabled shadow runtime release. Production remains unchanged.
