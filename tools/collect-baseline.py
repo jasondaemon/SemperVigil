@@ -111,6 +111,14 @@ def main() -> None:
         "collected_at": datetime.now(timezone.utc).isoformat(),
         "window_hours": args.hours,
         "note": "A query window is not evidence of continuous observation; inspect sample timestamps.",
+        "inference_caveats": [
+            "llm_runs records summary/context handlers and admin probes, not all inference stages.",
+            "Handler timings may include retries and parsing; they are not per-provider-call timings.",
+            "Recorded provider/model identify the configured primary, not necessarily a fallback used.",
+            "A downstream handler failure may record an additional failed row after successful inference.",
+            "Historical unlinked records cannot be reliably attributed and are not backfilled.",
+            "Do not infer total GPU utilization or Events capacity from these rows alone.",
+        ],
         "measurements": measurements,
     }, indent=2))
 

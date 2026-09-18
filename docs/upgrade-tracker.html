@@ -51,11 +51,12 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 <details open><summary><span>0 / Baseline and export contract</span><span class="badge active">In progress</span></summary>
 <ul>
 <li><span class="badge done">Verified</span> Read-only queue, inference, and build measurement tool.</li>
-<li><span class="badge done">Verified</span> 84 offline checks; export correctness, archive locking, chart wiring, and read-only public release checks.</li>
+<li><span class="badge done">Verified</span> 88 offline checks; export correctness, archive locking, chart wiring, public release checks, and summary-job attribution.</li>
 <li><span class="badge done">Verified</span> Initial public samples parse and counts match their contents.</li>
 <li><span class="badge done">Deployed</span> Serializer parity, atomic day replacement, archive locking, and dependency-aware invalidation.</li>
 <li><span class="badge active">Working</span> Sampled production completeness passes; full historical repair remains paused.</li>
 <li><span class="badge">Pending</span> At least 72 hours of observations; stage attribution and GPU/RAM measurements.</li>
+<li><span class="badge active">Tested / not deployed</span> Summary and context timing records now carry their actual job ID on success and failure. Existing historical records remain untouched. Full Events/provider-attempt accounting is still pending.</li>
 <li><span class="badge">Pending</span> 30-50 curated event evaluation cases and measured latency budgets.</li>
 </ul><p class="gate">Exit: completeness issues understood and tested; queue behavior explained; safe Events capacity established. A query covering 72 hours is not a sustained 72-hour observation.</p></details>
 <details open><summary><span>1 / Stability and security</span><span class="badge active">Started</span></summary>
@@ -86,11 +87,12 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 <tr><td>Export limits and parity</td><td>Daily download cap removed; UI query defaults retained; shared serializer tested.</td><td><span class="badge done">Verified samples</span></td></tr>
 <tr><td>Publication boundaries</td><td>Release activation and shared JSON updates require separate atomicity checks.</td><td>Pending</td></tr>
 <tr><td>Event contamination</td><td>Published Odido narrative contains unrelated roundup content.</td><td>Stage 2</td></tr>
-<tr><td>Inference attribution</td><td>Initial 122 inference samples do not join to jobs.</td><td>Stage 0</td></tr>
+<tr><td>Inference attribution</td><td>Summary/context handlers explicitly wrote null job IDs. Four record sites corrected and tested locally; runtime remains unchanged. Existing timing coverage does not include every inference stage or accurately identify fallback models.</td><td>Awaiting deployment / partial coverage</td></tr>
 <tr><td>Incomplete measurement window</td><td>Initial inference sample spans about 44 minutes; 242 historical malformed finish timestamps excluded.</td><td>Baseline limited</td></tr>
 <tr><td>Legacy integration tests</td><td>Existing syntax/stale-import problems and missing local dependencies; no full-suite pass claimed.</td><td>Stage 1</td></tr>
 </tbody></table></div></section>
 <section id="history"><h2>Change record</h2>
+<p><span class="badge active">September 18 / attribution</span> Corrected four summary/context telemetry record sites without changing prompts, leases, models, or scheduling. Four handler-path tests pass; total offline suite 88. Collector now warns about partial accounting, retry timing, and fallback-model ambiguity. No deployment or historical record rewrite.</p>
 <p><span class="badge done">September 18 / release checks</span> Added operator-run public checks and 26 offline regression cases. Live check passed at 16:33 UTC: five pages, 11 assets, index, and four day downloads. No runtime deployment, build, restart, or extra inference requested. Historical repair remains paused; browser execution and database completeness are separate gates.</p>
 <p><span class="badge done">06e047b</span> September 18: initial plan, audio feature scope, offline export checks, and read-only baseline collector committed and pushed. No runtime deployment.</p>
 <p><span class="badge done">76f724e</span> HTML tracker, representative serializer parity, completeness regression, and atomic daily JSON replacement.</p>

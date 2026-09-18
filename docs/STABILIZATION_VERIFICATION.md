@@ -335,3 +335,27 @@ Offline suite: 84 passed, including 26 new checks for failures, malformed indice
 incorrect units/counts/dates/links, and missing assets. Browser behavior, chart
 data freshness, integration tests, and a sustained observation window remain
 pending. Historical catch-up stays disabled during the observation window.
+
+## Summary-job attribution (local only, 2026-09-18)
+
+The summary and article-context handlers each passed `job_id=None` to
+`insert_llm_run` in both success and exception paths. All four now pass `job.id`.
+No schema migration, prompt, provider selection, lease, output, or scheduling
+change. Tests execute both handlers with mocked inference/storage and assert
+job association, unchanged invocation, failure propagation, and lease release.
+Offline suite: **88 passed**. No production deployment in this slice; runtime
+remains `889b2de`. No attempt to guess attribution for historical records.
+
+The collector now reports accounting limitations explicitly: only summary/context
+handlers and admin probes persist these records; Events/enrichment are not fully
+represented. Handler latency can include retries/parse work, primary model IDs
+do not necessarily identify the fallback used, and downstream failures can produce
+a second error row after success. Do not sum these rows as total inference/GPU
+utilization or set an Events capacity budget from them alone.
+
+Next release acceptance: deploy through the documented image/worker rollout,
+observe newly completed summary and context jobs, and confirm both successful
+and naturally occurring failed records join to `jobs`. Do not induce production
+failures solely to test error telemetry. Re-run public release checks and compare
+build/queue latency; use offline tests for controlled failure paths. Full
+provider-attempt accounting remains a separate, larger instrumentation change.

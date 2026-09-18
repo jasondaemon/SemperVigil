@@ -5880,7 +5880,7 @@ def _handle_summarize_article_llm(
         mark_build_dirty(conn, reason="summarize_article_llm")
         insert_llm_run(
             conn,
-            job_id=None,
+            job_id=job.id,
             provider_id=profile.get("primary_provider_id"),
             model_id=profile.get("primary_model_id"),
             prompt_name=profile.get("name") or "summarize_article",
@@ -5904,7 +5904,7 @@ def _handle_summarize_article_llm(
     except Exception as exc:  # noqa: BLE001
         insert_llm_run(
             conn,
-            job_id=None,
+            job_id=job.id,
             provider_id=profile.get("primary_provider_id") if profile else None,
             model_id=profile.get("primary_model_id") if profile else None,
             prompt_name=profile.get("name") if profile else "summarize_article",
@@ -6049,7 +6049,7 @@ def _handle_summarize_article_context_llm(
         )
         insert_llm_run(
             conn,
-            job_id=None,
+            job_id=job.id,
             provider_id=profile.get("primary_provider_id"),
             model_id=profile.get("primary_model_id"),
             prompt_name=profile.get("name") or "article_context_pack",
@@ -6074,7 +6074,7 @@ def _handle_summarize_article_context_llm(
     except Exception as exc:  # noqa: BLE001
         insert_llm_run(
             conn,
-            job_id=None,
+            job_id=job.id,
             provider_id=profile.get("primary_provider_id") if profile else None,
             model_id=profile.get("primary_model_id") if profile else None,
             prompt_name=profile.get("name") if profile else "article_context_pack",
