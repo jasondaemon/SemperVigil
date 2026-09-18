@@ -1261,7 +1261,7 @@ def _serialize_feed_cve_item(
     }
 
 
-ARCHIVE_SCHEMA_VERSION = 2
+ARCHIVE_SCHEMA_VERSION = 3
 
 
 def _feed_day_state_key(
@@ -1309,7 +1309,10 @@ def _build_feed_day_payload(
     tz,
     tz_name: str,
 ) -> dict[str, object]:
-    articles = list_articles_for_day(conn, day_key)
+    articles = [
+        article for article in list_articles_for_day(conn, day_key)
+        if not _is_article_suppressed(article.get("meta_json"))
+    ]
     article_ids = [int(article["id"]) for article in articles if article.get("id") is not None]
     event_keys_map = list_event_keys_for_articles(conn, article_ids) if article_ids else {}
     cve_tags_map = list_article_cve_tags(conn, article_ids) if article_ids else {}
@@ -1328,7 +1331,7 @@ def _build_feed_day_payload(
     article_items.sort(key=lambda item: item["_sort"], reverse=True)
     for item in article_items:
         item.pop("_sort", None)
-    cves = list_cves_for_day(conn, day_key, limit=500)
+    cves = list_cves_for_day(conn, day_key, limit=None)
     seen_cves: set[str] = set()
     cve_items = []
     for cve in cves:
@@ -1355,6 +1358,7 @@ def _refresh_feed_archive_days(
     logger: logging.Logger,
     *,
     mode: str = "dirty_only",
+    days: set[str] | None = None,
 ) -> dict[str, object]:
     site_root = os.environ.get("SV_HUGO_SOURCE_DIR") or _site_root_from_output_dir(config.paths.output_dir)
     tz_name = config.app.timezone or "UTC"
@@ -1372,6 +1376,8 @@ def _refresh_feed_archive_days(
     current_days = set(current_stats.keys())
     existing_days = {path.stem for path in feed_days_dir.glob("*.json") if path.is_file() and path.stem}
     target_days = sorted(current_days | existing_days, reverse=True)
+    if days is not None:
+        target_days = [day for day in target_days if day in days]
     updated = 0
     removed = 0
     skipped = 0
@@ -2149,17 +2155,9 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
         day_buckets.setdefault(day_key, []).append(entry)
 
     day_keys = sorted(day_buckets.keys(), reverse=True)
-    for day_key in day_keys:
-        day_items = day_buckets.get(day_key, [])
-        payload = {
-            "day": day_key,
-            "items": day_items,
-            "counts": {
-                "article": sum(1 for i in day_items if str(i.get("kind")) == "article"),
-                "cve": sum(1 for i in day_items if str(i.get("kind")) == "cve"),
-            },
-        }
-        _write_json_atomic(feed_days_dir / f"{day_key}.json", payload)
+    # A recent selection identifies days to inspect, never their full contents.
+    # Reuse the archive manifest and full-day serializer to avoid truncating history.
+    _refresh_feed_archive_days(conn, config, logger, days=set(day_keys))
     _write_product_data_files(conn, site_root, tz_name, logger)
     _write_sources_data_files(conn, data_root, logger)
     _write_cve_pages(conn, site_root, tz_name, logger)

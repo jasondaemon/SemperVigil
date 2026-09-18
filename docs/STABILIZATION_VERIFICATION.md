@@ -152,3 +152,35 @@ Read-only inventory on September 18 found 1,031 CVEs dated September 8 and 982
 dated September 15 in the database; public downloads contained 10 and 5 CVEs
 respectively. Recent selection limits and day rewrites are confirmed code paths;
 the full attribution and recovery scope for the existing files remain pending.
+
+## Complete-day correction (local, not deployed)
+
+The previously expected overwrite failure now passes. Recent results identify
+days to inspect; the archive serializer reads complete days, honors suppression,
+and requests CVEs with `LIMIT NULL` rather than 500. Default UI query limits are
+unchanged. The public envelope and existing fields remain; recent articles gain
+the archive's existing `id` alias, equal to `article_id`.
+
+Internal manifest schema 3 invalidates affected cached exports. Ordinary refresh
+is scoped to selected recent days, so this version bump does not rebuild the whole
+archive on every publish. Tests verify unchanged bytes/mtime, unrelated historical
+file retention, interrupted-write safety, and all 1,031 CVEs in a large fixture.
+Result: **32 passed**, offline only. No Hugo invocation or production writes.
+
+Read-only production selection measurements on September 18:
+
+| Query | Records | Seconds |
+| --- | ---: | ---: |
+| Feed-day inventory | 5,084 days | 0.403 |
+| Uncapped September 8 CVEs | 1,031 unique IDs | 0.143 |
+| Uncapped September 15 CVEs | 982 unique IDs | 0.064 |
+
+Measured using a direct PostgreSQL read-only connection with a 10-second statement
+timeout, without application initialization/migrations. These measurements do
+not include per-record enrichment serialization, file writes, or Hugo.
+
+Release gates remain: reconcile recent local-time bucketing with stored article
+brief days and CVE database dates; verify missing-brief-day selection, CVE-only
+operation, and enrichment invalidation (including changes outside the recent
+window); measure full export cost; then deploy and repair historical omissions
+through supported jobs/API. This is not a claim that production data is repaired.

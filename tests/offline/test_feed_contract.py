@@ -79,3 +79,35 @@ def test_day_contract_counts_order_and_cve_deduplication(evidence, monkeypatch, 
     assert [i["kind"] for i in payload["items"]] == ["cve", "article"]
     assert all("_sort" not in i for i in payload["items"])
     assert json.loads(json.dumps(payload, allow_nan=False)) == payload
+
+
+def test_full_day_does_not_cap_cves_at_500(evidence, monkeypatch, tmp_path):
+    _, cve = evidence
+    monkeypatch.setattr(worker, "list_articles_for_day", lambda *a: [])
+    rows = [dict(cve, cve_id=f"CVE-2026-{10000+i}") for i in range(1031)]
+
+    def cves_for_day(conn, day, limit=200):
+        assert limit is None, "Archive exports must request the complete day"
+        return rows if limit is None else rows[:limit]
+
+    monkeypatch.setattr(worker, "list_cves_for_day", cves_for_day)
+    payload = worker._build_feed_day_payload(
+        None, day_key="2026-09-18", site_root=str(tmp_path), tz=timezone.utc, tz_name="UTC",
+    )
+    assert payload["counts"] == {"article": 0, "cve": 1031}
+    assert len({item["cve_id"] for item in payload["items"]}) == 1031
+
+
+def test_full_day_excludes_suppressed_articles(evidence, monkeypatch, tmp_path):
+    article, _ = evidence
+    monkeypatch.setattr(worker, "list_articles_for_day", lambda *a: [
+        article, dict(article, id=8, meta_json=json.dumps({"suppressed": True})),
+    ])
+    monkeypatch.setattr(worker, "list_cves_for_day", lambda *a, **kw: [])
+    monkeypatch.setattr(worker, "list_event_keys_for_articles", lambda *a: {})
+    monkeypatch.setattr(worker, "list_article_cve_tags", lambda *a: {})
+    payload = worker._build_feed_day_payload(
+        None, day_key="2026-09-18", site_root=str(tmp_path), tz=timezone.utc, tz_name="UTC",
+    )
+    assert payload["counts"] == {"article": 1, "cve": 0}
+    assert [item["article_id"] for item in payload["items"]] == [7]

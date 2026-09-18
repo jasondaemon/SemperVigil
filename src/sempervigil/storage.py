@@ -917,7 +917,7 @@ def _meta_is_suppressed(meta_json: object) -> bool:
     if isinstance(parsed, dict):
         return bool(parsed.get("suppressed"))
     return False
-def list_cves_for_day(conn: Any, day: str, limit: int = 200) -> list[dict[str, object]]:
+def list_cves_for_day(conn: Any, day: str, limit: int | None = 200) -> list[dict[str, object]]:
     if not _table_exists(conn, "cves"):
         return []
     columns = _table_columns(conn, "cves")

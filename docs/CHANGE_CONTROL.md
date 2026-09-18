@@ -46,6 +46,29 @@ If you (Codex) propose edits affecting pipeline stability, you must:
 
 - Date: 2026-09-18
 - Author: Codex
+- Summary: Prepare complete-day, manifest-backed recent feed exports.
+- Motivation / Problem: Offline reproduction showed limited recent results
+  replacing a previously complete day. Read-only production queries found 1,031
+  and 982 CVEs on dates whose public downloads held only 10 and 5. The archive
+  exporter also imposed a 500-CVE cap.
+- Files changed: src/sempervigil/worker.py; src/sempervigil/storage.py;
+  tests/offline/test_feed_contract.py; tests/offline/test_recent_archive_parity.py;
+  tracker and verification documentation.
+- Risk / Impact: medium. Uses the existing full-day serializer and atomic writer;
+  internal manifest schema increases to 3. Ordinary refresh is scoped to recent
+  days. All existing payload fields remain; the historical article id alias is
+  additive for recent exports. Suppressed articles are excluded consistently.
+- Verification: 32 offline tests pass; read-only production uncapped selections
+  returned all expected unique IDs. Inventory query 0.403s; selections 0.143s and
+  0.064s. No build, rollout, production file writes, or direct Hugo invocation.
+- Outcome: local implementation only. Date-boundary, enrichment freshness,
+  CVE-only behavior, and full export performance remain release gates.
+- Rollback plan: revert this isolated source change before release; retain prior
+  deployment image and archive snapshot for eventual rollout. No environment
+  configuration or application concurrency changed in this slice.
+
+- Date: 2026-09-18
+- Author: Codex
 - Summary: Prepare atomic replacement of recent daily feed JSON files.
 - Motivation / Problem: The running recent exporter writes directly to shared
   public day paths. An offline fault-injection test reproduced a partial public
