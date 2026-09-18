@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import fcntl
 import json
 import feedparser
 import urllib.error
@@ -19,6 +20,7 @@ from dataclasses import replace
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+from contextlib import contextmanager
 from urllib.parse import urlparse, parse_qsl, urlencode, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
@@ -1353,7 +1355,31 @@ def _build_feed_day_payload(
     }
 
 
+@contextmanager
+def _feed_archive_lock(feed_dir: Path):
+    """Serialize shared day/manifest updates across worker processes and pods."""
+    feed_dir.mkdir(parents=True, exist_ok=True)
+    with (feed_dir / ".export.lock").open("a") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
 def _refresh_feed_archive_days(
+    conn,
+    config,
+    logger: logging.Logger,
+    *,
+    mode: str = "dirty_only",
+    days: set[str] | None = None,
+) -> dict[str, object]:
+    with _feed_archive_lock(_feed_archive_dir(config)):
+        return _refresh_feed_archive_days_locked(conn, config, logger, mode=mode, days=days)
+
+
+def _refresh_feed_archive_days_locked(
     conn,
     config,
     logger: logging.Logger,

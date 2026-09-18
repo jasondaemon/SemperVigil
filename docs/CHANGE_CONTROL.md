@@ -46,6 +46,20 @@ If you (Codex) propose edits affecting pipeline stability, you must:
 
 - Date: 2026-09-18
 - Author: Codex
+- Summary: Serialize archive writers before the staged production rollout.
+- Motivation / Problem: The Hugo lock starts after JSON export; archive writers
+  could otherwise race on day temporary files and manifest replacement.
+- Files changed: worker.py; offline archive lock test; source-only release image
+  recipe. No dependency, Hugo command, cache, or concurrency setting changes.
+- Verification: 56 offline tests pass; lock exclusion and release after exceptions
+  verified. Cross-pod lock validation and API-driven rollout pending.
+- Risk / Impact: medium; writers wait on a shared filesystem lock during archive
+  inventory and writes. Public serving never acquires this lock.
+- Rollback plan: retain previous images and export snapshot. First rollout disables
+  background catch-up; do not enable backlog until public validation passes.
+
+- Date: 2026-09-18
+- Author: Codex
 - Summary: Prepare dependency-aware feed invalidation and bounded historical repair.
 - Motivation / Problem: Base timestamps miss exported enrichment changes. Read-only
   audit counted 50,540 CVEs with newer EPSS check timestamps; linked-data removals
