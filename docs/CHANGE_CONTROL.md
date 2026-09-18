@@ -1,5 +1,19 @@
 # Change Control Log
 
+## 2026-09-18: Summary telemetry attribution rollout
+
+- Deployed ingest `27b9fb3`; retained builder `889b2de` and existing admin/web.
+- Runtime scope: four null job IDs replaced with the actual summary/context job ID.
+- Verified 88 offline tests, image-only server-side diffs, live source hashes,
+  rendered/live spec agreement, linked successful records for both handlers,
+  28.309s API-selected build, and 21 public release checks.
+- Shutdown race interrupted one old context task; canceled only the abandoned
+  records through the admin API and requeued the original payload. Future drains
+  must recheck queues after orchestrator termination, not during its grace period.
+- See STABILIZATION_VERIFICATION.md for exact evidence and task IDs.
+- Rollback: restore platform ingest tag `889b2de`, render, drain, and apply only
+  the five affected Deployments. No DB migration or content changes in this release.
+
 ## Purpose
 This log records all changes that affect build/publish/serve stability, docker-compose mounts, permissions, and Hugo build mechanics.
 

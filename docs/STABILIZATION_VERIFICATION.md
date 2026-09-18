@@ -359,3 +359,40 @@ and naturally occurring failed records join to `jobs`. Do not induce production
 failures solely to test error telemetry. Re-run public release checks and compare
 build/queue latency; use offline tests for controlled failure paths. Full
 provider-attempt accounting remains a separate, larger instrumentation change.
+
+## Attribution rollout verified (2026-09-18)
+
+Supersedes the local-only release state above. Ingest image `27b9fb3` deployed to
+orchestrator, fetch (two replicas), public-fetch, LLM, and OpenAI workers. Builder
+remains `889b2de`; admin, web, database, prompts, models, and concurrency unchanged.
+Background historical repair remains zero. Source-only overlay reused the
+verified `889b2de` dependency image. OCI manifest:
+`sha256:f24f99e2fdc0fa8e430919bb8278cd9aaafa913c3b0050d5840259c0f0ecd937`.
+
+- 88 offline tests passed. Rendered server-side diff was ten image substitutions
+  across five Deployments (main/init containers), no other spec changes.
+- Same image imported on all four schedulable nodes. All six new runtime pods'
+  worker source hashes matched the repository. Deployment specs match the rendered
+  platform configuration; all workloads ready with new pods at zero restarts.
+- New summary records at 16:47:48 and 16:48:43 UTC joined to succeeded jobs
+  (11.994s and 6.024s). Context record at 16:48:21 joined to a succeeded job
+  (23.963s). No production failure deliberately induced; failure paths tested offline.
+- API request found an already queued build, `job_9e4a5d2e9b164ce894c6742fbcaa7fed`;
+  it succeeded in 28.309s. Hugo was not invoked manually.
+- 21 read-only public checks passed before and after replacement; Kubernetes API
+  and etcd readiness passed. These point checks do not claim continuous monitoring.
+
+Rollout issue: an empty-queue snapshot was taken before the old orchestrator had
+fully terminated. It admitted another LLM launch during shutdown, so stopping the
+old LLM pod interrupted context job `job_c66c63d35410440a87f808d05aedb69d` and left
+its launch record marked running. After confirming that pod no longer existed,
+the exact abandoned launch/task records were canceled via the admin API, and the
+task was rerun with its original payload as `job_677f3b9b03234135b0105c7f94f65d82`.
+That retry was queued at verification time; no task was silently discarded and
+no direct DB writes were used. New inference continued with one active LLM job.
+The rollout documentation now requires a second queue check after orchestrator
+termination. Do not describe this as an entirely interruption-free worker rollout.
+
+Rollback: retain the prior image, restore the platform ingest tag to `889b2de`,
+render, compare, and apply only the affected Deployments after the corrected drain.
+No schema or data rollback is needed for this telemetry-only change.

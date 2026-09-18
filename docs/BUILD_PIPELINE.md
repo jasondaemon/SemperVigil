@@ -129,6 +129,13 @@ inventory and replacement; public reads do not acquire it. Rollback artifacts
 must live outside Hugo data inputs (including `/data` in production). The guarded
 release snapshot is under `/log/release-snapshots/`, not a recurring backup.
 
+For worker rollouts, a queue snapshot taken while the orchestrator pod is still
+terminating is not a drain gate. Wait for that pod to disappear, then recheck both
+running jobs and queued launch jobs until drained. Only then stop the affected
+runners. Inspect for abandoned work after replacement. If a removed pod still
+owns running records, use supported admin cancel/rerun endpoints for the exact
+records; retain the original task payload and do not cancel healthy workers.
+
 Offline verification: `python3 -m pytest -m offline --strict-markers -q`.
 
 ### Existing container checks
