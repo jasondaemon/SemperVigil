@@ -101,6 +101,13 @@ If implemented, it must be behind internal networking by default.
 ---
 
 ## Deliverable Rules
+For the staged stabilization and Events upgrade, maintain
+`docs/upgrade-tracker.html` alongside the detailed implementation plan. Update
+completed work, acceptance evidence, open findings, next steps, and release state
+with each implementation slice. Distinguish locally tested changes from deployed
+changes. Do not mark partial stages complete or describe the tracker as live
+telemetry. Preserve its self-contained, locally openable HTML format.
+
 Every meaningful change should include:
 - updated docs (README or docs/)
 - config examples

@@ -132,3 +132,23 @@ Sampled daily exports parsed, matched their declared counts, and used NVD CVE li
 Old publication dates are not evidence of site operating age. This sample checks
 public consistency only; it does not prove completeness against the database or
 all 5,059 indexed dates. No extra build was requested for this verification.
+
+## Follow-up: export parity and write interruption
+
+The local HTML tracker is [upgrade-tracker.html](upgrade-tracker.html). Update it
+with every implementation slice, distinguishing local validation from deployment.
+
+Representative recent and historical serializer output matches after accounting
+for the existing historical article id alias. A new regression reproduces loss of
+previously exported records when recent-window results replace a complete day;
+this remains a strict expected failure until the completeness correction lands.
+
+Fault injection also reproduced partial public JSON after a recent-day write
+failure. A one-line local correction now uses the existing atomic JSON helper,
+with identical serialization and payload semantics. This change is tested locally
+and not yet deployed. It does not fix the limited-window overwrite.
+
+Read-only inventory on September 18 found 1,031 CVEs dated September 8 and 982
+dated September 15 in the database; public downloads contained 10 and 5 CVEs
+respectively. Recent selection limits and day rewrites are confirmed code paths;
+the full attribution and recovery scope for the existing files remain pending.

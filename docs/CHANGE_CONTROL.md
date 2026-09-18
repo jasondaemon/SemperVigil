@@ -44,6 +44,25 @@ If you (Codex) propose edits affecting pipeline stability, you must:
 
 ## Entries
 
+- Date: 2026-09-18
+- Author: Codex
+- Summary: Prepare atomic replacement of recent daily feed JSON files.
+- Motivation / Problem: The running recent exporter writes directly to shared
+  public day paths. An offline fault-injection test reproduced a partial public
+  file after an interrupted write. Historical archive writes already use the
+  existing atomic helper.
+- Files changed: src/sempervigil/worker.py; tests/offline/test_recent_archive_parity.py
+- Risk / Impact: low; same serialization, payload, path, and export selection;
+  one temporary file and replacement per already-written day.
+- Verification: offline parity and interrupted-write regression tests; full
+  offline suite. No direct Hugo invocation.
+- Outcome: local correction prepared; production deployment and API-driven
+  publication verification are pending. Limited-window completeness is not fixed
+  by this change.
+- Rollback plan: revert this single call-site change and use the supported image
+  and API deployment workflow. Preserve the previous production image until
+  rollout verification passes.
+
 - Date: 2026-07-24 16:25 EDT
 - Author: Codex
 - Summary: Retired the public `/entities/` search surface and removed stale entity redirect/static generation paths.

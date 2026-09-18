@@ -27,6 +27,8 @@ goal, not the definition of success.
 
 Initial implementation and verification procedures:
 [STABILIZATION_VERIFICATION.md](STABILIZATION_VERIFICATION.md).
+Track progress locally in [upgrade-tracker.html](upgrade-tracker.html); refresh
+after each implementation update. This file records verified status, not live telemetry.
 
 ## Inspected baseline
 

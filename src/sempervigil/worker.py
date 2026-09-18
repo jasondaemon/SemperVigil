@@ -2159,7 +2159,7 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
                 "cve": sum(1 for i in day_items if str(i.get("kind")) == "cve"),
             },
         }
-        (feed_days_dir / f"{day_key}.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _write_json_atomic(feed_days_dir / f"{day_key}.json", payload)
     _write_product_data_files(conn, site_root, tz_name, logger)
     _write_sources_data_files(conn, data_root, logger)
     _write_cve_pages(conn, site_root, tz_name, logger)
