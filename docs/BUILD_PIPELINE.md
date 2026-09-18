@@ -114,6 +114,17 @@ to 0 to pause background catch-up; the explicit archive job remains available.
 Existing manifests without content signatures are migrated through the same
 bounded process. Do not seed signatures for unverified old files.
 
+The optional Helm value `buildWorker.feedArchiveBackgroundDays` overrides this
+setting only in the build worker. Its default is null (inherit shared env), and
+it accepts non-negative integers, including zero. Use a small builder-only value
+while keeping shared `env.SV_FEED_ARCHIVE_BACKGROUND_DAYS` at zero to stage repair
+without restarting inference workers or letting ingest refreshes repair history.
+This is a per-refresh bound, not a fixed daily throughput guarantee. A single
+expensive day is not interrupted by the between-day time budget. The explicit
+archive task is not limited by this setting; do not enqueue a full rebuild for
+bounded validation. Roll back by setting the builder override to zero and draining
+and replacing only that Deployment through the normal rollout procedure.
+
 The database scan adds measured work even when nothing needs regeneration; initial
 read-only observations were 2.68-4.17 seconds. This is not a deployed build-time
 measurement. Monitor full job duration after release. Use the platform API to

@@ -192,6 +192,8 @@ workerOpenai:
   resources: {}
 
 buildWorker:
+  # Null inherits the shared env value; override to stage archive catch-up only here.
+  feedArchiveBackgroundDays: null
   enabled: true
   replicaCount: 1
   resources: {}

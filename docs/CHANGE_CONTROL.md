@@ -1,5 +1,16 @@
 # Change Control Log
 
+## 2026-09-18: Builder-only historical catch-up
+
+- Added optional, validated chart override `buildWorker.feedArchiveBackgroundDays`;
+  production uses 1 while the shared limit remains 0. No application-code changes.
+- Only builder Deployment env changed. Paused admission, waited for orchestrator
+  termination and build drain, replaced builder, resumed. LLM workers untouched.
+- 96 offline tests, server-side diff/spec comparison, 35.232s API build and 33.217s
+  following automatic build passed. August 15 recovered 553 CVEs; exact IDs match
+  DB. All 5,059 files retained, 5,057 unchanged in first comparison; public checks pass.
+- Rollback: builder override 0 and scoped drained rollout; retain repaired JSON.
+
 ## 2026-09-18: Summary telemetry attribution rollout
 
 - Deployed ingest `27b9fb3`; retained builder `889b2de` and existing admin/web.

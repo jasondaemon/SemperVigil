@@ -64,6 +64,13 @@ spec:
             - configMapRef:
                 name: {{ include "sempervigil.fullname" . }}-env
           env:
+            {{- if ne .Values.buildWorker.feedArchiveBackgroundDays nil }}
+            {{- if not (regexMatch "^[0-9]+$" (toString .Values.buildWorker.feedArchiveBackgroundDays)) }}
+            {{- fail "buildWorker.feedArchiveBackgroundDays must be a non-negative integer or null" }}
+            {{- end }}
+            - name: SV_FEED_ARCHIVE_BACKGROUND_DAYS
+              value: {{ .Values.buildWorker.feedArchiveBackgroundDays | quote }}
+            {{- end }}
             - name: SV_RUNNER_LEASE_SECONDS
               value: "900"
             - name: SV_BUILDER_LEASE_SECONDS

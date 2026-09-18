@@ -396,3 +396,43 @@ termination. Do not describe this as an entirely interruption-free worker rollou
 Rollback: retain the prior image, restore the platform ingest tag to `889b2de`,
 render, compare, and apply only the affected Deployments after the corrected drain.
 No schema or data rollback is needed for this telemetry-only change.
+
+## Builder-only bounded historical repair (2026-09-18)
+
+Added optional Helm `buildWorker.feedArchiveBackgroundDays` (default null,
+inherits shared env; invalid/negative/fractional values fail rendering).
+Production sets it to `"1"`; shared `SV_FEED_ARCHIVE_BACKGROUND_DAYS` stays `"0"`.
+This activates the existing bounded exporter only on the builder. No app image,
+Hugo command, resource, cache, schema, or LLM-concurrency changes. Offline suite:
+**96 passed**, including eight override/default/scoping/validation tests.
+
+Server-side dry run confirmed the only builder spec change was the explicit env
+override. Paused admission, waited for orchestrator deletion, then rechecked and
+waited for build/launch jobs to drain before stopping the builder. Resumed admission
+after the new builder was ready. Other workers/web/admin were not restarted.
+Live builder spec matches rendered configuration, builder env is 1, sampled
+fetch/LLM envs remain 0, and all Deployments are ready.
+
+- API build `job_dcafedc6697143949dca92f1890bc12e`: **35.232s**, succeeded.
+  Export refreshed two dates (one foreground, one historical), skipped 40,
+  removed zero; deferred 5,055.
+- August 15 previously exposed 7 articles and zero CVEs. Repaired output exposes
+  7 articles and **553 CVEs**; exact article/CVE ID sets match read-only canonical
+  DB selection. Public download hash matches verified archive bytes.
+- Before/after inventory retained all **5,059** files; **5,057** retained both
+  hashes and mtimes. Only August 15 and September 17 changed. One new historical
+  fingerprint was recorded. Evidence snapshots generated under local `/tmp`, not
+  production Hugo input paths.
+- Next automatic build `job_c4d3c73ba1944fe4b41a4f79dbacbb50`: **33.217s**, succeeded;
+  deferred reduced to 5,054. This establishes progress, not a completion ETA.
+- First validation peak: **410,861,568 bytes (392 MiB)**; cgroup OOM/max events zero.
+- All **21** public checks passed, including repaired and older downloads. No
+  continuous outage monitor or full-backlog completeness claim is made.
+
+Recent pre-change build samples were 23-25s; catch-up has measurable added work.
+Keep the one-date limit until a larger observation window supports changing it.
+The time budget is checked between days, so one expensive date may exceed five
+seconds. Background refresh can repair or remove dates according to current DB
+state; it does not rewrite every file or push history back into Hugo input.
+Rollback: set the builder override to 0, render/compare, drain the build runner,
+and apply only its Deployment. Preserve correctly regenerated JSON.
