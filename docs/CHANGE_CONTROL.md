@@ -46,6 +46,25 @@ If you (Codex) propose edits affecting pipeline stability, you must:
 
 - Date: 2026-09-18
 - Author: Codex
+- Summary: Correct daily refresh targeting and CVE-only exports locally.
+- Motivation / Problem: Recent exports returned before CVE processing when no
+  articles existed; localized CVE timestamps could select the preceding archive
+  date. Stored article brief dates were absent from recent query results.
+- Files changed: storage.py, worker.py, offline selection/export tests, tracker,
+  and stabilization verification documentation.
+- Risk / Impact: medium; additive internal brief_day query field, broader correct
+  day targeting, and removal of the premature return. No public schema migration,
+  Hugo command changes, deployment changes, or LLM concurrency changes.
+- Verification: 37 offline checks pass. Read-only full-day serialization of two
+  large dates measured 0.550s and 0.362s, excluding disk writes and publishing.
+- Outcome: local only. Audit confirms enrichment updates are not reliably covered
+  by the base timestamps used for archive invalidation. This blocks rollout until
+  dependency-aware freshness is implemented and tested. No historical repair run.
+- Rollback plan: revert this isolated commit before rollout. No production state
+  was modified.
+
+- Date: 2026-09-18
+- Author: Codex
 - Summary: Prepare complete-day, manifest-backed recent feed exports.
 - Motivation / Problem: Offline reproduction showed limited recent results
   replacing a previously complete day. Read-only production queries found 1,031

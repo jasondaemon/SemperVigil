@@ -184,3 +184,54 @@ brief days and CVE database dates; verify missing-brief-day selection, CVE-only
 operation, and enrichment invalidation (including changes outside the recent
 window); measure full export cost; then deploy and repair historical omissions
 through supported jobs/API. This is not a claim that production data is repaired.
+
+## Date-selection and freshness audit (September 18)
+
+Local corrections now preserve stored article `brief_day` in recent selection,
+include CVE database dates even when their displayed local date is the preceding
+day, and continue CVE exports when no recent articles exist. Public date semantics
+are not migrated: article archive membership still uses stored brief days and CVE
+membership still uses database dates. Tests cover a midnight UTC CVE displayed in
+New York, an article whose brief day differs from its timestamp date, CVE-only
+operation, empty input, and the additional internal query field.
+
+**37 offline tests pass. Production is unchanged.**
+
+Read-only, in-memory production serialization (no files written, no build):
+
+| Day | Articles | CVEs | JSON bytes | Seconds |
+| --- | ---: | ---: | ---: | ---: |
+| September 8 | 105 | 1,031 | 5,220,818 | 0.550 |
+| September 15 | 36 | 982 | 3,009,428 | 0.362 |
+
+This used the deployed serializer with its CVE query uncapped only in the isolated
+inspection process, UTC display formatting, and a read-only database connection.
+It includes enrichment lookups and JSON encoding, not disk I/O or publishing. It
+is not an end-to-end test of the unshipped branch or a sustained performance test.
+
+Freshness is a confirmed release blocker, not just a hypothetical gap. Counts of
+records whose enrichment check timestamp exceeds their base `updated_at`:
+
+| Dataset | Check | Records |
+| --- | --- | ---: |
+| CVEs | EPSS | 50,540 |
+| CVEs | Products | 16,785 |
+| CVEs | Threat actors | 22,402 |
+| CVEs | KEV | 19,817 |
+| Articles | Products | 14,691 |
+| Articles | Threat actors | 16,007 |
+| Articles | Events | 15,135 |
+
+These counts indicate unreliable base-timestamp invalidation, not proven stale
+public payloads for every record. Source review confirms the checked-at setters
+do not update the base timestamp. A check timestamp alone also does not prove the
+rendered content changed. Two of 35,187 articles have missing/empty brief days;
+their fallback selection must be reconciled with archive inventory.
+
+Before release, inventory every exported field's dependencies (including linked
+products, actors, events, KEV and source labels); test updates and removals outside
+the recent window. Do not merely force all historical files to regenerate or
+claim that adding checked-at timestamps handles all dependency changes. Compare a
+content-based day signature with transactional dirty-day tracking, measure the
+chosen mechanism, and preserve unchanged file bytes/mtime. Then repair historical
+omissions in a bounded job and validate publication through the API.

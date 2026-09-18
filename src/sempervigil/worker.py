@@ -1473,10 +1473,6 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
     min_items = 20
     feed_recent_limit = max(200, int(os.environ.get("SV_FEED_RECENT_LIMIT", "2000") or 2000))
     recent_rows = list_recent_articles(conn, limit=feed_recent_limit)
-    if not recent_rows:
-        (data_dir / "today.json").write_text("[]", encoding="utf-8")
-        (data_dir / "recent.json").write_text("[]", encoding="utf-8")
-        return {"today": 0, "recent": 0}
     article_ids = [row["id"] for row in recent_rows if row.get("id") is not None]
     event_keys_map = list_event_keys_for_articles(conn, article_ids)
     cve_tags_map = list_article_cve_tags(conn, article_ids)
@@ -2154,7 +2150,17 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
         day_key = datetime.fromtimestamp(epoch, tz).date().isoformat()
         day_buckets.setdefault(day_key, []).append(entry)
 
-    day_keys = sorted(day_buckets.keys(), reverse=True)
+    archive_days = set(day_buckets)
+    # Archive selection uses stored brief days for articles and database dates
+    # for CVEs, not the localized timestamps displayed in the recent feed.
+    for row in recent_rows:
+        if row.get("brief_day"):
+            archive_days.add(str(row["brief_day"]))
+    for cve in cves_today + recent_cves:
+        parsed = _parse_ts(cve.get("published_at") or cve.get("last_modified_at"))
+        if parsed:
+            archive_days.add(parsed.date().isoformat())
+    day_keys = sorted(archive_days, reverse=True)
     # A recent selection identifies days to inspect, never their full contents.
     # Reuse the archive manifest and full-day serializer to avoid truncating history.
     _refresh_feed_archive_days(conn, config, logger, days=set(day_keys))

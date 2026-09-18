@@ -14,7 +14,7 @@ pytestmark = pytest.mark.offline
 
 
 @pytest.fixture
-def export_case(tmp_path, monkeypatch):
+def export_case(tmp_path, monkeypatch, request):
     day = "2026-09-08"
     root = tmp_path / "shared" / "feed"
     source = tmp_path / "source"
@@ -45,7 +45,7 @@ def export_case(tmp_path, monkeypatch):
         monkeypatch.setattr(worker, name, lambda *a, **k: None)
     config = SimpleNamespace(paths=SimpleNamespace(
         output_dir=str(source / "content" / "posts"), data_dir=str(tmp_path / "data")),
-        app=SimpleNamespace(timezone="UTC"))
+        app=SimpleNamespace(timezone=getattr(request, "param", "UTC")))
 
     def refresh():
         return worker._refresh_feed_data_files(None, config, logging.getLogger(__name__))
@@ -125,3 +125,52 @@ def test_refresh_does_not_rebuild_unrelated_history_on_version_change(export_cas
     monkeypatch.setattr(worker, "ARCHIVE_SCHEMA_VERSION", worker.ARCHIVE_SCHEMA_VERSION + 1)
     refresh()
     assert (old_path.read_bytes(), old_path.stat().st_mtime_ns) == before
+
+
+def test_cve_only_export_does_not_require_articles(export_case, monkeypatch):
+    day, path, source, refresh, stats = export_case
+    monkeypatch.setattr(worker, "list_recent_articles", lambda *a, **k: [])
+    monkeypatch.setattr(worker, "list_articles_for_day", lambda *a, **k: [])
+    stats[0]["article_count"] = 0
+    refresh()
+    assert json.loads(path.read_text())["counts"] == {"article": 0, "cve": 1}
+
+
+@pytest.mark.parametrize("export_case", ["America/New_York"], indirect=True)
+def test_midnight_cve_refreshes_database_day(export_case, monkeypatch):
+    day, path, source, refresh, stats = export_case
+    cve = dict(cve_id="CVE-2026-12345", published_at=day + "T01:00:00Z")
+    monkeypatch.setattr(worker, "list_recent_articles", lambda *a, **k: [])
+    monkeypatch.setattr(worker, "list_articles_for_day", lambda *a, **k: [])
+    monkeypatch.setattr(worker, "list_cves_for_day", lambda *a, **k: [cve])
+    monkeypatch.setattr(worker, "search_cves", lambda *a, **k: ([cve], 1))
+    stats[0]["article_count"] = 0
+    refresh()
+    payload = json.loads(path.read_text())
+    assert payload["day"] == day
+    assert payload["counts"] == {"article": 0, "cve": 1}
+
+
+def test_stored_article_day_is_refreshed(export_case, monkeypatch):
+    day, path, source, refresh, stats = export_case
+    article = dict(id=7, title="Late publication", brief_day=day,
+                   published_at="2026-09-09T01:00:00Z")
+    monkeypatch.setattr(worker, "list_recent_articles", lambda *a, **k: [article])
+    monkeypatch.setattr(worker, "list_articles_for_day", lambda *a, **k: [article])
+    monkeypatch.setattr(worker, "list_cves_for_day", lambda *a, **k: [])
+    monkeypatch.setattr(worker, "search_cves", lambda *a, **k: ([], 0))
+    stats[0]["cve_count"] = 0
+    refresh()
+    assert json.loads(path.read_text())["counts"] == {"article": 1, "cve": 0}
+
+
+def test_empty_database_export_completes(export_case, monkeypatch):
+    day, path, source, refresh, stats = export_case
+    stats.clear()
+    monkeypatch.setattr(worker, "list_recent_articles", lambda *a, **k: [])
+    monkeypatch.setattr(worker, "list_cves_for_day", lambda *a, **k: [])
+    monkeypatch.setattr(worker, "search_cves", lambda *a, **k: ([], 0))
+    result = refresh()
+    assert result["today"] == 0
+    assert result["recent"] == 0
+    assert not path.exists()

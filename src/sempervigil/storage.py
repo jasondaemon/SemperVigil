@@ -875,7 +875,7 @@ def list_recent_articles(conn: Any, limit: int = 200) -> list[dict[str, object]]
                a.source_id, s.name AS source_name,
                a.summary_llm,
                a.meta_json,
-               {tag_select}
+               {tag_select}, a.brief_day
         FROM articles a
         LEFT JOIN sources s ON s.id = a.source_id
         {tag_join}
@@ -900,6 +900,7 @@ def list_recent_articles(conn: Any, limit: int = 200) -> list[dict[str, object]]
                 "summary_llm": row[7],
                 "meta_json": row[8],
                 "tags": row[9] or "",
+                "brief_day": row[10],
             }
         )
     return rows
