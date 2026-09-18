@@ -64,6 +64,20 @@ state, and coordination occurs internally via PostgreSQL.
 - **External Dependencies**
   - Outbound-only services (e.g., VPN egress, LLM inference)
 
+### Planned internal Events investigation interface
+
+The accepted staged direction adds an internal MCP adapter over shared Events
+domain services. It is **not implemented or deployed**. Workers use the same
+services directly; MCP is neither a public endpoint nor a publishing dependency.
+Read-only historical evidence retrieval comes first, then separately authorized,
+version-bound draft proposals. No arbitrary SQL, direct publication, or inference
+outside the existing single-job queue is permitted. Skills guide investigations;
+application code enforces permissions, budgets, evidence checks, and revisions.
+
+See [Events MCP architecture](EVENTS_MCP_ARCHITECTURE.md) for contracts, trust
+boundaries, staged acceptance gates, and rollback. This is additive to the trust
+zones above and does not change the current build/serve pipeline.
+
 ---
 
 ## 0.2 Object Legend

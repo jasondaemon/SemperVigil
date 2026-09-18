@@ -1,7 +1,9 @@
 # SemperVigil stabilization and Events implementation plan
 
 Date: 2026-09-18
-Status: Proposed; planning only. No runtime changes authorized by this document.
+Status: Staged implementation in progress; consult the tracker for tested and
+deployed slices. MCP is an accepted design direction, not yet implemented.
+This document alone does not authorize a runtime rollout.
 
 ## Objective and constraints
 
@@ -96,6 +98,12 @@ totals must not be interpreted as current failures or blindly retried.
 
 ## Stage 0: Establish a reliable baseline
 
+Cross-stage architecture: [Events investigation and MCP](EVENTS_MCP_ARCHITECTURE.md).
+Shared domain services are the implementation boundary; an internal MCP adapter
+exposes bounded capabilities to authorized clients. It is not a replacement for
+workers, a public service, or an inference/publication bypass. Skills describe
+procedures; code enforces access, evidence, budgets, and revision rules.
+
 Scope: instrumentation, configuration inventory, and an offline evaluation corpus.
 
 - Collect at least 72 hours of arrival rates, queue ages, completions, retry rates,
@@ -131,6 +139,8 @@ Scope: no additional inference demand. Small independent releases.
 - Validate public link schemes and generated content. Introduce CSP in report-only
   mode before considering enforcement; never collect credentials in reports.
 - Lock tested dependencies and record immutable release identities.
+- Define internal MCP authentication, read/proposal scopes, and client data-access
+  policy before exposing any evidence. No arbitrary SQL, shell, or fetch tools.
 - Propose Ollama resource reservations and a safety ceiling only after measurement
   of loading and longest supported contexts. Do not fit the model to an arbitrary
   RAM limit or confuse host RAM with VRAM. Account for other GPU consumers.
@@ -142,6 +152,14 @@ Rollback: revert each deployment/configuration change independently.
 ## Stage 2: Evidence and event correctness
 
 Scope: additive internal records and deterministic logic; public behavior gated.
+
+- Build shared bounded retrieval services and a read-only MCP adapter for articles,
+  exact evidence, event records, and incident candidates. Test result parity,
+  authorization, query limits, suppression, and retrieval quality independently
+  of LLM output. First adapter deployment adds no writes or inference demand.
+- Integrate trusted passage/reference handling and bounded proposal schemas.
+  Skills for investigations, updates, conflicts, and audits reuse these contracts;
+  immutable proposal writes require idempotency and transactional version checks.
 
 - Add stable claim IDs, source and passage references, incident relevance, date
   precision, observed time, assertion status, and supersession/correction links.
@@ -170,6 +188,11 @@ Rollback: disable the new path; retain additive data and prior publication point
 
 Scope: 5-10 representative events; current evidence first; no bulk history replay.
 
+- Exercise proposal-only maintenance workflows through shared services; MCP clients
+  receive no direct publication permission. Bound tool calls and packet sizes,
+  record workflow versions, and test stale/duplicate proposals. Model work always
+  uses the existing single-job queue, never synchronous inference in read tools.
+
 - Add dedicated event evidence and report profiles using the existing model.
   Version prompts and schemas and verify effective input/output limits.
 - Evaluate whether existing article context extraction can emit reusable evidence
@@ -197,6 +220,9 @@ Scope: validated pilot events, then gradual expansion.
 
 - Render current status, what changed, evidence-linked milestones, impact,
   affected products/CVEs, primary mitigation references, and unresolved questions.
+- Promote accepted proposals through separate application validation and revision
+  gates, not MCP/skill approval. Adapter failure or shutdown must not affect
+  ingestion, existing jobs, public serving, or the last validated report.
 - Make confirmed facts, attacker allegations, and estimates visibly distinct.
 - Show meaningful update times, data coverage, sources, and correction history.
   Do not label refresh timestamps as new incident developments.

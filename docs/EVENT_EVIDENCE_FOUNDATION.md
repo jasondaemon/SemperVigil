@@ -73,6 +73,11 @@ are carried but their independence is not established by this validator.
 
 ## Next integration gate
 
+Follow the accepted [MCP/domain-service architecture](EVENTS_MCP_ARCHITECTURE.md).
+Retrieval and validation belong to shared application services, with a read-only
+internal adapter first. These helpers alone are not an MCP integration; skills
+and proposal tools must not bypass trusted evidence or publication gates.
+
 1. Integrate independently established passage scopes, canonical entity aliases,
    and incident-specific references with the tested extraction/matching helpers.
    Curate real multi-document examples, preserving existing public URLs.

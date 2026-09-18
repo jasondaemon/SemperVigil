@@ -48,6 +48,9 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 </ul>
 <section id="stages">
 <h2>Staged delivery</h2>
+<details open><summary><span>Cross-stage / Evidence investigation and MCP</span><span class="badge">Accepted design / not built</span></summary>
+<ul><li>Shared domain services support workers and an internal MCP adapter. No unrestricted database tools or dependency in the public serving/build path.</li><li>Stage 1/2: bounded read-only historical retrieval, exact evidence, event candidates, permissions, and direct/MCP parity tests. First deployment adds no inference or write operations.</li><li>Stage 2/3: versioned maintenance workflows and proposal-only shadow integration; trusted references, immutable drafts, idempotency, and transactional version checks first.</li><li>Stage 4: separately validated publication. Skills cannot grant permissions or approve their own output. Preserve the single-LLM queue and daily JSON contract.</li></ul>
+<p class="gate">Next: service contracts and bounded input/retrieval tests. <a href="EVENTS_MCP_ARCHITECTURE.md">Architecture, security boundaries, budgets, and acceptance gates</a>. No MCP implementation or deployment is claimed.</p></details>
 <details open><summary><span>0 / Baseline and export contract</span><span class="badge active">In progress</span></summary>
 <ul>
 <li><span class="badge done">Verified</span> Read-only queue, inference, and build measurement tool.</li>
@@ -92,6 +95,7 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 <tr><td>Legacy integration tests</td><td>Existing syntax/stale-import problems and missing local dependencies; no full-suite pass claimed.</td><td>Stage 1</td></tr>
 </tbody></table></div></section>
 <section id="history"><h2>Change record</h2>
+<p><span class="badge">September 18 / MCP architecture</span> Integrated internal read-only investigation, shared domain services, maintenance workflows, and later proposal-only shadow work into Stages 1-4. Documentation only; no dependencies, jobs, model calls, schema changes, or deployment. Existing 172-test result is from the prior implementation slice.</p>
 <p><span class="badge active">September 18 / Events foundation</span> Added pure, unreferenced evidence-validation module and 44 offline cases (147 total suite). No jobs, model calls, storage changes, public JSON changes, or deployment. Synthetic contract cases do not complete the multi-document quality evaluation gate.</p>
 <p><span class="badge done">September 18 / browser and freshness</span> Live desktop checks verified repaired historical content and search end-to-end. Added independent metrics timestamp validation (three-hour default), with seven regression cases. 103 offline tests and 21 public checks passed. Earlier interrupted context task completed at 18:25 UTC. No production changes or new inference.</p>
 <p><span class="badge done">September 18 / bounded archive repair</span> Added an optional validated builder-only Helm override; production value 1, shared value 0. Only the builder was replaced after admission stopped and build jobs drained. API build 35.2s, next automatic build 33.2s; 21 public checks passed. August 15 recovered all 553 missing CVEs. No image, Hugo-command, cache, resource, or concurrency changes.</p>
