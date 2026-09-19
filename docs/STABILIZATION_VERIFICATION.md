@@ -1254,3 +1254,53 @@ appliance-proxy/certificate changes remain untouched. Next release must await th
 existing v3 cache check, retain its current default profile, and enable scoped
 pilots separately. Keep all eight provisional quality expectations, including
 the repeated-company and cross-incident negative cases.
+
+## Scoped pilot deployment, September 19 07:27 UTC
+
+V3 reuse job `job_99347062943043ee874e5c719e93ed5e` succeeded with
+`model_cache_hit:true`, identical Commission artifact and zero `llm_runs` rows.
+Authenticated download again returned 112,236 bytes, SHA-256
+`7713566870933d6efd83fa9ca20d467f4f7b067e7427518ca59bd054d418fbc6`, private/no-store.
+Only after that result did the scoped rollout proceed.
+
+Source image `sempervigil-ingest:6141d61` uses the retained `27b9fb3` dependency
+base, image config `sha256:598271c3968068f13c2ecb18d88c82fb84905649fd9e201776fae6ab37a4fb55`,
+OCI manifest `sha256:3bb11617d1aa51210ac76423a34f55a7408ef78f07d46240e2b994a2cebd2873`.
+Imported on docker42/46/47/52. App `1015bea` adds tested chart wiring and pinned
+cases without changing image source. 506 offline tests pass.
+
+Render/diff showed only admin/LLM-worker main+init image changes and two new scope
+ConfigMap settings. Paused orchestrator admission, waited for pod exit and an empty
+running LLM/launch queue, stopped the single LLM worker, then applied only the
+ConfigMap and those two Deployments. Both rolled out successfully. Read-only
+factory guards passed for both existing v3 and new scoped profiles without any
+model invocation. Orchestrator was restored Ready; no concurrency increase.
+Post-apply diff is empty, platform `39b6dd2` committed/pushed, and rendered source
+values match applied configuration. Unrelated platform edits were preserved.
+
+Public checks before (07:21:08) and after (07:27:24) passed, including sampled
+historic JSON, public pages and local assets. Kubernetes/etcd readiness passed.
+Existing private attachment remains downloadable after admin replacement. These
+are HTTP/contract checks, not a new browser/mobile acceptance claim. Web, builder,
+fetch/orchestrator images, Hugo commands, shared archive and stage routing were
+not changed. The image contains the local event-writer improvement, but its active
+CVE-sync/events-rebuild callers still run the old shared image; no writer rollout
+or production build-performance improvement is claimed.
+
+The explicitly selected scoped cohort was submitted through authenticated admin:
+
+- Odido: `job_3e8dbe9ecba7450083d32fa61721c5dc`.
+- Vercel: `job_1aeca71d82a04edc97e88f09151a1689`.
+- Commission: `job_6f4f2dce65724b9db67206be1d9b3154`.
+
+All were queued behind normal CVE backfill (194 queued at last check), private
+priority -10, max attempts 1. No result/quality claim yet. All eight earlier
+provisional expectations remain; each request still includes 12 candidates and
+fits the original budget. Do not duplicate or reprioritize these jobs. Event-row
+fingerprints remained unchanged before rollout. No new public reporting enabled.
+
+Rollback: disable scope admission/model use for scoped requests with
+`SV_EVENT_REVIEW_SCOPE_ENABLED=0` and restart only affected processes after draining;
+or restore worker `293ad11` and admin `bddeff1`, preserving the v3 profile. Never
+leave a running model request orphaned to accelerate rollback. The unused scoped
+profile may remain for audit, with no ordinary pipeline routing to it.

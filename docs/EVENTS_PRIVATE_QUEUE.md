@@ -228,6 +228,8 @@ are in the verification notes. Do not publish these assessments or continue
 unbounded prompt tweaks. Next: `EVENTS_INCIDENT_SCOPING.md`. A single queued v3
 reuse check remains; do not duplicate it or invalidate its configuration.
 
-Local scope-aware review admission and worker execution now exist behind a separate
-disabled flag/profile. See `EVENTS_INCIDENT_SCOPING.md`. The default deployed v3 path
-and its hashes are unchanged. No new scoped jobs have been admitted or deployed.
+Scope-aware review admission and worker execution are deployed behind a separate
+flag/profile, disabled in chart defaults and enabled for the three-job private
+pilot. See `EVENTS_INCIDENT_SCOPING.md`. The default v3 path and its hashes are
+unchanged. Scoped jobs are queued; semantic acceptance and public automation are
+not claimed.

@@ -38,12 +38,12 @@ source-grounded incident definition across retrieval, assessment and revisions.
    by changing retrieval. Keep the current provisional cases and add changed-anchor,
    repeated-organization, roundup and reference-conflict cases.
 
-The source-anchor and private-job integration is now implemented locally, not
-deployed. Existing matching and evidence modules remain foundations; structural
+The source-anchor and private-job integration is deployed for a bounded private
+pilot. Existing matching and evidence modules remain foundations; structural
 validation is not semantic approval. The first integration remains private and
 disabled by default.
 
-## Local implementation contract
+## Implementation contract
 
 `event_scope.propose` binds one 35-1,200-character anchor to its full stored
 document version and event ID. Two to four distinct source-span focus roles
@@ -76,8 +76,9 @@ The three real v3 request hashes and private HTML hashes remain byte-identical
 under the local code when scope is absent. New offline tests cover source changes,
 forged metadata, exact spans, default-disabled admission, profile mismatch,
 stale-source rejection before model invocation, one-call reuse, escaping and
-scope-aware quality-case pins. A scoped real-model cohort, live admin integration,
-independent qualification and automatic publication remain unverified/unimplemented.
+scope-aware quality-case pins. Scoped jobs have now been admitted through live
+admin, but their real-model results remain pending. Independent qualification and
+automatic publication remain unimplemented.
 
 ### Scoped pilot prepared
 
@@ -97,6 +98,15 @@ The unused scoped profile `fe0ae074-117d-560f-8350-83c9da87ed67` and prompt
 provider/model, temperature zero, 1,024 output tokens, 12,000 input characters, no
 fallback/schema. Existing v3 profile and stage routing remain unchanged. No scoped
 inference or public report has been requested at this preparation checkpoint.
+
+### Deployment checkpoint
+
+Admin and LLM worker now run source image `6141d61`; chart controls are committed
+in `1015bea`, environment values in platform `39b6dd2`. Three scoped jobs are
+queued at the unchanged private priority; exact IDs and rollback are recorded in
+`STABILIZATION_VERIFICATION.md`. Do not duplicate or reprioritize the pilot.
+Existing v3 profile/cache/attachments continue unchanged. Private scope proposals
+and model suggestions still cannot authorize publication.
 
 ## Automation and publication boundary
 
