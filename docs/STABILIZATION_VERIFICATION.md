@@ -1756,3 +1756,24 @@ This is not the complete public feature and has no runtime caller yet.
 the new module was placed at repository root; moved to the package before testing.
 No SQL/JS changes; prior nine PostgreSQL and 21 JS gates were not rerun. No model
 calls, production migration, image change, public export or build this slice.
+
+## Qualified Markdown export boundary, September 19 11:00 UTC
+
+Expected production replicas remain ready. No production changes. Locally added
+an optional export branch accepting separately supplied immutable bundles and
+promoted pointer identities. Rendering reconstructs and compares exact identities,
+uses only source-backed quotations, and bypasses every legacy narrative/detail
+field. Existing stable slug and incremental file replacement logic are retained.
+Default callers continue producing the same pinned legacy checksum.
+
+Ten new tests cover qualified byte/inode/mtime reuse; unchanged prior files after
+invalid pointer, changed quote/scope/event, missing/unmatched pointer and duplicate
+event failures; stable URL; absent legacy facts; and source Markdown/HTML/Hugo
+shortcode neutralization. All 640 offline tests pass. No SQL or JS changes and no
+Hugo invocation; prior PostgreSQL/JS gates were not rerun.
+
+The new branch is not enabled in any runtime caller. Trusted qualification and
+publication-pointer storage remain pending. Inspection also confirms
+`write_events_index` still exports legacy summary/detail fields, so a matching
+qualified JSON index plus joint output preflight are required before activation.
+Do not enable Markdown-only qualified publishing or claim end-to-end acceptance.

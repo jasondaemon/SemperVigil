@@ -240,8 +240,17 @@ def write_events_index(events: Iterable[dict[str, object]], base_static_dir: str
 
 
 def write_events_markdown(
-    events: Iterable[dict[str, object]], base_content_dir: str
+    events: Iterable[dict[str, object]], base_content_dir: str, *,
+    qualified_revisions: dict[str, dict] | None = None,
+    promoted_revision_ids: dict[str, str] | None = None,
 ) -> list[str]:
+    # Future storage integration supplies both maps from trusted revision/pointer
+    # reads, never legacy event metadata. Existing callers take the unchanged path.
+    qualified_revisions = {} if qualified_revisions is None else qualified_revisions
+    promoted_revision_ids = {} if promoted_revision_ids is None else promoted_revision_ids
+    if set(qualified_revisions) != set(promoted_revision_ids):
+        raise ValueError("incomplete_event_publication_pointers")
+    qualified_seen: set[str] = set()
     output_dir = os.path.join(base_content_dir, "events")
     if Path(output_dir).is_symlink():
         raise ValueError("event_output_directory_symlink")
@@ -261,6 +270,20 @@ def write_events_markdown(
                 or site_slug.casefold() in names):
             raise ValueError("invalid_or_duplicate_event_slug")
         names.add(site_slug.casefold())
+        if event_id in qualified_revisions:
+            if event_id in qualified_seen:
+                raise ValueError("duplicate_qualified_event")
+            qualified_seen.add(event_id)
+            from .event_render import render
+            metadata, body = render(qualified_revisions[event_id], event_id=event_id,
+                                    expected_revision=promoted_revision_ids[event_id])
+            metadata["slug"] = site_slug
+            content = "---\n" + yaml.safe_dump(metadata, sort_keys=False, allow_unicode=False).strip()
+            content += "\n---\n\n" + body
+            path = os.path.join(output_dir, f"{site_slug}.md")
+            rendered.append((Path(path), content))
+            written.append(path)
+            continue
         frontmatter = {
             "title": event.get("title") or event_id,
             "severity": event.get("severity") or "UNKNOWN",
@@ -466,6 +489,8 @@ def write_events_markdown(
         path = os.path.join(output_dir, f"{site_slug}.md")
         rendered.append((Path(path), content))
         written.append(path)
+    if set(qualified_revisions) != qualified_seen:
+        raise ValueError("unmatched_event_publication_pointer")
     # Render the complete input before touching pages; do not erase the last
     # source set when serialization or a later write fails.
     for path, _ in rendered:

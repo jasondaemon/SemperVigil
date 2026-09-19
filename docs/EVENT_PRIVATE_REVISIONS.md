@@ -144,3 +144,32 @@ configuration, model calls, migrations or public files changed in this slice.
 Run `python3 -m pytest -q tests/offline/test_event_projection.py` for the 21 new
 checks; all 630 offline checks pass. The previous nine PostgreSQL and 21 JavaScript
 gates were not rerun for this pure-data addition.
+
+## Qualified Markdown export branch (local, not enabled)
+
+`write_events_markdown` now accepts optional `qualified_revisions` and
+`promoted_revision_ids` maps. Existing callers supply neither and retain identical
+legacy bytes. A future caller must obtain the latter from a trusted publication
+pointer store, not legacy event metadata, a model response or a client-supplied
+mapping. There is no such production caller or pointer store yet.
+
+`event_render.render` reconstructs the exact projection from its full packet,
+scope, independent qualification and predecessor, then compares the resulting
+identity and event to the expected pointer. It does not itself approve a
+qualification. It emits only source-backed quotations and explicit coverage/
+unknown-date/unknown-independence notices. Markdown, HTML and shortcode punctuation
+in source text is encoded; source URLs are separately encoded. Rendering never
+fetches a URL or invokes Hugo. The qualified branch skips all old summary,
+narrative, timeline, CVE and product fields, preserving the existing stable slug.
+
+All input renders and pointer checks complete before file replacements or pruning.
+Invalid, missing, duplicate or unmatched pointers fail without replacing prior
+pages; identical qualified output retains bytes, inode and timestamp. This does
+not make the source-directory writes a multi-file transaction: the existing
+build/atomic publication process is still required.
+
+Ten new checks pass, with 640 total offline tests and unchanged legacy checksum.
+No deploy or build occurred. Before enablement: add trusted pointer storage and
+qualification, a matching qualified Events JSON index path, full-output preflight,
+real platform-driven Hugo/browser validation and a bounded publication pilot.
+The daily feed JSON contract is not modified by this branch.

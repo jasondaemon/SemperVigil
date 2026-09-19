@@ -57,6 +57,13 @@ private model suggestions. Current production versions and pilot evidence are in
    merge old narrative sections, infer incident dates from feed dates, or use raw
    model text on parsing failure. Reject invalid revisions before writing files;
    retain prior validated output. Unknown dates remain explicitly unknown.
+   Local Markdown branch now reconstructs quote projections and compares their
+   identity to a separately supplied promoted pointer. Legacy byte compatibility,
+   stable slugs, unchanged-file reuse and no narrative blending pass offline.
+   `write_events_index` still reads legacy fields: a matching qualified index path
+   is required before any production caller enables the Markdown branch. Both
+   outputs must be prevalidated before either is replaced. No live caller supplies
+   qualified maps yet, and there is no trusted public-pointer store yet.
 6. Admit bounded changed-input work through the existing single LLM lane, using
    measured queue age and inference-time budgets, coalescing and cache identities.
    Oversized or ambiguous evidence stays held with visible coverage. No silent
