@@ -20,7 +20,9 @@ article, CVE, event, feed or public-site data was changed. The worker remains at
 zero replicas until the candidate image is deployed and the full real-input suite
 passes through that image. The initial deployed candidate run passed six stages;
 article-product extraction exposed schema extras before profile-schema forwarding
-was added. Cutover and rollback are model-reference transactions;
+was added. A second run proved the original active prompt itself explicitly asks
+for forbidden confidence fields. Migration 037 removes only that contradictory
+instruction from the routed prompt. Cutover and rollback are model-reference transactions;
 do not alternate loaded models during qualification.
 
 ## September 19, 20:23 UTC: passage-bound private article trial

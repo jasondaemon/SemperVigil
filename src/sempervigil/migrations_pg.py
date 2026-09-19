@@ -418,6 +418,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_sources_schedule_state_036")
             applied.add("pg_sources_schedule_state_036")
+        if "pg_article_product_prompt_schema_037" not in applied:
+            _migrate_article_product_prompt_schema_alignment(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_article_product_prompt_schema_037", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_article_product_prompt_schema_037")
+            applied.add("pg_article_product_prompt_schema_037")
         else:
             conn.commit()
         return
@@ -5192,3 +5201,40 @@ def _migrate_sources_schedule_state(conn) -> None:
     conn.execute("ALTER TABLE sources ADD COLUMN IF NOT EXISTS ingest_started_at TEXT NULL")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sources_next_due_at ON sources (next_due_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sources_ingest_job_id ON sources (ingest_job_id)")
+
+
+def _migrate_article_product_prompt_schema_alignment(conn) -> None:
+    """Remove a confidence instruction from the active two-field product schema."""
+    if not all(
+        _table_exists(conn, table)
+        for table in ("pipeline_stage_config", "llm_profiles", "llm_prompts")
+    ):
+        return
+    confidence_block = "\n".join(
+        [
+            "Confidence:",
+            "- Assign confidence based on evidence:",
+            "  high = explicit product mention (e.g., “FortiOS”, “Exchange Server”)",
+            "  medium = product line mentioned without specifics but clear (e.g., “Windows”)",
+            "  low = only implied context; use sparingly (prefer omit instead)",
+            "",
+        ]
+    )
+    conn.execute(
+        """
+        UPDATE llm_prompts
+        SET system_template = replace(system_template, %s, ''),
+            version = CASE
+                WHEN version LIKE '%%-schema-aligned' THEN version
+                ELSE version || '-schema-aligned'
+            END
+        WHERE id = (
+            SELECT p.prompt_id
+            FROM pipeline_stage_config s
+            JOIN llm_profiles p ON p.id = s.profile_id
+            WHERE s.stage_name = 'article_enrich_products'
+        )
+          AND position(%s in system_template) > 0
+        """,
+        (confidence_block, confidence_block),
+    )

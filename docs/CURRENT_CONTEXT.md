@@ -20,6 +20,10 @@ including strict private-review schemas. A direct CVE probe returned valid JSON
 in 4.43 seconds. All 982 offline tests pass with two existing skips. The local LLM
 worker remains paused for candidate qualification; production cutover is pending
 deployed seven-stage validation and must be one atomic profile transaction.
+The deployed candidate suite passed six stages and exposed one pre-existing prompt
+contradiction: article-product extraction required confidence while its two-field
+schema forbade confidence. Migration 037 removes only that paragraph from the
+active prompt; the output schema and extraction meaning are unchanged.
 
 ## Current direction: strengthen and reuse article enrichment
 
