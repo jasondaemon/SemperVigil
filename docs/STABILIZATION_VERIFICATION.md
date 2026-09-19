@@ -743,3 +743,7 @@ Dashboard verification exposed pre-existing expensive Need queries and overlappi
 ten-second browser polling. Single-flight refresh guard is tested, pending an
 admin-only follow-up deployment. No SQL/count semantics changed. Final visual
 acceptance and post-release public checks remain pending at this checkpoint.
+
+Browser testing also exposed a stale hard-coded August asset version: the new
+API was live but browsers retained old job-filter JavaScript. The follow-up
+admin release bumps the script version as well as serializing refresh requests.
