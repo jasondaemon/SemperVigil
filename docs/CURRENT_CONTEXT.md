@@ -9,6 +9,14 @@
 
 ## Current direction: strengthen and reuse article enrichment
 
+Latest local fix: candidate `article-evidence-v3` records all exact quote occurrences
+(maximum 32), with the first only a display anchor. Stored SolarWinds duplicate
+fixture now passes without source edits; records stay unreviewed/private. 31 targeted
+tests pass. No inference or runtime changes. Next: isolated queued three-article
+trial, at most six calls counted against the shared 14-attempt budget. See the
+latest section of ARTICLE_ENRICHMENT_QUALITY.md; older unique-quote notes below
+describe the prior contract.
+
 Read-only baseline comparison now covers stored articles 35613-35615. Existing
 context retains details lost in summaries; output can upgrade allegations or
 substitute publication dates. See `article-quality-comparison.html`. No new model

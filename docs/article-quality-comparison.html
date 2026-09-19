@@ -26,7 +26,7 @@ h3{font-size:1rem;margin-top:0}a{color:#19664f}code{overflow-wrap:anywhere;font-
 <div class="grid"><section><h3>Stored source</h3><p>The vendor did not mention exploitation. That does not establish whether evidence exists elsewhere.</p></section>
 <section><h3>Existing LLM output</h3><p>The bullet says <q>No evidence of exploitation in the wild as of now.</q> The context correctly retains the narrower vendor-reporting limitation.</p></section>
 <section><h3>Required outcome</h3><p>Preserve that limitation. Retain affected ARM versions, fixed version and the hard-coded-key cause. Keep other products' vulnerabilities separate.</p></section></div>
-<p class="warning">New-contract finding: the stored article body is duplicated. A valid qualification appears twice and fails the v2 unique-quotation check. Resolve citation occurrences deterministically before this becomes a canary acceptance criterion; do not silently remove source text.</p>
+<p class="warning">New-contract finding: the stored article body is duplicated. A valid qualification appears twice and failed the v2 unique-quotation check. Locally corrected in v3: both exact spans are retained, with the first only a display anchor. A manual evidence fixture passes; this is not new model output or semantic approval. Stored source text is unchanged.</p>
 <small><a href="https://thehackernews.com/2026/09/solarwinds-patches-arm-hard-coded-key.html">Original article</a> / Existing summary and context pass local shape checks.</small></article>
 
 <article><div class="label">Article 35614 / useful context omitted</div>
@@ -46,7 +46,7 @@ h3{font-size:1rem;margin-top:0}a{color:#19664f}code{overflow-wrap:anywhere;font-
 
 <h2>Next comparison</h2>
 <ol><li>Keep this source snapshot and baseline unchanged. Freeze the required outcomes above before generating candidate output.</li>
-<li>Resolve the duplicated-passage citation case without weakening semantic requirements or editing production source content.</li>
+<li>Duplicate-passage citation handling is locally corrected and tested. Both occurrences remain inspectable; semantic quality still requires review.</li>
 <li>Generate candidate context and summaries privately through the existing serial LLM queue. Compare source, baseline and candidate side by side.</li>
 <li>Measure omissions, unsupported assertions, qualifiers, timing, structure, attempts and latency. Keep production output until the candidate passes; no bulk rewrite.</li></ol>
 <footer><p>Snapshot captured at 2026-09-19 19:14:37 UTC. Full stored text and generated payloads are kept locally in the ignored data directory, not committed. All three complete inputs fit the candidate request budget. Existing structural checks do not establish historical router validation or factual correctness.</p>

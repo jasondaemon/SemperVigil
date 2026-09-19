@@ -4,6 +4,40 @@ September 19, 2026. Local hardening implemented and tested; NOT deployed.
 This corrects the Events architecture reset: reuse existing article enrichment,
 not routine re-extraction of each article for each event.
 
+## Duplicate citation correction: locally verified
+
+The candidate contract is now `article-evidence-v3`. Instead of rejecting repeated
+quotations, it records every exact occurrence (including overlapping matches),
+bounded to 32. The first span is only a deterministic display anchor, not a guess
+about intended surrounding context. Absent/blank quotations and overly repetitive
+spans fail; records remain unreviewed and ineligible for publication. No source
+normalization, deletion or runtime change. Record replay rejects altered/missing
+occurrences and the earlier workflow version.
+
+The saved SolarWinds qualification now validates at offsets 755-832 and 2534-2611
+and can enter a summary request. This uses a manually constructed evidence fixture,
+not fresh model output. 31 targeted tests pass, including duplicate-source replay,
+tampering, overlap bounds and explicit lack of semantic authority.
+Full offline suite: 974 passed, one skipped; integration tests not collected.
+
+Next execution sequence:
+
+1. Add a default-disabled, separate private article comparison queue operation.
+   Preserve the deployed normal article handlers; isolate the earlier strict
+   validation before any worker rollout. Test admission, serialization, profile
+   pinning and absence of article/event/build writes.
+2. Run the three frozen stored articles context-first, then summary, with no
+   automatic repair or retry. Six provider attempts maximum, charged to the
+   existing 14-attempt experiment budget, not a new allowance. Failed context
+   validation skips its summary. Never bypass the single-job lane.
+3. Compare original saved text, existing output and candidate against the frozen
+   expectations. Record failures and omissions as well as timing. No production
+   summary replacements until this passes; next stage reuses accepted facts for
+   one private event report and update, within the remaining shared budget.
+
+The queue operation and actual generation are still pending. No production rollout
+or factual-improvement claim is supported by this citation-only correction.
+
 ## Stored-article comparison: September 19
 
 Read-only comparison of articles 35613, 35614 and 35615 against their already

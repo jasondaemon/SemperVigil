@@ -62,11 +62,55 @@ def test_budget_includes_prompt_schema_and_full_source_without_truncation():
         evidence.context_request({**ARTICLE, 'content_text': '\u00e9' * 5000}, GEN)
 
 
-@pytest.mark.parametrize('quote', ['not in source', ' ', 'Acme'])
-def test_absent_empty_or_ambiguous_quote_fails(quote):
+@pytest.mark.parametrize('quote', ['not in source', ' '])
+def test_absent_or_empty_quote_fails(quote):
     data = context(); data['facts'][0]['evidence_quote'] = quote
-    with pytest.raises(ValueError, match='quote_not_unique'):
+    with pytest.raises(ValueError, match='quote_missing'):
         evidence.validate_context(encode(data), ARTICLE, GEN)
+
+
+def test_duplicate_source_preserves_every_occurrence_without_editing_source():
+    article = {**ARTICLE, 'content_text': ARTICLE['content_text'] + '\n' + ARTICLE['content_text']}
+    before = copy.deepcopy(article)
+    result = evidence.validate_context(encode(context()), article, GEN)
+    fact = result['facts'][0]
+    assert len(fact['occurrences']) == 2
+    assert fact['start'] == fact['occurrences'][0]['start'] == 0
+    for span in fact['occurrences']:
+        assert article['content_text'][span['start']:span['end']] == fact['evidence_quote']
+    assert article == before
+    assert not result['public_eligible']
+    assert evidence.validate_context_record(result, article) == result
+    evidence.summary_request(article, result, GEN)
+
+
+def test_repeated_words_do_not_resolve_context_or_prove_statement():
+    article = {**ARTICLE, 'content_text': 'Acme said no. Acme said yes.'}
+    data = context()
+    data['facts'][0].update(evidence_quote='Acme', uncertainty_quote=None,
+                           attribution_quote='Acme', statement='Acme certainly said yes.')
+    result = evidence.validate_context(encode(data), article, GEN)
+    assert len(result['facts'][0]['occurrences']) == 2
+    assert result['status'] == 'unreviewed'
+    assert not result['public_eligible']
+
+
+def test_occurrences_include_overlapping_matches_and_have_a_bound():
+    assert evidence._quote_occurrences('aaaa', 'aa') == [
+        {'start': 0, 'end': 2}, {'start': 1, 'end': 3}, {'start': 2, 'end': 4}]
+    with pytest.raises(ValueError, match='too_repetitive'):
+        evidence._quote_occurrences('a' * 33, 'a')
+
+
+@pytest.mark.parametrize('change', ['remove', 'move', 'workflow'])
+def test_modified_occurrence_record_or_old_contract_is_rejected(change):
+    article = {**ARTICLE, 'content_text': ARTICLE['content_text'] * 2}
+    result = evidence.validate_context(encode(context()), article, GEN)
+    if change == 'remove': result['facts'][0]['occurrences'].pop()
+    elif change == 'move': result['facts'][0]['occurrences'][1]['start'] += 1
+    else: result['workflow'] = 'article-evidence-v2'
+    with pytest.raises(ValueError, match='stale_or_modified'):
+        evidence.summary_request(article, result, GEN)
 
 
 @pytest.mark.parametrize('field', ['attribution_quote', 'uncertainty_quote', 'date_quote'])

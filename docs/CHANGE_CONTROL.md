@@ -1,5 +1,18 @@
 # Change Control Log
 
+## 2026-09-19: Duplicate-safe private article evidence
+
+- Version the undeployed contract to v3; preserve all exact quotation occurrences
+  rather than rejecting duplicate stored article passages. Bound matches to 32;
+  first occurrence is a display anchor only, not inferred semantic context.
+- Revalidate complete occurrence lists on replay. Tests cover duplicated source,
+  modified records, overlap and repetition bounds. 31 targeted tests pass.
+- Full offline suite: 974 passed, one skipped; integration tests not collected.
+- Saved SolarWinds fixture validates both original spans without source changes.
+  Fixture is manually specified, not new LLM output. No production/model writes.
+- Document bounded queued comparison sequence. Queue integration/generation remain
+  pending. Rollback is source-only; no deployed components reference this module.
+
 ## 2026-09-19: Stored article baseline comparison, read only
 
 - Compare three saved security articles to existing LLM summaries and context;
