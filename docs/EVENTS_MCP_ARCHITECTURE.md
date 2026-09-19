@@ -71,6 +71,13 @@ eligibility must never be inferred from an investigator's ability to read them.
 
 ## Event-maintenance workflows
 
+The first [private extractive workflow](EVENTS_PRIVATE_REVIEW.md) is implemented
+as local operator tooling over read-only snapshots. It makes no model calls and
+persists review artifacts only to a private local directory. It is not exposed
+as an MCP tool or production job; its local decisions cannot publish. This gives
+reviewers real evidence packets while semantic gates and job integration remain
+pending. Browser visual acceptance is still required.
+
 Versioned skills/workflow instructions describe investigation, follow-up updates,
 conflicting reports, evidence audits, and reader-facing change summaries. They
 must use the same service contracts and identify their version in proposals.

@@ -663,3 +663,40 @@ production deployment changed. This fixture-only slice does not require a new
 PostgreSQL run; the four prior integration results are unchanged. Larger corpus,
 independent review, actual single-job model evaluation, and disabled shadow-path
 integration remain release gates. See EVENTS_CURATED_EVALUATION.md.
+
+## Private Events review workflow (2026-09-18 local / September 19 UTC)
+
+Implemented a local end-to-end extractive path: read-only repeatable-read source
+snapshot, bounded strict packet parser, exact alias-matched passage suggestions,
+standalone HTML controls, snapshot-bound decisions, atomic immutable artifacts,
+and current-input comparison. It is not imported by existing workers/admin routes,
+does not invoke inference or publish, and cannot approve semantic truth.
+
+Real captures: Odido 7 sources/23 suggestions; Vercel 10/40; European Commission
+12/41. No missing documents or article-link truncation in these samples. The
+four-suggestion-per-source cap still limits coverage. All three packet versions
+matched a second production read. Snapshots and full source text are local ignored
+data; only implementation/docs/tests are committed. Production code was executed
+in memory for the bounded read, not installed or deployed.
+
+348 offline Python tests, five PostgreSQL tests, and eight JavaScript DOM-double
+tests passed. New PostgreSQL test used a restricted role and verified capture,
+draft/artifact generation, and suppression invalidating prior decisions. The
+empty memory/CPU-limited test container and loopback SSH tunnel were removed and
+their absence verified. No production schema or roles were changed.
+
+The browser tool denied the local HTML URL. No workaround browser/server was used;
+actual visual layout, CSP behavior, keyboard interaction, and downloads are not
+claimed verified. Unit tests cover control state/persistence/export/error behavior.
+The final read-only public checker passed 20 checks at 02:51 UTC: five pages,
+11 linked assets, three day downloads, and feed index. Metrics/feed freshness
+passed; August 15 retains 553 CVEs. This is not a full history completeness audit.
+
+Release decision: deliver the private review artifacts now; do not deploy or
+replace the public Events report handler yet. Autonomous model evaluation,
+semantic checks, and proposal-only queue integration remain later gates.
+
+Python wheel packaging succeeded and includes the new module, HTML template,
+and JavaScript, with no private packet data. The first no-isolation packaging
+attempt lacked setuptools in the test environment; normal isolated packaging
+resolved that tooling prerequisite without modifying production dependencies.

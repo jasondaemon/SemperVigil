@@ -157,6 +157,13 @@ Rollback: revert each deployment/configuration change independently.
 
 ## Stage 2: Evidence and event correctness
 
+Private review milestone: [extractive review workflow](EVENTS_PRIVATE_REVIEW.md)
+now connects bounded source snapshots, exact passage suggestions, local HTML
+review, immutable decisions/artifacts, and stale-input checks. Three real events
+are available from the tracker. This is operator review tooling, not production
+job integration or automatic factual approval. No new inference load or public
+output changes. Semantic/model evaluation and the shadow worker remain pending.
+
 Scope: additive internal records and deterministic logic; public behavior gated.
 
 - Build shared bounded retrieval services and a read-only MCP adapter for articles,

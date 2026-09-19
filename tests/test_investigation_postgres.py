@@ -101,10 +101,12 @@ def restricted_database():
                 title TEXT, original_url TEXT, brief_day TEXT, meta_json TEXT, content_text TEXT)""")
             admin.execute("""CREATE TABLE events(id TEXT PRIMARY KEY, kind TEXT, title TEXT,
                 severity TEXT, status TEXT, lifecycle TEXT, updated_at TEXT, visibility TEXT)""")
+            admin.execute("CREATE TABLE event_articles(event_id TEXT, article_id BIGINT)")
             admin.execute("""INSERT INTO articles VALUES (1, 'source', 'Incident',
                 'https://example.org', '2026-05-01', NULL, 'Exact original text.')""")
             admin.execute("""INSERT INTO events VALUES ('one', 'breach', 'Incident',
                 'high', 'open', 'active', '2026-05-01', 'active')""")
+            admin.execute("INSERT INTO event_articles VALUES ('one', 1)")
             admin.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(identifier, identifier))
             admin.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}").format(identifier, identifier))
             admin.execute(sql.SQL("ALTER ROLE {} SET search_path TO {}").format(identifier, identifier))
@@ -161,3 +163,25 @@ def test_stdio_client_reads_disposable_database(restricted_database):
             denied = await client.call_tool("execute_sql", {"query": "DELETE FROM articles"})
             assert denied.is_error
     asyncio.run(check())
+
+
+def test_private_event_review_on_restricted_postgres(restricted_database, tmp_path):
+    from sempervigil.event_review import snapshot, save, draft, validate_review
+    admin, reader_dsn, _ = restricted_database
+    admin.execute("UPDATE articles SET content_text='Incident responders reported an investigation is still ongoing.' WHERE id=1")
+    session = lambda: postgres_reader(reader_dsn)
+    scopes = frozenset({READ_SCOPE, EVIDENCE_SCOPE})
+    packet = snapshot(session, event_id="one", aliases=["Incident"], scopes=scopes)
+    assert len(packet["documents"]) == 1
+    proposed = draft(packet)
+    assert len(proposed["passages"]) == 1
+    decisions = {"workflow": packet["workflow"], "packet_version": packet["packet_version"],
+                 "decisions": {proposed["passages"][0]["id"]: "include"}, "note": "Check attribution."}
+    page = save(packet, tmp_path, decisions)
+    assert page.is_file() and not packet["public_eligible"]
+    assert snapshot(session, event_id="one", aliases=["Incident"], scopes=scopes) == packet
+    admin.execute("UPDATE articles SET meta_json='{\"suppressed\":true}' WHERE id=1")
+    changed = snapshot(session, event_id="one", aliases=["Incident"], scopes=scopes)
+    assert changed["documents"] == []
+    with pytest.raises(ValueError, match="stale_or_invalid_review"):
+        validate_review(json.dumps(decisions).encode(), changed)
