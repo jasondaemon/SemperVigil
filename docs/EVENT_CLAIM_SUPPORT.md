@@ -1,9 +1,50 @@
 # Private claim support audit
 
-September 19, 2026: queue integration deployed to admin `eff906d`; the single-claim
-worker revision is `3148e06`, platform `023f17c`. Private API admission is enabled;
-v2 real evaluation completed and FAILED quality acceptance. Existing
+September 19, 2026: queue integration deployed to admin `eff906d`; the two-phase
+worker revision is `d80f98a`, platform `3200453`. Private API admission is enabled;
+v4 real evaluation completed and FAILED quality acceptance. Existing
 private extraction and public quotation publication are unchanged.
+
+## Current V4 contract and measured acceptance
+
+The older six-dimension V1/V2 description below is historical. V4 checks quotation
+support without the full document first, then full-source context only if the
+quotation supports the statement. Each phase returns a short reason and verdict.
+An unsupported verdict rejects, uncertainty holds, and two supported verdicts
+produce only a private model suggestion. At most two serial calls per claim;
+phase caches survive interruption. Full source/scope/config still bind identity.
+No model verdict authorizes publication. Input budget remains 15KB; no truncation,
+model change, added concurrency, public mutation or candidate deletion.
+Current profile: `e08785a1-74c8-5453-a039-80086f4767ee`.
+
+Frozen original fixture: `tests/fixtures/event_claim_support_pilot.json`.
+V3 got 13/17 decisions right, including one unsafe acceptance. V4 gets 12/17:
+11 true rejections, one false acceptance, one true acceptance, four false
+rejections. The sensitive/unprotected-secrets confusion persists. V4 is NOT an
+improvement in measured acceptance and must not become an authorization gate.
+Fresh holdout `event_claim_support_holdout.json` was labeled before evaluation:
+three negatives rejected, one positive supported, one positive held (pronoun
+antecedent outside the isolated quotation). No expectations were relabeled.
+
+V4 jobs and model time:
+- 26217: `job_c09814e60654448ebf18caf3eb9e8123`, 9 calls / 18.407s.
+- 26201: `job_aa788da7348b4aa8adf85e82daf209a0`, 6 calls / 9.134s.
+- 26239: `job_55dbe82d9ee34641934e0bebbccb67cd`, 5 calls / 6.907s.
+- Holdout 26236: `job_13b9e5172eec46879378bde3b4166264`, 6 calls / 8.561s.
+
+Replay jobs `job_337be729f574493f83f93ebb5de82674`,
+`job_032b4866380a40a2a24b532a0643aa85`, and
+`job_20d6dc37cbdb44d5a67b3f9473784532` all succeeded with cache hits and zero
+LLM runs. Saved sorted packet JSON now reconstructs the original source wire
+order, preserving existing extraction receipts; a regression test covers this.
+
+`tools/evaluate-claim-support.py` compares saved job results against frozen
+fixtures, fails on missing/extra/duplicate cases, and never treats holds as passes.
+863 offline tests pass, one skip. Next: evidence passage/antecedent handling and
+coverage evaluation on independent examples, not further benchmark-specific
+prompt tuning. Extraction still missed recovery facts present in the new source.
+
+## Historical V1/V2 design
 
 ## Queue admission
 

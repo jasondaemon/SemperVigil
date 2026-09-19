@@ -1,5 +1,21 @@
 # Stabilization verification
 
+## September 19, 18:32 UTC: private two-phase audit
+
+LLM worker `d80f98a`, platform `3200453`; admin `eff906d` unchanged. Only worker
+image and pinned support profile changed. Orchestrator restored and ready after
+draining the old worker. Rendered admin/worker/config/orchestrator matches live.
+863 offline tests pass, one Linux-only skip. No DB/JS suite rerun for this slice.
+V4 real semantic acceptance fails (12/17 original, 4/5 fresh holdout); no generated
+narrative promoted. Three cache replays succeeded with zero inference calls.
+Public pointer remains `c44cc56060cba571615cc697fc2d4930edacacdb94bbedf92104d9ce46a90252`.
+All 20 publication checks passed at 18:32:26 UTC: 5,060 indexed archive days,
+today 17 articles/24 CVEs, Aug 15 seven articles/553 CVEs, earliest sample one CVE.
+Metrics generated 18:17; feed index 18:20. These are HTTP/markup/assets/sampled
+JSON checks, not browser execution or exhaustive DB completeness proof.
+No Hugo/build/feed/schema/resource/concurrency changes. See EVENT_CLAIM_SUPPORT.md
+for exact jobs, latency, and unresolved quality failures.
+
 ## First implementation slice (2026-09-18)
 
 This slice changes tests, documentation, and an operator-invoked measurement tool.

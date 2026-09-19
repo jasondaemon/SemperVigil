@@ -7,7 +7,26 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
-## Latest deployment: queued claim support audit
+## Latest checkpoint: September 19, 18:32 UTC
+
+Admin remains `eff906d`; LLM worker `d80f98a`, platform `3200453`.
+V4 performs serial quotation/context checks with separately resumable caches.
+Saved-packet replay now preserves the original source serialization order;
+the production extraction receipt validates after reload without re-extraction.
+863 offline tests pass, one Linux-only skip. Render/live deployment diff is empty.
+All 20 public checks pass; public revision and build/feed behavior are unchanged.
+
+Quality gate still FAILS. Original 17 cases: 11 correct rejections, one false
+acceptance, one correct acceptance, four false rejections. Fresh five-case holdout:
+three correct rejections, one correct acceptance, one valid claim held because its
+quotation requires a surrounding antecedent. Do not promote these suggestions.
+The four jobs used 26 serial calls / 43.009 seconds of model time. Three original
+source replays succeeded with zero LLM calls. Stop prompt-only tuning on this
+cohort: next evaluate passage/antecedent-bound evidence and extraction coverage
+on independent examples before narrative synthesis or automatic authorization.
+See EVENT_CLAIM_SUPPORT.md for job IDs and limits.
+
+## Earlier deployment: queued claim support audit
 
 Admin `eff906d`, LLM worker `3148e06`, platform `023f17c`. Explicit `audit_source`
 admission uses existing private jobs/artifact viewer and a separate pinned profile.
