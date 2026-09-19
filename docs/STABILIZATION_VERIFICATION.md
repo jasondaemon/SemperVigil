@@ -1665,3 +1665,13 @@ Application repo and source values are committed/pushed. The platform repo's
 unrelated appliance/certificate work remains untouched and uncommitted; it is not
 claimed globally clean. Full Events automation still requires qualified incident
 scope/evidence, transactional public revisions, and reader-facing acceptance.
+
+## Publication-path analysis, September 19 10:10 UTC
+
+Receipt pilot still queued; no duplicate or priority change. Repository inspection
+confirms the new publication path cannot simply reuse the legacy report parser and
+metadata slot: synthesized timeline dates and old narrative-section blending would
+undermine source-qualified output. Event CAS alone also does not cover independent
+article-body changes. `EVENT_PUBLICATION_HANDOFF.md` records concrete integration
+boundaries, transactional concurrency tests and separate promotion/export gates.
+Documentation only this checkpoint; no schema, public content or runtime change.
