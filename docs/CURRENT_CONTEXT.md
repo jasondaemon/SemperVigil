@@ -7,7 +7,28 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
-## Current release checkpoint: September 19, 13:36 UTC
+## Current release checkpoint: September 19, 14:00 UTC
+
+- **Latest override:** orchestrator `7fd1010`, platform `7bcfd87`. Other ingest
+  components remain `e091471`; builder remains `bfa9986`. Only the scheduler was
+  rolled for scoped automatic Events admission. No build/LLM behavior changed.
+- Vercel event `evt_0ffca0813049` is explicitly enrolled. The scheduler queued a
+  real paired-source review, admitted one short exact excerpt under policy, and
+  the existing promotion worker/dirty-build path published revision
+  `c44cc56060cba571615cc697fc2d4930edacacdb94bbedf92104d9ce46a90252`.
+  Public HTML and Events JSON both have three cited sources. No manual approval,
+  direct DB promotion or manually enqueued build was used for this update.
+- Real inference: one call, 5.154s. Automatic build: 19.86s reported duration,
+  release `20260919135817`. All 5,060 archive JSON files remain. No repeated
+  inference/build after completion; two oversized sources are explicitly held.
+- 777 offline / 11 real PostgreSQL / 26 JS tests pass; one Linux-only stress
+  test skipped on macOS. The earlier Linux stress validation remains recorded.
+- This is bounded production automation for an enrolled, previously reviewed
+  scope, not autonomous discovery/enrollment of all events or generated narrative.
+  Changed anchor/quoted documents require fresh review. See EVENT_AUTOMATION.md
+  and the latest STABILIZATION_VERIFICATION.md entry for exact limits and evidence.
+
+### Earlier checkpoint: September 19, 13:36 UTC
 
 - **Override of the older checkpoint below:** ingest components now run `e091471`,
   builder `bfa9986`, platform values `4d852c2`. Qualified publication, human

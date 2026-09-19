@@ -4,7 +4,8 @@ September 19 deployment update: builder-owned export, output-bound activation,
 restricted credentials/schema and a two-revision operator-reviewed pilot are now
 live. See `EVENT_RELEASE_COORDINATION.md` and the latest verification entry. The
 steps below preserve the earlier implementation rationale, not current rollout
-status. Automatic qualification/maintenance admission remains open. The approved
+status. Bounded automatic qualification/admission for explicitly enrolled scopes
+is now live (EVENT_AUTOMATION.md); general autonomous discovery remains open. The approved
 atomic release-switch correction is deployed; see the verification log for the
 post-fix checks rather than inferring interruption-free operation from build success.
 

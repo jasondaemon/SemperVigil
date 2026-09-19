@@ -1,8 +1,10 @@
 # Builder-owned Events publication
 
-The qualified Events runtime is deployed: ingest `e091471`, builder `bfa9986`,
-platform `4d852c2`. Two controlled Vercel pilot revisions passed API publication
-and public HTML/JSON checks. Automatic qualification is not enabled. The approved
+The qualified Events runtime is deployed: ingest `e091471`, orchestrator `7fd1010`,
+builder `bfa9986`, platform `7bcfd87`. Two controlled Vercel pilot revisions passed
+API publication and public HTML/JSON checks. Bounded automatic qualification for
+the enrolled scope subsequently published a third revision; see EVENT_AUTOMATION.md.
+General autonomous event discovery/enrollment is not enabled. The approved
 atomic switch correction passed two more API builds; see CURRENT_CONTEXT.md and
 STABILIZATION_VERIFICATION.md for the HTTP evidence and NFS visibility caveat.
 

@@ -1,5 +1,11 @@
 # Scoped automatic Events quotation updates
 
+Status: deployed September 19 with orchestrator `7fd1010`, platform `7bcfd87`.
+The first automatic review, policy qualification, promotion and build succeeded;
+the live Vercel page and JSON now contain three excerpts. One model call took
+5.154 seconds; the normal dirty-build process reported 19.86 seconds. See
+STABILIZATION_VERIFICATION.md for IDs and public checks.
+
 Implementation: `event_automation.py`, called by the existing orchestrator.
 Default disabled: `orchestrator.eventAutoScopes: "{}"`. An explicit map of at
 most three event IDs to previously reviewed revision hashes enrolls bounded

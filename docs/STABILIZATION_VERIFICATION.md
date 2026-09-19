@@ -1945,3 +1945,53 @@ All expected production replicas were ready at this checkpoint's opening.
   and changed-input admission remain next work; the pilot is not autonomous LLM
   qualification. No new background monitor or schedule was created.
   No zero-interruption claim. The static feed JSON remained available during checks.
+
+## September 19: first automatic scoped update published
+
+- App `7fd1010`, platform `7bcfd87`; only the orchestrator Deployment changed
+  image plus explicit enrollment and restricted admission Secret reference.
+  Render/live diff is empty. Other ingest images remain `e091471`, builder
+  `bfa9986`. No web restart, schema migration, inference configuration, Hugo or
+  daily-feed change. Scheduling was drained and resumed for the targeted rollout.
+- 777 offline tests pass, one Linux-only stress test skipped on macOS; all 11
+  disposable PostgreSQL tests and 26 JavaScript tests pass. Expanded real DB
+  test exercises private-review queue admission, exact receipt consumption,
+  restricted policy approval, promotion, pending/unchanged reuse and revoked seed
+  refusal. Disposable database container and tunnel were removed after tests.
+- Enrolled only `evt_0ffca0813049` against reviewed root revision
+  `d06c840ec6d2b0ecf75db1901fb157c333082316ccbd123d9659ec1176b01ca2`.
+  Production preflight found broad retrieval selected only over-budget new sources.
+  Non-entity scope-focus retrieval found a qualifying source with a 13,628-byte
+  paired request, below the unchanged 15,000-byte budget. No source truncation or
+  context/model-budget increase was used. Two other sources remain over budget.
+- Scheduler created private-review job `job_45a1badc4e6c4dc5955cfcc52605dab1` at
+  13:56:49 UTC. It succeeded with one real local-model call, 5,154 ms, no cache hit.
+  Four assessed passages: two include, one hold, one exclude. These were proposals;
+  independent deterministic policy admitted one exact short excerpt from article
+  26239, requiring every approved focus term and the per-source word limit.
+- Scheduler recorded policy approval
+  `3050ef46f7839d8a5b6fa8ddc64f1c89cd012ac05d05df11d6cd3e3e2544d913` and queued
+  `job_d199adcd9bc24cbea4ba2111bc17b623` at 13:57:20 UTC. The existing restricted
+  promotion worker succeeded with revision
+  `c44cc56060cba571615cc697fc2d4930edacacdb94bbedf92104d9ce46a90252`.
+  No human approval, direct DB promotion, or operational admission script was used.
+- Normal dirty-build admission queued `job_c8dd8d64c45a4d8882af3781a4f356d5`
+  with reason `qualified_event_promoted`. It succeeded, reporting 19.86 seconds,
+  release `20260919135817`. No manual API build enqueue or direct Hugo invocation
+  was needed for this automatic update.
+- Public HTML and Events JSON independently returned HTTP 200 / Cloudflare
+  DYNAMIC and matched that exact revision. Both contain three source quotations
+  (articles 26201, 26217, 26239). All 5,060 daily archive JSON files remain.
+- 985 sampled public HTTP/JSON requests during rollout, activation and follow-up
+  had zero failures. The publication checker at 13:58 UTC passed all 20 page,
+  asset and JSON checks. All Deployments ready, API readiness healthy. Builder
+  lifetime peak 490,299,392 bytes (about 468 MiB), comfortably below unchanged
+  policy. This sampled evidence is not an absolute availability guarantee.
+- Subsequent scheduler passes held sources 26251/26742 as over budget, with empty
+  queues and no repeated inference or build. Since rollout there was exactly one
+  review, one promotion and one build, all successful. Hold reasons are logged;
+  real review/promotion tasks and immutable receipts remain in admin Jobs.
+- Limits: automatic additions operate only inside explicitly enrolled, unchanged
+  reviewed scopes. General incident discovery/enrollment, revised quoted-document
+  qualification, comprehensive coverage and generated narrative are not delivered
+  by this slice. See EVENT_AUTOMATION.md for policy and rollback semantics.
