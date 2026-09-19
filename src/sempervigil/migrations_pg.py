@@ -427,6 +427,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_article_product_prompt_schema_037")
             applied.add("pg_article_product_prompt_schema_037")
+        if "pg_article_product_prompt_user_schema_038" not in applied:
+            _migrate_article_product_user_prompt_schema_alignment(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_article_product_prompt_user_schema_038", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_article_product_prompt_user_schema_038")
+            applied.add("pg_article_product_prompt_user_schema_038")
         else:
             conn.commit()
         return
@@ -5237,4 +5246,48 @@ def _migrate_article_product_prompt_schema_alignment(conn) -> None:
           AND position(%s in system_template) > 0
         """,
         (confidence_block, confidence_block),
+    )
+
+
+def _migrate_article_product_user_prompt_schema_alignment(conn) -> None:
+    """Align the active article-product user prompt with its two-field schema."""
+    if not all(
+        _table_exists(conn, table)
+        for table in ("pipeline_stage_config", "llm_profiles", "llm_prompts")
+    ):
+        return
+    user_template = "\n".join(
+        [
+            "Extract vendor/product entities mentioned in the cybersecurity item below for correlation.",
+            "",
+            "Return valid JSON with exactly this shape:",
+            '{"items":[{"vendor":"...","product":"..."}]}',
+            "",
+            "Rules:",
+            "- Each item must contain only vendor and product.",
+            "- Only include vendor/product pairs explicitly mentioned or strongly implied by the input.",
+            '- Exclude generic terms such as "router", "server", or "malware" unless a named product line is present.',
+            "- Do not include confidence, evidence, notes, CVE IDs, or commentary.",
+            '- If none are supported, return {"items":[]}.',
+            "",
+            "Input:",
+            "{{input}}",
+        ]
+    )
+    conn.execute(
+        """
+        UPDATE llm_prompts
+        SET user_template = %s,
+            version = CASE
+                WHEN version LIKE '%%-user-schema-v2' THEN version
+                ELSE version || '-user-schema-v2'
+            END
+        WHERE id = (
+            SELECT p.prompt_id
+            FROM pipeline_stage_config s
+            JOIN llm_profiles p ON p.id = s.profile_id
+            WHERE s.stage_name = 'article_enrich_products'
+        )
+        """,
+        (user_template,),
     )
