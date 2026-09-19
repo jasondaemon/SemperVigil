@@ -1723,3 +1723,36 @@ Read-only production catalogue confirms both event_articles foreign keys exist.
 Receipt verification remains queued; normal CVE threat-actor work completed 166
 jobs since 10:00 and had 32 queued at the initial sample, so the observed delay is
 low-priority queue wait, not a stuck model. No priority adjustment or duplicate.
+
+## Receipt acceptance and quote-only projection, September 19 10:50 UTC
+
+Receipt pilot `job_aefc9fa9885b40e584eaa4e917c9dd20` succeeded with cache_hit=true
+and zero llm_runs. Both authenticated attachments returned 200, private/no-store
+and sandbox CSP. HTML remains 109734 bytes, SHA256
+`79e7391491770fd262c4366d705a17c35a7f08aec2e884a863102d8655f68f7d`.
+Receipt is 2782 bytes, raw SHA256
+`02829e1dfc429a191307c7a07db0e88b7662c21edfa9e59487bc2defd79a58af`,
+revision identity `62d282c6c399fcb341ba31809fb140fa2abe546ad2160dc24bcdbc959041d3dc`.
+Guarded generation remains `767cc31100bc1ce61015ea93182201977b356b36224b57db6b1fd6a20c252f06`.
+Vercel event fingerprint remains `de70b60cd209cb493f75a529c78524e8`.
+Unauthorized/legacy receipt behavior was previously verified as 401/404.
+
+Authenticated Chrome Jobs filtering now visibly shows this succeeded job, cached
+reuse, 4/40 assessed and 36 unassessed passages, 3 include/1 exclude suggestions,
+and both private-review and revision download links. No console errors. No other
+UI actions or new submissions were taken. Native screen was locked; the available
+browser extension session provided the page verification without unlocking it.
+Deployment readback shows expected ready replica counts and unchanged release tags.
+
+Local `event_projection.prepare` adds the bounded quote-only preparation contract:
+separately trusted qualification identity, exact full snapshot/scope binding,
+versioned reviewer, exact spans, no arbitrary prose or inferred incident dates,
+unknown origin independence and explicit uncovered source IDs. Default trust is
+empty; caller authentication/qualification and publication promotion are not
+implemented by this helper. Every result remains not_promoted/public_eligible=false.
+This is not the complete public feature and has no runtime caller yet.
+
+21 new checks and all 630 offline tests pass. Initial collection failed because
+the new module was placed at repository root; moved to the package before testing.
+No SQL/JS changes; prior nine PostgreSQL and 21 JS gates were not rerun. No model
+calls, production migration, image change, public export or build this slice.

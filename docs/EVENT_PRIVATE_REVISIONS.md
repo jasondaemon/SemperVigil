@@ -1,6 +1,6 @@
 # Private revision receipts
 
-Status: deployed to admin/LLM as `78a0739`; end-to-end receipt pilot pending.
+Status: deployed to admin/LLM as `78a0739`; end-to-end receipt pilot verified.
 Existing opt-in private
 review guards remain the configuration boundary. No new queue, model profile,
 database migration, publication pointer or build behavior.
@@ -36,15 +36,20 @@ node --test tests/js/private_review_result.test.cjs
 
 Latest full gate: 598 offline tests and 21 JavaScript tests passed, plus JavaScript
 syntax validation. Integration PostgreSQL tests were not rerun; this adds no SQL.
-The paired diagnostics completed before rollout. The receipt verification job is
-`job_aefc9fa9885b40e584eaa4e917c9dd20`; cache availability and unchanged generation
-were verified before admission. Do not duplicate or reprioritize it.
+The paired diagnostics completed before rollout. Receipt verification job
+`job_aefc9fa9885b40e584eaa4e917c9dd20` succeeded using its cache, with zero model calls.
+Both authenticated downloads passed integrity/header checks. Jobs filtering,
+coverage labels and download links were verified in the browser with no console
+errors. Do not duplicate the job. See the dated verification notes for hashes.
 
 Release: after current diagnostic completion, render/diff and drain before a
 targeted admin/LLM-only rollout. Verify one existing assessment-cache hit produces
 a receipt without inference, download authorization/integrity, and public checks.
 Retain prior images. Rollback leaves harmless private receipt files on disk; old
 workers/UI ignore the additive result field. No backfill is required.
+
+The release procedure above is now complete for receipts. It does not authorize
+deployment of the later local-only database or projection components below.
 
 Troubleshooting: older completed jobs legitimately return 404 for this endpoint.
 Do not synthesize generation identity or rewrite their records to make a download
@@ -113,3 +118,29 @@ membership insert/delete attempts, stale-source rejection, harmless bookkeeping
 updates, missing-FK rejection and unsafe autocommit rejection. All 609 offline
 tests pass. The private persistence test also reran against the stricter receipt
 validator. Disposable container and tunnel were removed again after verification.
+
+## Quote-only projection preparation (local, no publishing caller)
+
+`event_projection.prepare` accepts a source packet, incident scope and a separate
+qualification record. Its default empty trusted-qualification set refuses all
+records. A future caller must load permitted identities from an independently
+authorized store, never from model output or a client-supplied trust list. Digest
+membership is a boundary supplied by that caller, not authentication implemented
+by this module. No qualification evaluator or trusted store is implemented yet.
+
+The bounded qualification records exact source and scope versions, versioned
+human/policy reviewer identity and exact quotation spans. Preparation rejects
+stale/full-context changes, incomplete packets, altered quotes, duplicate or
+overlapping spans, arbitrary prose and model-role reviewers. Output uses only
+attributed quotations and source metadata, keeps unrepresented sources visible,
+leaves origin independence and incident dates unknown, and labels feed_day only
+as feed metadata. It never copies legacy narrative fields. An optional predecessor
+changes content identity but is not a transactional compare-and-swap.
+
+Returned projections remain not_promoted/public_eligible=false. Independent
+qualification, durable storage, transactional pointer promotion, secure rendering
+and publication authorization are still required. No runtime imports, production
+configuration, model calls, migrations or public files changed in this slice.
+Run `python3 -m pytest -q tests/offline/test_event_projection.py` for the 21 new
+checks; all 630 offline checks pass. The previous nine PostgreSQL and 21 JavaScript
+gates were not rerun for this pure-data addition.

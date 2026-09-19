@@ -1,6 +1,6 @@
 # Private Events jobs and admin visibility
 
-## Current status: September 19, 10:00 UTC
+## Current status: September 19, 10:50 UTC
 
 Admin and LLM worker run `78a0739`; platform values are `9681dc1`.
 **Authenticated operator-triggered private admission and bounded model suggestions
@@ -33,14 +33,18 @@ contracts and remaining semantic gates: `EVENTS_INCIDENT_SCOPING.md`.
 
 Job coverage and selected-source labels are deployed, authenticated private
 downloads retain no-store/sandbox headers, and existing artifacts remain immutable.
-No browser acceptance of the latest labels is claimed. Older checkpoints below
+Browser verification of Jobs filtering, coverage labels, cached-result text and both
+download links passed at 10:50 UTC, with no console errors. Older checkpoints below
 are historical records, not instructions to re-enable old profiles or repeat jobs.
 
 Now deployed: immutable model-review receipts and authenticated
 revision evidence downloads are integrated into the worker and Jobs UI. They
 preserve exact input/model/artifact lineage without adding publication permission
 or inference. See `EVENT_PRIVATE_REVISIONS.md`. 598 offline / 21 JS tests pass.
-One cache-reuse receipt verification is queued: `job_aefc9fa9885b40e584eaa4e917c9dd20`.
+Cache-reuse receipt verification succeeded: `job_aefc9fa9885b40e584eaa4e917c9dd20`.
+It generated no model call, retained the same HTML bytes, and preserved the event
+record. Both authenticated downloads returned 200 with verified hashes. This does
+not qualify its 36 unassessed passages or approve publication.
 
 ## Initial private pilot (historical)
 

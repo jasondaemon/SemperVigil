@@ -30,9 +30,9 @@ private model suggestions. Current production versions and pilot evidence are in
 
 ## Concrete next slices
 
-1. Finish the deployed receipt cache-hit/download check. No model rerun when its
-   exact cached assessment is usable. Preserve private artifacts and current public
-   pages; a receipt never promotes itself.
+1. Receipt cache-hit/download check completed, including browser Jobs controls.
+   Zero model calls, unchanged event and HTML. Preserve private artifacts and
+   current public pages; a receipt never promotes itself.
 2. Implement an immutable revision repository and separate publication pointer as
    additive, bounded records. Store reproducible public projection data in the
    database, not a pointer into disposable private logs. Use a content identity,
@@ -44,6 +44,9 @@ private model suggestions. Current production versions and pilot evidence are in
    reviewer/policy identity. Model-selected `include` is relevance, not factual
    entailment or approval. Unknown origin independence stays unknown. Start with
    deterministic attributed quotations; optional prose must not add claims.
+   Local `event_projection.prepare` now implements the quote-only data boundary,
+   with default-deny trusted qualification identities. It does not evaluate or
+   authenticate those qualifications; trusted storage/authorization remains open.
 4. Use one transaction for current-input checks and pointer promotion. Lock the
    event/membership and cited source rows in a fixed order, re-read their versions,
    reject stale or suppressed evidence and compare the expected predecessor.

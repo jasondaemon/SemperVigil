@@ -7,7 +7,7 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
-## Current release checkpoint: September 19, 10:00 UTC
+## Current release checkpoint: September 19, 10:50 UTC
 
 - App source and runtime behavior: this repository. Environment values:
   `k8s-platform/apps/sempervigil/values.yaml`. Theme: `sempervigil-hugo`.
@@ -19,8 +19,12 @@
   Legacy Events behavior is not evidence that the new correctness gates are met.
 - Paired cohort completed: all seven assessed checks pass; one over-budget case
   remains unassessed. This is not the full semantic or public-publication gate.
-- Private revision receipt release is deployed. Its cache-reuse verification job
-  `job_aefc9fa9885b40e584eaa4e917c9dd20` is pending; do not repeat submissions.
+- Private revision receipt release is deployed and verified. Cache-reuse job
+  `job_aefc9fa9885b40e584eaa4e917c9dd20` succeeded with zero model calls; authenticated
+  attachments and browser Jobs coverage/download controls pass. Do not repeat it.
+- Local-only snapshot storage, current-source transaction window and quote-only
+  projection preparation are tested, not deployed. Independent qualification,
+  pointer promotion and the new public export branch remain unimplemented.
 - Public checks passed after the last targeted rollout. Use the dated evidence in
   `STABILIZATION_VERIFICATION.md`, not this checkpoint as a live health monitor.
 - Preserve one local LLM job, API-driven publishing, incremental feed history and
