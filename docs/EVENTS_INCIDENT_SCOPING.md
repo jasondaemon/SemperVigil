@@ -221,3 +221,14 @@ Then render/diff a targeted admin/LLM release, preserving the ordinary model lan
 and admit the seven-job cohort. Do not mistake the offline implementation for a
 successful real-model result. The prior seven PostgreSQL and 19 JS checks are from
 the preceding slices, not rerun in this source-only checkpoint.
+
+### Source cohort pinned
+
+The seven source requests are pinned in `assessment-*-source-v1.json`, with all
+eight labels and allowed decisions identical to the scoped cohort. Guarded profile
+preflight returned generation identity
+`58bedc2903733c7b9f840791cc27583f0b0538167c397742249974fb275aa4e1` without inference.
+Inputs contain three or four passages and 4,887-5,942 bytes including system text.
+557 offline tests pass. Source runtime image `e93b6f0` is prepared; targeted
+admin/LLM server-side spec comparisons show only container/init-container images
+changing from `6141d61`. Rollout and actual model results are not yet verified.

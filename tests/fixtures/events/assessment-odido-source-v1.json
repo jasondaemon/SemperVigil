@@ -1,0 +1,15 @@
+{
+  "event_id": "evt_69844df3a97f",
+  "packet_version": "d78eb12d0da4e2fa00eb07a00b34c071e9f32694cb9239f79580f5d58d567f8c",
+  "scope_version": "b9d58bfecd3ab6b35da74fed61e037959195349273ad049bcfd2ee87b39c4243",
+  "generation_version": "58bedc2903733c7b9f840791cc27583f0b0538167c397742249974fb275aa4e1",
+  "source_requests": {
+    "21505": "9d7c7f8a93fb182ef4a0826976ff243ca47bfb02672b94a0fe9a514930948d0a",
+    "22331": "cbc3cd57c8c153c30880b9c270ee4c9cc867197e2d536f95cd851f4181a81268"
+  },
+  "checks": [
+    {"passage_id": "71b64a4a484e332503c0babccfe8f650452833bac2a23a72682c776784c6f4b4", "label": "Odido customer breach reporting retained", "allowed": ["include"]},
+    {"passage_id": "f946f0ff3abcc509223621c883da327cc5ca55ba482768eb865c4d8e3652b70e", "label": "Generic company services are not incident evidence", "allowed": ["exclude", "hold"]},
+    {"passage_id": "e4714fad3630f976dcf3e9ac52ae3049b9f0f2e26c88bfa04c2e5eb43f5dc9e2", "label": "Repeated generic company description excluded", "allowed": ["exclude", "hold"]}
+  ]
+}

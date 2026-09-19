@@ -112,3 +112,17 @@ def test_scoped_pilot_keeps_all_eight_previous_expectations():
             k: v for k, v in new.items() if k != "request_version"}
         total += len(new["checks"])
     assert total == 8
+
+
+def test_source_cohort_keeps_all_eight_cases_across_seven_sources():
+    fixtures = Path(__file__).parents[1] / "fixtures/events"
+    total = sources = 0
+    generations = set()
+    for old_path in fixtures.glob("assessment-*-scoped-v1.json"):
+        old = json.loads(old_path.read_text())
+        new = json.loads(old_path.with_name(old_path.name.replace("-scoped-v1", "-source-v1")).read_text())
+        assert all(new[k] == old[k] for k in ("event_id", "packet_version", "checks"))
+        total += len(new["checks"])
+        sources += len(new["source_requests"])
+        generations.add(new["generation_version"])
+    assert total == 8 and sources == 7 and len(generations) == 1

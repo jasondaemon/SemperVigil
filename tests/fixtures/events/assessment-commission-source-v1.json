@@ -1,0 +1,18 @@
+{
+  "event_id": "evt_9bfd4aa3616a",
+  "packet_version": "567dbc7bbc825c8bf4f7fb2e32ceaec4a5a4c62a2e7deed73db1fc13d91d0438",
+  "scope_version": "a3c49540b88f71cd1ac70641743d4bc38f4c0c11dfa0be5afc2a4a7e061a67eb",
+  "generation_version": "58bedc2903733c7b9f840791cc27583f0b0538167c397742249974fb275aa4e1",
+  "source_requests": {
+    "21216": "975c075df54ea7a3a885a10e69b7cd3e55dfa7b895ccd53ffe689f8f51615019",
+    "21218": "1dc3ff4ecfaf84d083f93f9b152b1d457bf6e1206ac8e08135839010ab1a8f39",
+    "23638": "591a1536b8df63b69537718ea4645ab50174ef980684e03fbb2bca2f32180be0",
+    "25303": "dd071166c4def9e6c6420d69687685ff6d971c1566d3f4d4bfc3eeb040dcf868"
+  },
+  "checks": [
+    {"passage_id": "d3abfdbac6204d587ebfce00f2613ba146f0e70699342151f368e2a1099ba6c4", "label": "Staff MDM breach is not the Trivy cloud incident", "allowed": ["exclude", "hold"]},
+    {"passage_id": "104aebe03dfcb5648d77ec3567dde545d2c8948a3682a02a50dd32da89d41cf2", "label": "Staff phones intrusion must remain separate", "allowed": ["exclude", "hold"]},
+    {"passage_id": "047303c407924cfc09b5fc38e3073209f0e13218f1f84a845c1bf53d2674115c", "label": "January MDM incident must remain separate", "allowed": ["exclude", "hold"]},
+    {"passage_id": "107a962bb4e90fb5b7eff8d70e4167ae585670824bed7e74d710c2b7cb2c3495", "label": "Explicit Trivy AWS reporting retained with attribution", "allowed": ["include"]}
+  ]
+}

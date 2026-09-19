@@ -1,0 +1,10 @@
+{
+  "event_id": "evt_0ffca0813049",
+  "packet_version": "dd5a2b647d25c5876635e4c5f4115f5462add01ee777ac809bb4895f3a814375",
+  "scope_version": "cd30ecb87d26c54e5390dff7551704dbaca5c9222afdf075c3e9e2e6fb397136",
+  "generation_version": "58bedc2903733c7b9f840791cc27583f0b0538167c397742249974fb275aa4e1",
+  "source_requests": {"26190": "0bd9c441c8047e3f3a309adf37a27dacf333fccc776b18c31fb109bf05c836c9"},
+  "checks": [
+    {"passage_id": "f2c7c115681baf76ead4675ae105ffdcd55046ad708dfc688e65d3d6632b2a6b", "label": "Vercel incident reporting retained", "allowed": ["include"]}
+  ]
+}
