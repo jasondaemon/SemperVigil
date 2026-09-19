@@ -1,5 +1,20 @@
 # Change Control Log
 
+## 2026-09-19: Real private pilot completed, publication still gated
+
+- Current admin `69e76a6`, LLM worker `c4f8ddf`, platform `5c6044d`.
+  Render/live scoped manifest comparison is empty. No builder, web, source,
+  feed, schema, resource or concurrency changes. Orchestrator admission resumed.
+- Intermediate date schema caused Ollama grammar parsing to fail on a regex
+  escape and its inference subprocess to crash. Removed regex/conditional grammar
+  from this private contract; derive and validate precision in application code.
+  No AI platform configuration change or manual model restart was needed.
+- Three corrected extractions succeeded, compiling 17 private claims. Replay
+  reused the cache without inference. Semantic citation failures remain explicit;
+  the public report was not replaced. See STABILIZATION_VERIFICATION.md.
+- Rollback: disable the separate deconstruction flag, drain and roll only the
+  affected admin/LLM components. No data migration or public rollback required.
+
 ## 2026-09-19: Private deconstruction pilot and constrained generation
 
 - Rolled only admin and LLM worker to `69e76a6`, preserving the existing model,

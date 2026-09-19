@@ -22,6 +22,8 @@ def test_constrained_format_quotes_are_exact_and_dates_have_enums():
     assert 'Context.ai was compromised.' in fields["quote"]["enum"]
     assert "date_precision" not in fields
     assert "incident" not in fields["section"]["enum"]
+    schema_text = json.dumps(draft.response_format(text))
+    assert '"anyOf"' not in schema_text and '"pattern"' not in schema_text
 
 
 def test_generation_schema_rejects_null_with_month_precision(database):

@@ -2009,6 +2009,54 @@ All expected production replicas were ready at this checkpoint's opening.
 - Semantic synthesis, real-model evaluation, correction adjudication and guarded
   publication remain open. Prior PostgreSQL/JS results were not rerun this slice.
 
+# September 19, 2026: deployed private deconstruction pilot
+
+This entry supersedes the local-only status below. Admin `69e76a6`, LLM worker
+`c4f8ddf`, platform `5c6044d`. Rendered admin/worker/ConfigMap/orchestrator manifests
+match live. Only admin/LLM images and private enablement/profile settings changed;
+admission was paused, jobs drained, old pods removed, then admission resumed.
+Builder, web, model/context/resources, single-LLM concurrency and feeds unchanged.
+
+- Profile v2: `fc201a04-3f95-5251-b66f-f3afc0e883f2`, created through supported
+  AI API with exact source prompt, temperature 0, max tokens 1536, no fallback.
+  The earlier v1 profile was disabled through the same API.
+- Initial free-output job `job_080a41f7a58c494dacf264a08b41a112` failed closed
+  after 13.041s: invalid fields and altered quotations. Constrained job
+  `job_073cb367cb0d4bdda790789112e6dcae` failed after 22.224s: date precision
+  disagreed with null dates. Neither wrote public data.
+- Intermediate job `job_e1cf48d24dce4e1c95cc6e39d7c878a3` encountered HTTP 500:
+  Ollama logs show grammar parser failure on a regex escape, then SIGSEGV in its
+  inference subprocess. Transport retries repeated the failure; pod restarts
+  stayed zero. This is not evidence of OOM. Removed regex/conditional grammar
+  and model-generated precision, retaining strict local date/calendar validation.
+  The next request reloaded the model successfully without a platform restart.
+- `job_1c05a7e1ff9a4b6eafa6b76dd4a7517f`: source 26217, six claims, one call
+  28.736s including reload. `job_320730845c8249a1ae6c555ab0aff044`: source 26201,
+  six claims, one call 22.224s. `job_8c9b040505744389ad9bcb62b7a3f14d`: source
+  26239, five claims, one call 22.191s. All succeeded as PRIVATE unreviewed drafts.
+- Replay `job_2b4fc9fc6b924882aea0844928985ab8` succeeded with cache hit and
+  zero llm_runs. It retained three-source compilation revision
+  `dec4b2a36ddee950ed0df5feaf9444469edd13b3e0bbad1c5231ba86592d9205`.
+  Coverage: three included, four pending, two over budget, one unextractable.
+  Authenticated artifact downloaded to ignored
+  `data/events-review/deconstruction-vercel-pilot.html` for local inspection.
+- Semantic review FAILS publication acceptance: unrelated citations for access,
+  impact and recovery claims; imprecise ShinyHunters identity/uncertainty; sensitive
+  versus unprotected secrets conflated. No overview or dated milestones. Exact
+  quote presence alone is demonstrably insufficient. These claims cannot enter
+  the public quotation approval path and produced no publication receipt.
+- Full offline suite: 817 passed, one Linux-only skip. Final targeted regression
+  suite: 48 passed, existing FastAPI deprecation warnings. PostgreSQL/JavaScript
+  suites not rerun this slice; no schema or JavaScript changes.
+- Public checker passed all 20 tests at 15:03 and 15:22 UTC, including 5,060
+  indexed archive days, current/historic JSON, Events, search, metrics and assets.
+  Existing Vercel pointer remains `c44cc56060cba571615cc697fc2d4930edacacdb94bbedf92104d9ce46a90252`.
+  All Deployments ready; API readiness healthy. Post-correction model runs use
+  GPU with unchanged 16K context; final recent logs show successful generation,
+  no repeated grammar failures. Sampled checks are not a zero-downtime guarantee.
+- No direct Hugo invocation, manual build, migration or candidate deletion. Next
+  is semantic support/uncertainty validation before coherent narrative generation.
+
 # September 19, 2026: private deconstruction extraction, local only
 
 - Added opt-in source-level claims to existing private-review admission and LLM

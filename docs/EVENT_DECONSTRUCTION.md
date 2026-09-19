@@ -1,7 +1,8 @@
 # Private incident deconstruction
 
-September 19, 2026: locally implemented, including cached multi-source compilation;
-not deployed or model-evaluated.
+September 19, 2026: private pilot deployed (admin `69e76a6`, LLM worker
+`c4f8ddf`). See STABILIZATION_VERIFICATION.md for measured model outcomes.
+This is not enabled for automatic narrative publication.
 
 This is the extraction and structured-compilation slice of the living report. It
 does not complete narrative synthesis, claim qualification, semantic corrections,
@@ -24,13 +25,20 @@ whose system prompt exactly equals `event_deconstruction.SYSTEM_PROMPT`, user
 template is `{{input}}`, and model/provider match the existing local model.
 No cloud fallback or new model is permitted. Parameters: temperature 0,
 max_input_chars 15000, max_tokens 512-1536. Actual model quality and output-budget
-adequacy remain unmeasured; do not enable automated admission on this basis.
+adequacy require real-pilot evaluation; do not enable automated admission on this basis.
 
 The worker sends one complete bounded source and an exact incident anchor. It
 holds oversized sources before inference rather than truncating silently.
 At most eight proposed claims cover overview, initial access, attack path,
 impact, recovery and attribution. Claims include exact source spans and optional
 incident/disclosure dates with explicit precision. Unknown dates remain null.
+The local transport now uses schema-constrained generation with exact source
+sentence choices and allowed sections. The model returns only a date value or
+null; code derives precision and validates the calendar date. This avoids both
+inconsistent duplicate fields and the installed Ollama grammar parser's crash
+on regex escapes. No regex/conditional grammar is sent to inference.
+Both schema and source input count toward the existing 15KB budget. Sources with
+no unique bounded sentences are explicitly held, not treated as an empty success.
 Existing claim validation is reused. A structural pass does NOT establish
 incident relevance, entailment, date support, independence or truth.
 
@@ -64,10 +72,16 @@ publication pointers or dirty-build state are written.
 - Drafts are historical snapshot reviews, not assertions of current DB freshness.
 - Model statements/dates can be semantically wrong despite exact citations.
   Tests explicitly demonstrate that structural success is never approval.
-- Next: provision the dedicated profile through the supported API, perform a
-  bounded private Vercel pilot, evaluate actual claims against sources, then add
-  qualified multi-source narrative synthesis and semantic correction handling.
-  Retain the current public report until those gates pass.
+- The dedicated v2 profile is provisioned through the supported API. A real
+  three-source Vercel pilot produced 17 claims; unchanged-source replay used no
+  inference. Actual review found mismatched supporting quotations, overconfident
+  attribution, and loss of the sensitive/unprotected-secret distinction. No
+  overview or dated milestones were extracted. Structural success is not reader
+  acceptance. The earlier v1 profile is disabled.
+- Next: passage-bound claim support evaluation and uncertainty/correction tests,
+  then qualified multi-source narrative synthesis. Retain the current public
+  report until those gates pass. Do not increase model/context/concurrency to
+  hide these failures or auto-enroll the legacy candidate backlog.
 
 ## Verification and troubleshooting
 
@@ -85,5 +99,7 @@ source is deliberately held; do not raise model context or truncate to bypass.
 the source rather than fuzzy matching. Invalid model output fails the job with
 its existing one-attempt policy, not a generic summary fallback.
 
-Rollback: leave the feature disabled. No migration or production change is
-required for this local implementation.
+Rollback: set the separate deconstruction flag to 0, render/diff, and roll only
+admin/LLM worker after draining their work. The original private quotation flow
+and public report do not require this flag. There is no schema migration or public
+content rollback. Keep the existing single-LLM lane and retained images.

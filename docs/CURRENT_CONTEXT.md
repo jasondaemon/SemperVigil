@@ -7,7 +7,32 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
-## Current release checkpoint: September 19, 14:00 UTC
+## Current release checkpoint: September 19, 15:30 UTC
+
+Private deconstruction is deployed: admin `69e76a6`, LLM worker `c4f8ddf`,
+platform `5c6044d`. Orchestrator remains `7fd1010`, other ingest workers
+`e091471`, builder `bfa9986`. Single LLM lane, model, resources, build and
+feed behavior are unchanged. Production flag is enabled for manual private API
+admission only; no automatic narrative publication.
+
+The actual Vercel pilot compiled 17 unreviewed claims from three sources.
+Successful model calls took 28.736s (including reload), 22.224s and 22.191s.
+Repeating source 26217 reused the cache with zero model calls and the same
+three-source compilation revision. Claims have citation/meaning mismatches;
+no overview or dated milestones were extracted. Do not promote this draft.
+Next: passage-bound claim support evaluation, uncertainty/correction handling,
+then coherent narrative synthesis. Do not substitute longer unvalidated prose.
+
+An intermediate schema crashed the installed Ollama grammar parser on a regex
+escape, not an established OOM. The corrected contract sends no regex or
+conditional grammar and derives date precision locally. Three subsequent model
+requests succeeded; the model is back on GPU and all Deployments are ready.
+817 offline tests passed with one Linux-only skip; final targeted suite 48 passed.
+All 20 publication checks passed at 15:22 UTC. Public event pointer is unchanged.
+Legacy candidates were not deleted: some published records carry that flag.
+See EVENT_DECONSTRUCTION.md and STABILIZATION_VERIFICATION.md for evidence.
+
+## Earlier checkpoint: September 19, 14:00 UTC
 
 Latest local continuation: private deconstruction now reuses source/config-bound
 extractions and compiles all current cached source drafts into one review artifact.
