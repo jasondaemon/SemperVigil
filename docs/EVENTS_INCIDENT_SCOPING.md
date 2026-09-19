@@ -38,9 +38,46 @@ source-grounded incident definition across retrieval, assessment and revisions.
    by changing retrieval. Keep the current provisional cases and add changed-anchor,
    repeated-organization, roundup and reference-conflict cases.
 
-This is a design checkpoint, not a deployed scoping system. Existing matching and
-evidence modules are foundations; their structural validation is not semantic
-approval. The first integration remains private and disabled by default.
+The source-anchor and private-job integration is now implemented locally, not
+deployed. Existing matching and evidence modules remain foundations; structural
+validation is not semantic approval. The first integration remains private and
+disabled by default.
+
+## Local implementation contract
+
+`event_scope.propose` binds one 35-1,200-character anchor to its full stored
+document version and event ID. Two to four distinct source-span focus roles
+identify the entity and an affected system, attack mechanism or reported
+reference. Exact quotes, offsets, title and URL are revalidated from the current
+worker snapshot before inference. Role labels are proposals, not an entailment
+test or verified chronology. Source changes invalidate the proposal; a report-only
+event timestamp change does not change its identity. The broader assessment
+request still includes the private packet version and is not yet suitable as an
+automatic report-refresh fingerprint.
+
+Admin accepts an optional `scope` object on the existing authenticated private
+review endpoint, bounded to 6,000 JSON bytes. Admission checks metadata and its
+hash without reading article bodies or invoking inference. The worker checks
+actual source provenance. The separate `SV_EVENT_REVIEW_SCOPE_ENABLED=1` flag and
+`SV_EVENT_REVIEW_SCOPE_PROFILE_ID` are required; the latter must use the exact
+scoped system prompt, existing local provider/model, and existing bounded params.
+Missing/incorrect configuration fails closed instead of silently dropping scope.
+No automatic admission or public write is added. The existing job type remains
+visible in the dashboard, with the same low priority and single-attempt policy.
+
+Requests keep the existing round-robin candidate selection, 12-item/12,000-byte
+maximum and one model call. Scope is separately included as comparison evidence.
+The cache includes scoped request identity and refuses a valid assessment for a
+different scope planted in the expected entry. Private HTML shows the anchor,
+source citation, document version and explicit unqualified status; human choices
+still start at Hold. Scope is retained inside the immutable assessment JSON.
+
+The three real v3 request hashes and private HTML hashes remain byte-identical
+under the local code when scope is absent. New offline tests cover source changes,
+forged metadata, exact spans, default-disabled admission, profile mismatch,
+stale-source rejection before model invocation, one-call reuse, escaping and
+scope-aware quality-case pins. A scoped real-model cohort, live admin integration,
+independent qualification and automatic publication remain unverified/unimplemented.
 
 ## Automation and publication boundary
 

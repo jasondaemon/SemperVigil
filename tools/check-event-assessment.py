@@ -10,7 +10,7 @@ from sempervigil.event_review import validate_packet
 
 def evaluate(packet: dict, assessment: dict, cases: dict) -> dict:
     assessment = validate_assessment(assessment, packet)
-    request = request_for(packet)
+    request = request_for(packet, scope=assessment.get("scope"))
     if (cases.get("packet_version") != packet["packet_version"]
             or cases.get("request_version") != request["request_version"]
             or cases.get("event_id") != packet["event"]["id"]):

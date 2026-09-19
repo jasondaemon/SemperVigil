@@ -59,13 +59,24 @@ def enabled() -> bool:
     return value == "1"
 
 
-def payload_for(event_id: str, aliases: list[str]) -> dict:
+def scoped_enabled() -> bool:
+    value = os.environ.get("SV_EVENT_REVIEW_SCOPE_ENABLED", "0")
+    if value not in {"0", "1"}:
+        raise ValueError("invalid_event_scope_enablement")
+    return value == "1"
+
+
+def payload_for(event_id: str, aliases: list[str], *, scope: dict | None = None) -> dict:
     if not _text(event_id, 128) or not event_id.strip():
         raise ValueError("invalid_event_id")
-    return {"event_id": event_id, "aliases": _aliases(aliases), "workflow": WORKFLOW}
+    payload = {"event_id": event_id, "aliases": _aliases(aliases), "workflow": WORKFLOW}
+    if scope is not None:
+        from .event_scope import declaration
+        payload["scope"] = declaration(scope, event_id)
+    return payload
 
 
-def submit(connection_factory, *, event_id: str, aliases: list[str]) -> str:
+def submit(connection_factory, *, event_id: str, aliases: list[str], scope: dict | None = None) -> str:
     """Own the admission connection; serialize duplicate requests transactionally.
 
     This operation is only called behind admin authorization. It neither reads
@@ -73,7 +84,9 @@ def submit(connection_factory, *, event_id: str, aliases: list[str]) -> str:
     """
     if not enabled():
         raise PermissionError("private_review_disabled")
-    payload = payload_for(event_id, aliases)
+    if scope is not None and not scoped_enabled():
+        raise PermissionError("private_scope_disabled")
+    payload = payload_for(event_id, aliases, scope=scope)
     # Serialize every review admission, including queue-size checks, not just
     # requests for one event. This is a low-volume manual pilot operation.
     lock_id = int(_version({"namespace": JOB_TYPE})[:15], 16)
@@ -128,9 +141,16 @@ def artifact_root() -> Path:
 def run(payload: dict, *, complete=None) -> dict:
     if not enabled():
         return {"status": "skipped", "reason": "private_review_disabled", "public_eligible": False}
-    if type(payload) is not dict or payload.keys() != {"event_id", "aliases", "workflow"}:
+    if type(payload) is not dict or payload.keys() not in (
+            {"event_id", "aliases", "workflow"}, {"event_id", "aliases", "workflow", "scope"}):
         raise ValueError("invalid_private_review_payload")
-    canonical = payload_for(payload["event_id"], payload["aliases"])
+    scope = payload.get("scope")
+    if "scope" in payload:
+        if not scoped_enabled():
+            raise PermissionError("private_scope_disabled")
+        if scope is None or complete is None:
+            raise ValueError("private_scope_model_required")
+    canonical = payload_for(payload["event_id"], payload["aliases"], scope=scope)
     if payload != canonical:
         raise ValueError("invalid_private_review_payload")
     root = artifact_root()
@@ -144,7 +164,7 @@ def run(payload: dict, *, complete=None) -> dict:
         page = save(packet, root)
     else:
         from .event_assessment_cache import reuse
-        assessment, cache_hit = reuse(packet, complete, root)
+        assessment, cache_hit = reuse(packet, complete, root, scope=scope)
         page = save(packet, root, assessment=assessment)
     return {"status": "review_ready", "event_id": payload["event_id"],
             "workflow": WORKFLOW, "packet_version": packet["packet_version"],

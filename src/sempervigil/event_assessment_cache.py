@@ -27,17 +27,20 @@ def _read(folder: int, name: str, packet: dict, request: str, generation: str) -
     if (entry.keys() != {"request_version", "generation_version", "assessment"}
             or entry["request_version"] != request or entry["generation_version"] != generation):
         raise ValueError("stale_assessment_cache")
-    return validate_assessment(entry["assessment"], packet)
+    assessment = validate_assessment(entry["assessment"], packet)
+    if assessment["request_version"] != request:
+        raise ValueError("stale_assessment_cache")
+    return assessment
 
 
-def reuse(packet: dict, complete: Callable[[str], dict], root: Path) -> tuple[dict, bool]:
+def reuse(packet: dict, complete: Callable[[str], dict], root: Path, *, scope: dict | None = None) -> tuple[dict, bool]:
     """Only a guarded completion with a versioned configuration may use cache."""
     generation = getattr(complete, "cache_identity", None)
     if generation is None:
-        return assess(packet, complete), False
+        return assess(packet, complete, scope=scope), False
     if type(generation) is not str or not re.fullmatch(r"[0-9a-f]{64}", generation):
         raise ValueError("invalid_assessment_cache_identity")
-    request = request_for(packet)["request_version"]
+    request = request_for(packet, scope=scope)["request_version"]
     name = _version({"request": request, "generation": generation}) + ".json"
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -51,7 +54,7 @@ def reuse(packet: dict, complete: Callable[[str], dict], root: Path) -> tuple[di
             cached = _read(folder, name, packet, request, generation)
             if cached is not None:
                 return cached, True
-            value = assess(packet, complete)
+            value = assess(packet, complete, scope=scope)
             encoded = json.dumps({"request_version": request, "generation_version": generation,
                                   "assessment": value}, sort_keys=True, ensure_ascii=True).encode()
             if len(encoded) > MAX_ENTRY_BYTES:

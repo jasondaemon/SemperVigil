@@ -7444,14 +7444,21 @@ def _parse_event_report_output(result: dict[str, object], incident_date: str = "
 
 def _private_review_completion(conn, job, logger):
     """Opt-in, pinned local profile; normal extractive reviews need no inference."""
+    scoped = "scope" in (getattr(job, "payload", None) or {})
+    if scoped:
+        from .event_review_jobs import scoped_enabled
+        if not scoped_enabled():
+            raise PermissionError("private_scope_disabled")
     flag = os.environ.get("SV_EVENT_REVIEW_MODEL_ENABLED", "0")
     if flag not in {"0", "1"}:
         raise ValueError("invalid_private_review_model_enablement")
     if flag == "0":
+        if scoped:
+            raise ValueError("private_scope_model_required")
         return None
-    from .event_assessment import SYSTEM_PROMPT, MAX_INPUT_BYTES
+    from .event_assessment import SYSTEM_PROMPT, SCOPED_SYSTEM_PROMPT, MAX_INPUT_BYTES
     from .services.ai_service import get_prompt
-    profile_id = os.environ.get("SV_EVENT_REVIEW_PROFILE_ID", "")
+    profile_id = os.environ.get("SV_EVENT_REVIEW_SCOPE_PROFILE_ID" if scoped else "SV_EVENT_REVIEW_PROFILE_ID", "")
     profile = get_profile(conn, profile_id) if profile_id else None
     reference = _coerce_profile(get_active_profile_for_stage(conn, "cve_enrich_products"))
     if not profile or not reference or profile.get("fallback") or profile.get("schema_id"):
@@ -7463,7 +7470,8 @@ def _private_review_completion(conn, job, logger):
     if not str(model.get("model_name", "")).startswith("ollama/"):
         raise ValueError("private_review_requires_local_model")
     prompt = get_prompt(conn, profile.get("prompt_id")) or {}
-    if prompt.get("system_template") != SYSTEM_PROMPT or prompt.get("user_template") != "{{input}}":
+    expected_prompt = SCOPED_SYSTEM_PROMPT if scoped else SYSTEM_PROMPT
+    if prompt.get("system_template") != expected_prompt or prompt.get("user_template") != "{{input}}":
         raise ValueError("private_review_prompt_mismatch")
     params = profile.get("params") or {}
     tokens = params.get("max_tokens")

@@ -205,7 +205,20 @@ def _suggested_reading(packet: dict, proposal: dict, assessment: dict | None) ->
                         f'{quotes}</section>')
     coverage = len(assessment["suggestions"])
     body = "".join(sections) or '<p>No passages were selected by the model. No account of the incident is inferred.</p>'
-    return (f'<details class="source" id="model-reading"><summary>Suggested reading - '
+    scope_html = ""
+    if assessment.get("scope") is not None:
+        scope = assessment["scope"]
+        anchor = scope["anchor"]
+        fields = "".join(f'<li>{escape(f["role"])}: {escape(f["quote"])}</li>' for f in scope["focus"])
+        scope_html = ('<section class="source" id="incident-scope"><h2>Comparison incident</h2>'
+                      '<p class="banner">Source-backed scope proposal, not independently qualified or approved.</p>'
+                      f'<blockquote>{escape(anchor["quote"])}</blockquote>'
+                      f'<a href="{escape(anchor["url"], quote=True)}" target="_blank" '
+                      f'rel="noopener noreferrer">{escape(anchor["source_title"])}</a>'
+                      f'<p class="muted">Article {anchor["article_id"]}; source characters '
+                      f'{anchor["start"]}-{anchor["end"]}; document version {anchor["document_version"]}</p>'
+                      f'<ul>{fields}</ul></section>')
+    return (scope_html + f'<details class="source" id="model-reading"><summary>Suggested reading - '
             f'{len(selected)} unverified passage{"s" if len(selected) != 1 else ""}</summary>'
             '<p class="banner">Private model-selected draft, not an approved report. '
             'These are attributed source quotations, not independently confirmed facts. '

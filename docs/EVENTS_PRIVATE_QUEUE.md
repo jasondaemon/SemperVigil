@@ -227,3 +227,7 @@ quality cases still fail. All artifacts remain private; exact job/hash/timing da
 are in the verification notes. Do not publish these assessments or continue
 unbounded prompt tweaks. Next: `EVENTS_INCIDENT_SCOPING.md`. A single queued v3
 reuse check remains; do not duplicate it or invalidate its configuration.
+
+Local scope-aware review admission and worker execution now exist behind a separate
+disabled flag/profile. See `EVENTS_INCIDENT_SCOPING.md`. The default deployed v3 path
+and its hashes are unchanged. No new scoped jobs have been admitted or deployed.

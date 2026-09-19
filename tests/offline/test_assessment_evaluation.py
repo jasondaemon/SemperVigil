@@ -83,3 +83,19 @@ def test_v3_retains_identical_quality_expectations():
         assert old["request_version"] != new["request_version"]
         assert {k: v for k, v in old.items() if k != "request_version"} == {
             k: v for k, v in new.items() if k != "request_version"}
+
+
+def test_scoped_evaluation_requires_scoped_request_pin(database):
+    from test_event_scope import proposal, completion
+    packet = get_packet(database)
+    scope = proposal(packet)
+    run, _ = completion(packet, scope)
+    result = assessment.assess(packet, run, scope=scope)
+    cases = {"event_id": packet["event"]["id"], "packet_version": packet["packet_version"],
+             "request_version": result["request_version"], "checks": [{
+                 "passage_id": next(iter(result["suggestions"])), "label": "unchanged negative case",
+                 "allowed": ["hold", "exclude"]}]}
+    assert checker.evaluate(packet, result, cases)["passed"]
+    cases["request_version"] = assessment.request_for(packet)["request_version"]
+    with pytest.raises(ValueError, match="snapshot_mismatch"):
+        checker.evaluate(packet, result, cases)

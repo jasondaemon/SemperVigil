@@ -1230,3 +1230,27 @@ or public revision was claimed. V3 Commission reuse check
 Do not duplicate or cancel it merely to deploy another prompt; the v3 runtime
 should remain stable while scope handling is developed locally. Verify cache hit,
 identical artifact and no new `llm_runs` row when it completes.
+
+## Source-scoped private jobs: local implementation, September 19 07:12 UTC
+
+Added exact source/document-version scope proposals, bounded optional authenticated
+admission, independent disabled-by-default enablement/profile, worker provenance
+validation before inference, scoped cache identity and private comparison-source
+display. All human reading decisions remain Hold; no public permission, automatic
+admission, schema change, model/concurrency change or build invocation is added.
+The offline quality checker now pins the actual scoped request when present.
+
+503 offline tests pass, including 32 additional checks for source/contract changes,
+scope/profile gates, stale evidence before inference, serialized one-call dispatch,
+cache reuse/cross-scope rejection, escaping and evaluation identity. Existing three
+v3 request hashes and complete HTML hashes match the production artifacts recorded
+above exactly. No new PostgreSQL, live scoped inference or browser acceptance is
+claimed. Earlier six PostgreSQL/fourteen JS checks remain from prior slices.
+
+All live deployments remained Ready during the read-only check. The v3 reuse job
+was still queued, with zero inference records, when checked around 07:08 UTC.
+No production writes or deployment were performed. The platform's unrelated
+appliance-proxy/certificate changes remain untouched. Next release must await the
+existing v3 cache check, retain its current default profile, and enable scoped
+pilots separately. Keep all eight provisional quality expectations, including
+the repeated-company and cross-incident negative cases.
