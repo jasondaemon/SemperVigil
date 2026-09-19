@@ -5,6 +5,10 @@ must have SELECT only on them. No code here creates or approves qualifications.
 """
 import json
 import re
+from contextlib import contextmanager
+
+import psycopg
+from psycopg.rows import dict_row
 
 from .event_projection import prepare
 from .event_revision_store import locked_current_snapshot
@@ -122,3 +126,70 @@ semantic reviewer. Conflicts abort; no automatic retries or builds are performed
                 (event_id, revision, utc_now_iso()))
     return {"event_id": event_id, "revision_id": revision,
             "status": "reused" if current == revision else "promoted"}
+
+
+def load_export(connection_factory, event_ids: list[str]) -> dict:
+    """Read one bounded, consistent authorization snapshot, never legacy fallback.
+
+Withheld and withdrawn identities remain managed. A future coordinator must handle
+them explicitly, not drop these IDs from the maps and export legacy narratives.
+This snapshot is not a lease: build activation still needs revocation coordination.
+"""
+    if (type(event_ids) is not list or len(event_ids) > 20
+            or any(type(v) is not str or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", v) for v in event_ids)
+            or len(set(event_ids)) != len(event_ids)):
+        raise ValueError("invalid_publication_export_ids")
+    result = {"qualified_revisions": {}, "promoted_revision_ids": {},
+              "managed_event_ids": [], "withheld": {}, "withdrawn": {}}
+    if not event_ids:
+        return result
+    from .event_review import snapshot
+    from .event_revision_store import source_version
+    from .event_render import resolve
+    from .investigation import READ_SCOPE, EVIDENCE_SCOPE
+    with connection_factory() as conn:
+        if conn.autocommit or conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+            raise ValueError("dedicated_export_transaction_required")
+        conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        conn.execute("SET LOCAL statement_timeout='3s'")
+        rows = conn.execute("""SELECT p.event_id,p.revision_id,r.qualification_id,r.bundle_json,
+                   q.qualification_json,q.revoked_at
+            FROM event_public_pointers p
+            LEFT JOIN event_public_revisions r ON r.event_id=p.event_id AND r.revision_id=p.revision_id
+            LEFT JOIN event_quote_qualifications q ON q.event_id=r.event_id AND q.qualification_id=r.qualification_id
+            WHERE p.event_id=ANY(%s) ORDER BY p.event_id""", (event_ids,)).fetchall()
+
+        @contextmanager
+        def session():
+            with conn.cursor(row_factory=dict_row) as cursor:
+                yield cursor
+
+        for event_id, revision, qid, raw, qraw, revoked in rows:
+            result["managed_event_ids"].append(event_id)
+            if raw is None or qraw is None:
+                raise ValueError("broken_publication_reference")
+            if revoked is not None:
+                result["withdrawn"][event_id] = "qualification_revoked"
+                continue
+            bundle, qualification = json.loads(raw), json.loads(qraw)
+            if _version(qualification) != qid or bundle.get("qualification") != qualification:
+                raise ValueError("qualification_integrity_failure")
+            _, projection = resolve(bundle, event_id=event_id, expected_revision=revision)
+            try:
+                current = snapshot(session, event_id=event_id, aliases=bundle["packet"]["aliases"],
+                                   scopes=frozenset({READ_SCOPE, EVIDENCE_SCOPE}))
+            except ValueError as exc:
+                if str(exc) != "event_unavailable":
+                    raise
+                result["withdrawn"][event_id] = "event_unavailable"
+                continue
+            cited = {entry["article_id"] for entry in projection["entries"]}
+            present = {document["article_id"] for document in current["documents"]}
+            if cited - present or any(o["reason"] == "unavailable" for o in current["omissions"]):
+                result["withdrawn"][event_id] = "evidence_unavailable"
+            elif source_version(current) != source_version(bundle["packet"]):
+                result["withheld"][event_id] = "evidence_changed"
+            else:
+                result["qualified_revisions"][event_id] = bundle
+                result["promoted_revision_ids"][event_id] = revision
+    return result

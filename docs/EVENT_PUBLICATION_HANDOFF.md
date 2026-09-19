@@ -42,6 +42,9 @@ private model suggestions. Current production versions and pilot evidence are in
    Local `event_publication_store` now defines these tables and a tested transaction.
    Production migration, restricted-role provisioning, trusted qualification
    admission and revocation-aware export reads remain open; no rollout yet.
+   The local bounded revocation-aware reader is now tested; worker withdrawal/hold
+   handling and authorization recheck at build activation are still open. Never
+   interpret a managed withheld/withdrawn revision as eligible legacy fallback.
 3. Persist evidence qualification separately from model proposals. Bind exact
    incident scope, source versions, citation spans, assertion/date roles and
    reviewer/policy identity. Model-selected `include` is relevance, not factual

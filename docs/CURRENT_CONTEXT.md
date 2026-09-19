@@ -7,7 +7,7 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
-## Current release checkpoint: September 19, 11:20 UTC
+## Current release checkpoint: September 19, 11:30 UTC
 
 - App source and runtime behavior: this repository. Environment values:
   `k8s-platform/apps/sempervigil/values.yaml`. Theme: `sempervigil-hugo`.
@@ -24,10 +24,12 @@
   attachments and browser Jobs coverage/download controls pass. Do not repeat it.
 - Local-only snapshot storage, current-source transaction window and quote-only
   projection preparation and pointer promotion are tested, not deployed.
-  Independent qualification, restricted production roles, revocation-aware export
-  reads and runtime admission remain unimplemented. Local Markdown
+  The local revocation-aware reader distinguishes managed withheld/withdrawn
+  revisions from unmanaged legacy content. Independent qualification, restricted
+  production roles, withdrawal/build coordination and runtime admission remain
+  unimplemented. Local Markdown
   and Events JSON preparation use the same pointer-matched quotations with joint
-  content preflight. No production caller enables them. 655 offline / ten real
+  content preflight. No production caller enables them. 662 offline / ten real
   disposable PostgreSQL tests pass;
   legacy bytes and the daily feed contract remain unchanged.
 - Public checks passed after the last targeted rollout. Use the dated evidence in

@@ -237,3 +237,33 @@ reuse, stale evidence rejection, denied qualification writes, monotonic revocati
 and its event lock, and missing-guard refusal. All 655 offline tests pass. The
 test container and loopback tunnel were removed. No production schema, role,
 content or image changed; no model calls or Hugo build occurred.
+
+## Revocation-aware export read (local, not deployed)
+
+`event_publication_store.load_export` reads at most 20 explicitly selected event
+IDs in one dedicated REPEATABLE READ, READ ONLY transaction with a three-second
+statement timeout. It joins pointer, immutable bundle and qualification, verifies
+their identity/content bindings and compares current event/source evidence.
+No pointer means unmanaged legacy content; a revoked or invalid managed revision
+must never be treated as unmanaged just because it has no output bundle.
+
+The returned `managed_event_ids` therefore includes all discovered pointers.
+`qualified_revisions` and `promoted_revision_ids` contain only eligible snapshots.
+`withdrawn` explicitly identifies revoked qualifications, unavailable/hidden events
+and unavailable/suppressed/removed cited sources. `withheld` marks other changed
+evidence. Corrupt references or integrity failures abort instead of falling back.
+Empty selection opens no connection, and oversized/invalid/duplicate identifiers
+fail before database access.
+
+This is a read snapshot, not an authorization lease lasting through a build.
+The future coordinator must process withdrawal/hold states explicitly and check
+activation against current authorization. It must not pass only the two eligible
+maps while leaving managed withheld/withdrawn events in the legacy export list.
+No worker/export caller is wired yet; revocation does not yet trigger a production
+withdrawal job. The single transaction is bounded but not a database-wide scan.
+
+All ten real PostgreSQL tests pass with expanded export-reader cases for valid
+and timestamp-only snapshots, source edits, suppression, link removal, event
+visibility and qualification revocation. All 662 offline tests pass, including
+seven new preconnection/empty-selection checks. Disposable database container
+and tunnel were removed. No production schema, role, file, image or model changes.

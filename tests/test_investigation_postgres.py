@@ -323,7 +323,7 @@ def test_qualified_publication_transaction(restricted_database):
     from sempervigil.event_review import snapshot
     from sempervigil.event_scope import propose
     from sempervigil.event_revision_store import source_version, locked_current_snapshot
-    from sempervigil.event_publication_store import SCHEMA, promote
+    from sempervigil.event_publication_store import SCHEMA, promote, load_export
     from sempervigil.investigation import _version
     admin, dsn, role = restricted_database
     admin.execute(SCHEMA)
@@ -365,6 +365,12 @@ def test_qualified_publication_transaction(restricted_database):
     assert outcomes.count("promoted") == 1 and set(outcomes) <= {"promoted", "reused", "deferred"}
     first = run()
     assert first["status"] == "reused"
+    exported = load_export(factory, ["one", "no-pointer"])
+    assert exported["managed_event_ids"] == ["one"]
+    assert exported["promoted_revision_ids"] == {"one": first["revision_id"]}
+    assert not exported["withdrawn"] and not exported["withheld"]
+    with pytest.raises(ValueError, match="dedicated_export_transaction"):
+        load_export(lambda: psycopg.connect(dsn, autocommit=True), ["one"])
     assert admin.execute("SELECT count(*) FROM event_public_revisions").fetchone()[0] == 1
     original = admin.execute("SELECT bundle_json,recorded_at FROM event_public_revisions").fetchone()
     admin.execute("UPDATE events SET updated_at='2026-05-02' WHERE id='one'")
@@ -372,6 +378,20 @@ def test_qualified_publication_transaction(restricted_database):
                       scopes=frozenset({READ_SCOPE,EVIDENCE_SCOPE}))
     assert run()["status"] == "reused"
     assert admin.execute("SELECT bundle_json,recorded_at FROM event_public_revisions").fetchone() == original
+    assert load_export(factory, ["one"])["promoted_revision_ids"] == {"one": first["revision_id"]}
+    admin.execute("UPDATE articles SET content_text=%s WHERE id=1", (text + " More reporting.",))
+    changed = load_export(factory, ["one"])
+    assert changed["withheld"] == {"one": "evidence_changed"} and not changed["qualified_revisions"]
+    admin.execute("UPDATE articles SET content_text=%s,meta_json=%s WHERE id=1", (text, '{"suppressed":true}'))
+    suppressed = load_export(factory, ["one"])
+    assert suppressed["withdrawn"] == {"one": "evidence_unavailable"} and not suppressed["promoted_revision_ids"]
+    admin.execute("UPDATE articles SET meta_json=NULL WHERE id=1")
+    admin.execute("DELETE FROM event_articles WHERE event_id='one' AND article_id=1")
+    assert load_export(factory, ["one"])["withdrawn"] == {"one": "evidence_unavailable"}
+    admin.execute("INSERT INTO event_articles VALUES ('one',1)")
+    admin.execute("UPDATE events SET visibility='hidden' WHERE id='one'")
+    assert load_export(factory, ["one"])["withdrawn"] == {"one": "event_unavailable"}
+    admin.execute("UPDATE events SET visibility='active' WHERE id='one'")
     # A second independently recorded qualification can advance the predecessor.
     qualification["reviewer"]["version"] = "b"*64
     second_q = _version(qualification)
@@ -391,6 +411,10 @@ def test_qualified_publication_transaction(restricted_database):
         admin.execute("SET lock_timeout=0")
     admin.execute("UPDATE event_quote_qualifications SET revoked_at='test' WHERE qualification_id=%s", (second_q,))
     with pytest.raises(ValueError, match="unavailable"): run(second_q, first["revision_id"])
+    revoked = load_export(factory, ["one"])
+    assert revoked["managed_event_ids"] == ["one"]
+    assert revoked["withdrawn"] == {"one": "qualification_revoked"}
+    assert not revoked["qualified_revisions"] and not revoked["promoted_revision_ids"]
     with pytest.raises(psycopg.errors.RaiseException):
         admin.execute("UPDATE event_quote_qualifications SET revoked_at=NULL WHERE qualification_id=%s", (second_q,))
     with pytest.raises(psycopg.errors.RaiseException):

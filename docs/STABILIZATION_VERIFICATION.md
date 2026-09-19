@@ -1828,3 +1828,25 @@ were expected at the opening check. Private review remains the deployed feature.
 Trusted qualification admission, revocation-aware export/withdrawal, restricted
 role provisioning, coordinated build admission and reader-facing rollout are
 still required before the automatic public Events feature can be claimed ready.
+
+## Revocation-aware export snapshot, September 19 11:30 UTC
+
+Local bounded read-only export selection now joins and verifies pointer/revision/
+qualification identities under repeatable read, then compares current source data.
+Managed identity remains explicit even when revoked or withheld. Revoked
+qualifications, hidden/unavailable events and unavailable/suppressed/removed cited
+sources produce withdrawal reasons. Other changed evidence is withheld; corrupt
+references fail rather than falling back to legacy narrative. No production caller.
+
+Ten real PostgreSQL tests pass after adding valid-read, unsafe-autocommit,
+timestamp-only reuse, changed text, suppression, removed membership, hidden event
+and revoked qualification read cases. The prior promotion/race/permission and
+baseline integration checks reran. All 662 offline tests pass; seven new cases
+exercise invalid/oversized/duplicate IDs and empty selection before connection.
+Disposable PostgreSQL container and loopback tunnel removed after verification.
+
+Production replica counts were healthy at opening. No production changes, model
+calls or build. This reader is not a lease covering later build activation:
+withdrawal handling, coordinated build admission and authorization recheck remain
+mandatory integration work. Private review is still the deployed feature, not
+autonomous public reporting.
