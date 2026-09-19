@@ -515,3 +515,28 @@ the helper cannot validate a caller's incorrect incident assignment.
 No runtime imports, deployment, migration, job changes, model calls, or public
 JSON changes. Next work is the bounded input boundary and trusted integration
 design before a disabled shadow runtime release. Production remains unchanged.
+
+## Bounded investigation retrieval (2026-09-18)
+
+Inspected the existing article/event readers and PostgreSQL schema. The article
+reader can follow stored filesystem paths; the event reader loads unbounded
+linked collections and legacy prose. Neither is exposed to investigation clients.
+
+Added isolated shared read services with trusted caller scopes, a 4 KiB strict
+JSON boundary, parameterized article discovery, 31-day indexed feed-date windows,
+keyset pagination, 200-row scan cap plus lookahead, and 64 KiB response cap.
+Suppressed/invalid-policy records fail closed. Legacy event reads expose only
+bounded active-record metadata, explicitly not a validated published revision.
+PostgreSQL factory configures read-only repeatable-read transactions and bounded
+connection/statement/lock/idle timeouts without initialization or migrations.
+
+**224 offline tests passed**, including 52 new checks. SQL behavior is exercised
+on an in-memory SQLite fixture; PostgreSQL connection options are mocked. Added
+`tests/test_investigation_postgres.py` for an explicitly disposable PostgreSQL
+database, but did not run it. Production query plans, role permissions, recall,
+transport authentication, and exact evidence retrieval remain release gates.
+
+No runtime imports, dependency changes, MCP endpoint, job admission, inference,
+database migration, build, or deployment. Existing JSON and site behavior are
+untouched. See INVESTIGATION_RETRIEVAL.md for the deliberately limited coverage
+and metadata-versus-evidence version distinction.

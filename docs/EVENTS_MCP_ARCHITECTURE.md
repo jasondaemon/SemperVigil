@@ -1,6 +1,7 @@
 # Events investigation and MCP architecture
 
-Status: accepted design direction, not implemented or deployed.
+Status: accepted design direction; isolated retrieval services tested offline.
+MCP adapter, workflow integration, and deployment remain pending.
 Date: 2026-09-18
 
 ## Purpose and boundaries
@@ -38,6 +39,11 @@ theme repository.
 ## Initial service/tool contracts
 
 Names below are proposed, not existing endpoints.
+
+Implementation progress: [bounded retrieval foundation](INVESTIGATION_RETRIEVAL.md)
+provides article discovery and legacy event metadata reads as unreferenced shared
+services. These are not complete versions of all contracts below. No MCP endpoint
+exists yet; exact evidence retrieval, candidate search, and proposals remain pending.
 
 | Operation | Purpose | Boundary |
 | --- | --- | --- |
