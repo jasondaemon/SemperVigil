@@ -148,6 +148,10 @@ def test_real_private_dispatch_and_existing_artifact_reader(monkeypatch, databas
     with pytest.raises(ValueError, match="private_revision_unavailable"):
         jobs.read_revision(job)
     assert admin.EventPrivateReviewRequest(aliases=["Acme"], deconstruct=True).deconstruct
+    again = worker.run_claimed_job(None, None, job, logging.getLogger("test"))
+    assert again["model_cache_hit"] is True
+    assert again["artifact"] == result["artifact"]
+    model.assert_called_once()
 
 
 @pytest.mark.parametrize("options", [{}, {"article_id": 1}, {"paired": True, "article_id": 1}])
@@ -157,3 +161,101 @@ def test_incomplete_or_mixed_modes_rejected(database, options):
         options = {**options, "scope": proposal(packet)}
     with pytest.raises(ValueError):
         jobs.payload_for("event", ["Acme"], deconstruct=True, **options)
+
+
+def source_result(packet, scope, article_id):
+    text = next(d["text"] for d in packet["documents"] if d["article_id"] == article_id)
+    value = response(packet)
+    value["claims"][0]["quote"] = text
+    value["claims"][0]["statement"] = text
+    result = draft.validate_response(json.dumps(value).encode(), packet, scope, article_id)
+    return {**result, "generation_version": "a" * 64}
+
+
+def test_incremental_compilation_replaces_changed_source_not_old_prose(database):
+    packet = get_packet(database)
+    scope = proposal(packet)
+    first = source_result(packet, scope, 1)
+    old = draft.compile_report(packet, scope, [first], "a" * 64)
+    packet["documents"].append({**packet["documents"][0], "article_id": 2,
+                                "text": "Acme says recovery is partial."})
+    resign(packet)
+    second = source_result(packet, scope, 2)
+    newer = draft.compile_report(packet, scope, [second, first], "a" * 64)
+    assert newer == draft.compile_report(packet, scope, [first, second], "a" * 64)
+    delta = draft.changes(old, newer)
+    assert len(delta["added"]) == 1 and len(delta["retained"]) == 1 and not delta["withdrawn"]
+    packet["documents"][1]["text"] = "Acme corrected the restoration claim."
+    resign(packet)
+    with pytest.raises(ValueError):
+        draft.compile_report(packet, scope, [first, second], "a" * 64)
+    corrected = source_result(packet, scope, 2)
+    latest = draft.compile_report(packet, scope, [first, corrected], "a" * 64)
+    delta = draft.changes(newer, latest)
+    assert len(delta["withdrawn"]) == len(delta["added"]) == len(delta["retained"]) == 1
+    assert "recovery is partial" not in draft.render(latest)
+
+
+def test_compilation_coverage_and_timestamp_stability(database):
+    packet = get_packet(database)
+    scope = proposal(packet)
+    first = source_result(packet, scope, 1)
+    packet["documents"].extend([{**packet["documents"][0], "article_id": 2},
+                                {**packet["documents"][0], "article_id": 3, "text": "x" * 16000}])
+    resign(packet)
+    report = draft.compile_report(packet, scope, [first], "a" * 64)
+    assert report["coverage"]["pending"] == [2]
+    assert report["coverage"]["over_budget"] == [3]
+    packet["event"]["updated_at"] = "2026-09-20"
+    resign(packet)
+    assert draft.compile_report(packet, scope, [first], "a" * 64) == report
+    assert report["public_eligible"] is False
+
+
+@pytest.mark.parametrize("change", ["generation", "id", "url", "start", "statement"])
+def test_compilation_rejects_tampered_source_receipt(database, change):
+    packet = get_packet(database)
+    scope = proposal(packet)
+    result = source_result(packet, scope, 1)
+    if change == "generation":
+        result["generation_version"] = "b" * 64
+    else:
+        result["claims"][0][change] = 7 if change == "start" else "tampered"
+    with pytest.raises(ValueError):
+        draft.compile_report(packet, scope, [result], "a" * 64)
+
+
+def test_cache_reuses_unchanged_source_despite_other_source_changes(database, tmp_path):
+    packet = get_packet(database)
+    scope = proposal(packet)
+    complete = Mock(return_value=response(packet))
+    complete.cache_identity = "a" * 64
+    _, first = draft.save(packet, scope, 1, complete, tmp_path)
+    assert not first["cache_hit"]
+    packet["documents"].append({**packet["documents"][0], "article_id": 2})
+    resign(packet)
+    _, second = draft.save(packet, scope, 1, complete, tmp_path)
+    assert second["cache_hit"] and second["coverage"]["pending"] == [2]
+    complete.assert_called_once()
+    complete.cache_identity = "b" * 64
+    _, third = draft.save(packet, scope, 1, complete, tmp_path)
+    assert not third["cache_hit"] and complete.call_count == 2
+
+
+def test_cache_symlink_and_tampering_fail_without_inference(database, tmp_path):
+    packet = get_packet(database)
+    scope = proposal(packet)
+    complete = Mock(return_value=response(packet))
+    complete.cache_identity = "a" * 64
+    draft.save(packet, scope, 1, complete, tmp_path)
+    cached = next((tmp_path / "deconstruction-cache").glob('*.json'))
+    value = json.loads(cached.read_text())
+    value["claims"][0]["url"] = "https://wrong.example/"
+    cached.write_text(json.dumps(value))
+    with pytest.raises(ValueError):
+        draft.save(packet, scope, 1, complete, tmp_path)
+    cached.unlink()
+    cached.symlink_to(tmp_path / "missing")
+    with pytest.raises(OSError):
+        draft.save(packet, scope, 1, complete, tmp_path)
+    complete.assert_called_once()

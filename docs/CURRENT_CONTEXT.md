@@ -9,6 +9,15 @@
 
 ## Current release checkpoint: September 19, 14:00 UTC
 
+Latest local continuation: private deconstruction now reuses source/config-bound
+extractions and compiles all current cached source drafts into one review artifact.
+Changed source receipts are rejected; added/withdrawn/retained claim diffs are
+available. 808 offline tests pass, one Linux-only skip. No runtime deployment or
+model pilot yet. This is compilation, not finished narrative synthesis.
+Read-only production inventory found 1,424 draft candidates and three published
+rows also marked candidate. No cleanup applied; see EVENT_LEGACY_RETIREMENT.md
+for the reversible, publication-preserving retirement boundary.
+
 Later local work: source-level private deconstruction is wired into the existing
 private-review API/job/viewer behind a new default-disabled flag and separate
 profile. It produces unreviewed cited claims, not publishable narrative. No

@@ -1,6 +1,9 @@
 """Private source-level incident claims. Structural checks are not approval."""
 import hashlib
 import json
+import os
+import re
+import stat
 from html import escape
 from pathlib import Path
 
@@ -12,6 +15,7 @@ from .investigation import _version
 WORKFLOW = "event-deconstruction-source-v1"
 MAX_INPUT_BYTES = 15000
 MAX_OUTPUT_BYTES = 16000
+MAX_RESULT_BYTES = 65536
 SECTIONS = {
     "overview": "What happened",
     "initial_access": "Initial access / attack vector",
@@ -110,9 +114,18 @@ def render(result: dict) -> str:
              '<style>body{font:18px Georgia,serif;max-width:850px;margin:3rem auto;padding:0 1rem;'
              'line-height:1.6}aside{padding:1rem;background:#fff3cd}blockquote{color:#555}'
              'h2{margin-top:2rem}small{font:14px sans-serif}</style>',
-             '<h1>Incident deconstruction: source draft</h1>',
+             '<h1>Incident deconstruction: private draft</h1>',
              '<aside>Private, unreviewed model claims. Citation checks do not establish truth, '
              'incident relevance, or support for the paraphrase. Not approved for publication.</aside>']
+    if "coverage" in result:
+        coverage = result["coverage"]
+        lines.append('<p>Current source drafts: ' + str(len(coverage["included"]))
+                     + '. Sources awaiting extraction: ' + str(len(coverage["pending"]))
+                     + '. Over budget: ' + str(len(coverage["over_budget"]))
+                     + '. Unavailable sources: ' + str(coverage["omitted"])
+                     + '. Source list truncated: ' + str(coverage["links_truncated"]) + '.</p>')
+        lines.append('<p>This is a structured compilation, not yet a synthesized or '
+                     'independently corroborated narrative. Conflicting statements are not reconciled.</p>')
     for key, title in SECTIONS.items():
         lines.append('<h2>' + title + '</h2>')
         rows = [c for c in result["claims"] if c["section"] == key]
@@ -132,12 +145,131 @@ def render(result: dict) -> str:
     return '\n'.join(lines + ['</html>'])
 
 
+def _generation(complete) -> str:
+    value = getattr(complete, "cache_identity", None)
+    if type(value) is not str or not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise ValueError("deconstruction_generation_required")
+    return value
+
+
+def _cache_name(request: dict, generation: str) -> str:
+    return _version({"request": request["request_version"], "generation": generation}) + '.json'
+
+
+def _load(folder: Path, name: str) -> dict | None:
+    directory = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        try:
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        except FileNotFoundError:
+            return None
+        with os.fdopen(fd, 'rb') as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= MAX_RESULT_BYTES:
+                raise ValueError("invalid_deconstruction_cache")
+            return _json(stream.read(MAX_RESULT_BYTES + 1), MAX_RESULT_BYTES)
+    finally:
+        os.close(directory)
+
+
+def validate_result(result: dict, packet: dict, scope: dict, article_id: int, generation: str) -> dict:
+    """Reconstruct every cached claim against the current full source and scope."""
+    if (type(result) is not dict or type(result.get("claims")) is not list
+            or len(result["claims"]) > 8):
+        raise ValueError("invalid_deconstruction_cache")
+    fields = {"section", "statement", "status", "quote", "date_role", "date_precision", "date_value"}
+    if any(type(row) is not dict or not fields <= row.keys() for row in result["claims"]):
+        raise ValueError("invalid_deconstruction_cache")
+    response = {"claims": [{key: row[key] for key in fields} for row in result["claims"]]}
+    canonical = validate_response(json.dumps(response).encode(), packet, scope, article_id)
+    canonical["generation_version"] = generation
+    if canonical != result:
+        raise ValueError("stale_or_modified_deconstruction_cache")
+    return canonical
+
+
+def compile_report(packet: dict, scope: dict, results: list[dict], generation: str) -> dict:
+    """Compile only current source drafts, never legacy summaries or prior prose."""
+    packet = validate_packet(json.dumps(packet).encode())
+    validate(scope, packet)
+    if type(results) is not list or len(results) > len(packet["documents"]):
+        raise ValueError("invalid_deconstruction_sources")
+    included, claims = set(), []
+    for result in results:
+        article_id = result.get("article_id") if isinstance(result, dict) else None
+        if type(article_id) is not int or article_id in included:
+            raise ValueError("duplicate_or_invalid_deconstruction_source")
+        canonical = validate_result(result, packet, scope, article_id, generation)
+        included.add(article_id)
+        claims.extend(canonical["claims"])
+    pending, over_budget = [], []
+    for doc in packet["documents"]:
+        if doc["article_id"] in included:
+            continue
+        try:
+            request_for(packet, scope, doc["article_id"])
+        except ValueError as exc:
+            if str(exc) != "deconstruction_source_over_budget":
+                raise
+            over_budget.append(doc["article_id"])
+        else:
+            pending.append(doc["article_id"])
+    report = {"workflow": "event-deconstruction-compilation-v1", "event_id": packet["event"]["id"],
+              "scope_version": scope["scope_version"], "generation_version": generation,
+              "claims": sorted(claims, key=lambda row: (row["article_id"], row["id"])),
+              "coverage": {"included": sorted(included), "pending": sorted(pending),
+                           "over_budget": sorted(over_budget), "omitted": len(packet["omissions"]),
+                           "links_truncated": packet["links_truncated"]},
+              "public_eligible": False, "status": "unreviewed"}
+    return {**report, "revision_id": _version(report)}
+
+
+def changes(previous: dict, current: dict) -> dict:
+    """Describe changed claim records, not inferred factual corrections."""
+    for report in (previous, current):
+        if (type(report) is not dict or report.get("workflow") != "event-deconstruction-compilation-v1"
+                or report.get("revision_id") != _version({k: v for k, v in report.items() if k != "revision_id"})):
+            raise ValueError("invalid_deconstruction_revision")
+    if (previous["event_id"], previous["scope_version"]) != (current["event_id"], current["scope_version"]):
+        raise ValueError("different_deconstruction_incident")
+    old = {row["id"] for row in previous["claims"]}
+    new = {row["id"] for row in current["claims"]}
+    return {"added": sorted(new - old), "withdrawn": sorted(old - new),
+            "retained": sorted(old & new), "coverage_changed": previous["coverage"] != current["coverage"]}
+
+
 def save(packet: dict, scope: dict, article_id: int, complete, root: Path) -> tuple[Path, dict]:
     request = request_for(packet, scope, article_id)
-    response = complete(request["input"])
-    result = validate_response(json.dumps(response).encode(), packet, scope, article_id)
-    result["generation_version"] = getattr(complete, "cache_identity", None)
-    page = render(result).encode()
+    generation = _generation(complete)
+    cache = root / 'deconstruction-cache'
+    cache.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if cache.is_symlink():
+        raise ValueError("symlink_artifact_directory")
+    name = _cache_name(request, generation)
+    result = _load(cache, name)
+    cache_hit = result is not None
+    if result is None:
+        response = complete(request["input"])
+        result = validate_response(json.dumps(response).encode(), packet, scope, article_id)
+        result["generation_version"] = generation
+        _immutable_write(cache / name, json.dumps(result, sort_keys=True, ensure_ascii=True).encode())
+    else:
+        result = validate_result(result, packet, scope, article_id, generation)
+    sources = [result]
+    for doc in packet["documents"]:
+        if doc["article_id"] == article_id:
+            continue
+        try:
+            other_request = request_for(packet, scope, doc["article_id"])
+        except ValueError as exc:
+            if str(exc) != "deconstruction_source_over_budget":
+                raise
+            continue
+        other = _load(cache, _cache_name(other_request, generation))
+        if other is not None:
+            sources.append(validate_result(other, packet, scope, doc["article_id"], generation))
+    report = compile_report(packet, scope, sources, generation)
+    page = render(report).encode()
     folder = root / packet["packet_version"]
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     if folder.is_symlink():
@@ -145,6 +277,9 @@ def save(packet: dict, scope: dict, article_id: int, complete, root: Path) -> tu
     _immutable_write(folder / "packet.json", json.dumps(packet, sort_keys=True, ensure_ascii=True).encode())
     _immutable_write(folder / ("deconstruction-" + _version(result) + ".json"),
                      json.dumps(result, sort_keys=True, ensure_ascii=True).encode())
+    _immutable_write(folder / ("compilation-" + report["revision_id"] + ".json"),
+                     json.dumps(report, sort_keys=True, ensure_ascii=True).encode())
     path = folder / ("review-" + hashlib.sha256(page).hexdigest()[:16] + ".html")
     _immutable_write(path, page)
-    return path, result
+    return path, {**result, "cache_hit": cache_hit, "compilation_revision": report["revision_id"],
+                  "coverage": report["coverage"]}

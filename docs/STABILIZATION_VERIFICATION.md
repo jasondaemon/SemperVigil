@@ -1995,6 +1995,20 @@ All expected production replicas were ready at this checkpoint's opening.
   reviewed scopes. General incident discovery/enrollment, revised quoted-document
   qualification, comprehensive coverage and generated narrative are not delivered
   by this slice. See EVENT_AUTOMATION.md for policy and rollback semantics.
+# September 19, 2026: private source reuse and compilation, local only
+
+- 31 targeted deconstruction tests pass. Full offline suite: 808 passed, one
+  Linux-only skip on macOS. Current cache content is reconstructed against exact
+  source/scope/config; invalid or symlinked entries fail without inference.
+- Tests cover incremental source addition, changed-source rejection/replacement,
+  unchanged-source inference reuse, model-config invalidation, order/timestamp
+  stability, explicit omitted coverage and no public approval receipt.
+- Live DB inventory was read-only. An initial aggregate incorrectly assumed the
+  legacy manual column was boolean; the corrected integer comparison succeeded.
+  No candidate cleanup, model call, DB migration, deployment or build performed.
+- Semantic synthesis, real-model evaluation, correction adjudication and guarded
+  publication remain open. Prior PostgreSQL/JS results were not rerun this slice.
+
 # September 19, 2026: private deconstruction extraction, local only
 
 - Added opt-in source-level claims to existing private-review admission and LLM

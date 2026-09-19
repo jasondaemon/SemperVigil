@@ -1,5 +1,14 @@
 # Change Control Log
 
+## 2026-09-19: Private source reuse and compilation (local only)
+
+- Source/config-bound extraction cache and multi-source private compilation use
+  the existing review job/viewer. No additional model calls for compilation.
+- Current evidence is revalidated on cache reads. Material claim change records
+  distinguish additions/withdrawals/retention, not factual adjudication.
+- Read-only production legacy-candidate inventory completed; no deletes, writes,
+  build changes, schema changes or rollouts. See EVENT_LEGACY_RETIREMENT.md.
+
 ## 2026-09-19: Private source-level deconstruction (local only)
 
 - Add an opt-in mode to the existing private review API/job. Separate disabled

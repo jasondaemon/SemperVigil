@@ -1,9 +1,10 @@
 # Private incident deconstruction
 
-September 19, 2026: locally implemented; not deployed or model-evaluated.
+September 19, 2026: locally implemented, including cached multi-source compilation;
+not deployed or model-evaluated.
 
-This is the first source-extraction slice of the living incident report. It does
-not complete multi-source synthesis, claim qualification, incremental corrections,
+This is the extraction and structured-compilation slice of the living report. It
+does not complete narrative synthesis, claim qualification, semantic corrections,
 or publication. The public quotation pilot is unchanged.
 
 ## Execution path
@@ -43,10 +44,21 @@ publication pointers or dirty-build state are written.
 
 ## Current limits and next gate
 
-- Manual API pilot only. No scheduler admission or persistent extraction cache
-  yet; repeating a completed request will call the model again. Request identity
-  binds source, scope and prompt, not unrelated event update timestamps, preparing
-  source-level reuse without accepting stale evidence.
+- Manual API pilot only; no automatic scheduler admission. Persistent extraction
+  reuse binds the entire source, incident scope, prompt and pinned generation
+  configuration. Unrelated event timestamps or new sources do not repeat existing
+  inference. Every cached claim is reconstructed against current evidence; corrupt
+  cache entries fail rather than silently falling back. Cache hits are shown in
+  the existing job result. Cached empty extractions also avoid repeated calls.
+- After extracting one source, the same job compiles all matching current cached
+  drafts without extra inference. Changed/missing source versions are not copied
+  from old drafts. Revisions ignore source ordering and event-only timestamp churn.
+  The `changes` helper describes added, withdrawn and retained claim records; it
+  does not infer which competing claim is true or claim to adjudicate a correction.
+- Compilation is structured paragraphs with citations, not yet coherent model
+  synthesis. Conflicting assertions remain unreviewed rather than being silently
+  reconciled. Coverage identifies included, pending, over-budget, omitted and
+  truncated sources. There is no public version of this path.
 - Full sources above the bounded context budget are held. Chunking requires its
   own relevance and missing-context evaluation before use.
 - Drafts are historical snapshot reviews, not assertions of current DB freshness.
@@ -54,7 +66,7 @@ publication pointers or dirty-build state are written.
   Tests explicitly demonstrate that structural success is never approval.
 - Next: provision the dedicated profile through the supported API, perform a
   bounded private Vercel pilot, evaluate actual claims against sources, then add
-  source-level reuse, qualified multi-source synthesis, and correction handling.
+  qualified multi-source narrative synthesis and semantic correction handling.
   Retain the current public report until those gates pass.
 
 ## Verification and troubleshooting

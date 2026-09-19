@@ -266,9 +266,11 @@ def run(payload: dict, *, complete=None) -> dict:
         return {"status": "review_ready", "event_id": payload["event_id"],
                 "workflow": WORKFLOW, "packet_version": packet["packet_version"],
                 "artifact": str(page.relative_to(root)), "model_assessed": True,
-                "model_cache_hit": False, "public_eligible": False,
+                "model_cache_hit": result["cache_hit"], "public_eligible": False,
                 "deconstruction": {"workflow": result["workflow"], "article_id": article_id,
-                                    "claims": len(result["claims"]), "status": "unreviewed"}}
+                                    "claims": len(result["claims"]), "status": "unreviewed",
+                                    "compilation_revision": result["compilation_revision"],
+                                    "coverage": result["coverage"]}}
     cache_hit = False
     assessment = None
     if complete is None:
