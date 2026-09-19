@@ -9,6 +9,11 @@ Model-assisted pilot `job_2be77141919a403592ce6ca21ce8e8a3` targets the same Odi
 event (`evt_69844df3a97f`, aliases `["Odido"]`). It is pending behind normal CVE
 work; no model quality or latency result is claimed yet. Preserve its low priority
 and single-job runner policy rather than bypassing normal work.
+The bounded model cohort also includes Vercel
+(`job_4cd3c296ba03499380a220b485a0c2de`) and European Commission
+(`job_378b8db685ee4c219314058ef0082316`). These are the same three events used in
+the prior private visual review, not additional automatic discovery. Do not
+duplicate them. The Commission case must test separation of distinct incidents.
 Live Event Detail shows the enabled private control; all 35 job types and four
 dashboard groups were verified in the preceding release.
 

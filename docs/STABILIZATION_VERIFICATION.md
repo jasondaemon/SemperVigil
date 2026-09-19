@@ -1031,3 +1031,19 @@ builder, model, prompts or concurrency in this release.
 Rollback is a worker-only return to `0e826ed` if needed: it retains corrected
 router handling and cache, but lacks suggested reading/timing. Preserve artifacts.
 Automatic evidence refresh and public reporting are still not enabled.
+
+### Three-event model cohort admitted
+
+Added Vercel `job_4cd3c296ba03499380a220b485a0c2de` (event `evt_0ffca0813049`,
+alias Vercel) and European Commission `job_378b8db685ee4c219314058ef0082316`
+(event `evt_9bfd4aa3616a`, alias European Commission) through the private admin
+API, preserving priority -10 and the single worker. The original Odido pilot
+remains in place. No automatic discovery or further admission is enabled.
+
+Before admission, event fingerprints were `de70b60cd209cb493f75a529c78524e8`
+(Vercel) and `b39cd4a3d7fc432285b4082f6c1c3af0` (Commission). Last-day existing
+telemetry had 462 rows totaling 6,027,341 ms; this undercounts unmetered job types.
+Three bounded private calls are the explicit pilot, not permission for unlimited
+backfill. Evaluate actual aggregate timing before further admissions; pause
+expansion if it consumes the provisional 10% budget or delays fresh work.
+Commission's mixed-incident sources are a required quality counterexample.
