@@ -7,6 +7,19 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
+## September 19: Qwen 3.5 candidate qualification
+
+Qwen 3.5 9B Q4_K_M is downloaded on the existing RTX 3060 host and fits entirely
+in 12 GiB VRAM at a 16,384-token context. The first LiteLLM-routed trial exposed
+an adapter defect: LiteLLM 1.77.7 places `think=false` inside Ollama generation
+options, so Qwen returns hidden reasoning and can leave visible JSON empty. No
+production profile was switched. A source-controlled `ollama_native` transport now
+sends top-level `think=false`, retains existing profile prompts and validation,
+and supports strict private-review schemas. A direct CVE probe returned valid JSON
+in 4.43 seconds. All 981 offline tests pass with two existing skips. The local LLM
+worker remains paused for candidate qualification; production cutover is pending
+deployed seven-stage validation and must be one atomic profile transaction.
+
 ## Current direction: strengthen and reuse article enrichment
 
 Authoritative stabilization sequence: `CONTENT_EVENTS_STABILIZATION.md`. Keep the

@@ -1,5 +1,26 @@
 # Stabilization verification
 
+## September 19: Qwen 3.5 transport candidate
+
+The 9.7B Qwen 3.5 Q4_K_M weights load completely on the RTX 3060 at 16K context,
+using about 8.5 GiB VRAM and leaving about 3.3 GiB free. A generic gateway probe
+completed, then read-only tests exercised the seven active local stages against a
+current full article and CVE. Summary, context, threat-actor and event contracts
+were usable; article product extraction was production-parseable but included
+schema-extraneous evidence fields. CVE product extraction failed because the
+installed LiteLLM Ollama adapter misplaced `think=false`; this is a transport
+failure, not a prompt or model-content failure. The same CVE through Ollama's
+native chat API with top-level `think=false` returned valid product JSON in 4.43s.
+
+Added an explicit native Ollama transport with deterministic non-thinking mode,
+JSON/schema mapping, token telemetry and private-review support. OpenAI and existing
+LiteLLM behavior are unchanged. Targeted router/event/private-review tests pass
+165/165; the full offline suite passes 981 with two skips. No profile, prompt,
+article, CVE, event, feed or public-site data was changed. The worker remains at
+zero replicas until the candidate image is deployed and the full real-input suite
+passes through that image. Cutover and rollback are model-reference transactions;
+do not alternate loaded models during qualification.
+
 ## September 19, 20:23 UTC: passage-bound private article trial
 
 Application `e2c7abf`, platform `c0d9ec8`. Admin and the local LLM worker use the

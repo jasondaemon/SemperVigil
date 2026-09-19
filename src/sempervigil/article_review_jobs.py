@@ -26,7 +26,8 @@ def configuration(conn) -> tuple[dict, dict, dict, str]:
     model = get_model(conn, profile["primary_model_id"]) or {}
     provider = get_provider(conn, profile["primary_provider_id"]) or {}
     if (not str(model.get("model_name", "")).startswith("ollama/")
-            or provider.get("type") != "openai_compatible" or not provider.get("base_url")):
+            or provider.get("type") not in {"openai_compatible", "ollama_native"}
+            or not provider.get("base_url")):
         raise ValueError("article_review_requires_existing_local_model")
     version = _version({"workflow": evidence.WORKFLOW, "params": PARAMS,
         "profile": profile["id"], "model": model["id"], "model_name": model["model_name"],
@@ -70,7 +71,7 @@ def submit(conn, article_ids: list[int]) -> str:
 
 def complete(conn, job_id: str, request: dict) -> str:
     """One provider attempt, no router repair/fallback. Only called inside the LLM job."""
-    from .llm.router import _http_request, _auth_headers, _join_url, _read_openai
+    from .llm.router import _call_ollama_native, _http_request, _auth_headers, _join_url, _read_openai
     require_enabled()
     profile, model, provider, generation = configuration(conn)
     if generation != request["generation_version"]:
@@ -83,9 +84,14 @@ def complete(conn, job_id: str, request: dict) -> str:
             "name": "article_" + request["phase"], "strict": True, "schema": request["schema"]}}}
     started, raw, error = time.monotonic(), "", None
     try:
-        raw = _read_openai(_http_request("POST", _join_url(provider["base_url"], "/chat/completions"),
-            _auth_headers(provider["type"], secret), payload, provider,
-            context={"stage": JOB_TYPE, "job_id": job_id}))
+        context = {"stage": JOB_TYPE, "job_id": job_id}
+        if provider["type"] == "ollama_native":
+            raw = _call_ollama_native(
+                provider["base_url"], model["model_name"], payload["messages"], PARAMS,
+                provider, context=context, response_format=payload["response_format"])
+        else:
+            raw = _read_openai(_http_request("POST", _join_url(provider["base_url"], "/chat/completions"),
+                _auth_headers(provider["type"], secret), payload, provider, context=context))
         if configuration(conn)[3] != generation:
             raise ValueError("article_review_configuration_changed")
         return raw

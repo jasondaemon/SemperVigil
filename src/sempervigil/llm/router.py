@@ -82,6 +82,10 @@ def test_provider(conn, provider_id: str, logger: logging.Logger) -> dict[str, A
         headers = _auth_headers(provider["type"], api_key)
         response = _http_request("GET", path, headers, None, provider)
         return {"ok": True, "response": response}
+    if provider["type"] == "ollama_native":
+        path = _join_url(base_url, "/api/tags")
+        response = _http_request("GET", path, {}, None, provider)
+        return {"ok": True, "response": response}
     if provider["type"] == "anthropic":
         path = _join_url(base_url, "/messages")
         payload = {
@@ -337,28 +341,45 @@ def _call_provider(
     assessment_ids = (context or {}).get("event_assessment_ids")
     deconstruction_source = (context or {}).get("event_deconstruction_source")
     support_phase = (context or {}).get("event_claim_support_phase")
+    local_ollama = provider_type == "ollama_native" or (
+        provider_type == "openai_compatible" and model_name.startswith("ollama/")
+    )
     if support_phase is not None:
         if (type(support_phase) is not str or support_phase not in {"quotation", "context"}
                 or assessment_ids is not None or deconstruction_source is not None
-                or provider_type != "openai_compatible" or not model_name.startswith("ollama/")
+                or not local_ollama
                 or (context or {}).get("stage") != "event_review_private"):
             raise ValueError("unsupported_private_support_format")
         from ..event_claim_support import response_format as support_format
         assessment_format = support_format()
     if deconstruction_source is not None:
         if (type(deconstruction_source) is not str or not 0 < len(deconstruction_source) <= 32000
-                or assessment_ids is not None or provider_type != "openai_compatible"
-                or not model_name.startswith("ollama/")
+                or assessment_ids is not None or not local_ollama
                 or (context or {}).get("stage") != "event_review_private"):
             raise ValueError("unsupported_private_deconstruction_format")
         from ..event_deconstruction import response_format as deconstruction_format
         assessment_format = deconstruction_format(deconstruction_source)
     if assessment_ids is not None:
-        if (provider_type != "openai_compatible" or not model_name.startswith("ollama/")
+        if (not local_ollama
                 or (context or {}).get("stage") != "event_review_private"):
             raise ValueError("unsupported_private_assessment_format")
         from ..event_assessment import response_format
         assessment_format = response_format(assessment_ids)
+    if provider_type == "ollama_native":
+        response_format = None
+        if assessment_ids is not None or deconstruction_source is not None or support_phase is not None:
+            response_format = assessment_format
+        elif bool((context or {}).get("json_response_format_enabled")):
+            response_format = {"type": "json_object"}
+        return _call_ollama_native(
+            base_url,
+            model_name,
+            messages,
+            params,
+            provider,
+            context=context,
+            response_format=response_format,
+        )
     if provider_type == "openai_compatible":
         if (assessment_ids is not None or deconstruction_source is not None or support_phase is not None) and _use_openai_background(provider, base_url, context):
             raise ValueError("unsupported_private_assessment_format")
@@ -410,6 +431,53 @@ def _call_provider(
         response = _http_request("POST", path, {}, payload, provider, context=context)
         return _read_google(response)
     raise ValueError("unsupported_provider_type")
+
+
+def _call_ollama_native(
+    base_url: str,
+    model_name: str,
+    messages: list[dict[str, str]],
+    params: dict[str, Any],
+    provider: dict[str, Any],
+    *,
+    context: dict[str, Any] | None = None,
+    response_format: dict[str, Any] | None = None,
+) -> str:
+    """Call Ollama's chat API so thinking can be disabled deterministically."""
+    options: dict[str, Any] = {}
+    for key, value in _filter_params(params).items():
+        options["num_predict" if key == "max_tokens" else key] = value
+    payload: dict[str, Any] = {
+        "model": model_name.removeprefix("ollama/"),
+        "messages": messages,
+        "stream": False,
+        "think": False,
+        "options": options,
+    }
+    if response_format:
+        if response_format.get("type") == "json_object":
+            payload["format"] = "json"
+        elif response_format.get("type") == "json_schema":
+            json_schema = response_format.get("json_schema") or {}
+            schema = json_schema.get("schema")
+            if not isinstance(schema, dict):
+                raise ValueError("ollama_native_schema_required")
+            payload["format"] = schema
+        else:
+            raise ValueError("ollama_native_response_format_unsupported")
+    response = _http_request(
+        "POST",
+        _join_url(base_url, "/api/chat"),
+        {},
+        payload,
+        provider,
+        context=context,
+    )
+    message = response.get("message") if isinstance(response, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("ollama_native_missing_content")
+    return content
 
 
 def _http_request(
@@ -689,7 +757,13 @@ def _extract_response_metrics(raw: str) -> dict[str, int]:
         return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     usage = response.get("usage")
     if not isinstance(usage, dict):
-        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        prompt_tokens = int(response.get("prompt_eval_count") or 0)
+        completion_tokens = int(response.get("eval_count") or 0)
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        }
     return {
         "prompt_tokens": int(usage.get("prompt_tokens") or 0),
         "completion_tokens": int(usage.get("completion_tokens") or 0),
@@ -872,6 +946,8 @@ def _default_base_url(provider_type: str) -> str:
         return "https://api.anthropic.com/v1"
     if provider_type == "google":
         return "https://generativelanguage.googleapis.com/v1beta"
+    if provider_type == "ollama_native":
+        return "http://localhost:11434"
     return ""
 
 

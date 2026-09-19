@@ -7487,7 +7487,9 @@ def _private_review_completion(conn, job, logger):
     provider = get_provider(conn, profile["primary_provider_id"]) or {}
     if not provider:
         raise ValueError("private_review_provider_required")
-    if (paired or deconstruct or support) and provider.get("type") != "openai_compatible":
+    if (paired or deconstruct or support) and provider.get("type") not in {
+        "openai_compatible", "ollama_native"
+    }:
         raise ValueError("private_pair_requires_schema_transport")
     from .investigation import _version
     def completion(text):
