@@ -1454,3 +1454,38 @@ drain the serialized lane, apply only those Deployments and restore scheduling.
 Keep scoped profile/config and private artifacts; older worker rejects new
 source-level payloads rather than silently processing them as whole-event jobs.
 Avoid rollback with pending source jobs unless they are first handled explicitly.
+
+## Source cohort outcome, September 19 08:50 UTC
+
+Seven calls, 15,021 ms total: Odido 2,435/2,194 ms; Vercel 2,296 ms; Commission
+1,811/1,822/2,215/2,248 ms. Six jobs succeeded structurally. Odido passes 3/3 and
+Commission 4/4 unchanged cases; Vercel has no valid assessment and the aggregate
+gate fails. Across five bounded cohorts: 19 calls / 95,192 ms, excluding ordinary
+work and queue wait. This is not complete platform cost accounting.
+
+Vercel raw output has `id:` on p3, rejected as `invalid_assessment_item`; its p1
+also proposes exclude/different_incident for the expected positive. No coercion,
+retry, model change or public write. New regression test preserves strict key
+validation. Worker HTTP logs show no response_format on this request; the current
+router only supplies JSON-object mode for configured stages, not schema-constrained
+private assessment. Inspect the installed path before implementing format support.
+
+Read-only source inspection found no stored HTML/raw HTML for the four sampled
+anchor/candidate articles. Candidate 26190 has 3,856 text characters and anchor
+26194 has 6,667, including extraneous footer text. Full-body context cannot simply
+be appended to the current 12,000-byte request without budget analysis. Shared
+official-link provenance is unavailable in this snapshot; do not fabricate it.
+
+All three production event fingerprints unchanged. Six immutable HTML artifacts
+validated against their job hashes and source-specific cache/generation identities:
+
+- Odido 21505: 70,361 bytes, `aedabc75352941f76aad61c4a52fee4f7ccd2eee9696507504506beab29bab9b`.
+- Odido 22331: 70,560 bytes, `d2757e26d06c36962ec439d2026c591a9f357136b5c2175ef6fe8a66d1d3fdd5`.
+- Commission 21216: 109,337 bytes, `3facfbf425d084c410d829609cdd7bd915c051aab5e7b840054317c0491d0906`.
+- Commission 21218: 109,337 bytes, `a15732665f0550fb1ee330ec53c80fbc60757202ee269f0eb714e69540439b26`.
+- Commission 23638: 109,433 bytes, `05a9cd332426558bf6cf45c4135b3525638d0188cf26853edd0f498673fa9604`.
+- Commission 25303: 110,588 bytes, `4bf6d0fccc02aa4bfed60a6b55bd423f07852da2522dfd80d135df6d057906b6`.
+
+Next is constrained-format/provider and paired-source input analysis, not publishing
+the passing subset as a completed automated feature. Source display follow-up
+`2b5954a` remains local; runtime remains `e93b6f0`. No deployment this checkpoint.

@@ -238,3 +238,55 @@ request hashes and guarded generation identities matched before admission. Jobs
 are queued at unchanged priority. Exact IDs, public checks, cache/attachment
 verification and rollback are in `STABILIZATION_VERIFICATION.md`. Semantic quality
 is still pending; no public permission follows from a completed private job.
+
+## Source cohort evaluated
+
+All seven jobs attempted exactly one call: 15,021 ms total. Six produced validated
+private artifacts. Odido now passes 3/3 and Commission 4/4, with all previous labels
+unchanged. Vercel failed `invalid_assessment_item`: the model emitted `id:` instead
+of `id` for one row. No artifact or cached valid assessment was accepted for that
+job. Its raw p1 decision also excludes the pinned positive, so fixing the key alone
+would not resolve the semantic failure. Do not normalize malformed output, count
+the failed case as a pass, retry blindly, or publish the partial cohort.
+
+There are two distinct next issues: enforce the exact output shape at generation
+where the installed provider supports it, and preserve enough source context to
+compare an early generic incident report with a later root-cause account. The
+current Vercel positive describes the initial incident without the Context.ai
+detail in the anchor. Exact quotations elsewhere in the same stored documents
+carry additional context that the four-candidate snippets do not send. Stored
+HTML/outbound-reference provenance is absent for these sampled articles, so do
+not invent shared advisory links or treat model guesses as trusted references.
+
+Before another model cohort, inspect the installed provider's constrained-output
+capability and design a bounded source-pair evidence input. Keep the same local
+model and single-call serialization; measure the request budget against actual
+context capacity rather than silently truncating or raising limits. Preserve the
+existing workflows/profile/cache and all eight cases. If required evidence cannot
+fit or establish the relationship, hold explicitly. A paired-input test remains a
+hypothesis, not an established fix, and must not unlock public reporting by itself.
+
+### Installed capability and budget evidence
+
+Read-only inspection confirms installed LiteLLM 1.77.7 maps OpenAI-compatible
+`response_format.type=json_schema` to Ollama's schema-valued `format`, in both
+completion and chat adapters. This is a capability observation, not a successful
+end-to-end constrained-generation test. Ollama still reports the same Qwen model,
+100% GPU and 16,384-token context. Seven source calls used 1,030-1,296 actual prompt
+tokens and 77-100 output tokens each; no context-pressure evidence in this cohort.
+
+A candidate Vercel paired-input layout retains both full stored texts (no silent
+truncation), exact candidate quotes, the same scope, and untrusted-source treatment.
+Removing duplicated 200-character windows and repeating document metadata yields
+14,701 bytes including the existing system text, before explicit pair-role IDs.
+It does not fit the current 12,000-byte contract. A separate opt-in, versioned
+15,000-byte diagnostic mode/profile is a bounded next option, not a global limit
+increase; keep 1,024 output tokens and the same single local model. Measure actual
+tokens on the one failed Vercel source before considering broader use.
+
+Some other source pairs exceed that budget (one Commission pair alone is 22,420
+serialized bytes). Such requests must reject/hold without truncating, hiding
+coverage, or falling back silently. Keep existing smaller successful modes intact.
+Do not describe a successful one-source diagnostic as a homogeneous all-case
+qualification. Pin new generation and request identities, test strict schema
+transport and application validation, then admit at most that one diagnostic call.

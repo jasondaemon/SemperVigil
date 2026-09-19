@@ -89,6 +89,14 @@ def test_missing_source_decisions_fail_closed(database):
                                      scope=proposal(packet), article_id=1)
 
 
+def test_observed_model_id_typo_is_not_silently_repaired(database):
+    packet = get_packet(database)
+    raw = json.dumps({"decisions": [
+        {"id:": "p1", "decision": "include", "reason": "same_incident"}]}).encode()
+    with pytest.raises(ValueError, match="invalid_assessment_item"):
+        assessment.validate_response(raw, packet, scope=proposal(packet), article_id=1)
+
+
 def test_cache_separates_identical_sources_and_rebinds_timestamp(database, tmp_path):
     packet = packet_with_sources(database)
     packet["documents"][1]["text"] = packet["documents"][0]["text"]
