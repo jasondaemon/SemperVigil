@@ -639,6 +639,12 @@ def run_once(builder_id: str) -> int:
     )
     start = time.time()
     try:
+        from .event_release import enabled as events_enabled, prepare_site
+        if events_enabled():
+            if os.environ.get("SV_EVENT_ACTIVATION_CHECK", "0") != "1":
+                raise ValueError("qualified_events_require_activation_guard")
+            event_export = prepare_site(conn, config, logger)
+            log_event(logger, logging.INFO, "qualified_events_prepared", **event_export)
         returncode, stdout, stderr, canceled, cmd = _run_hugo_until_done(
             conn,
             job.id,

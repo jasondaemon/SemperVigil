@@ -1,5 +1,23 @@
 # Change Control Log
 
+## 2026-09-19: Builder-owned qualified Events release integration
+
+- Problem: `worker._publish_events` wrote shared Events inputs independently of
+  the builder; the new pointer path had no runtime exporter. An authority-only
+  manifest could not prove which rendered page/JSON would become live.
+- Change: default-disabled builder-only export, output-bound manifest, exact
+  HTML/JSON and current-source verification at the approved activation hook.
+  Workers request ordinary builds after promotion. No Hugo command, cache,
+  resource limit, daily JSON schema or historical rebuild changes.
+- Changed evidence withdraws only that managed report, without legacy fallback.
+- Added role-specific existing-Secret wiring and render-time configuration checks.
+- Verification: offline release/chart tests and real disposable PostgreSQL
+  activation/source-lock tests. No production changes at this checkpoint.
+- Risk: medium when enabled; requires a coordinated all-writer rollout and an
+  API-driven pilot. Disabled path retains existing publication behavior.
+- Rollback: retain verified images/live release and Events-only source snapshot;
+  stop admissions and coordinate writers. Never bypass a failed candidate guard.
+
 ## 2026-09-18: Builder-only historical catch-up
 
 - Added optional, validated chart override `buildWorker.feedArchiveBackgroundDays`;

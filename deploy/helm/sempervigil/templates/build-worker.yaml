@@ -64,6 +64,13 @@ spec:
             - configMapRef:
                 name: {{ include "sempervigil.fullname" . }}-env
           env:
+            {{- if .Values.eventPublication.existingSecret }}
+            - name: SV_EVENT_ACTIVATION_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.eventPublication.existingSecret | quote }}
+                  key: SV_EVENT_ACTIVATION_DB_URL
+            {{- end }}
             {{- if ne .Values.buildWorker.feedArchiveBackgroundDays nil }}
             {{- if not (regexMatch "^[0-9]+$" (toString .Values.buildWorker.feedArchiveBackgroundDays)) }}
             {{- fail "buildWorker.feedArchiveBackgroundDays must be a non-negative integer or null" }}

@@ -4,6 +4,13 @@ Status: locally implemented and tested, **not deployed or enabled**. The user
 explicitly approved this narrowly scoped activation-path change on September 19,
 2026. It does not authorize arbitrary build changes or autonomous publication.
 
+**Current integration:** see [EVENT_RELEASE_COORDINATION.md](EVENT_RELEASE_COORDINATION.md).
+The builder now prepares an output-bound version-two manifest named
+`event-publication.json`. The live activation entry point requires version two,
+checks current source evidence and rendered outputs, and refuses the authority-only
+version-one format described below. The older format remains in transaction unit
+tests only. Deployment and API-driven pilot verification are still pending.
+
 ## Behavior
 
 `SV_EVENT_ACTIVATION_CHECK` defaults to `0`. In that state `hugo-build.sh` runs its

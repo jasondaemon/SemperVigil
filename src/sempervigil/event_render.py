@@ -50,19 +50,22 @@ def index_entry(bundle: dict, *, event_id: str, expected_revision: str) -> dict:
 
 def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict, str]:
     metadata, projection = resolve(bundle, event_id=event_id, expected_revision=expected_revision)
-    lines = ["## Source-backed coverage", "",
-             "These are attributed source quotations, not independently verified facts.", "",
-             "Incident date: unknown. Feed dates below are not incident dates. "
-             "Source independence has not been established.", ""]
+    from html import escape
+    lines = [f'<section id="sv-event-coverage" data-event-id="{escape(event_id, quote=True)}" '
+             f'data-event-revision="{expected_revision}">',
+             '<h2>Source-backed coverage</h2>',
+             '<p>These are attributed source quotations, not independently verified facts.</p>',
+             '<p>Incident date: unknown. Feed dates below are not incident dates. '
+             'Source independence has not been established.</p>']
     for entry in projection["entries"]:
         url = url_quote(entry["url"], safe=":/?&=%#@+")
-        lines.extend([f"### [{literal(entry['source_title'])}](<{url}>)", "",
-                      "> " + literal(entry["quote"]), "",
-                      f"Feed date: {entry['feed_day'] or 'unknown'}. "
-                      f"Source characters: {entry['start']}-{entry['end']}.", ""])
+        lines.extend([f'<h3><a href="{escape(url, quote=True)}">{literal(entry["source_title"])}</a></h3>',
+                      '<blockquote><p>' + literal(entry["quote"]) + '</p></blockquote>',
+                      f"<p>Feed date: {entry['feed_day'] or 'unknown'}. "
+                      f"Source characters: {entry['start']}-{entry['end']}.</p>"])
     uncovered = len(projection["unrepresented_article_ids"])
     if uncovered:
-        lines.extend([f"Coverage note: {uncovered} linked source(s) are not represented "
-                      "in this qualified revision. No conclusions are inferred from them.", ""])
-    lines.extend([f"Revision: `{expected_revision}`.", ""])
+        lines.append(f"<p>Coverage note: {uncovered} linked source(s) are not represented "
+                     "in this qualified revision. No conclusions are inferred from them.</p>")
+    lines.extend([f"<p>Revision: <code>{expected_revision}</code>.</p>", "</section>", ""])
     return metadata, "\n".join(lines)

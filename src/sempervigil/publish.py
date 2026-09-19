@@ -267,8 +267,8 @@ def write_events_exports(events: Iterable[dict[str, object]], base_content_dir: 
                          promoted_revision_ids: dict[str, str]) -> tuple[list[str], str]:
     """Prevalidate page/index content together; not atomic multi-file publication.
 
-    Future caller must supply one trusted pointer snapshot and coordinate with the
-    builder. On IO failure it must not request publication. No runtime caller yet.
+    The enabled builder supplies one trusted pointer snapshot. On IO failure it
+    must not invoke Hugo or activate the candidate release.
     """
     from .utils import _json_default
     events = list(events)
@@ -317,7 +317,7 @@ def write_events_authorized_snapshot(events: Iterable[dict[str, object]], base_c
     if (set(bundles) != active or set(managed) != active | hold_ids | withdrawal_ids
             or active & hold_ids or active & withdrawal_ids or hold_ids & withdrawal_ids
             or any(v != "evidence_changed" for v in held.values())
-            or any(v not in ("qualification_revoked", "event_unavailable", "evidence_unavailable")
+            or any(v not in ("qualification_revoked", "event_unavailable", "evidence_unavailable", "evidence_changed")
                    for v in withdrawn.values())):
         raise ValueError("inconsistent_event_export_authorization")
     if held:

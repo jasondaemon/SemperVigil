@@ -1,8 +1,8 @@
 """Default-disabled, bounded Events authorization at the release switch.
 
-The publication coordinator must bind this manifest to its prepared page/JSON
-output. This guard checks authority, not prose quality or rendered-file integrity.
-It is not a replacement for export preflight or an autonomous publication gate.
+The builder binds its manifest to the prepared page/JSON output. This guard checks
+authority, current evidence and rendered-file integrity, not semantic prose quality.
+It is not an autonomous qualification gate.
 """
 import json
 import os
@@ -17,15 +17,22 @@ import psycopg
 from .event_render import resolve
 from .investigation import _version
 
-MANIFEST = ".event-publication.json"
+MANIFEST = "event-publication.json"
 MAX_BYTES = 16384
 MAX_EVENTS = 20
 
 
 def validate_manifest(value: dict) -> dict:
     """Require complete managed-event inventory, including deliberate removals."""
-    if (type(value) is not dict or value.keys() != {"workflow", "revisions", "withdrawn"}
-            or value["workflow"] != "event-release-authorization-v1"):
+    if type(value) is not dict:
+        raise ValueError("invalid_event_activation_manifest")
+    version = value.get("workflow")
+    fields = {"workflow", "revisions", "withdrawn"}
+    if version == "event-release-authorization-v2":
+        fields |= {"pages", "index_sha256", "fragments"}
+    elif version != "event-release-authorization-v1":
+        raise ValueError("invalid_event_activation_manifest")
+    if value.keys() != fields:
         raise ValueError("invalid_event_activation_manifest")
     for field in ("revisions", "withdrawn"):
         entries = value[field]
@@ -38,6 +45,15 @@ def validate_manifest(value: dict) -> dict:
     if (len(identities) > MAX_EVENTS
             or set(value["revisions"]) & set(value["withdrawn"])):
         raise ValueError("invalid_event_activation_manifest")
+    if version == "event-release-authorization-v2":
+        if (type(value["pages"]) is not dict or set(value["pages"]) != identities
+                or any(type(s) is not str or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,200}", s)
+                       or s.lower() == "_index" for s in value["pages"].values())
+                or len({s.casefold() for s in value["pages"].values()}) != len(identities)
+                or type(value["fragments"]) is not dict or set(value["fragments"]) != set(value["revisions"])
+                or any(type(s) is not str or not re.fullmatch(r"[0-9a-f]{64}", s)
+                       for s in [value["index_sha256"], *value["fragments"].values()])):
+            raise ValueError("invalid_event_activation_manifest")
     return value
 
 
@@ -67,7 +83,7 @@ def read_manifest(release: Path) -> dict:
     return validate_manifest(json.loads(raw, object_pairs_hook=_unique_object))
 
 
-def authorize_and_activate(connection_factory, manifest: dict, activate) -> None:
+def authorize_and_activate(connection_factory, manifest: dict, activate, *, release: Path | None = None) -> None:
     """Hold authority locks through a short release-switch callback, never Hugo.
 
 Pointer-table SHARE prevents inventory changes (including new managed events).
@@ -76,6 +92,8 @@ NOWAIT refuses contention rather than waiting behind ingestion or promotion.
 The caller must supply a dedicated connection and a bounded local switch only.
 """
     manifest = validate_manifest(manifest)
+    if manifest["workflow"] == "event-release-authorization-v2" and release is None:
+        raise ValueError("event_release_candidate_required")
     expected = {**manifest["revisions"], **manifest["withdrawn"]}
     with connection_factory() as conn:
         if conn.autocommit or conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
@@ -111,6 +129,7 @@ The caller must supply a dedicated connection and a bounded local switch only.
             ORDER BY p.event_id LIMIT %s""", (MAX_EVENTS + 1,)).fetchall()
         if {row[0]: row[1] for row in rows} != expected:
             raise ValueError("event_activation_inventory_changed")
+        bundles = {}
         for event_id, revision, raw, qid, qraw, revoked in rows:
             if raw is None or qraw is None:
                 raise ValueError("broken_publication_reference")
@@ -122,6 +141,13 @@ The caller must supply a dedicated connection and a bounded local switch only.
             if _version(qualification) != qid or bundle.get("qualification") != qualification:
                 raise ValueError("qualification_integrity_failure")
             resolve(bundle, event_id=event_id, expected_revision=revision)
+            bundles[event_id] = bundle
+            if release is not None:
+                from .event_release import check_current
+                check_current(conn, bundle["packet"])
+        if release is not None:
+            from .event_release import verify_release
+            verify_release(release, manifest, bundles)
         # Reproduction above is local CPU work. Refuse if the server expired the
         # idle transaction, and renew its short window before the bounded switch.
         conn.execute("SELECT 1").fetchone()
@@ -135,6 +161,8 @@ def activate_release(release: Path, current: Path, *, connection_factory=None) -
             or release.is_symlink() or not (release / "index.html").is_file()):
         raise ValueError("invalid_event_activation_release")
     manifest = read_manifest(release)
+    if manifest["workflow"] != "event-release-authorization-v2":
+        raise ValueError("event_release_bound_manifest_required")
     if connection_factory is None:
         dsn = os.environ.get("SV_EVENT_ACTIVATION_DB_URL", "")
         if not dsn:
@@ -142,7 +170,7 @@ def activate_release(release: Path, current: Path, *, connection_factory=None) -
         connection_factory = lambda: psycopg.connect(dsn, connect_timeout=3)
     authorize_and_activate(connection_factory, manifest,
                            lambda: subprocess.run(["ln", "-sfn", "releases/" + release.name,
-                                                   str(current)], check=True, timeout=2))
+                                                   str(current)], check=True, timeout=2), release=release)
 
 
 def main() -> int:
@@ -158,7 +186,12 @@ def main() -> int:
             "qualification_read_only_role_required", "qualification_integrity_failure",
             "broken_publication_reference", "invalid_event_activation_release",
             "invalid_event_activation_manifest", "invalid_event_activation_file",
-            "duplicate_event_activation_key", "dedicated_activation_transaction_required"}
+            "duplicate_event_activation_key", "dedicated_activation_transaction_required",
+            "event_release_bound_manifest_required", "event_release_candidate_required",
+            "event_release_index_changed", "event_release_index_projection_mismatch",
+            "event_release_page_projection_mismatch", "event_release_withdrawal_incomplete",
+            "event_release_unmanaged_revision", "stale_revision_snapshot",
+            "event_release_fragment_missing_or_duplicate", "event_release_symlink"}
         reason = str(exc) if str(exc) in safe_reasons else type(exc).__name__
         print("Events release activation failed (" + reason + ").", file=sys.stderr)
         return 1

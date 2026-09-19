@@ -318,7 +318,7 @@ def test_revision_window_locks_sources_and_membership(restricted_database):
             pytest.fail("stale evidence accepted")
 
 
-def test_qualified_publication_transaction(restricted_database):
+def test_qualified_publication_transaction(restricted_database, tmp_path):
     from concurrent.futures import ThreadPoolExecutor
     from sempervigil.event_review import snapshot
     from sempervigil.event_scope import propose
@@ -393,6 +393,42 @@ def test_qualified_publication_transaction(restricted_database):
     assert exported["managed_event_ids"] == ["one"]
     assert exported["promoted_revision_ids"] == {"one": first["revision_id"]}
     assert not exported["withdrawn"] and not exported["withheld"]
+    # The real release guard binds both outputs and holds source locks through
+    # activation, not just the publication pointer lock.
+    import hashlib
+    from sempervigil.event_release import INDEX_PATH, fragment_identity
+    from sempervigil.event_render import render, index_entry
+    bundle = exported["qualified_revisions"]["one"]
+    revision = first["revision_id"]
+    body = render(bundle, event_id="one", expected_revision=revision)[1]
+    page = tmp_path / "events/one/index.html"
+    page.parent.mkdir(parents=True)
+    page.write_text(body)
+    index = tmp_path / INDEX_PATH
+    index.parent.mkdir(parents=True)
+    index.write_text(json.dumps([index_entry(bundle, event_id="one", expected_revision=revision)]))
+    bound = {**first_manifest, "workflow": "event-release-authorization-v2",
+             "pages": {"one": "one"}, "fragments": {"one": fragment_identity(body)},
+             "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest()}
+    def bound_switch():
+        admin.execute("SET lock_timeout='100ms'")
+        try:
+            with pytest.raises(psycopg.errors.LockNotAvailable):
+                admin.execute("UPDATE articles SET content_text='concurrent change' WHERE id=1")
+            with pytest.raises(psycopg.errors.LockNotAvailable):
+                admin.execute("DELETE FROM event_articles WHERE event_id='one' AND article_id=1")
+        finally:
+            admin.execute("SET lock_timeout=0")
+    authorize_and_activate(factory, bound, bound_switch, release=tmp_path)
+    page.write_text(body.replace("contact system", "different system"))
+    # Render escapes punctuation only; replacement changes the literal quotation.
+    with pytest.raises(ValueError, match="projection_mismatch"):
+        authorize_and_activate(factory, bound, lambda: pytest.fail("modified page activated"), release=tmp_path)
+    page.write_text(body)
+    admin.execute("UPDATE articles SET content_text=%s WHERE id=1", (text + " New evidence.",))
+    with pytest.raises(ValueError, match="stale_revision_snapshot"):
+        authorize_and_activate(factory, bound, lambda: pytest.fail("stale evidence activated"), release=tmp_path)
+    admin.execute("UPDATE articles SET content_text=%s WHERE id=1", (text,))
     with pytest.raises(ValueError, match="dedicated_export_transaction"):
         load_export(lambda: psycopg.connect(dsn, autocommit=True), ["one"])
     assert admin.execute("SELECT count(*) FROM event_public_revisions").fetchone()[0] == 1

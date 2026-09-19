@@ -1,3 +1,16 @@
+{{- range $key := list "SV_EVENT_HUMAN_APPROVAL_ENABLED" "SV_EVENT_PUBLICATION_ENABLED" "SV_EVENT_ACTIVATION_CHECK" }}
+{{- if not (has (index $.Values.env $key) (list "0" "1")) }}
+{{- fail (printf "%s must be the string 0 or 1" $key) }}
+{{- end }}
+{{- end }}
+{{- if and (eq .Values.env.SV_EVENT_PUBLICATION_ENABLED "1") (ne .Values.env.SV_EVENT_ACTIVATION_CHECK "1") }}
+{{- fail "Events publication requires its activation guard" }}
+{{- end }}
+{{- if or (eq .Values.env.SV_EVENT_HUMAN_APPROVAL_ENABLED "1") (eq .Values.env.SV_EVENT_ACTIVATION_CHECK "1") }}
+{{- if not .Values.eventPublication.existingSecret }}
+{{- fail "Events enablement requires eventPublication.existingSecret" }}
+{{- end }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -15,6 +28,9 @@ data:
   SV_DATA_DIR: /data
   SV_LOG_DIR: /log
   SV_EVENT_REVIEW_ENABLED: {{ .Values.env.SV_EVENT_REVIEW_ENABLED | quote }}
+  SV_EVENT_HUMAN_APPROVAL_ENABLED: {{ .Values.env.SV_EVENT_HUMAN_APPROVAL_ENABLED | quote }}
+  SV_EVENT_PUBLICATION_ENABLED: {{ .Values.env.SV_EVENT_PUBLICATION_ENABLED | quote }}
+  SV_EVENT_ACTIVATION_CHECK: {{ .Values.env.SV_EVENT_ACTIVATION_CHECK | quote }}
   SV_EVENT_REVIEW_MODEL_ENABLED: {{ .Values.env.SV_EVENT_REVIEW_MODEL_ENABLED | quote }}
   SV_EVENT_REVIEW_PROFILE_ID: {{ .Values.env.SV_EVENT_REVIEW_PROFILE_ID | quote }}
   SV_EVENT_REVIEW_SCOPE_ENABLED: {{ .Values.env.SV_EVENT_REVIEW_SCOPE_ENABLED | quote }}

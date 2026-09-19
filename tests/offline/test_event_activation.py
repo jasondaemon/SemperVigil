@@ -138,7 +138,12 @@ def test_release_and_database_bounds_preserve_current(tmp_path, monkeypatch):
     new.mkdir()
     (old / "index.html").write_text("old")
     (new / "index.html").write_text("new")
-    (new / activation.MANIFEST).write_text(json.dumps(manifest()))
+    import hashlib
+    (new / "sempervigil/index").mkdir(parents=True)
+    (new / "sempervigil/index/events.json").write_bytes(b"[]")
+    bound = {**manifest(), "workflow": "event-release-authorization-v2", "pages": {}, "fragments": {},
+             "index_sha256": hashlib.sha256(b"[]").hexdigest()}
+    (new / activation.MANIFEST).write_text(json.dumps(bound))
     current = tmp_path / "current"
     current.symlink_to("releases/old")
     monkeypatch.delenv("SV_EVENT_ACTIVATION_DB_URL", raising=False)

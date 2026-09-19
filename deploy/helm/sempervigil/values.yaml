@@ -79,7 +79,14 @@ storage:
     accessModes: ["ReadWriteMany"]
     size: 10Gi
 
+# Existing secret only; these role-separated credentials are never chart values.
+eventPublication:
+  existingSecret: ""
+
 env:
+  SV_EVENT_HUMAN_APPROVAL_ENABLED: "0"
+  SV_EVENT_PUBLICATION_ENABLED: "0"
+  SV_EVENT_ACTIVATION_CHECK: "0"
   SV_EVENT_REVIEW_ENABLED: "0"
   SV_EVENT_REVIEW_MODEL_ENABLED: "0"
   SV_EVENT_REVIEW_PROFILE_ID: ""

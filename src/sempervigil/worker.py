@@ -9089,7 +9089,7 @@ def _maybe_cleanup_vendor_product_tags(conn, logger: logging.Logger) -> None:
     )
 
 
-def _publish_events(conn, config, logger: logging.Logger) -> None:
+def _collect_published_events(conn) -> tuple[list[dict], int]:
     events: list[dict[str, object]] = []
     page = 1
     page_size = 200
@@ -9125,6 +9125,15 @@ def _publish_events(conn, config, logger: logging.Logger) -> None:
         if len(items) < page_size:
             break
         page += 1
+    return events, total
+
+
+def _publish_events(conn, config, logger: logging.Logger) -> None:
+    from .event_release import enabled
+    if enabled():
+        mark_build_dirty(conn, reason="qualified_events_refresh")
+        return
+    events, total = _collect_published_events(conn)
     base_content_dir = os.path.dirname(config.paths.output_dir)
     base_static_dir = os.path.dirname(config.publishing.json_index_path)
     written_pages = write_events_markdown(events, base_content_dir)
@@ -9688,7 +9697,11 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         return run(job.payload or {}) if completion is None else run(job.payload or {}, complete=completion)
     if job.job_type == "event_promote_reviewed":
         from .event_approval import run
-        return run(job.payload or {})
+        result = run(job.payload or {})
+        from .event_release import enabled
+        if enabled() and result.get("status") in {"promoted", "reused"}:
+            mark_build_dirty(conn, reason="qualified_event_promoted")
+        return result
     if job.job_type == "rebuild_vendor_products":
         return _handle_rebuild_vendor_products(conn, config, logger)
     if job.job_type == "smoke_test":

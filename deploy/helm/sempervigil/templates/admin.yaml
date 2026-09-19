@@ -74,6 +74,13 @@ spec:
             - configMapRef:
                 name: {{ include "sempervigil.fullname" . }}-env
           env:
+            {{- if .Values.eventPublication.existingSecret }}
+            - name: SV_EVENT_APPROVAL_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.eventPublication.existingSecret | quote }}
+                  key: SV_EVENT_APPROVAL_DB_URL
+            {{- end }}
             - name: SV_SCHEDULER_ENABLED
               value: "0"
             - name: SV_DB_URL

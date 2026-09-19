@@ -118,6 +118,13 @@ spec:
                 secretKeyRef:
                   name: {{ default (include "sempervigil.secretName" .) .Values.externalDatabase.existingSecret }}
                   key: {{ default "url" .Values.externalDatabase.urlKey }}
+            {{- if .Values.eventPublication.existingSecret }}
+            - name: SV_EVENT_PROMOTION_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.eventPublication.existingSecret | quote }}
+                  key: SV_EVENT_PROMOTION_DB_URL
+            {{- end }}
             - name: HTTP_PROXY
               value: http://127.0.0.1:8888
             - name: HTTPS_PROXY
