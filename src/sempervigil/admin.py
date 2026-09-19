@@ -246,6 +246,7 @@ _DASHBOARD_LLM_JOB_TYPES = [
     "cve_enrich_llm",
     "cve_enrich_threat_actors",
     "event_report_llm",
+    "event_review_private",
 ]
 _DASHBOARD_FETCH_JOB_TYPES = [
     "fetch_article_content",
@@ -284,11 +285,14 @@ _DASHBOARD_STATUS_COLUMNS = {
     "running": "running",
     "failed": "failed",
     "complete": "succeeded",
+    "canceled": "canceled",
 }
 
 
-def _dashboard_visible_job_types() -> list[str]:
-    return _DASHBOARD_FETCH_JOB_TYPES + _DASHBOARD_LLM_JOB_TYPES + _DASHBOARD_BUILD_JOB_TYPES
+def _dashboard_visible_job_types(observed=()) -> list[str]:
+    from .storage import registered_job_types
+    primary = _DASHBOARD_FETCH_JOB_TYPES + _DASHBOARD_LLM_JOB_TYPES + _DASHBOARD_BUILD_JOB_TYPES
+    return list(dict.fromkeys(primary + sorted(set(registered_job_types()) | set(WORKER_JOB_TYPES) | set(observed))))
 
 
 def _dashboard_job_group_id(job_type: str) -> str:
@@ -298,14 +302,14 @@ def _dashboard_job_group_id(job_type: str) -> str:
         return "fetch"
     if job_type in _DASHBOARD_BUILD_JOB_TYPES:
         return "build"
-    return "all"
+    return "other"
 
 
 def _dashboard_display_rows(payload: dict[str, object]) -> list[dict[str, object]]:
     counts = payload.get("job_counts_by_type_status") or {}
     queueable = payload.get("queueable_by_job_type") or {}
     rows: list[dict[str, object]] = []
-    for index, job_type in enumerate(_dashboard_visible_job_types()):
+    for index, job_type in enumerate(_dashboard_visible_job_types(counts)):
         status_map = counts.get(job_type) if isinstance(counts, dict) else {}
         if not isinstance(status_map, dict):
             status_map = {}
@@ -318,6 +322,7 @@ def _dashboard_display_rows(payload: dict[str, object]) -> list[dict[str, object
             "running": int(status_map.get("running") or 0),
             "failed": int(status_map.get("failed") or 0),
             "complete": int(status_map.get("succeeded") or 0),
+            "canceled": int(status_map.get("canceled") or 0),
         }
         rows.append(row)
     return rows
@@ -628,12 +633,16 @@ def _prometheus_timestamp(value: str | None) -> float | None:
         return None
 
 
-def _dashboard_job_groups() -> list[dict[str, object]]:
-    return [
+def _dashboard_job_groups(job_types=None) -> list[dict[str, object]]:
+    groups = [
         {"id": "fetch", "title": "Fetch Worker", "job_types": _DASHBOARD_FETCH_JOB_TYPES},
         {"id": "llm", "title": "LLM Worker", "job_types": _DASHBOARD_LLM_JOB_TYPES},
         {"id": "build", "title": "Build / Publish", "job_types": _DASHBOARD_BUILD_JOB_TYPES},
     ]
+    grouped = {kind for group in groups for kind in group["job_types"]}
+    groups.append({"id": "other", "title": "Control / Other Jobs",
+                   "job_types": [kind for kind in (job_types or _dashboard_visible_job_types()) if kind not in grouped]})
+    return groups
 
 
 def _job_group_id_for_job_type(job_type: str) -> str:
@@ -645,9 +654,9 @@ def _job_group_id_for_job_type(job_type: str) -> str:
 
 def _build_dashboard_metrics_payload(conn: Any) -> dict[str, object]:
     metrics = get_dashboard_metrics(conn)
-    visible_job_types = _dashboard_visible_job_types()
+    visible_job_types = _dashboard_visible_job_types(metrics.get("job_counts_by_type_status") or {})
     metrics["job_types"] = visible_job_types
-    metrics["job_groups"] = _dashboard_job_groups()
+    metrics["job_groups"] = _dashboard_job_groups(visible_job_types)
     metrics["build_state"] = get_build_state(conn)
     metrics["build_status"] = get_build_status(conn)
     metrics["queue_stats"] = get_queue_stats(conn)
@@ -2180,6 +2189,7 @@ def jobs(
     page_size: int = 20,
     status: str | None = None,
     job_type: str | None = None,
+    include_types: bool = False,
 ) -> dict[str, object]:
     conn = _get_conn()
     items, total = list_jobs_filtered(
@@ -2206,6 +2216,8 @@ def jobs(
         "page_size": page_size,
         "status": status,
         "job_type": job_type,
+        **({"job_types": _dashboard_visible_job_types(row[0] for row in conn.execute("SELECT DISTINCT job_type FROM jobs").fetchall())}
+           if include_types else {}),
     }
 
 
@@ -3165,6 +3177,24 @@ class EventPublishRequest(BaseModel):
     publish: bool = True
     force: bool = False
     site_slug: str | None = None
+
+
+class EventPrivateReviewRequest(BaseModel):
+    aliases: list[str]
+    model_config = {"extra": "forbid", "strict": True}
+
+
+@app.post("/admin/api/events/{event_id}/private-review",
+          dependencies=[Depends(_require_admin_token)])
+def api_event_private_review(event_id: str, payload: EventPrivateReviewRequest) -> dict[str, object]:
+    from .event_review_jobs import submit
+    try:
+        job_id = submit(_get_conn, event_id=event_id, aliases=payload.aliases)
+    except PermissionError as exc:
+        raise HTTPException(status_code=503, detail="private_review_disabled") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid_or_unavailable_private_review") from exc
+    return {"job_id": job_id, "event_id": event_id, "public_eligible": False}
 
 
 @app.post(

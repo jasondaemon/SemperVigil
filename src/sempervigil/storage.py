@@ -52,11 +52,17 @@ _QUEUE_NAME_BY_JOB_TYPE: dict[str, str] = {
     "cve_enrich_threat_actors": "llm_local",
     "enrich_event_summary_llm": "llm_local",
     "event_report_llm": "llm_local",
+    "event_review_private": "llm_local",
     "build_daily_brief": "openai",
     "write_article_markdown": "publish",
     "build_site": "build",
     "smoke_test": "ops",
 }
+
+def registered_job_types() -> list[str]:
+    """Authoritative queue registry for admin discovery, including control jobs."""
+    return sorted(_QUEUE_NAME_BY_JOB_TYPE)
+
 
 _JOB_SELECT_COLUMNS = """
 id,

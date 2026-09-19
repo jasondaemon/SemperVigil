@@ -3,6 +3,12 @@
 Status: working local operator workflow, tested against real snapshots. Not a
 production worker/API deployment and not autonomous factual validation.
 
+Update: [private queue integration](EVENTS_PRIVATE_QUEUE.md) now connects the
+extractive service to a distinct worker job and admin admission endpoint. It is
+tested but disabled and not deployed. The local workflow below still works
+independently. User gave initial positive visual feedback on these review pages;
+new admin changes still require live UI acceptance.
+
 ## What is ready
 
 `python -m sempervigil.event_review` implements a complete private review path:

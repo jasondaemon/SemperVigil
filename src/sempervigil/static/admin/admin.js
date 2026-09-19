@@ -265,14 +265,14 @@ function wireDashboard() {
     }
   }
   function renderJobCounts(counts, jobTypes, jobGroups, countsSince, queueable, buildState) {
-    const hiddenJobTypes = new Set(["build_daily_brief"]);
-    const allTypes = (jobTypes && jobTypes.length ? jobTypes : Object.keys(counts).sort()).filter(
-      (type) => !hiddenJobTypes.has(type)
-    );
+    const allTypes = [...new Set([...(jobTypes || []), ...Object.keys(counts)])];
     const fallbackGroups = [
       { id: "all", title: "Job Queue", job_types: allTypes },
     ];
-    const groups = Array.isArray(jobGroups) && jobGroups.length ? jobGroups : fallbackGroups;
+    const groups = Array.isArray(jobGroups) && jobGroups.length ? [...jobGroups] : fallbackGroups;
+    const groupedTypes = new Set(groups.flatMap(group => group.job_types || []));
+    const ungrouped = allTypes.filter(type => !groupedTypes.has(type));
+    if (ungrouped.length) groups.push({id: "other", title: "Other Jobs", job_types: ungrouped});
     const sinceEl = document.getElementById("dashboard-job-counts-since");
     if (sinceEl) {
       if (countsSince) {
@@ -291,6 +291,7 @@ function wireDashboard() {
           <th>Run</th>
           <th>Fail</th>
           <th>Complete</th>
+          <th>Canceled (all time)</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -390,7 +391,7 @@ function wireDashboard() {
         const queueHtml = controlHtml || "—";
         const row = document.createElement("tr");
         row.innerHTML = `
-          <td>${jobType}</td>
+          <td><a href="/ui/jobs?job_type=${encodeURIComponent(jobType)}">${esc(jobType)}</a></td>
           <td class="job-needs">
             <span class="job-needs-value">${needsHtml}</span>
           </td>
@@ -399,6 +400,7 @@ function wireDashboard() {
           <td>${statusMap.running || 0}</td>
           <td>${statusMap.failed || 0}</td>
           <td>${statusMap.succeeded || 0}</td>
+          <td>${statusMap.canceled || 0}</td>
         `;
         body.appendChild(row);
       });
@@ -1999,28 +2001,9 @@ function wireJobs() {
   if (!refresh || !table || !tbody) {
     return;
   }
-  const knownJobTypes = [
-    "ingest_due_sources",
-    "ingest_source",
-    "fetch_article_content",
-    "summarize_article_llm",
-    "write_article_markdown",
-    "build_site",
-    "cve_sync",
-    "events_rebuild",
-    "derive_events_from_articles",
-    "enrich_event_from_web",
-    "promote_event_web_source_to_article",
-    "article_enrich_products",
-    "article_enrich_threat_actors",
-    "article_products_backfill",
-    "article_threat_actors_backfill",
-    "enrich_event_summary_llm",
-    "source_acquire",
-    "smoke_test",
-    "cve_enrich_threat_actors",
-    "cve_threat_actors_backfill",
-  ];
+  const selectedType = new URLSearchParams(window.location.search).get("job_type") || "";
+  let typesLoaded = false;
+  const knownJobTypes = selectedType ? [selectedType] : [];
   let page = 1;
   let pageSize = sizeSelect ? parseInt(sizeSelect.value, 10) || 20 : 20;
   if (typeFilter && typeFilter.tagName === "SELECT" && typeFilter.options.length <= 1) {
@@ -2030,6 +2013,7 @@ function wireJobs() {
       opt.textContent = jobType;
       typeFilter.appendChild(opt);
     });
+    typeFilter.value = selectedType;
   }
   function formatResult(job) {
     if (job.job_type === "build_site" && job.result) {
@@ -2124,8 +2108,21 @@ function wireJobs() {
   }
   async function refreshJobs() {
     const params = buildParams();
+    if (!typesLoaded) params.set("include_types", "true");
     const payload = await apiFetch(`/jobs?${params.toString()}`);
     const jobs = Array.isArray(payload) ? payload : payload.items || [];
+    if (typeFilter && Array.isArray(payload.job_types)) {
+      typesLoaded = true;
+      const known = new Set([...typeFilter.options].map(option => option.value));
+      for (const type of payload.job_types) {
+        if (known.has(type)) continue;
+        const option = document.createElement("option");
+        option.value = type;
+        option.textContent = type;
+        typeFilter.appendChild(option);
+        known.add(type);
+      }
+    }
     renderRows(jobs);
     if (!Array.isArray(payload)) {
       renderPager(pager, payload.total || 0, payload.page || page, payload.page_size || pageSize, (nextPage) => {

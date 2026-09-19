@@ -157,6 +157,12 @@ Rollback: revert each deployment/configuration change independently.
 
 ## Stage 2: Evidence and event correctness
 
+Queue integration checkpoint: `event_review_private` now has opt-in admin
+admission, bounded/deduplicated requests, worker dispatch, and private artifact
+results. Admin job visibility uses registries and observed history rather than
+incomplete UI lists. Tested, not deployed; the next runtime rollout is admin and
+LLM-worker verification with admission disabled. See [release gates](EVENTS_PRIVATE_QUEUE.md).
+
 Private review milestone: [extractive review workflow](EVENTS_PRIVATE_REVIEW.md)
 now connects bounded source snapshots, exact passage suggestions, local HTML
 review, immutable decisions/artifacts, and stale-input checks. Three real events

@@ -102,6 +102,11 @@ def restricted_database():
             admin.execute("""CREATE TABLE events(id TEXT PRIMARY KEY, kind TEXT, title TEXT,
                 severity TEXT, status TEXT, lifecycle TEXT, updated_at TEXT, visibility TEXT)""")
             admin.execute("CREATE TABLE event_articles(event_id TEXT, article_id BIGINT)")
+            admin.execute("""CREATE TABLE jobs(id TEXT PRIMARY KEY, job_type TEXT, status TEXT,
+                priority INTEGER, payload_json TEXT, result_json TEXT, requested_at TEXT,
+                started_at TEXT, finished_at TEXT, locked_by TEXT, locked_at TEXT, error TEXT,
+                queue_name TEXT, attempt_count INTEGER, max_attempts INTEGER, available_at TEXT,
+                heartbeat_at TEXT, lease_expires_at TEXT, parent_job_id TEXT, dedupe_key TEXT)""")
             admin.execute("""INSERT INTO articles VALUES (1, 'source', 'Incident',
                 'https://example.org', '2026-05-01', NULL, 'Exact original text.')""")
             admin.execute("""INSERT INTO events VALUES ('one', 'breach', 'Incident',
@@ -185,3 +190,27 @@ def test_private_event_review_on_restricted_postgres(restricted_database, tmp_pa
     assert changed["documents"] == []
     with pytest.raises(ValueError, match="stale_or_invalid_review"):
         validate_review(json.dumps(decisions).encode(), changed)
+
+
+def test_private_review_concurrent_admission(restricted_database, monkeypatch, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from sempervigil import event_review_jobs
+    admin, reader_dsn, identifier = restricted_database
+    admin.execute(sql.SQL("GRANT INSERT ON jobs TO {}").format(identifier))
+    admin.execute("UPDATE articles SET content_text='Incident responders reported an investigation is still ongoing.' WHERE id=1")
+    monkeypatch.setenv("SV_EVENT_REVIEW_ENABLED", "1")
+    monkeypatch.setenv("SV_DB_URL", reader_dsn)
+    monkeypatch.setenv("SV_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("SV_EVENT_REVIEW_DIR", str(tmp_path / "private"))
+    def submit():
+        return event_review_jobs.submit(lambda: psycopg.connect(reader_dsn), event_id="one", aliases=["Incident"])
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = list(pool.map(lambda _: submit(), range(2)))
+    assert first == second
+    row = admin.execute("SELECT job_type,queue_name,priority,max_attempts,payload_json FROM jobs").fetchone()
+    assert row[:4] == ("event_review_private", "llm_local", -10, 1)
+    assert admin.execute("SELECT count(*) FROM jobs").fetchone()[0] == 1
+    result = event_review_jobs.run(json.loads(row[4]))
+    assert result["status"] == "review_ready" and result["public_eligible"] is False
+    assert (tmp_path / "private" / result["artifact"]).is_file()
+    assert admin.execute("SELECT title FROM events WHERE id='one'").fetchone()[0] == "Incident"

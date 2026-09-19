@@ -219,6 +219,7 @@ WORKER_JOB_TYPES = [
     "promote_event_web_source_to_article",
     "enrich_event_summary_llm",
     "event_report_llm",
+    "event_review_private",
     "source_acquire",
     "rebuild_vendor_products",
     "smoke_test",
@@ -249,6 +250,7 @@ QUEUE_WORKER_TYPES = {
         "cve_enrich_llm",
         "cve_enrich_threat_actors",
         "event_report_llm",
+        "event_review_private",
         "enrich_event_summary_llm",
         "article_products_backfill",
         "article_threat_actors_backfill",
@@ -297,6 +299,7 @@ HANDLED_JOB_TYPES = {
     "promote_event_web_source_to_article",
     "enrich_event_summary_llm",
     "event_report_llm",
+    "event_review_private",
     "source_acquire",
     "rebuild_vendor_products",
     "smoke_test",
@@ -9563,6 +9566,9 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         return _handle_enrich_event_summary_llm(conn, config, job.payload or {}, logger)
     if job.job_type == "event_report_llm":
         return _handle_event_report_llm(conn, config, job.payload or {}, logger)
+    if job.job_type == "event_review_private":
+        from .event_review_jobs import run
+        return run(job.payload or {})
     if job.job_type == "rebuild_vendor_products":
         return _handle_rebuild_vendor_products(conn, config, logger)
     if job.job_type == "smoke_test":

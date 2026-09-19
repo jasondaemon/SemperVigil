@@ -700,3 +700,28 @@ Python wheel packaging succeeded and includes the new module, HTML template,
 and JavaScript, with no private packet data. The first no-isolation packaging
 attempt lacked setuptools in the test environment; normal isolated packaging
 resolved that tooling prerequisite without modifying production dependencies.
+
+## Private queue integration and admin visibility (2026-09-18 local)
+
+Added distinct `event_review_private` type, registered to llm_local but outside
+model-invoking job types. New admin-token-protected admission is disabled by
+default, canonicalizes aliases, serializes dedupe/cap checks, and caps pending
+requests at ten. Worker dispatch snapshots and renders outside data/site roots;
+results contain metadata only, never a publication pointer or source text.
+
+Admin inspection identified three visibility gaps: fixed dashboard lists, explicit
+daily-brief hiding in JavaScript, and a separate incomplete Jobs filter list.
+Registry/observed discovery, an Other group, canceled counts, and filtered links
+replace these. Type catalogue lookup occurs once per Jobs-page load, not each poll.
+
+371 offline Python tests, six disposable PostgreSQL tests, and ten JS unit tests
+pass. PostgreSQL proves concurrent admission returns one job and produces a private
+artifact without changing the event record. Two existing FastAPI startup-hook
+deprecation warnings remain; no lifecycle refactor was included. JS syntax passes.
+Temporary isolated database and tunnel removed; no production migrations, jobs,
+model calls, deployment values, or application workloads changed.
+
+User confirmed local review pages look good; this is initial visual feedback,
+not factual approval or new dashboard browser verification. Next rollout must
+verify admin/worker together with private admission disabled before a bounded
+request. New LLM proposal/semantic evaluation remains unimplemented and gated.
