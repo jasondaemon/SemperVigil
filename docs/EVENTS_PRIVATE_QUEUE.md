@@ -218,3 +218,6 @@ Commission incident-separation checks failed. See the verification notes for IDs
 timing and artifact integrity. V3 preparation keeps one bounded call and exact
 validation, makes the requested incident/required IDs explicit, and stops sending
 the quote twice inside context. No public eligibility or safety gate is relaxed.
+V3 is now deployed with three low-priority evaluation jobs; exact release/job IDs
+are in `STABILIZATION_VERIFICATION.md`. No automatic admission or public reporting
+is enabled. Evaluate those jobs before expanding the cohort.

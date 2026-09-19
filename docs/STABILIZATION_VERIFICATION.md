@@ -1138,3 +1138,47 @@ v2 (only request identity changes); 452 offline tests pass. No extra model call,
 model change, concurrency increase, validator coercion or publication bypass.
 V3 is not yet deployed or evaluated. A single Commission v2 reuse check was
 admitted as `job_3909e41559c440e28658dfaa12c6b37e`; observe before replacement.
+
+The optional v2 reuse check was canceled through the admin API while still queued
+before the v3 rollout, so it made no inference call and does not verify live cache
+reuse. Orchestration had admitted another ordinary 200-job threat-actor batch
+before this request arrived; the delay was normal priority ordering, not a missing
+private job registry or absent runner launches. Read-only source/log inspection
+confirmed queue-name-based launches. No orchestrator code/image or priority change.
+
+### V3 targeted release and cohort
+
+Worker source `293ad11`, platform `019f623`; image manifest
+`sha256:e99317014b13e30535c6f474e4362369c82a86fda2493b99d3a99bb6ee5378b1`
+imported on all four schedulable nodes. V3 prompt
+`4e18080e-b38e-546c-a3b2-0658645879d0`, profile
+`a2ccda1b-95c1-5085-8de7-22c2d328faa0` created through admin API; older profiles
+left intact. Same provider/model, token/input limits, temperature and single-worker
+policy. Only assessment source changed between runtime images.
+
+Rendered/diffed worker Deployment and ConfigMap: only worker/init images and
+private profile ID changed. Orchestrator fully terminated; no active jobs or queued
+LLM launch remained; old worker terminated. Applied ConfigMap then worker,
+verified actual profile guard without inference, restored orchestration Ready.
+Post-apply diff empty; platform change committed/pushed separately from unrelated
+appliance-proxy/certificate work. No Hugo invocation or public-renderer change.
+
+Third bounded cohort admitted at private priority -10:
+
+- Odido: `job_211c1cbb8e694b5d94388fd567c7b84d`
+- Vercel: `job_fc27a285bb464e4d9f133ab8da700395`
+- Commission: `job_69334e60a73c4f9aa53d7dfd3764098e`
+
+Observe these jobs; do not duplicate or reprioritize them. Run the offline checker
+with the v3 fixtures and inspect full suggestions beyond that small subset. A
+passing structural job/fixture subset does not authorize public reporting. If
+incident confusion persists, prioritize explicit incident evidence/scope handling
+over repeated prompt-wording changes. Automatic refresh and public gates remain
+unimplemented/disabled. Live unchanged-input cache reuse is still unverified.
+
+Rollback pairs worker `5324cab` with private profile
+`98dc8957-780b-585c-b311-64dd4fc2a9f2`, or disables model assessment and preserves
+extractive private artifacts. Preserve all existing snapshots and public output.
+Post-rollout public checker passed at 06:25 UTC, including historical JSON; all
+application Deployments Ready and replacement worker zero restarts. These are
+point checks, not continuous availability or full-history completeness proof.
