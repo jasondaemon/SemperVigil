@@ -7454,7 +7454,7 @@ def _private_review_completion(conn, job, logger):
     profile_id = os.environ.get("SV_EVENT_REVIEW_PROFILE_ID", "")
     profile = get_profile(conn, profile_id) if profile_id else None
     reference = _coerce_profile(get_active_profile_for_stage(conn, "cve_enrich_products"))
-    if not profile or not reference or profile.get("fallback"):
+    if not profile or not reference or profile.get("fallback") or profile.get("schema_id"):
         raise ValueError("private_review_profile_required")
     if any(not profile.get(k) or profile.get(k) != reference.get(k)
            for k in ("primary_provider_id", "primary_model_id")):
@@ -7472,8 +7472,32 @@ def _private_review_completion(conn, job, logger):
             or params.get("temperature") != 0
             or params.get("max_input_chars") != MAX_INPUT_BYTES):
         raise ValueError("private_review_profile_budget")
-    return lambda text: run_profile(conn, profile_id, text, logger, context={
-        "stage": "event_review_private", "job_type": "event_review_private", "job_id": job.id})
+    provider = get_provider(conn, profile["primary_provider_id"]) or {}
+    if not provider:
+        raise ValueError("private_review_provider_required")
+    from .investigation import _version
+    def completion(text):
+        output = run_profile(conn, profile_id, text, logger, context={
+            "stage": "event_review_private", "job_type": "event_review_private", "job_id": job.id})
+        current = _private_review_completion(conn, job, logger)
+        if current is None or current.cache_identity != completion.cache_identity:
+            raise ValueError("private_review_configuration_changed")
+        if not isinstance(output, dict) or output.get("schema_valid") is not True:
+            raise ValueError("private_review_router_result")
+        return output.get("parsed")
+    # Hash configuration, not credentials; no raw endpoint or source text in metadata.
+    completion.cache_identity = _version({
+        "profile": {k: profile.get(k) for k in ("id", "primary_provider_id", "primary_model_id", "prompt_id", "schema_id", "params", "fallback")},
+        "profile_updated": str(profile.get("updated_at") or ""),
+        "model": {k: model.get(k) for k in ("id", "model_name", "max_context", "default_params")},
+        "model_updated": str(model.get("updated_at") or ""),
+        "provider": {k: provider.get(k) for k in ("id", "type", "base_url", "timeout_s")},
+        "provider_updated": str(provider.get("updated_at") or ""),
+        "prompt": {k: prompt.get(k) for k in ("id", "version", "system_template", "user_template")},
+        "prompt_updated": str(prompt.get("updated_at") or ""),
+        "workflow": "event-assessment-cache-v1",
+    })
+    return completion
 
 
 def _handle_event_report_llm(

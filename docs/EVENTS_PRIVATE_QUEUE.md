@@ -68,6 +68,31 @@ on hold. Structural validation is not semantic validation, incident approval, or
 permission to publish. Real-model latency and multi-incident quality evaluation
 are still required before enabling automatic event/report decisions.
 
+### Assessment reuse and router correction (local, release pending)
+
+The next worker release unwraps the actual router result's `parsed` field before
+assessment validation and requires `schema_valid: true`. A test exercises the
+real router/parsing/envelope path with only provider transport faked; earlier
+router mocks missed this contract defect. The pending production pilot has not
+run yet. Profiles with a schema are refused to prevent automatic repair calls.
+One profile invocation still inherits the existing HTTP transport retry policy;
+it is not an independent overall wall-clock deadline.
+
+Validated assessments can be reused for an identical bounded evidence/request
+fingerprint and guarded profile/model/provider/prompt configuration fingerprint.
+The worker rechecks configuration after inference before caching. Invalid cache
+entries fail closed; unversioned callbacks do not cache. Files are private,
+bounded, immutable and installed atomically through directory descriptors; symlink
+and nonregular entries are refused. Cache hits never change review decisions or
+publication eligibility and are exposed as `model_cache_hit` in job metadata.
+
+This identity covers database-visible configuration, not a live attestation of
+server model weights. If weights or server-side generation defaults change behind
+an unchanged model name/endpoint, revise the dedicated profile through the AI API
+to advance its version timestamp before reusing results. Cache coverage is the
+bounded evidence packet, not omitted source text. Cache is an optimization for
+unverified suggestions, never evidence that a report is safe to publish.
+
 A **distinct job type** is essential: an older worker could ignore a private-mode
 payload on `event_report_llm` and publish a normal report. Old workers do not know
 this new type, so a staged request remains queued rather than falling through to

@@ -946,3 +946,26 @@ queue documentation reflect the pending real-model gate. Unrelated platform
 appliance/certificate edits were preserved, not committed. Rollback: disable the
 assessment flag, retain artifacts, restore admin/worker `0087db6` through the same
 targeted rendered/drained rollout. No schema or public-content rollback needed.
+
+## Assessment cache and router contract correction (September 19 UTC, local)
+
+Source inspection during cache work found that `run_profile` returns an envelope
+containing `parsed`, not the decisions object directly. The deployed model pilot
+is still queued, so no real model assessment has succeeded or failed yet. Fixed
+the callback to unwrap the validated envelope; a test now traverses the actual
+router with only provider I/O mocked. Refused schema-configured private profiles
+to avoid the router's extra schema-repair call. This is why the earlier 412-test
+result was not described as real-model verification.
+
+Added private immutable assessment reuse keyed by bounded request/evidence plus
+database-visible generation configuration. Rechecks configuration after inference;
+cache hits still pass assessment validation and never approve reading selections
+or public content. Symlink folders/files, FIFOs, malformed/oversized/stale entries
+fail without inference. Atomic cache install does not overwrite earlier results.
+The cache does not attest to model weight changes hidden behind unchanged names;
+operators must revise the dedicated profile after such changes.
+
+427 offline tests and 14 JavaScript tests pass, including a repeated real worker
+dispatch issuing only one mocked inference and retaining identical HTML. No DB
+integration or real model quality claim added. New release is not yet deployed;
+current model pilot remains `job_2be77141919a403592ce6ca21ce8e8a3` at low priority.

@@ -8,6 +8,7 @@ import pytest
 
 from sempervigil import event_assessment as assessment, event_review as review, event_review_jobs as jobs, worker
 from sempervigil.services import ai_service
+from sempervigil.llm import router
 from test_event_review import database, get_packet, resign
 
 pytestmark = pytest.mark.offline
@@ -97,6 +98,7 @@ def configured(monkeypatch):
     monkeypatch.setattr(worker, "get_profile", lambda *a: profile)
     monkeypatch.setattr(worker, "get_active_profile_for_stage", lambda *a: (copy.deepcopy(profile), "ok"))
     monkeypatch.setattr(worker, "get_model", lambda *a: {"model_name":"ollama/qwen2.5:7b-instruct-16k"})
+    monkeypatch.setattr(worker, "get_provider", lambda *a: {"id":"local", "type":"openai_compatible"})
     monkeypatch.setattr(ai_service, "get_prompt", lambda *a: {
         "system_template":assessment.SYSTEM_PROMPT, "user_template":"{{input}}"})
     return profile
@@ -110,12 +112,32 @@ def test_worker_default_makes_no_model_lookup(monkeypatch):
 
 def test_worker_calls_existing_router_with_job_attribution(monkeypatch):
     configured(monkeypatch)
-    call = Mock(return_value={"decisions":[]})
+    call = Mock(return_value={"parsed":{"decisions":[]}, "schema_valid":True})
     monkeypatch.setattr(worker, "run_profile", call)
     fn = worker._private_review_completion(None, SimpleNamespace(id="job-test"), logging.getLogger())
-    fn("input")
+    assert fn("input") == {"decisions": []}
     assert call.call_args.kwargs["context"]["job_id"] == "job-test"
     assert call.call_args.args[1] == "review-profile"
+
+
+def test_real_router_envelope_reaches_assessment_validator(monkeypatch, database):
+    profile = configured(monkeypatch)
+    packet = get_packet(database)
+    monkeypatch.setattr(router, "get_profile", lambda *a: profile)
+    monkeypatch.setattr(router, "get_model", worker.get_model)
+    monkeypatch.setattr(router, "get_provider", worker.get_provider)
+    monkeypatch.setattr(router, "get_prompt", ai_service.get_prompt)
+    monkeypatch.setattr(router, "load_provider_secret", lambda *a: None)
+    monkeypatch.setattr(router, "load_runtime_config", lambda *a: {})
+    transport = Mock(return_value=json.dumps(response(packet)))
+    monkeypatch.setattr(router, "_call_provider", transport)
+    # Keep the actual run_profile / parsing / envelope path, not a router mock.
+    callback = worker._private_review_completion(None, SimpleNamespace(id="real-router"), logging.getLogger())
+    result = assessment.assess(packet, callback)
+    assert result["suggestions"] and result["public_eligible"] is False
+    transport.assert_called_once()
+    assert transport.call_args.args[5]["max_tokens"] == 1024
+    assert transport.call_args.kwargs["context"]["job_id"] == "real-router"
 
 
 @pytest.mark.parametrize("valid", [True, False])
@@ -129,7 +151,7 @@ def test_model_worker_dispatch_is_private_and_fails_closed(monkeypatch, tmp_path
     monkeypatch.setattr(jobs, "snapshot", lambda *a, **k: packet)
     monkeypatch.setattr(worker, "_log_job_claimed", lambda *a: None)
     monkeypatch.setattr(worker, "is_job_canceled", lambda *a: False)
-    call = Mock(return_value=response(packet) if valid else {"publish": True})
+    call = Mock(return_value={"parsed":response(packet) if valid else {"publish": True}, "schema_valid":True})
     monkeypatch.setattr(worker, "run_profile", call)
     for name in ("mark_build_dirty", "update_event_report", "_handle_event_report_llm"):
         monkeypatch.setattr(worker, name, Mock(side_effect=AssertionError("must not publish")))
@@ -140,6 +162,10 @@ def test_model_worker_dispatch_is_private_and_fails_closed(monkeypatch, tmp_path
         page = (tmp_path / "private" / result["artifact"]).read_text()
         assert "Model suggestion: include" in page
         assert 'value="include" selected' not in page
+        assert result["model_cache_hit"] is False
+        repeated = worker.run_claimed_job(None, None, job, logging.getLogger("test"))
+        assert repeated["model_cache_hit"] is True
+        assert repeated["artifact"] == result["artifact"]
     else:
         with pytest.raises(ValueError):
             worker.run_claimed_job(None, None, job, logging.getLogger("test"))
@@ -147,10 +173,11 @@ def test_model_worker_dispatch_is_private_and_fails_closed(monkeypatch, tmp_path
     call.assert_called_once()
 
 
-@pytest.mark.parametrize("change", ["fallback", "tokens", "extra_params", "prompt", "cloud"])
+@pytest.mark.parametrize("change", ["fallback", "schema", "tokens", "extra_params", "prompt", "cloud"])
 def test_worker_rejects_unsafe_profiles(monkeypatch, change):
     profile = configured(monkeypatch)
     if change == "fallback": profile["fallback"] = [{"provider_id":"cloud", "model_id":"other"}]
+    if change == "schema": profile["schema_id"] = "would-trigger-repair-inference"
     if change == "tokens": profile["params"]["max_tokens"] = 9000
     if change == "extra_params": profile["params"]["max_output_tokens"] = 100000
     if change == "prompt": monkeypatch.setattr(ai_service, "get_prompt", lambda *a: {})

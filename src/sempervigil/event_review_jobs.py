@@ -139,11 +139,12 @@ def run(payload: dict, *, complete=None) -> dict:
         raise ValueError("worker_database_required")
     packet = snapshot(lambda: postgres_reader(dsn), event_id=payload["event_id"],
                       aliases=payload["aliases"], scopes=frozenset({READ_SCOPE, EVIDENCE_SCOPE}))
+    cache_hit = False
     if complete is None:
         page = save(packet, root)
     else:
-        from .event_assessment import assess
-        assessment = assess(packet, complete)
+        from .event_assessment_cache import reuse
+        assessment, cache_hit = reuse(packet, complete, root)
         page = save(packet, root, assessment=assessment)
     return {"status": "review_ready", "event_id": payload["event_id"],
             "workflow": WORKFLOW, "packet_version": packet["packet_version"],
@@ -151,4 +152,5 @@ def run(payload: dict, *, complete=None) -> dict:
             "passages": len(draft(packet)["passages"]), "omissions": len(packet["omissions"]),
             "links_truncated": packet["links_truncated"],
             "model_assessed": complete is not None and bool(assessment["suggestions"]),
+            "model_cache_hit": cache_hit,
             "public_eligible": False}
