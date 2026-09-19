@@ -334,7 +334,16 @@ def _call_provider(
     provider: dict[str, Any],
     context: dict[str, Any] | None = None,
 ) -> str:
+    assessment_ids = (context or {}).get("event_assessment_ids")
+    if assessment_ids is not None:
+        if (provider_type != "openai_compatible" or not model_name.startswith("ollama/")
+                or (context or {}).get("stage") != "event_review_private"):
+            raise ValueError("unsupported_private_assessment_format")
+        from ..event_assessment import response_format
+        assessment_format = response_format(assessment_ids)
     if provider_type == "openai_compatible":
+        if assessment_ids is not None and _use_openai_background(provider, base_url, context):
+            raise ValueError("unsupported_private_assessment_format")
         if _use_openai_background(provider, base_url, context):
             response = _call_openai_responses_background(
                 provider,
@@ -352,7 +361,9 @@ def _call_provider(
             "messages": messages,
             **_filter_params(params),
         }
-        if bool((context or {}).get("json_response_format_enabled")):
+        if assessment_ids is not None:
+            payload["response_format"] = assessment_format
+        elif bool((context or {}).get("json_response_format_enabled")):
             payload["response_format"] = {"type": "json_object"}
         headers = _auth_headers(provider_type, api_key)
         response = _http_request("POST", path, headers, payload, provider, context=context)

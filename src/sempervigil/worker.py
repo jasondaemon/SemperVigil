@@ -7445,6 +7445,13 @@ def _parse_event_report_output(result: dict[str, object], incident_date: str = "
 def _private_review_completion(conn, job, logger):
     """Opt-in, pinned local profile; normal extractive reviews need no inference."""
     scoped = "scope" in (getattr(job, "payload", None) or {})
+    paired = (getattr(job, "payload", None) or {}).get("paired", False)
+    if type(paired) is not bool:
+        raise ValueError("invalid_assessment_pair")
+    if paired:
+        from .event_review_jobs import paired_enabled
+        if not scoped or not paired_enabled():
+            raise PermissionError("private_pair_disabled")
     if scoped:
         from .event_review_jobs import scoped_enabled
         if not scoped_enabled():
@@ -7456,9 +7463,11 @@ def _private_review_completion(conn, job, logger):
         if scoped:
             raise ValueError("private_scope_model_required")
         return None
-    from .event_assessment import SYSTEM_PROMPT, SCOPED_SYSTEM_PROMPT, MAX_INPUT_BYTES
+    from .event_assessment import SYSTEM_PROMPT, SCOPED_SYSTEM_PROMPT, MAX_INPUT_BYTES, PAIR_MAX_INPUT_BYTES, response_format
     from .services.ai_service import get_prompt
-    profile_id = os.environ.get("SV_EVENT_REVIEW_SCOPE_PROFILE_ID" if scoped else "SV_EVENT_REVIEW_PROFILE_ID", "")
+    profile_key = ("SV_EVENT_REVIEW_PAIR_PROFILE_ID" if paired else
+                   "SV_EVENT_REVIEW_SCOPE_PROFILE_ID" if scoped else "SV_EVENT_REVIEW_PROFILE_ID")
+    profile_id = os.environ.get(profile_key, "")
     profile = get_profile(conn, profile_id) if profile_id else None
     reference = _coerce_profile(get_active_profile_for_stage(conn, "cve_enrich_products"))
     if not profile or not reference or profile.get("fallback") or profile.get("schema_id"):
@@ -7478,11 +7487,14 @@ def _private_review_completion(conn, job, logger):
     if (set(params) != {"max_tokens", "temperature", "max_input_chars"}
             or type(tokens) is not int or not 512 <= tokens <= 1536
             or params.get("temperature") != 0
-            or params.get("max_input_chars") != MAX_INPUT_BYTES):
+            or params.get("max_input_chars") != (PAIR_MAX_INPUT_BYTES if paired else MAX_INPUT_BYTES)
+            or (paired and tokens != 1024)):
         raise ValueError("private_review_profile_budget")
     provider = get_provider(conn, profile["primary_provider_id"]) or {}
     if not provider:
         raise ValueError("private_review_provider_required")
+    if paired and provider.get("type") != "openai_compatible":
+        raise ValueError("private_pair_requires_schema_transport")
     from .investigation import _version
     def completion(text):
         started = time.monotonic()
@@ -7498,8 +7510,12 @@ def _private_review_completion(conn, job, logger):
                 ok=error is None, error=type(error).__name__ if error is not None else None,
             )
         try:
-            output = run_profile(conn, profile_id, text, logger, context={
-                "stage": "event_review_private", "job_type": "event_review_private", "job_id": job.id})
+            context = {"stage": "event_review_private", "job_type": "event_review_private", "job_id": job.id}
+            if paired:
+                ids = json.loads(text).get("required_ids")
+                response_format(ids)
+                context["event_assessment_ids"] = ids
+            output = run_profile(conn, profile_id, text, logger, context=context)
             current = _private_review_completion(conn, job, logger)
             if current is None or current.cache_identity != completion.cache_identity:
                 raise ValueError("private_review_configuration_changed")
@@ -7524,6 +7540,9 @@ def _private_review_completion(conn, job, logger):
         "prompt_updated": str(prompt.get("updated_at") or ""),
         "workflow": "event-assessment-cache-v1",
     })
+    if paired:
+        completion.cache_identity = _version({"generation": completion.cache_identity,
+            "workflow": "event-paired-generation-v1", "format": response_format(["p1"])})
     return completion
 
 

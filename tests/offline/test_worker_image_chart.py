@@ -24,6 +24,8 @@ def test_private_review_chart_configuration(enabled):
     assert data["SV_EVENT_REVIEW_PROFILE_ID"] == "private-profile"
     assert data["SV_EVENT_REVIEW_SCOPE_ENABLED"] == "0"
     assert data["SV_EVENT_REVIEW_SCOPE_PROFILE_ID"] == ""
+    assert data["SV_EVENT_REVIEW_PAIR_ENABLED"] == "0"
+    assert data["SV_EVENT_REVIEW_PAIR_PROFILE_ID"] == ""
 
 
 @pytest.mark.skipif(not shutil.which("helm"), reason="Helm is not installed")
@@ -38,6 +40,20 @@ def test_scoped_review_chart_configuration(enabled):
     assert data["SV_EVENT_REVIEW_SCOPE_ENABLED"] == enabled
     assert data["SV_EVENT_REVIEW_SCOPE_PROFILE_ID"] == "scope-profile"
     assert data["SV_EVENT_REVIEW_MODEL_ENABLED"] == "0"
+
+
+@pytest.mark.skipif(not shutil.which("helm"), reason="Helm is not installed")
+@pytest.mark.parametrize("enabled", ["0", "1"])
+def test_paired_review_chart_configuration(enabled):
+    chart = Path(__file__).resolve().parents[2] / "deploy/helm/sempervigil"
+    raw = subprocess.check_output(["helm", "template", "test", str(chart),
+        "--show-only", "templates/configmap-env.yaml", "--set-string",
+        "env.SV_EVENT_REVIEW_PAIR_ENABLED=" + enabled,
+        "--set-string", "env.SV_EVENT_REVIEW_PAIR_PROFILE_ID=pair-profile"], text=True)
+    data = yaml.safe_load(raw)["data"]
+    assert data["SV_EVENT_REVIEW_PAIR_ENABLED"] == enabled
+    assert data["SV_EVENT_REVIEW_PAIR_PROFILE_ID"] == "pair-profile"
+    assert data["SV_EVENT_REVIEW_SCOPE_ENABLED"] == "0"
 
 
 @pytest.mark.skipif(not shutil.which("helm"), reason="Helm is not installed")

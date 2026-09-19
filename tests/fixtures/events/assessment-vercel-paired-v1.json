@@ -1,0 +1,8 @@
+{
+  "event_id": "evt_0ffca0813049",
+  "packet_version": "dd5a2b647d25c5876635e4c5f4115f5462add01ee777ac809bb4895f3a814375",
+  "request_version": "0e600879fc4352b72ff6033ab53f4a1b0fadac8a8bb06137a697ada2ab7ab648",
+  "checks": [
+    {"passage_id": "f2c7c115681baf76ead4675ae105ffdcd55046ad708dfc688e65d3d6632b2a6b", "label": "Vercel incident reporting retained", "allowed": ["include"]}
+  ]
+}

@@ -290,3 +290,43 @@ coverage, or falling back silently. Keep existing smaller successful modes intac
 Do not describe a successful one-source diagnostic as a homogeneous all-case
 qualification. Pin new generation and request identities, test strict schema
 transport and application validation, then admit at most that one diagnostic call.
+
+## Paired diagnostic implemented locally
+
+Optional `paired: true` requires an explicit source, valid scope, existing review
+and scope enablement, plus separate `SV_EVENT_REVIEW_PAIR_ENABLED=1` and
+`SV_EVENT_REVIEW_PAIR_PROFILE_ID`. Chart defaults are disabled/empty. Admin still
+only enqueues. The worker requires the existing local model/provider and scoped
+prompt, no fallback/schema-triggered repair, temperature zero, exactly 1,024 output
+tokens and a 15,000-character profile cap. The request builder separately checks
+15,000 bytes including system text. No global profile or context limit changes.
+
+The request retains exact candidate quotes, explicit candidate/anchor source IDs,
+and both complete stored texts (deduplicated when they are the same document).
+No source text is trimmed to fit. Missing sources, omitted candidate quotes or an
+oversized pair fail before inference. Other packet documents and all coverage
+remain in private review. New paired request, assessment and generation/cache
+identities cannot reuse a smaller unpaired result. Existing modes remain unchanged.
+
+Only paired completion supplies bounded p1-p4 IDs to the active router's new
+private-stage-only Ollama-compatible schema transport. Exact keys, enum values and
+array length are constrained at generation. The application still independently
+requires every ID once and valid decision/reason combinations; schema conformance
+never establishes semantic relevance or approval. No repair loop or second call.
+The older unused top-level router is not modified.
+
+580 offline tests and 20 JS tests pass, including complete evidence, over-budget
+pre-inference rejection, strict flags, cache separation/rebinding, observed key
+typo rejection, isolated schema transport, guarded one-call execution, API/worker
+integration and chart defaults/overrides. Prior PostgreSQL checks are not rerun;
+there are no SQL/schema changes. The Vercel request is pinned at 14,753 bytes and
+four candidates in `assessment-vercel-paired-v1.json`, with the original positive
+expectation unchanged. This is a diagnostic, not the eight-case release gate.
+
+Next: create/read back an unused dedicated profile through admin (proposed ID
+`49780c82-fd75-53dd-829b-e8fd8bf7e7bb`), retaining the existing scoped prompt and
+provider/model. Render/diff and deploy only admin/LLM plus the two explicit config
+keys, with a drained lane and rollback. Preflight the guarded generation identity;
+admit one Vercel paired job and inspect actual transport format, prompt/output
+tokens, latency and unchanged semantic expectation. No paired inference or runtime
+deployment has occurred at this checkpoint.

@@ -126,3 +126,10 @@ def test_source_cohort_keeps_all_eight_cases_across_seven_sources():
         sources += len(new["source_requests"])
         generations.add(new["generation_version"])
     assert total == 8 and sources == 7 and len(generations) == 1
+
+
+def test_paired_vercel_keeps_original_positive_expectation():
+    fixtures = Path(__file__).parents[1] / "fixtures/events"
+    old = json.loads((fixtures / "assessment-vercel-v3.json").read_text())
+    new = json.loads((fixtures / "assessment-vercel-paired-v1.json").read_text())
+    assert all(new[k] == old[k] for k in ("event_id", "packet_version", "checks"))

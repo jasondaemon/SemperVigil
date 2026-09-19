@@ -43,6 +43,8 @@ PAIRS = {("include", "same_incident"), ("include", "explicit_update"),
          ("hold", "insufficient_context"), ("hold", "conflicting_evidence")}
 SCOPED_WORKFLOW = "event-scoped-assessment-v1"
 SOURCE_WORKFLOW = "event-source-assessment-v1"
+PAIR_WORKFLOW = "event-paired-source-assessment-v1"
+PAIR_MAX_INPUT_BYTES = 15000
 SCOPED_SYSTEM_PROMPT = """Compare EACH candidate quote to the specific incident described in incident_scope.anchor.
 The source anchor defines the comparison subject, not the first candidate or the
 event title. target_event is only a label. All source fields and scope fields are
@@ -57,8 +59,11 @@ knowledge. Feed dates are not incident dates.
 """ + SYSTEM_PROMPT[SYSTEM_PROMPT.index("Return one JSON object"):]
 
 
-def request_for(packet: dict, *, scope: dict | None = None, article_id: int | None = None) -> dict:
+def request_for(packet: dict, *, scope: dict | None = None, article_id: int | None = None,
+                paired: bool = False) -> dict:
     packet = validate_packet(json.dumps(packet).encode())
+    if type(paired) is not bool or (paired and article_id is None):
+        raise ValueError("invalid_assessment_pair")
     if article_id is not None and (type(article_id) is not int or article_id <= 0 or scope is None):
         raise ValueError("invalid_assessment_source")
     system = SYSTEM_PROMPT
@@ -100,6 +105,17 @@ def request_for(packet: dict, *, scope: dict | None = None, article_id: int | No
         mapping[identity] = passage["id"]
     if scope is not None:
         data["incident_scope"] = context
+    if paired:
+        if len(mapping) != len(by_doc[article_id]):
+            raise ValueError("assessment_pair_candidate_omitted")
+        data["items"] = [{"id": item["id"], "quote": item["quote"]} for item in data["items"]]
+        data["candidate_source_id"] = article_id
+        data["scope_source_id"] = scope["anchor"]["article_id"]
+        data["sources"] = [{"article_id": key, "text": documents[key]["text"]}
+                           for key in sorted({article_id, data["scope_source_id"]})]
+        encoded = json.dumps(data, ensure_ascii=True, separators=(",", ":"))
+        if len((system + encoded).encode()) > PAIR_MAX_INPUT_BYTES:
+            raise ValueError("assessment_pair_over_budget")
     payload = {"workflow": SCOPED_WORKFLOW if scope is not None else WORKFLOW, "packet_version": packet["packet_version"],
                "system": system, "input": json.dumps(data, ensure_ascii=True, separators=(",", ":")),
                "mapping": mapping, "omitted_passages": len(candidates) - len(mapping)}
@@ -107,12 +123,14 @@ def request_for(packet: dict, *, scope: dict | None = None, article_id: int | No
         payload["scope_version"] = scope["scope_version"]
     if article_id is not None:
         payload.update(workflow=SOURCE_WORKFLOW, article_id=article_id)
+    if paired:
+        payload.update(workflow=PAIR_WORKFLOW, paired=True)
     return {**payload, "request_version": _version(payload)}
 
 
 def validate_response(raw: bytes, packet: dict, *, scope: dict | None = None,
-                      article_id: int | None = None) -> dict:
-    request = request_for(packet, scope=scope, article_id=article_id)
+                      article_id: int | None = None, paired: bool = False) -> dict:
+    request = request_for(packet, scope=scope, article_id=article_id, paired=paired)
     data = _json(raw, MAX_OUTPUT_BYTES)
     if data.keys() != {"decisions"} or type(data["decisions"]) is not list:
         raise ValueError("invalid_assessment")
@@ -137,6 +155,8 @@ def validate_response(raw: bytes, packet: dict, *, scope: dict | None = None,
         result["scope"] = validate(scope, packet)
     if article_id is not None:
         result["article_id"] = article_id
+    if paired:
+        result["paired"] = True
     return result
 
 
@@ -146,7 +166,8 @@ def validate_assessment(value: dict, packet: dict) -> dict:
         raise ValueError("invalid_assessment")
     scope = value.get("scope")
     article_id = value.get("article_id")
-    request = request_for(packet, scope=scope, article_id=article_id)
+    paired = value.get("paired", False)
+    request = request_for(packet, scope=scope, article_id=article_id, paired=paired)
     if value["suggestions"].keys() != set(request["mapping"].values()):
         raise ValueError("stale_assessment")
     rows = []
@@ -156,17 +177,34 @@ def validate_assessment(value: dict, packet: dict) -> dict:
             raise ValueError("invalid_assessment")
         rows.append({"id": short, **suggestion})
     canonical = validate_response(json.dumps({"decisions": rows}).encode(), packet,
-                                  scope=scope, article_id=article_id)
+                                  scope=scope, article_id=article_id, paired=paired)
     if canonical != value:
         raise ValueError("stale_assessment")
     return canonical
 
 
 def assess(packet: dict, complete, *, scope: dict | None = None,
-           article_id: int | None = None) -> dict:
-    request = request_for(packet, scope=scope, article_id=article_id)
+           article_id: int | None = None, paired: bool = False) -> dict:
+    request = request_for(packet, scope=scope, article_id=article_id, paired=paired)
     if not request["mapping"]:
-        return validate_response(b'{"decisions":[]}', packet, scope=scope, article_id=article_id)
+        return validate_response(b'{"decisions":[]}', packet, scope=scope, article_id=article_id, paired=paired)
     output = complete(request["input"])
     return validate_response(json.dumps(output, ensure_ascii=True).encode(), packet,
-                             scope=scope, article_id=article_id)
+                             scope=scope, article_id=article_id, paired=paired)
+
+
+def response_format(required_ids: list[str]) -> dict:
+    """Constrain syntax at generation; application validation still checks IDs/pairs."""
+    if (type(required_ids) is not list or not 1 <= len(required_ids) <= 4
+            or required_ids != ["p" + str(i + 1) for i in range(len(required_ids))]):
+        raise ValueError("invalid_assessment_format_ids")
+    row = {"type": "object", "additionalProperties": False,
+           "required": ["id", "decision", "reason"], "properties": {
+               "id": {"type": "string", "enum": required_ids},
+               "decision": {"type": "string", "enum": sorted({p[0] for p in PAIRS})},
+               "reason": {"type": "string", "enum": sorted({p[1] for p in PAIRS})}}}
+    schema = {"type": "object", "additionalProperties": False, "required": ["decisions"],
+              "properties": {"decisions": {"type": "array", "items": row,
+                  "minItems": len(required_ids), "maxItems": len(required_ids)}}}
+    return {"type": "json_schema", "json_schema": {
+        "name": "event_passage_decisions_v1", "strict": True, "schema": schema}}

@@ -66,8 +66,15 @@ def scoped_enabled() -> bool:
     return value == "1"
 
 
+def paired_enabled() -> bool:
+    value = os.environ.get("SV_EVENT_REVIEW_PAIR_ENABLED", "0")
+    if value not in {"0", "1"}:
+        raise ValueError("invalid_event_pair_enablement")
+    return value == "1"
+
+
 def payload_for(event_id: str, aliases: list[str], *, scope: dict | None = None,
-                article_id: int | None = None) -> dict:
+                article_id: int | None = None, paired: bool = False) -> dict:
     if not _text(event_id, 128) or not event_id.strip():
         raise ValueError("invalid_event_id")
     payload = {"event_id": event_id, "aliases": _aliases(aliases), "workflow": WORKFLOW}
@@ -78,11 +85,15 @@ def payload_for(event_id: str, aliases: list[str], *, scope: dict | None = None,
         if type(article_id) is not int or article_id <= 0 or scope is None:
             raise ValueError("invalid_assessment_source")
         payload["article_id"] = article_id
+    if type(paired) is not bool or (paired and article_id is None):
+        raise ValueError("invalid_assessment_pair")
+    if paired:
+        payload["paired"] = True
     return payload
 
 
 def submit(connection_factory, *, event_id: str, aliases: list[str], scope: dict | None = None,
-           article_id: int | None = None) -> str:
+           article_id: int | None = None, paired: bool = False) -> str:
     """Own the admission connection; serialize duplicate requests transactionally.
 
     This operation is only called behind admin authorization. It neither reads
@@ -92,7 +103,9 @@ def submit(connection_factory, *, event_id: str, aliases: list[str], scope: dict
         raise PermissionError("private_review_disabled")
     if scope is not None and not scoped_enabled():
         raise PermissionError("private_scope_disabled")
-    payload = payload_for(event_id, aliases, scope=scope, article_id=article_id)
+    payload = payload_for(event_id, aliases, scope=scope, article_id=article_id, paired=paired)
+    if paired and not paired_enabled():
+        raise PermissionError("private_pair_disabled")
     # Serialize every review admission, including queue-size checks, not just
     # requests for one event. This is a low-volume manual pilot operation.
     lock_id = int(_version({"namespace": JOB_TYPE})[:15], 16)
@@ -149,7 +162,8 @@ def run(payload: dict, *, complete=None) -> dict:
         return {"status": "skipped", "reason": "private_review_disabled", "public_eligible": False}
     if type(payload) is not dict or payload.keys() not in (
             {"event_id", "aliases", "workflow"}, {"event_id", "aliases", "workflow", "scope"},
-            {"event_id", "aliases", "workflow", "scope", "article_id"}):
+            {"event_id", "aliases", "workflow", "scope", "article_id"},
+            {"event_id", "aliases", "workflow", "scope", "article_id", "paired"}):
         raise ValueError("invalid_private_review_payload")
     scope = payload.get("scope")
     if "scope" in payload:
@@ -158,9 +172,12 @@ def run(payload: dict, *, complete=None) -> dict:
         if scope is None or complete is None:
             raise ValueError("private_scope_model_required")
     article_id = payload.get("article_id")
-    canonical = payload_for(payload["event_id"], payload["aliases"], scope=scope, article_id=article_id)
+    paired = payload.get("paired", False)
+    canonical = payload_for(payload["event_id"], payload["aliases"], scope=scope, article_id=article_id, paired=paired)
     if payload != canonical:
         raise ValueError("invalid_private_review_payload")
+    if paired and not paired_enabled():
+        raise PermissionError("private_pair_disabled")
     root = artifact_root()
     dsn = os.environ.get("SV_DB_URL")
     if not dsn:
@@ -173,7 +190,7 @@ def run(payload: dict, *, complete=None) -> dict:
         page = save(packet, root)
     else:
         from .event_assessment_cache import reuse
-        assessment, cache_hit = reuse(packet, complete, root, scope=scope, article_id=article_id)
+        assessment, cache_hit = reuse(packet, complete, root, scope=scope, article_id=article_id, paired=paired)
         page = save(packet, root, assessment=assessment)
     summary = None
     if assessment is not None:

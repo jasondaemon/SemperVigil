@@ -5346,7 +5346,7 @@ function privateReviewResultSummary(job) {
       && detail.included + detail.held + detail.excluded === detail.assessed) {
     parts.push(`${detail.assessed} of ${result.passages} candidate passages assessed; ${detail.not_assessed} not assessed.`);
     parts.push(`Suggestions: ${detail.included} included, ${detail.held} held, ${detail.excluded} excluded.`);
-    if (detail.workflow === "event-source-assessment-v1"
+    if (["event-source-assessment-v1", "event-paired-source-assessment-v1"].includes(detail.workflow)
         && Number.isSafeInteger(detail.article_id) && detail.article_id > 0) {
       parts.push(`Assessed source article ${detail.article_id}; other sources remain unassessed.`);
     }
