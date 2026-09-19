@@ -365,6 +365,30 @@ def test_qualified_publication_transaction(restricted_database):
     assert outcomes.count("promoted") == 1 and set(outcomes) <= {"promoted", "reused", "deferred"}
     first = run()
     assert first["status"] == "reused"
+    from sempervigil.event_activation import authorize_and_activate
+    first_manifest = {"workflow": "event-release-authorization-v1",
+                      "revisions": {"one": first["revision_id"]}, "withdrawn": {}}
+    with factory() as blocker:
+        blocker.execute("LOCK TABLE event_public_pointers IN ROW EXCLUSIVE MODE")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            authorize_and_activate(factory, first_manifest, lambda: pytest.fail("contended activation"))
+    with factory() as blocker:
+        blocker.execute("SELECT id FROM events WHERE id='one' FOR UPDATE")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            authorize_and_activate(factory, first_manifest, lambda: pytest.fail("contended event activation"))
+    switched = []
+    def switch_under_locks():
+        admin.execute("SET lock_timeout='100ms'")
+        try:
+            with pytest.raises(psycopg.errors.LockNotAvailable):
+                admin.execute("UPDATE event_quote_qualifications SET revoked_at='test' WHERE qualification_id=%s", (qid,))
+            with pytest.raises(psycopg.errors.LockNotAvailable):
+                admin.execute("UPDATE event_public_pointers SET updated_at='changed' WHERE event_id='one'")
+        finally:
+            admin.execute("SET lock_timeout=0")
+        switched.append(True)
+    authorize_and_activate(factory, first_manifest, switch_under_locks)
+    assert switched == [True]
     exported = load_export(factory, ["one", "no-pointer"])
     assert exported["managed_event_ids"] == ["one"]
     assert exported["promoted_revision_ids"] == {"one": first["revision_id"]}
@@ -400,6 +424,8 @@ def test_qualified_publication_transaction(restricted_database):
     with pytest.raises(ValueError, match="predecessor_conflict"): run(second_q)
     second = run(second_q, first["revision_id"])
     assert second["revision_id"] != first["revision_id"]
+    with pytest.raises(ValueError, match="inventory_changed"):
+        authorize_and_activate(factory, first_manifest, lambda: pytest.fail("superseded activation"))
     with pytest.raises(ValueError, match="predecessor_conflict"): run()
     assert admin.execute("SELECT revision_id FROM event_public_pointers").fetchone()[0] == second["revision_id"]
     assert admin.execute("SELECT count(*) FROM event_public_revisions").fetchone()[0] == 2
@@ -410,6 +436,12 @@ def test_qualified_publication_transaction(restricted_database):
             admin.execute("UPDATE event_quote_qualifications SET revoked_at='test' WHERE qualification_id=%s", (second_q,))
         admin.execute("SET lock_timeout=0")
     admin.execute("UPDATE event_quote_qualifications SET revoked_at='test' WHERE qualification_id=%s", (second_q,))
+    second_manifest = {**first_manifest, "revisions": {"one": second["revision_id"]}}
+    with pytest.raises(ValueError, match="qualification_revoked"):
+        authorize_and_activate(factory, second_manifest, lambda: pytest.fail("revoked activation"))
+    authorize_and_activate(factory, {**second_manifest, "revisions": {},
+        "withdrawn": {"one": second["revision_id"]}}, lambda: switched.append(True))
+    assert switched == [True, True]
     with pytest.raises(ValueError, match="unavailable"): run(second_q, first["revision_id"])
     revoked = load_export(factory, ["one"])
     assert revoked["managed_event_ids"] == ["one"]
@@ -422,9 +454,13 @@ def test_qualified_publication_transaction(restricted_database):
     with pytest.raises(psycopg.errors.RaiseException): admin.execute("DELETE FROM event_quote_qualifications")
     admin.execute(sql.SQL("GRANT INSERT ON event_quote_qualifications TO {}").format(role))
     with pytest.raises(PermissionError, match="read_only_role"): run()
+    with pytest.raises(PermissionError, match="read_only_role"):
+        authorize_and_activate(factory, second_manifest, lambda: pytest.fail("overprivileged activation"))
     admin.execute(sql.SQL("REVOKE INSERT ON event_quote_qualifications FROM {}").format(role))
     admin.execute("ALTER TABLE event_quote_qualifications DISABLE TRIGGER event_qualification_guard")
     with pytest.raises(ValueError, match="revocation_guard"): run()
+    with pytest.raises(ValueError, match="revocation_guard"):
+        authorize_and_activate(factory, second_manifest, lambda: pytest.fail("unguarded activation"))
     admin.execute("ALTER TABLE event_quote_qualifications ENABLE TRIGGER event_qualification_guard")
     admin.execute("UPDATE articles SET content_text='Changed evidence after qualification' WHERE id=1")
     with pytest.raises(ValueError, match="stale_revision_snapshot"): run()

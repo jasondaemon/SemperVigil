@@ -97,6 +97,15 @@ These are safe **only if they do not modify the pipeline**:
 
 ## How to Verify (Exact Commands)
 
+### Prepared Events activation check (September 19, 2026)
+
+The explicitly approved, default-disabled `SV_EVENT_ACTIVATION_CHECK` adds a
+bounded authorization check with locks held through the existing release switch.
+It does not change Hugo commands or incremental feed behavior. This is locally
+tested, not deployed; do not enable it before coordinated page/JSON/manifest
+export is complete. See [EVENT_ACTIVATION_GUARD.md](EVENT_ACTIVATION_GUARD.md) for
+the contract, required separate database role, failure behavior and release gates.
+
 ### Incremental feed freshness (prepared September 2026)
 
 The staged upgrade branch uses database content fingerprints rather than only

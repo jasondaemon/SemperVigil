@@ -216,7 +216,17 @@ EOF
     now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf '{\"generated_at\":\"%s\",\"release\":\"%s\"}\n' "$now" "$ts" >"$buildinfo"
     rel_release="releases/${ts}"
-    ln -sfn "$rel_release" "$CURRENT_LINK"
+    # Events authority locks must cover the switch, not just a preceding check.
+    case "${SV_EVENT_ACTIVATION_CHECK:-0}" in
+      0) ln -sfn "$rel_release" "$CURRENT_LINK" ;;
+      1)
+        if ! python3 -m sempervigil.event_activation "$release_dir" "$CURRENT_LINK"; then
+          echo "error: Events activation failed; no unguarded activation attempted"
+          exit 1
+        fi
+        ;;
+      *) echo "error: SV_EVENT_ACTIVATION_CHECK must be 0 or 1"; exit 1 ;;
+    esac
     if [ -d "$RELEASES_DIR" ]; then
       count=0
       for dir in $(ls -1dt "$RELEASES_DIR"/* 2>/dev/null); do

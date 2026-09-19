@@ -26,11 +26,14 @@
   projection preparation and pointer promotion are tested, not deployed.
   The local revocation-aware reader distinguishes managed withheld/withdrawn
   revisions from unmanaged legacy content. Independent qualification, restricted
-  production roles, activation/build coordination and runtime admission remain
-  unimplemented. Local Markdown
+  production roles, export/build coordination and runtime admission remain
+  unimplemented. A narrowly approved, default-disabled activation guard now
+  retains authority locks through the existing switch; locally tested only.
+  It requires a complete coordinator-produced manifest and separate role before
+  enablement. See EVENT_ACTIVATION_GUARD.md. Local Markdown
   and Events JSON preparation use the same pointer-matched quotations with joint
   content preflight and explicit hold/withdrawal selection. No production caller
-  enables them. 670 offline / prior ten real
+  enables them. 703 offline / ten real
   disposable PostgreSQL tests pass;
   legacy bytes and the daily feed contract remain unchanged.
 - Public checks passed after the last targeted rollout. Use the dated evidence in
