@@ -1777,3 +1777,26 @@ publication-pointer storage remain pending. Inspection also confirms
 `write_events_index` still exports legacy summary/detail fields, so a matching
 qualified JSON index plus joint output preflight are required before activation.
 Do not enable Markdown-only qualified publishing or claim end-to-end acceptance.
+
+## Matched qualified index and preflight, September 19 11:10 UTC
+
+Production deployment ready counts remain expected; no runtime changes. Local
+Events index preparation now reconstructs the same exact projection and trusted
+pointer identity as Markdown. Qualified entries exclude old summary, severity,
+dates, CVEs and products; represented source counts and exact quotations are
+explicit. The daily article/CVE JSON contract is untouched.
+
+Combined export pre-serializes index data and checks index paths before the
+all-page render/replace phase. Rejected pointer, quote, slug, unmatched event or
+unserializable data leaves both prior outputs intact. Identical runs preserve
+page and index bytes/mtime; legacy index serialization is pinned unchanged.
+Symlink output tests pass. This is not atomic multi-file source writing: disk
+errors still require no build admission, and coordinated build/export integration
+remains outstanding. Production callers still use the unchanged legacy path.
+
+Ten new tests and all 650 offline tests pass. The initial serialization fixture
+used a bare object, which the existing JSON fallback stringifies; changed that
+fixture to an unsupported dictionary key to exercise an actual JSON failure.
+No SQL/JS changes, model calls, deployment or Hugo invocation. Previous nine PG
+and 21 JS tests were not rerun. Trusted qualification/pointer storage and
+transactional promotion are the next integration prerequisite.

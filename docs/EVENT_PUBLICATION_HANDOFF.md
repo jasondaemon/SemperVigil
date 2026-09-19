@@ -60,10 +60,12 @@ private model suggestions. Current production versions and pilot evidence are in
    Local Markdown branch now reconstructs quote projections and compares their
    identity to a separately supplied promoted pointer. Legacy byte compatibility,
    stable slugs, unchanged-file reuse and no narrative blending pass offline.
-   `write_events_index` still reads legacy fields: a matching qualified index path
-   is required before any production caller enables the Markdown branch. Both
-   outputs must be prevalidated before either is replaced. No live caller supplies
-   qualified maps yet, and there is no trusted public-pointer store yet.
+   Matching qualified index preparation and `write_events_exports` now prevalidate
+   both outputs before page replacements. Legacy index callers remain unchanged.
+   This is content preflight, not an atomic multi-file transaction: IO failures
+   still need coordinated build admission and the existing atomic publication.
+   No live caller supplies qualified maps or uses the combined writer yet, and
+   there is no trusted public-pointer store yet.
 6. Admit bounded changed-input work through the existing single LLM lane, using
    measured queue age and inference-time budgets, coalescing and cache identities.
    Oversized or ambiguous evidence stays held with visible coverage. No silent

@@ -173,3 +173,31 @@ No deploy or build occurred. Before enablement: add trusted pointer storage and
 qualification, a matching qualified Events JSON index path, full-output preflight,
 real platform-driven Hugo/browser validation and a bounded publication pilot.
 The daily feed JSON contract is not modified by this branch.
+
+## Matched Events index and content preflight (local, not enabled)
+
+`event_render.index_entry` reconstructs the same pointer-matched projection used
+by Markdown. Existing index fields remain present, but qualified entries do not
+copy legacy summary, dates, severity, CVEs or products. Unknown fields are null;
+articles/counts describe the represented sources, and additive quotation/revision/
+coverage fields carry exact provenance. This is the Events index, not a change to
+the daily article/CVE download contract. JSON consumers must still escape strings
+when inserting them into HTML; raw JSON quotations are data, not markup.
+
+`write_events_exports` takes the full selected event list and both trusted maps,
+prepares and serializes the index, checks its output paths, and then uses the
+existing all-page pre-render pass before any page replacement. Invalid pointer,
+quote, slug, unmatched event or unserializable data preserves both prior outputs.
+The index is replaced only if its bytes changed, preserving its inode/mtime on
+identical reruns along with the pages. Legacy index serialization stays identical.
+
+This helper is not called by production workers yet. The caller must read one
+trusted pointer snapshot, coordinate source export with build admission, and never
+admit publication after an IO failure. Disk-write failures can still leave a
+partial source directory; only the existing build/atomic activation protects live
+serving. This helper does not claim atomic multi-file source writes.
+
+Ten new tests and all 650 offline tests pass. No model calls, database changes,
+deployment or Hugo run. Prior PostgreSQL/JS gates were not rerun. Remaining next
+step is trusted qualification/pointer persistence and transactional promotion,
+followed by worker integration and a platform-API-driven publication pilot.

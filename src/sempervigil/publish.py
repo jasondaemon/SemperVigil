@@ -205,11 +205,25 @@ def write_tag_indexes(articles: Iterable[Article], output_dir: str, section: str
     return written
 
 
-def write_events_index(events: Iterable[dict[str, object]], base_static_dir: str) -> str:
-    index_dir = os.path.join(base_static_dir, "index")
-    os.makedirs(index_dir, exist_ok=True)
+def events_index_payload(events: Iterable[dict[str, object]], *,
+                         qualified_revisions: dict[str, dict] | None = None,
+                         promoted_revision_ids: dict[str, str] | None = None) -> list[dict]:
+    qualified_revisions = {} if qualified_revisions is None else qualified_revisions
+    promoted_revision_ids = {} if promoted_revision_ids is None else promoted_revision_ids
+    if set(qualified_revisions) != set(promoted_revision_ids):
+        raise ValueError("incomplete_event_publication_pointers")
+    qualified_seen = set()
     payload = []
     for event in events:
+        event_id = str(event.get("id") or "")
+        if event_id in qualified_revisions:
+            from .event_render import index_entry
+            if event_id in qualified_seen:
+                raise ValueError("duplicate_qualified_event")
+            qualified_seen.add(event_id)
+            payload.append(index_entry(qualified_revisions[event_id], event_id=event_id,
+                                       expected_revision=promoted_revision_ids[event_id]))
+            continue
         items = event.get("items") or {}
         cves = items.get("cves") or []
         products = items.get("products") or []
@@ -234,9 +248,52 @@ def write_events_index(events: Iterable[dict[str, object]], base_static_dir: str
                 },
             }
         )
+    if set(qualified_revisions) != qualified_seen:
+        raise ValueError("unmatched_event_publication_pointer")
+    return payload
+
+
+def write_events_index(events: Iterable[dict[str, object]], base_static_dir: str) -> str:
+    index_dir = os.path.join(base_static_dir, "index")
+    os.makedirs(index_dir, exist_ok=True)
+    payload = events_index_payload(events)
     path = os.path.join(index_dir, "events.json")
     atomic_write_json(path, payload, indent=2)
     return path
+
+
+def write_events_exports(events: Iterable[dict[str, object]], base_content_dir: str,
+                         base_static_dir: str, *, qualified_revisions: dict[str, dict],
+                         promoted_revision_ids: dict[str, str]) -> tuple[list[str], str]:
+    """Prevalidate page/index content together; not atomic multi-file publication.
+
+    Future caller must supply one trusted pointer snapshot and coordinate with the
+    builder. On IO failure it must not request publication. No runtime caller yet.
+    """
+    from .utils import _json_default
+    events = list(events)
+    options = {"qualified_revisions": qualified_revisions,
+               "promoted_revision_ids": promoted_revision_ids}
+    payload = events_index_payload(events, **options)
+    encoded = json.dumps(payload, indent=2, default=_json_default).encode("utf-8")
+    index_dir = Path(base_static_dir) / "index"
+    path = index_dir / "events.json"
+    if index_dir.is_symlink() or (index_dir.exists() and not index_dir.is_dir()):
+        raise ValueError("invalid_event_index_directory")
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError("invalid_event_index_file")
+    # The page writer pre-renders all pages before replacing any. Index JSON is
+    # already serialized, so no later content/serialization failure can split it.
+    pages = write_events_markdown(events, base_content_dir, **options)
+    index_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("rb") as handle:
+            unchanged = handle.read(len(encoded) + 1) == encoded
+    except FileNotFoundError:
+        unchanged = False
+    if not unchanged:
+        atomic_write_text(path, encoded.decode("utf-8"))
+    return pages, str(path)
 
 
 def write_events_markdown(

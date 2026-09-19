@@ -16,7 +16,7 @@ def literal(value: str) -> str:
                    for c in " ".join(value.split()))
 
 
-def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict, str]:
+def resolve(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict, dict]:
     if type(bundle) is not dict or bundle.keys() != {"packet", "scope", "qualification", "predecessor"}:
         raise ValueError("invalid_event_projection_bundle")
     # Reconstruct rather than accepting stored/generated prose. Pointer identity
@@ -29,6 +29,27 @@ def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict
     entity = next(f["quote"] for f in bundle["scope"]["focus"] if f["role"] == "entity")
     metadata = {"title": entity + " | Incident coverage", "event_revision": expected_revision,
                 "event_report_format": projection["workflow"]}
+    return metadata, projection
+
+
+def index_entry(bundle: dict, *, event_id: str, expected_revision: str) -> dict:
+    metadata, projection = resolve(bundle, event_id=event_id, expected_revision=expected_revision)
+    articles = {entry["article_id"]: {"article_id": entry["article_id"],
+                "title": entry["source_title"], "url": entry["url"]}
+                for entry in projection["entries"]}
+    return {"event_id": event_id, "title": metadata["title"],
+            "summary": "Attributed source quotations; incident date and source independence are unknown.",
+            "severity": None, "kind": None, "status": "source_backed_coverage",
+            "first_seen_at": None, "last_seen_at": None, "cves": [], "products": [],
+            "articles": [articles[key] for key in sorted(articles)],
+            "counts": {"cves": 0, "products": 0, "articles": len(articles)},
+            "event_revision": expected_revision, "event_report_format": projection["workflow"],
+            "quotations": projection["entries"],
+            "unrepresented_article_ids": projection["unrepresented_article_ids"]}
+
+
+def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict, str]:
+    metadata, projection = resolve(bundle, event_id=event_id, expected_revision=expected_revision)
     lines = ["## Source-backed coverage", "",
              "These are attributed source quotations, not independently verified facts.", "",
              "Incident date: unknown. Feed dates below are not incident dates. "
