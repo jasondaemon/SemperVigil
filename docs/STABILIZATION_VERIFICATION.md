@@ -618,3 +618,24 @@ Temporary database/container and SSH tunnel were removed and absence verified.
 No production role, dependency install, deployment, build, or inference change.
 Full-schema integration, curated evidence evaluation, transitive release locking,
 and authorized operator deployment remain gates before elevation.
+
+## Historical evidence coverage investigation (2026-09-18)
+
+Read-only production aggregates classified all 18,931 missing stored texts:
+18,898 historical age exclusions, 18 retry-exhausted, eight HTTP 404, three legacy
+HTTP 401, two legacy redirect errors, and two disabled-test-source rows without
+errors. All age exclusions are one source's February 6 ingestion cohort, with
+stored feed dates spanning 2007-2025. Current code excludes this marker from
+automatic fetching; its original writer predates the available full-project sync.
+
+September inventory: 1,117 articles, 1,090 with full-content flag and nonempty text,
+22 with text but no full-content flag, five without text. Recent missing records
+are four BleepingComputer September 9 and one Krebs September 8, all retry-exhausted.
+No claim of semantic completeness or extraction quality is made.
+
+Decision and bounded recovery gates are recorded in INVESTIGATION_RETRIEVAL.md
+and the local HTML tracker. No code, schema, runtime configuration, model calls,
+jobs, or production deployment changed. No test suite rerun for this documentation
+slice; previous 286 offline/four PostgreSQL results remain historical evidence.
+One Kubernetes worker exec returned upstream 502; read-only verification succeeded
+through another existing worker. Ready pod status is not proof of exec recovery.

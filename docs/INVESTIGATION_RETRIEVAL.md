@@ -148,3 +148,46 @@ retrieval recall, evidence quality, and remote authentication remain separate
 gates. Trusted incident scoping remains pending.
 Rollback before integration is simply reverting the isolated files. No production
 or data rollback is needed.
+
+## Missing-text investigation (2026-09-18)
+
+Read-only follow-up explains the 18,931 missing database texts:
+
+| Recorded outcome | Records |
+| --- | ---: |
+| `stale_older_than_week` | 18,898 |
+| `max_retries_exceeded` | 18 |
+| `http_404` | 8 |
+| Legacy HTTP 401 | 3 |
+| Legacy redirect error | 2 |
+| No error, disabled test source | 2 |
+
+All 18,898 age-excluded records belong to Infosecurity Magazine, were ingested
+on February 6, 2026, and have stored feed dates from May 16, 2007 through
+December 4, 2025. This is a historical cohort, not a current fetch queue.
+Current worker and storage selection explicitly treat the age marker as terminal.
+The initial full-project sync already included this exclusion; repository history
+does not establish which earlier process originally assigned those markers.
+
+For stored feed dates September 1 onward, 1,117 records include 1,090 with nonempty
+text and `has_full_content=1`, 22 with text not marked full, and five without text.
+The five are retry-exhausted records: four BleepingComputer articles dated
+September 9 and one Krebs on Security article dated September 8. These are
+inventory/flag measurements, not independent extraction-quality validation.
+The prior seven-day job snapshot showed 333 succeeded content-fetch jobs and no
+failed jobs requested in that window. A succeeded job can report a permanent
+failure or teaser rejection, so job status alone does not establish text coverage.
+
+Decision: do not globally reset terminal errors or backfill this historical
+cohort. Proceed with the curated Events evaluation using available source text;
+record absent evidence explicitly and abstain where it is required. If a selected
+incident needs a missing article, first inspect that specific URL/error through
+the existing source test/fetch path, then consider a bounded operator-approved
+recovery through existing jobs. Preserve downstream feed history, current retry
+policy, single-job LLM capacity, and incremental publication. Missing text does
+not authorize treating generated summaries as source evidence.
+
+No production writes, retries, builds, model calls, or deployment occurred.
+One worker exec attempt returned a Kubernetes upstream 502; the same bounded
+read succeeded through another existing worker. Listed application pods remained
+Ready, but that does not prove the affected node's exec path has recovered.
