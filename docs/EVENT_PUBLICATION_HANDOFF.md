@@ -39,6 +39,9 @@ private model suggestions. Current production versions and pilot evidence are in
    unique event/revision binding, idempotent insertion and explicit predecessor.
    No schema work occurs on a diagnostic read connection. Test migrations only on
    a disposable database before planning a targeted production schema step.
+   Local `event_publication_store` now defines these tables and a tested transaction.
+   Production migration, restricted-role provisioning, trusted qualification
+   admission and revocation-aware export reads remain open; no rollout yet.
 3. Persist evidence qualification separately from model proposals. Bind exact
    incident scope, source versions, citation spans, assertion/date roles and
    reviewer/policy identity. Model-selected `include` is relevance, not factual
@@ -53,6 +56,8 @@ private model suggestions. Current production versions and pilot evidence are in
    Verify membership-insert/delete and article-update races on PostgreSQL; an
    isolated hash check or event-row-only CAS is insufficient. Do not nest the
    existing self-committing `update_event_report` inside this transaction.
+   Local promotion now does this with the existing snapshot locks; PostgreSQL
+   predecessor/duplicate/staleness/revocation cases pass. No runtime caller.
 5. Give the qualified export branch only the promoted immutable projection. Never
    merge old narrative sections, infer incident dates from feed dates, or use raw
    model text on parsing failure. Reject invalid revisions before writing files;

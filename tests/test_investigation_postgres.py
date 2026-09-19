@@ -316,3 +316,92 @@ def test_revision_window_locks_sources_and_membership(restricted_database):
     with pytest.raises(ValueError, match="stale_revision_snapshot"):
         with locked_current_snapshot(lambda: psycopg.connect(reader_dsn), packet):
             pytest.fail("stale evidence accepted")
+
+
+def test_qualified_publication_transaction(restricted_database):
+    from concurrent.futures import ThreadPoolExecutor
+    from sempervigil.event_review import snapshot
+    from sempervigil.event_scope import propose
+    from sempervigil.event_revision_store import source_version, locked_current_snapshot
+    from sempervigil.event_publication_store import SCHEMA, promote
+    from sempervigil.investigation import _version
+    admin, dsn, role = restricted_database
+    admin.execute(SCHEMA)
+    admin.execute("ALTER TABLE event_articles ADD FOREIGN KEY(event_id) REFERENCES events(id)")
+    admin.execute("ALTER TABLE event_articles ADD FOREIGN KEY(article_id) REFERENCES articles(id)")
+    admin.execute(sql.SQL("GRANT SELECT ON event_quote_qualifications,event_public_revisions,event_public_pointers TO {}").format(role))
+    admin.execute(sql.SQL("GRANT INSERT ON event_public_revisions,event_public_pointers TO {}").format(role))
+    admin.execute(sql.SQL("GRANT UPDATE ON events,articles,event_articles,event_public_pointers TO {}").format(role))
+    text = "Incident responders reported compromise of the contact system."
+    admin.execute("UPDATE articles SET content_text=%s WHERE id=1", (text,))
+    packet = snapshot(lambda: postgres_reader(dsn), event_id="one", aliases=["Incident"],
+                      scopes=frozenset({READ_SCOPE,EVIDENCE_SCOPE}))
+    start = text.index("contact system")
+    scope = propose(packet, article_id=1, start=0, end=len(text), focus=[
+        {"role": "entity", "start": 0, "end": 8},
+        {"role": "affected_system", "start": start, "end": start+14}])
+    qualification = {"workflow": "event-quote-qualification-v1", "event_id": "one",
+        "source_version": source_version(packet), "scope_version": scope["scope_version"],
+        "reviewer": {"kind": "policy", "id": "test-only", "version": "a"*64},
+        "quotes": [{"article_id": 1, "start": 0, "end": len(text), "quote": text}]}
+    qid = _version(qualification)
+    factory = lambda: psycopg.connect(dsn)
+    def run(q=qid, predecessor=None):
+        return promote(factory, packet, scope, qualification_id=q, expected_predecessor=predecessor)
+    with pytest.raises(ValueError, match="unavailable"): run()
+    admin.execute("INSERT INTO event_quote_qualifications VALUES ('one',%s,%s,'test',NULL)",
+                  (qid,json.dumps(qualification)))
+    with factory() as restricted:
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            restricted.execute("UPDATE event_quote_qualifications SET revoked_at='test'")
+        restricted.rollback()
+    def concurrent_attempt(_):
+        try:
+            return run()["status"]
+        except psycopg.errors.LockNotAvailable:
+            return "deferred"
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(concurrent_attempt, range(2)))
+    assert outcomes.count("promoted") == 1 and set(outcomes) <= {"promoted", "reused", "deferred"}
+    first = run()
+    assert first["status"] == "reused"
+    assert admin.execute("SELECT count(*) FROM event_public_revisions").fetchone()[0] == 1
+    original = admin.execute("SELECT bundle_json,recorded_at FROM event_public_revisions").fetchone()
+    admin.execute("UPDATE events SET updated_at='2026-05-02' WHERE id='one'")
+    packet = snapshot(lambda: postgres_reader(dsn), event_id="one", aliases=["Incident"],
+                      scopes=frozenset({READ_SCOPE,EVIDENCE_SCOPE}))
+    assert run()["status"] == "reused"
+    assert admin.execute("SELECT bundle_json,recorded_at FROM event_public_revisions").fetchone() == original
+    # A second independently recorded qualification can advance the predecessor.
+    qualification["reviewer"]["version"] = "b"*64
+    second_q = _version(qualification)
+    admin.execute("INSERT INTO event_quote_qualifications VALUES ('one',%s,%s,'test',NULL)",
+                  (second_q,json.dumps(qualification)))
+    with pytest.raises(ValueError, match="predecessor_conflict"): run(second_q)
+    second = run(second_q, first["revision_id"])
+    assert second["revision_id"] != first["revision_id"]
+    with pytest.raises(ValueError, match="predecessor_conflict"): run()
+    assert admin.execute("SELECT revision_id FROM event_public_pointers").fetchone()[0] == second["revision_id"]
+    assert admin.execute("SELECT count(*) FROM event_public_revisions").fetchone()[0] == 2
+    # Event lock serializes a one-way revocation with pointer promotion.
+    with locked_current_snapshot(factory, packet):
+        admin.execute("SET lock_timeout='100ms'")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            admin.execute("UPDATE event_quote_qualifications SET revoked_at='test' WHERE qualification_id=%s", (second_q,))
+        admin.execute("SET lock_timeout=0")
+    admin.execute("UPDATE event_quote_qualifications SET revoked_at='test' WHERE qualification_id=%s", (second_q,))
+    with pytest.raises(ValueError, match="unavailable"): run(second_q, first["revision_id"])
+    with pytest.raises(psycopg.errors.RaiseException):
+        admin.execute("UPDATE event_quote_qualifications SET revoked_at=NULL WHERE qualification_id=%s", (second_q,))
+    with pytest.raises(psycopg.errors.RaiseException):
+        admin.execute("UPDATE event_quote_qualifications SET qualification_json='{}' WHERE qualification_id=%s", (qid,))
+    with pytest.raises(psycopg.errors.RaiseException): admin.execute("DELETE FROM event_quote_qualifications")
+    admin.execute(sql.SQL("GRANT INSERT ON event_quote_qualifications TO {}").format(role))
+    with pytest.raises(PermissionError, match="read_only_role"): run()
+    admin.execute(sql.SQL("REVOKE INSERT ON event_quote_qualifications FROM {}").format(role))
+    admin.execute("ALTER TABLE event_quote_qualifications DISABLE TRIGGER event_qualification_guard")
+    with pytest.raises(ValueError, match="revocation_guard"): run()
+    admin.execute("ALTER TABLE event_quote_qualifications ENABLE TRIGGER event_qualification_guard")
+    admin.execute("UPDATE articles SET content_text='Changed evidence after qualification' WHERE id=1")
+    with pytest.raises(ValueError, match="stale_revision_snapshot"): run()
+    assert admin.execute("SELECT revision_id FROM event_public_pointers").fetchone()[0] == second["revision_id"]

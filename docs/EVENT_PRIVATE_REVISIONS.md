@@ -201,3 +201,39 @@ Ten new tests and all 650 offline tests pass. No model calls, database changes,
 deployment or Hugo run. Prior PostgreSQL/JS gates were not rerun. Remaining next
 step is trusted qualification/pointer persistence and transactional promotion,
 followed by worker integration and a platform-API-driven publication pilot.
+
+## Qualified revision transaction (local, disposable database only)
+
+`event_publication_store.SCHEMA` defines separate qualification, immutable revision
+and current-pointer tables. It is not registered in application startup and has
+not been applied to production. `promote` uses the existing locked-current-source
+window, loads a nonrevoked qualification by event/digest, reconstructs its exact
+projection, checks the expected predecessor and inserts/verifies the immutable
+bundle before updating the pointer in the same transaction. Contention defers via
+NOWAIT rather than waiting on ingestion; there is no automatic retry or build.
+Retry of an already-current revision preserves its original bytes/time, including
+when only the event bookkeeping timestamp has changed.
+
+Qualification authority is separate: the promotion principal must have SELECT
+only on qualification rows. Table/column write privileges cause refusal; the
+existing broad application credential must not be assumed suitable. Revision
+permissions must be SELECT/INSERT only, and pointer permissions SELECT/INSERT/
+UPDATE. No helper here issues grants, evaluates evidence, mints qualifications,
+or authorizes a user. A trusted independently validated reviewer/policy workflow
+and reviewed production role provisioning are prerequisites, not implemented
+features of this storage module.
+
+Qualifications cannot be edited or deleted through ordinary DML. A trigger permits
+only one-way revocation and locks the same event row as promotion, serializing the
+two operations. A missing/disabled guard is refused. The trusted owner can revoke,
+but the promotion principal cannot. Revocation does not itself change public
+files: a future export reader must check it and a withdrawal job must publish the
+result. Neither reader/withdrawal integration nor public feature activation exists
+yet. Treating an old pointer as permanently authorized would be incorrect.
+
+Ten real disposable PostgreSQL tests pass, including concurrent duplicate
+promotion/defer, idempotent retry, expected-predecessor conflict, exact immutable
+reuse, stale evidence rejection, denied qualification writes, monotonic revocation
+and its event lock, and missing-guard refusal. All 655 offline tests pass. The
+test container and loopback tunnel were removed. No production schema, role,
+content or image changed; no model calls or Hugo build occurred.

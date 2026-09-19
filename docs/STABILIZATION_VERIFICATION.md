@@ -1800,3 +1800,31 @@ fixture to an unsupported dictionary key to exercise an actual JSON failure.
 No SQL/JS changes, model calls, deployment or Hugo invocation. Previous nine PG
 and 21 JS tests were not rerun. Trusted qualification/pointer storage and
 transactional promotion are the next integration prerequisite.
+
+## Qualified pointer transaction, September 19 11:20 UTC
+
+Local publication store defines separate qualification, revision and pointer
+tables, with no startup migration or production caller. Promotion uses the tested
+current-source transaction window, rejects write-capable qualification principals,
+loads an independently stored nonrevoked qualification, reconstructs the exact
+projection, checks the expected predecessor, and inserts/verifies the immutable
+revision before pointer update in one transaction. A guarded one-way revocation
+locks the same event row. A missing/disabled trigger fails closed. No automatic
+approval, retry or build; new restricted production credentials remain required.
+
+All ten disposable PostgreSQL tests pass, rerun after adding concurrent promotion
+and timestamp-only retry cases. Duplicate concurrent attempts yield one promotion
+and reuse/defer, never a second revision; stale predecessors and stale source text
+are rejected without moving the pointer. Original stored bytes/timestamps survive
+bookkeeping changes. Qualification writes are denied to the promotion role;
+revocation blocks on the current-source event lock and cannot be undone/rewritten.
+Revoked qualification retries fail. The prior nine integration tests reran too.
+All 655 offline tests pass; five new identity checks reject before DB access.
+
+The PostgreSQL 18.4 test container used a named disposable database and loopback
+tunnel; both were removed after testing. No production schema/data/role/image
+change, model calls or Hugo invocation. All production deployment ready counts
+were expected at the opening check. Private review remains the deployed feature.
+Trusted qualification admission, revocation-aware export/withdrawal, restricted
+role provisioning, coordinated build admission and reader-facing rollout are
+still required before the automatic public Events feature can be claimed ready.
