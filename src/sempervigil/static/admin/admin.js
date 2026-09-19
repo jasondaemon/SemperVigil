@@ -2084,6 +2084,9 @@ function wireJobs() {
           && job.result?.status === "review_ready" && job.result?.public_eligible === false) {
         resultHtml += `<p class="muted">${esc(privateReviewResultSummary(job))}</p>`;
         resultHtml += `<a href="/admin/api/jobs/${encodeURIComponent(job.id)}/private-review">Download private review</a>`;
+        if (hasPrivateRevision(job)) {
+          resultHtml += ` <a href="/admin/api/jobs/${encodeURIComponent(job.id)}/private-revision">Download revision evidence</a>`;
+        }
       }
       const row = document.createElement("tr");
       row.innerHTML = `
@@ -5360,6 +5363,15 @@ function privateReviewResultSummary(job) {
   }
   if (result.model_cache_hit === true) parts.push("Cached assessment reused.");
   return parts.join(" ");
+}
+
+function hasPrivateRevision(job) {
+  const revision = job.result?.private_revision;
+  return job.job_type === "event_review_private" && job.status === "succeeded"
+    && job.result?.status === "review_ready" && job.result?.public_eligible === false
+    && revision?.workflow === "event-private-revision-v1" && revision.status === "proposal_only"
+    && revision.public_eligible === false && typeof revision.version === "string"
+    && /^[a-f0-9]{64}$/.test(revision.version);
 }
 
 function wirePrivateEventReview() {

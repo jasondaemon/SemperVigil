@@ -15,6 +15,20 @@ function job() {
     model_cache_hit:true, assessment_summary:{status:'proposal_only',
       assessed:12, not_assessed:11, included:6, held:4, excluded:2, scope_version:'a'.repeat(64)}}};
 }
+test('revision download is only offered for a completed private receipt', () => {
+  const value = job();
+  assert.equal(context.hasPrivateRevision(value), false);
+  value.result.private_revision = {workflow:'event-private-revision-v1', version:'a'.repeat(64),
+    status:'proposal_only', public_eligible:false};
+  assert.equal(context.hasPrivateRevision(value), true);
+  for (const [key, invalid] of [['version','../secret'], ['version','<img>'],
+      ['status','approved'], ['public_eligible',true], ['workflow','other']]) {
+    const bad = structuredClone(value); bad.result.private_revision[key] = invalid;
+    assert.equal(context.hasPrivateRevision(bad), false);
+  }
+  value.status='running';
+  assert.equal(context.hasPrivateRevision(value), false);
+});
 test('successful private job displays coverage without factual approval', () => {
   const text = context.privateReviewResultSummary(job());
   assert.match(text, /not publication approval/);

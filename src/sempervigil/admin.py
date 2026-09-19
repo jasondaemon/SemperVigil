@@ -2212,6 +2212,30 @@ def download_private_review(job_id: str) -> Response:
     })
 
 
+@app.get("/admin/api/jobs/{job_id}/private-revision", dependencies=[Depends(_require_admin_token)])
+def download_private_revision(job_id: str) -> Response:
+    if not os.environ.get("SV_ADMIN_TOKEN"):
+        raise HTTPException(status_code=503, detail="private_review_auth_required")
+    from .event_review_jobs import read_revision
+    conn = _get_conn()
+    try:
+        job = get_job(conn, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="private_revision_unavailable")
+        try:
+            data = read_revision(job)
+        except (OSError, ValueError):
+            raise HTTPException(status_code=404, detail="private_revision_unavailable") from None
+    finally:
+        conn.close()
+    return Response(data, media_type="application/json", headers={
+        "Content-Disposition": 'attachment; filename="sempervigil-private-revision.json"',
+        "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "sandbox; default-src 'none'; frame-ancestors 'none'",
+        "Referrer-Policy": "no-referrer",
+    })
+
+
 @app.get("/admin/api/private-reviews/status", dependencies=[Depends(_require_admin_token)])
 def private_review_status() -> dict[str, object]:
     from .event_review_jobs import enabled

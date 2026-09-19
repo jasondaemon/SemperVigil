@@ -52,6 +52,36 @@ def read_artifact(job) -> bytes:
         os.close(root_fd)
 
 
+def read_revision(job) -> bytes:
+    """Resolve a job-owned receipt without accepting a client filesystem path."""
+    from .event_revision import MAX_BYTES, validate_receipt
+    html = read_artifact(job)
+    descriptor = job.result.get("private_revision")
+    version = descriptor.get("version") if isinstance(descriptor, dict) else None
+    if type(version) is not str or not re.fullmatch(r"[0-9a-f]{64}", version):
+        raise ValueError("private_revision_unavailable")
+    root_fd = os.open(artifact_root(), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        folder = os.open(job.result["packet_version"], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                         dir_fd=root_fd)
+        try:
+            fd = os.open("revision-" + version + ".json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                         dir_fd=folder)
+            with os.fdopen(fd, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= MAX_BYTES:
+                    raise ValueError("private_revision_unavailable")
+                raw = stream.read(MAX_BYTES + 1)
+            validate_receipt(raw, descriptor, packet_version=job.result["packet_version"],
+                             event_id=job.result.get("event_id"),
+                             artifact=job.result["artifact"].split("/")[1], html=html)
+            return raw
+        finally:
+            os.close(folder)
+    finally:
+        os.close(root_fd)
+
+
 def enabled() -> bool:
     value = os.environ.get("SV_EVENT_REVIEW_ENABLED", "0")
     if value not in {"0", "1"}:
@@ -193,7 +223,10 @@ def run(payload: dict, *, complete=None) -> dict:
         assessment, cache_hit = reuse(packet, complete, root, scope=scope, article_id=article_id, paired=paired)
         page = save(packet, root, assessment=assessment)
     summary = None
+    revision = None
     if assessment is not None:
+        from .event_revision import save_revision
+        revision = save_revision(packet, assessment, getattr(complete, "cache_identity", None), page)
         decisions = [item["decision"] for item in assessment["suggestions"].values()]
         summary = {"workflow": assessment["workflow"], "scope_version": (scope or {}).get("scope_version"),
                    "assessed": len(decisions), "not_assessed": assessment["omitted_passages"],
@@ -209,4 +242,5 @@ def run(payload: dict, *, complete=None) -> dict:
             "model_assessed": complete is not None and bool(assessment["suggestions"]),
             "model_cache_hit": cache_hit,
             **({"assessment_summary": summary} if summary is not None else {}),
+            **({"private_revision": revision} if revision is not None else {}),
             "public_eligible": False}

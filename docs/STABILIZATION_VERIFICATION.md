@@ -1576,3 +1576,18 @@ All 588 offline tests pass; no runtime deployment required for this evaluator.
 Next: collect these results once, retain failures and all coverage. The private
 pilot is still not automatic public reporting: independent incident qualification,
 revision/publication integration and reader-facing verification remain pending.
+
+## Private revision handoff, September 19 09:40 UTC
+
+Local worker integration now saves immutable assessment receipts with input,
+generation and full HTML identities. Admin adds authenticated no-store JSON
+download and a guarded Jobs link. No SQL, model call, public-output or deployment
+change. Old/extractive results remain valid without a receipt. 598 offline and 21
+JS tests pass; syntax check passes. Runtime remains `670558c`, platform `c98e9e4`.
+See `EVENT_PRIVATE_REVISIONS.md`; public revision pointers and transactional
+evidence qualification are explicitly not implemented by this receipt.
+
+Read-only queue sample: five paired diagnostic jobs still queued; 80 normal CVE
+threat-actor jobs queued and one running. No reprioritization or retry performed.
+`.cache/collect-paired-cohort.py` is a read-only collector validating each completed
+cache entry, pinned generation/request, and immutable HTML hash. It does not enqueue.

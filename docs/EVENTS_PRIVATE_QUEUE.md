@@ -1,6 +1,6 @@
 # Private Events jobs and admin visibility
 
-## Current status: September 19, 09:20 UTC
+## Current status: September 19, 09:40 UTC
 
 Admin and LLM worker run `670558c`; platform values are `c98e9e4`.
 **Authenticated operator-triggered private admission and bounded model suggestions
@@ -22,8 +22,10 @@ profile is diagnostic only, not automatic queue expansion or publication approva
 
 The seven-source cohort finished: six valid private artifacts, Odido 3/3 and
 Commission 4/4 checks passed, Vercel invalid structure and wrong raw relevance
-decision. The full gate fails. One follow-up paired Vercel job is queued:
-`job_557d20eb1f2449d0979fadfa3c1fe6a9`. Do not duplicate or reprioritize it.
+decision. The full gate fails. The follow-up paired Vercel job succeeded in 4.505
+seconds and passed its unchanged positive case. Five additional paired sources
+are queued; Vercel is reused. One oversized source remains explicitly unassessed.
+See the latest verification section for their IDs; do not duplicate/reprioritize.
 All original quality expectations remain unchanged. Exact release, timing,
 artifact hashes and rollback: `STABILIZATION_VERIFICATION.md`. Implementation
 contracts and remaining semantic gates: `EVENTS_INCIDENT_SCOPING.md`.
@@ -32,6 +34,11 @@ Job coverage and selected-source labels are deployed, authenticated private
 downloads retain no-store/sandbox headers, and existing artifacts remain immutable.
 No browser acceptance of the latest labels is claimed. Older checkpoints below
 are historical records, not instructions to re-enable old profiles or repeat jobs.
+
+Local follow-up, not deployed: immutable model-review receipts and authenticated
+revision evidence downloads are integrated into the worker and Jobs UI. They
+preserve exact input/model/artifact lineage without adding publication permission
+or inference. See `EVENT_PRIVATE_REVISIONS.md`. 598 offline / 21 JS tests pass.
 
 ## Initial private pilot (historical)
 
