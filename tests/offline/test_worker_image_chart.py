@@ -26,6 +26,21 @@ def test_private_review_chart_configuration(enabled):
     assert data["SV_EVENT_REVIEW_SCOPE_PROFILE_ID"] == ""
     assert data["SV_EVENT_REVIEW_PAIR_ENABLED"] == "0"
     assert data["SV_EVENT_REVIEW_PAIR_PROFILE_ID"] == ""
+    assert data["SV_EVENT_DECONSTRUCTION_ENABLED"] == "0"
+    assert data["SV_EVENT_DECONSTRUCTION_PROFILE_ID"] == ""
+
+
+@pytest.mark.skipif(not shutil.which("helm"), reason="Helm is not installed")
+@pytest.mark.parametrize("enabled", ["0", "1"])
+def test_deconstruction_configuration_reaches_runtime(enabled):
+    chart = Path(__file__).resolve().parents[2] / "deploy/helm/sempervigil"
+    raw = subprocess.check_output(["helm", "template", "test", str(chart),
+        "--show-only", "templates/configmap-env.yaml", "--set-string",
+        "env.SV_EVENT_DECONSTRUCTION_ENABLED=" + enabled,
+        "--set-string", "env.SV_EVENT_DECONSTRUCTION_PROFILE_ID=draft-profile"], text=True)
+    data = yaml.safe_load(raw)["data"]
+    assert data["SV_EVENT_DECONSTRUCTION_ENABLED"] == enabled
+    assert data["SV_EVENT_DECONSTRUCTION_PROFILE_ID"] == "draft-profile"
 
 
 @pytest.mark.skipif(not shutil.which("helm"), reason="Helm is not installed")

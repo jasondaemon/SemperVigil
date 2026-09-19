@@ -44,6 +44,27 @@ Use an empty claims array when no incident-relevant evidence is supported.
 Claims are unreviewed proposals; this task does not authorize publication."""
 
 
+def response_format(text: str) -> dict:
+    """Constrain quotes to verbatim source sentences, not model transcription."""
+    quotes = sorted(set(m.group().strip() for m in re.finditer(
+        r'.+?(?:[.!?][\u201d\u2019\"]?(?=\s|$)|\n|$)', text, re.DOTALL)
+        if 1 <= len(m.group().strip()) <= 600 and text.count(m.group().strip()) == 1))
+    if not quotes:
+        raise ValueError("deconstruction_no_bounded_quotes")
+    fields = {"section": {"type": "string", "enum": list(SECTIONS)},
+              "statement": {"type": "string", "minLength": 1, "maxLength": 900},
+              "status": {"type": "string", "enum": ["asserted", "alleged", "disputed"]},
+              "quote": {"type": "string", "enum": quotes},
+              "date_role": {"type": "string", "enum": ["incident", "disclosure"]},
+              "date_precision": {"type": "string", "enum": ["unknown", "year", "month", "day"]},
+              "date_value": {"type": ["string", "null"]}}
+    row = {"type": "object", "additionalProperties": False, "required": list(fields), "properties": fields}
+    schema = {"type": "object", "additionalProperties": False, "required": ["claims"],
+              "properties": {"claims": {"type": "array", "maxItems": 8, "items": row}}}
+    return {"type": "json_schema", "json_schema": {
+        "name": "event_source_claims_v1", "strict": True, "schema": schema}}
+
+
 def request_for(packet: dict, scope: dict, article_id: int) -> dict:
     packet = validate_packet(json.dumps(packet).encode())
     scope = validate(scope, packet)
@@ -56,9 +77,12 @@ def request_for(packet: dict, scope: dict, article_id: int) -> dict:
     encoded = json.dumps(data, ensure_ascii=True, separators=(",", ":"))
     if len((SYSTEM_PROMPT + encoded).encode()) > MAX_INPUT_BYTES:
         raise ValueError("deconstruction_source_over_budget")
+    format = response_format(doc["text"])
+    if len((SYSTEM_PROMPT + encoded + json.dumps(format, ensure_ascii=True)).encode()) > MAX_INPUT_BYTES:
+        raise ValueError("deconstruction_source_over_budget")
     identity = {"workflow": WORKFLOW, "event_id": packet["event"]["id"],
                 "scope_version": scope["scope_version"], "system": SYSTEM_PROMPT,
-                "input": encoded}
+                "input": encoded, "response_format": format}
     return {**identity, "request_version": _version(identity)}
 
 

@@ -7507,7 +7507,7 @@ def _private_review_completion(conn, job, logger):
     provider = get_provider(conn, profile["primary_provider_id"]) or {}
     if not provider:
         raise ValueError("private_review_provider_required")
-    if paired and provider.get("type") != "openai_compatible":
+    if (paired or deconstruct) and provider.get("type") != "openai_compatible":
         raise ValueError("private_pair_requires_schema_transport")
     from .investigation import _version
     def completion(text):
@@ -7529,6 +7529,8 @@ def _private_review_completion(conn, job, logger):
                 ids = json.loads(text).get("required_ids")
                 response_format(ids)
                 context["event_assessment_ids"] = ids
+            if deconstruct:
+                context["event_deconstruction_source"] = json.loads(text)["source"]["text"]
             output = run_profile(conn, profile_id, text, logger, context=context)
             current = _private_review_completion(conn, job, logger)
             if current is None or current.cache_identity != completion.cache_identity:
@@ -7557,6 +7559,9 @@ def _private_review_completion(conn, job, logger):
     if paired:
         completion.cache_identity = _version({"generation": completion.cache_identity,
             "workflow": "event-paired-generation-v1", "format": response_format(["p1"])})
+    if deconstruct:
+        completion.cache_identity = _version({"generation": completion.cache_identity,
+                                              "workflow": "event-constrained-deconstruction-v1"})
     return completion
 
 

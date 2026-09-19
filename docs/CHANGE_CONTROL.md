@@ -1,5 +1,21 @@
 # Change Control Log
 
+## 2026-09-19: Private deconstruction pilot and constrained generation
+
+- Rolled only admin and LLM worker to `69e76a6`, preserving the existing model,
+  single inference lane, builder and feeds. Added the missing chart ConfigMap
+  fields and a dedicated profile through the AI API. Admission was paused and
+  jobs drained during rollout; normal orchestrator admission was restored.
+- First real private extraction failed closed (`invalid_deconstruction_values`)
+  after 13.041s. Captured output used null date-role/precision, an unsupported
+  section and altered quotations. No public or report writes occurred.
+- Correct the generation contract, not the validator: local private mode gets
+  JSON-schema enums and exact source-sentence choices. Count schema bytes within
+  the existing 15KB input budget. No concurrency, model or memory increase.
+- Subsequent model verification and final deployment state are recorded in
+  STABILIZATION_VERIFICATION.md. This does not authorize automatic narrative
+  publication or legacy-candidate deletion.
+
 ## 2026-09-19: Private source reuse and compilation (local only)
 
 - Source/config-bound extraction cache and multi-source private compilation use

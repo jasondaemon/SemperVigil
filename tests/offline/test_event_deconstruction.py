@@ -7,11 +7,33 @@ import pytest
 
 from sempervigil import event_deconstruction as draft, event_review_jobs as jobs, worker, admin
 from sempervigil.services import ai_service
+from sempervigil.llm import router
 from test_event_review import database, get_packet, resign
 from test_event_scope import proposal
 from test_event_assessment import configured
 
 pytestmark = pytest.mark.offline
+
+
+def test_constrained_format_quotes_are_exact_and_dates_have_enums():
+    text = 'Context.ai was compromised. "Recovery is partial." Another claim.'
+    fields = draft.response_format(text)["json_schema"]["schema"]["properties"]["claims"]["items"]["properties"]
+    assert all(q in text for q in fields["quote"]["enum"])
+    assert 'Context.ai was compromised.' in fields["quote"]["enum"]
+    assert fields["date_precision"]["enum"] == ["unknown", "year", "month", "day"]
+    assert "incident" not in fields["section"]["enum"]
+
+
+def test_transport_applies_schema_only_to_private_local_mode(monkeypatch):
+    call = Mock(return_value={"choices": [{"message": {"content": '{"claims":[]}'}}]})
+    monkeypatch.setattr(router, "_http_request", call)
+    context = {"stage": "event_review_private", "event_deconstruction_source": "Acme reported a breach."}
+    router._call_provider("openai_compatible", "http://localhost", None, "ollama/test", [], {}, {}, context)
+    assert call.call_args.args[3]["response_format"] == draft.response_format(context["event_deconstruction_source"])
+    for stage, model in (("other", "ollama/test"), ("event_review_private", "gpt-test")):
+        with pytest.raises(ValueError, match="unsupported_private_deconstruction"):
+            router._call_provider("openai_compatible", "http://localhost", None, model, [], {}, {},
+                                  {**context, "stage": stage})
 
 
 def response(packet):
