@@ -1,6 +1,7 @@
 # Private revision receipts
 
-Status: implemented and tested locally; not deployed. Existing opt-in private
+Status: deployed to admin/LLM as `78a0739`; end-to-end receipt pilot pending.
+Existing opt-in private
 review guards remain the configuration boundary. No new queue, model profile,
 database migration, publication pointer or build behavior.
 
@@ -35,8 +36,9 @@ node --test tests/js/private_review_result.test.cjs
 
 Latest full gate: 598 offline tests and 21 JavaScript tests passed, plus JavaScript
 syntax validation. Integration PostgreSQL tests were not rerun; this adds no SQL.
-Production remains on the prior runtime while five paired diagnostics wait behind
-ordinary work. Do not restart that worker merely to ship this local slice.
+The paired diagnostics completed before rollout. The receipt verification job is
+`job_aefc9fa9885b40e584eaa4e917c9dd20`; cache availability and unchanged generation
+were verified before admission. Do not duplicate or reprioritize it.
 
 Release: after current diagnostic completion, render/diff and drain before a
 targeted admin/LLM-only rollout. Verify one existing assessment-cache hit produces

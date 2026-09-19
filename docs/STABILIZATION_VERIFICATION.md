@@ -1619,3 +1619,49 @@ Deployment is deferred until this cohort is complete. Then preserve `670558c` as
 rollback, drain normally, change only the two source-of-truth image overrides,
 apply only the affected Deployments, verify a no-inference receipt cache-hit pilot,
 and confirm local/remote/platform/runtime agreement. No direct Hugo execution.
+
+## Paired cohort complete and receipt rollout, September 19 10:00 UTC
+
+Five additional jobs succeeded with one call each: Odido 21505 3,112 ms; Odido
+22331 4,692 ms; Commission 21216 4,067 ms; 21218 3,482 ms; 25303 4,539 ms.
+Total 19,892 ms, plus the reused Vercel diagnostic 4,505 ms. Cumulative diagnostic
+inference is 25 calls / 119,589 ms. All seven assessed provisional checks pass:
+Odido 3/3, Vercel 1/1, Commission 3/3 assessed. Commission 23638 is still over
+budget/unassessed, so the full eight-case gate is **not passed**. No case labels
+changed; no missing result was normalized into success; public eligibility false.
+
+Read-only cache/request/generation and HTML integrity verification succeeded:
+
+| Source | Bytes | HTML SHA256 |
+| --- | ---: | --- |
+| Odido 21505 | 70557 | `2550a33db7f17c632e1806b6b143d343c3643786958dbdbd714e5636ddf04324` |
+| Odido 22331 | 70532 | `ff6996a4ea69f518c22f272e1d73abcdbaefaa4f27197abce06bd400977e8a9d` |
+| Commission 21216 | 109529 | `8ca8b7bd9087d67b568dba3ddc558544dbfc9ccf4a4f51b81d0bd953f77dc169` |
+| Commission 21218 | 109543 | `e9b65ffaac8f069deabef8a4e348436675e182c975471b931095cf5991a44a88` |
+| Commission 25303 | 110798 | `508160acaa59abe3c8c84010992b9ee063e869a062dbbb77cf59b1bc0abcb98d` |
+
+All three event-row fingerprints remain exactly unchanged from prior pilots.
+The receipt release `78a0739` is now live on admin/LLM only, platform `9681dc1`
+committed/pushed. Orchestrator stopped, exited, and LLM/launch queue checked empty
+before stopping the old LLM pod. Re-rendered from the corrected platform values;
+server-side comparison changed only main/init image fields in those two
+Deployments (restoring the deliberately drained replica count). Both rolled out;
+scheduling restored and all expected Deployment replicas Ready. Post-apply diffs
+empty. Builder, fetch/OpenAI workers, web, models and all configuration flags unchanged.
+
+Public checker passed at 10:03:41 UTC; cluster readiness passed. New JS revision
+link is served. Unauthorized receipt download returns 401; an authenticated legacy
+job without a receipt returns 404, as designed. No browser acceptance claimed.
+
+Exactly one receipt cache-reuse job admitted after read-only preflight proved the
+original Vercel packet, request, generation and validated cache still match:
+`job_aefc9fa9885b40e584eaa4e917c9dd20`. Admission is recorded in ignored
+`.cache/receipt-pilot-job.jsonl`. No duplicate/reprioritization. Its completion,
+zero `llm_runs`, cache-hit result and authenticated receipt bytes remain pending.
+Older completed jobs are not rewritten/backfilled. Rollback admin/LLM to `670558c`
+with the same drain procedure; preserve harmless private receipts and profiles.
+
+Application repo and source values are committed/pushed. The platform repo's
+unrelated appliance/certificate work remains untouched and uncommitted; it is not
+claimed globally clean. Full Events automation still requires qualified incident
+scope/evidence, transactional public revisions, and reader-facing acceptance.

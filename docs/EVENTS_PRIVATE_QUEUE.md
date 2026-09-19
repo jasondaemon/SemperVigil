@@ -1,8 +1,8 @@
 # Private Events jobs and admin visibility
 
-## Current status: September 19, 09:40 UTC
+## Current status: September 19, 10:00 UTC
 
-Admin and LLM worker run `670558c`; platform values are `c98e9e4`.
+Admin and LLM worker run `78a0739`; platform values are `9681dc1`.
 **Authenticated operator-triggered private admission and bounded model suggestions
 are enabled.** Autonomous admission and new public-report publication are not.
 All private jobs use the existing single local-model lane, priority -10 and one
@@ -24,7 +24,8 @@ The seven-source cohort finished: six valid private artifacts, Odido 3/3 and
 Commission 4/4 checks passed, Vercel invalid structure and wrong raw relevance
 decision. The full gate fails. The follow-up paired Vercel job succeeded in 4.505
 seconds and passed its unchanged positive case. Five additional paired sources
-are queued; Vercel is reused. One oversized source remains explicitly unassessed.
+completed in 19.892 seconds total; all seven assessed checks pass across the cohort.
+One oversized source remains explicitly unassessed; full semantic acceptance fails.
 See the latest verification section for their IDs; do not duplicate/reprioritize.
 All original quality expectations remain unchanged. Exact release, timing,
 artifact hashes and rollback: `STABILIZATION_VERIFICATION.md`. Implementation
@@ -35,10 +36,11 @@ downloads retain no-store/sandbox headers, and existing artifacts remain immutab
 No browser acceptance of the latest labels is claimed. Older checkpoints below
 are historical records, not instructions to re-enable old profiles or repeat jobs.
 
-Local follow-up, not deployed: immutable model-review receipts and authenticated
+Now deployed: immutable model-review receipts and authenticated
 revision evidence downloads are integrated into the worker and Jobs UI. They
 preserve exact input/model/artifact lineage without adding publication permission
 or inference. See `EVENT_PRIVATE_REVISIONS.md`. 598 offline / 21 JS tests pass.
+One cache-reuse receipt verification is queued: `job_aefc9fa9885b40e584eaa4e917c9dd20`.
 
 ## Initial private pilot (historical)
 
