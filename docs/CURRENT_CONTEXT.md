@@ -9,6 +9,16 @@
 
 ## Current direction: strengthen and reuse article enrichment
 
+Latest deployment: admin/LLM `3d2a981`, platform `583da4c`. Private article queue
+enabled; strict normal validation OFF. Render/live diff empty; other images intact.
+Real job `job_86bd8979191e493797025e9a71d790fc`: three calls / 20.092s provider time,
+all three context candidates invalid, zero summary calls. Factual/coverage quality
+also fails manual inspection. No auto repair or rerun; 3/14 shared attempts used.
+Baseline article hashes and public event revision unchanged; 20 public checks pass.
+1004 offline tests, one skip; disposable PG queue test passes. See
+ARTICLE_PRIVATE_QUEUE.md for exact failures and proposed passage-ID next step.
+Older local-only/blocker paragraphs below are superseded.
+
 Release-workflow correction: local Docker/guessed SSH were not prerequisites.
 Recovered the established remote image-builder account/key from prior successful
 release commands; production remains K3s/containerd. See KUBERNETES_RELEASE.md.

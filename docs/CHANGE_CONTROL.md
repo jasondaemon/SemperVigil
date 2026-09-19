@@ -1,5 +1,23 @@
 # Change Control Log
 
+## 2026-09-19: Kubernetes private article trial deployed and evaluated
+
+- Admin/LLM image `3d2a981`, platform `583da4c`; explicit default-disabled Helm
+  flag wired before apply. Image manifest identical on four eligible nodes:
+  `sha256:b4df615f67ec344b86b71010b1b457812503ef3418ffae03d45561b98e2d1098`.
+- Compared namespace-qualified dry-run diff: four image references and one
+  private enablement key only. Paused admission/drained old LLM pod, applied only
+  ConfigMap and admin/LLM Deployments, then restored admission. No public rebuild.
+- Job `job_86bd8979191e493797025e9a71d790fc`: 3 calls / 20.092s, all context
+  candidates invalid, no summary generation or repair. Failed quality recorded,
+  not hidden. Repeat admission returns the same completed job without inference.
+- Three article baseline hashes unchanged; public event pointer unchanged.
+  Twenty sampled public checks pass before/after; all deployments and API Ready.
+  Scoped render/live diff empty; no profile, resources or concurrency changes.
+- 1004 offline / one disposable PostgreSQL test passed, one offline skip. Test pod
+  and forwarding removed. Previous admin `eff906d` and LLM `d80f98a` retained for
+  rollback. Unrelated dirty platform files preserved.
+
 ## 2026-09-19: Kubernetes release recovery and queue integration gate
 
 - Recovered and verified the established remote image-builder/K3s import path

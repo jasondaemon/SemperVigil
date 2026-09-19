@@ -2,12 +2,42 @@
 
 ## Status
 
-Release validation in progress. The earlier access blocker was an operator-context
+Deployed September 19, 2026: admin and LLM worker `3d2a981`, platform `583da4c`.
+Private admission is enabled; normal strict validation remains OFF. The scoped
+Helm render matches live. All other deployment images and model concurrency remain
+unchanged. The first real comparison completed; candidate quality FAILED.
+
+Job `job_86bd8979191e493797025e9a71d790fc` used three context calls, 20.092 seconds
+of recorded provider latency. Each context failed validation, so zero summary
+calls were made. Repeated admission returned the same job with no extra calls.
+Three of the shared fourteen attempts are spent; eleven remain, not a new budget.
+
+- 35613: attribution is not an exact substring of the cited passage. Manual
+  inspection also finds the advisory date mislabeled as an incident date.
+- 35614: copied headline is wrapped in additional quotation marks absent from
+  stored source; attribution is borrowed from elsewhere. Only one fact extracted.
+- 35615: quotation was altered; attribution lies outside the cited passage. Only
+  one fact extracted. An uncertainty was retained, but coverage is insufficient.
+
+The exact stored text, title, summary and context hashes for all three articles
+match the pre-run baseline. Public event revision is unchanged. Twenty sampled
+HTTP/JSON checks passed before and after rollout, all deployments Ready, Kubernetes
+API readiness passed. These are sampled safety checks, not exhaustive guarantees.
+See `article-quality-comparison.html`; raw private output is retained in the job
+and ignored `data/article-quality-comparison/queued-result.json`.
+
+Next investigate passage-ID selection with source spans attached by code, rather
+than model reproduction of quotations. This is a proposed remedy for copy errors,
+not proof that selected passages support claims. Keep frozen semantic and coverage
+expectations; do not strip quotes/borrow attribution to silently accept these results.
+No candidate summary or public rewrite is authorized by this failed comparison.
+
+The earlier access blocker was an operator-context
 error: prior successful releases use the designated remote image builder, import
 the image into K3s/containerd and apply scoped Helm-rendered Deployments. Local
 Docker is not required. The established account/key were recovered from prior
 release records and verified. See KUBERNETES_RELEASE.md. Never copy code into live
-containers as a workaround. Actual model results are recorded after the canary.
+containers as a workaround.
 
 ## Operation
 
@@ -72,8 +102,9 @@ generation acceptance and failure-preservation rollout gates have passed.
 
 ## Verification and release gates
 
-Full offline suite: 1003 passed, one skipped. PostgreSQL integration and real
-provider execution have not been performed for this slice.
+Full offline suite: 1004 passed, one skipped. One real disposable PostgreSQL queue
+lifecycle test passed with mocked inference. Actual provider results are above.
+The test pod and forwarding were removed. No production migration was performed.
 
 Offline tests cover serial six-call bounds, failed-context skip, one-attempt HTTP,
 source/configuration changes, replay refusal, reservation failure, admission

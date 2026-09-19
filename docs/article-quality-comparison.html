@@ -19,10 +19,12 @@ h3{font-size:1rem;margin-top:0}a{color:#19664f}code{overflow-wrap:anywhere;font-
 <header><div class="label">Read-only baseline / September 19, 2026</div>
 <h1>What survives the summary?</h1>
 <p>Three stored articles compared with their already-generated LLM summaries and context. Source meaning is assessed against the saved article text, not independently verified reporting.</p>
-<p><strong>No new model generation. No production changes.</strong> These are diagnostic examples, not a random sample or an accuracy score. The new v2 prompts have not been evaluated.</p></header>
+<p><strong>Real queued comparison completed; candidate quality failed.</strong> Three context calls took 20.092 seconds total. Each failed citation validation, so summary generation was skipped. Stored article data and public content are unchanged. These diagnostic examples are not a random sample or an accuracy score.</p>
+<p class="warning">The earlier sections compare the saved baseline. Candidate findings below come from the deployed private v3 trial, job <code>job_86bd8979191e493797025e9a71d790fc</code>. No automatic repairs or retries were used.</p></header>
 
 <article><div class="label">Article 35613 / qualification lost</div>
 <h2>SolarWinds ARM vulnerability</h2>
+<p><strong>Candidate: rejected.</strong> One fact, invalid attribution span. It also classifies the advisory release date as an incident date. The candidate does not establish improvement over existing context.</p>
 <div class="grid"><section><h3>Stored source</h3><p>The vendor did not mention exploitation. That does not establish whether evidence exists elsewhere.</p></section>
 <section><h3>Existing LLM output</h3><p>The bullet says <q>No evidence of exploitation in the wild as of now.</q> The context correctly retains the narrower vendor-reporting limitation.</p></section>
 <section><h3>Required outcome</h3><p>Preserve that limitation. Retain affected ARM versions, fixed version and the hard-coded-key cause. Keep other products' vulnerabilities separate.</p></section></div>
@@ -31,6 +33,7 @@ h3{font-size:1rem;margin-top:0}a{color:#19664f}code{overflow-wrap:anywhere;font-
 
 <article><div class="label">Article 35614 / useful context omitted</div>
 <h2>WaterPlum campaign</h2>
+<p><strong>Candidate: rejected.</strong> One headline-based fact with added quotation marks absent from the source and attribution taken from another location. Coverage of the campaign is inadequate.</p>
 <div class="grid"><section><h3>Stored source</h3><p>The advisory reports at least 30,000 devices during December 2025 through July 2026, with more than $10.7 million transferred to North Korea.</p></section>
 <section><h3>Existing LLM output</h3><p>The summary drops the reporting period and attribution, and rounds the amount. A bullet changes the lower bound to <q>over 30,000</q>. The context retains the dates, lower bound and more precise amount.</p></section>
 <section><h3>Required outcome</h3><p>Reuse those context facts with advisory attribution. Preserve quantities, units and time scope. Distinguish defensive advice from completed recovery and attempted theft from confirmed results.</p></section></div>
@@ -39,15 +42,16 @@ h3{font-size:1rem;margin-top:0}a{color:#19664f}code{overflow-wrap:anywhere;font-
 
 <article><div class="label">Article 35615 / allegation promoted</div>
 <h2>ShinyHunters and Clop</h2>
+<p><strong>Candidate: rejected.</strong> One fact with an altered quotation and attribution outside the passage. It retains a reporting caveat, but does not cover the incident adequately.</p>
 <div class="grid"><section><h3>Stored source</h3><p>The reporter confirmed file upload and defacement. The vulnerability explanation comes from the attackers; claimed theft of logs, source code and keys was not independently verified.</p></section>
 <section><h3>Existing LLM output</h3><p>The narrative retains the theft allegation, but a bullet presents the Grav CMS attack method as established. Another misspells Clop. Context is wrapped in an escaped string and assigns the publication date to the attack despite relative timing in the source.</p></section>
 <section><h3>Required outcome</h3><p>Keep confirmed observations separate from attacker claims. Leave the relative attack timing unresolved; do not substitute publication day. Do not treat a historical Oracle CVE as the current breach's vulnerability.</p></section></div>
 <small><a href="https://www.bleepingcomputer.com/news/security/shinyhunters-hacks-clop-leak-site-threatens-to-extort-ransomware-gang/">Original article</a> / Summary shape passes; context shape fails.</small></article>
 
-<h2>Next comparison</h2>
+<h2>Next step after the failed trial</h2>
 <ol><li>Keep this source snapshot and baseline unchanged. Freeze the required outcomes above before generating candidate output.</li>
 <li>Duplicate-passage citation handling is locally corrected and tested. Both occurrences remain inspectable; semantic quality still requires review.</li>
-<li>Generate candidate context and summaries privately through the existing serial LLM queue. Compare source, baseline and candidate side by side.</li>
+<li>The serial queue trial is complete: three context calls, zero summaries. Investigate selecting passage IDs so code can attach exact evidence instead of asking the model to copy it. This will not by itself establish factual correctness.</li>
 <li>Measure omissions, unsupported assertions, qualifiers, timing, structure, attempts and latency. Keep production output until the candidate passes; no bulk rewrite.</li></ol>
 <footer><p>Snapshot captured at 2026-09-19 19:14:37 UTC. Full stored text and generated payloads are kept locally in the ignored data directory, not committed. All three complete inputs fit the candidate request budget. Existing structural checks do not establish historical router validation or factual correctness.</p>
 <p><a href="upgrade-tracker.html">Upgrade tracker</a> / <a href="ARTICLE_ENRICHMENT_QUALITY.md">Contract and rollout notes</a></p></footer>
