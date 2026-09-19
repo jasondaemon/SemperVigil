@@ -1,5 +1,16 @@
 # Change Control Log
 
+## 2026-09-19: Local private claim-support audit contract
+
+- Added a full-source, bounded audit of incident, entailment, attribution,
+  uncertainty, dates and surrounding context. Exact response inventory required;
+  unsupported/uncertain outcomes cannot become model-supported proposals.
+- Source/claim/checker-bound immutable cache avoids repeating unchanged audits.
+  No claim repair, publication receipt, runtime caller, API, schema or deployment
+  change. Contract tests use mocked completions; model accuracy remains unmeasured.
+- See EVENT_CLAIM_SUPPORT.md for queue integration and real-model acceptance gate.
+  Rollback is source-only; working production is unchanged.
+
 ## 2026-09-19: Real private pilot completed, publication still gated
 
 - Current admin `69e76a6`, LLM worker `c4f8ddf`, platform `5c6044d`.

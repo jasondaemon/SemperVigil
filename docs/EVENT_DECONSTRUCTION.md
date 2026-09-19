@@ -82,6 +82,8 @@ publication pointers or dirty-build state are written.
   then qualified multi-source narrative synthesis. Retain the current public
   report until those gates pass. Do not increase model/context/concurrency to
   hide these failures or auto-enroll the legacy candidate backlog.
+  The local audit contract is now implemented in `event_claim_support.py`; see
+  EVENT_CLAIM_SUPPORT.md. It is not wired into production or model-validated yet.
 
 ## Verification and troubleshooting
 

@@ -2009,6 +2009,24 @@ All expected production replicas were ready at this checkpoint's opening.
 - Semantic synthesis, real-model evaluation, correction adjudication and guarded
   publication remain open. Prior PostgreSQL/JS results were not rerun this slice.
 
+# September 19, 2026: local claim support audit
+
+- Added `event_claim_support.py`: six independent support dimensions over exact
+  stored claims and full source. Strict bounded schema and complete ID inventory;
+  one unsupported dimension rejects, any uncertainty holds. All-supported is
+  explicitly only a model suggestion, never public approval.
+- At most one callback per source, separate checker identity and immutable cache.
+  Unchanged replay makes no inference call, empty extraction abstains locally,
+  changed source/claim/prompt/profile invalidates reuse. No truncation, automatic
+  repair or publication mutation. Private rendered output escapes model text.
+- 32 new audit contract tests pass. Full offline suite: 849 passed, one Linux-only
+  skip and existing deprecation warnings. PostgreSQL/JS not rerun; no schema/JS
+  changes. These use mocked completions and establish no actual-model accuracy.
+- No production/API/job integration, deployment, new profile, direct inference or
+  build this slice. Existing runtime remains as recorded in the pilot below.
+  Next: explicit queue admission and fixed-error-cohort model evaluation before
+  any synthesis/publication use. See EVENT_CLAIM_SUPPORT.md.
+
 # September 19, 2026: deployed private deconstruction pilot
 
 This entry supersedes the local-only status below. Admin `69e76a6`, LLM worker

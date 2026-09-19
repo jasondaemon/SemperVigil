@@ -7,6 +7,16 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
+## Latest local implementation: claim support audit
+
+`event_claim_support.py` now supplies a bounded, full-source audit contract for
+six separate support dimensions, strict complete claim inventory and an isolated
+source/claim/profile-bound cache. One unsupported dimension rejects a proposal;
+uncertainty holds it. Model agreement never authorizes publication. Original
+claims remain unchanged. No runtime integration, deployment or actual-model
+audit yet. Next: explicit existing-queue admission and fixed pilot-error cohort,
+then measured model evaluation before synthesis. See EVENT_CLAIM_SUPPORT.md.
+
 ## Current release checkpoint: September 19, 15:30 UTC
 
 Private deconstruction is deployed: admin `69e76a6`, LLM worker `c4f8ddf`,
