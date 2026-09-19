@@ -121,6 +121,8 @@ Changed-evidence admission must fingerprint source versions, scope and generatio
 policy, not report-written timestamps. The current private packet includes the
 legacy event `updated_at`, which is also changed by report writes: reusing that
 unchanged in an automatic publish/refresh loop could cause self-triggered churn.
+The local scoped-cache correction below addresses inference reuse, not automatic
+admission or publication; the running pilot still uses its original deployed code.
 Coalesce pending jobs, reuse unchanged assessments, limit inference by measured
 capacity and pause when fresh-content budgets are exceeded. Current `llm_runs`
 coverage is incomplete, so it is not yet a complete automated budget meter.
@@ -130,3 +132,25 @@ model suggestions and incident lifecycle. Failed assessment, stale evidence or
 scope changes preserve the last validated public revision. Public exports and daily
 JSON remain compatible and publish only through the existing platform API and
 atomic release process. The current private artifacts are not public revisions.
+
+## Timestamp-independent scoped reuse (local, not deployed)
+
+The scoped cache now keys the full bounded source snapshot, scope, exact model
+input/system text and guarded generation identity, excluding only the event's
+report-written `updated_at`. It still includes full documents, aliases, event ID
+and title, omission/truncation coverage, and every source metadata field. Changes
+outside the model's excerpt invalidate reuse too. Non-scoped v3 behavior is
+unchanged, as are all request formats and quality-case hashes.
+
+A hit revalidates the stored assessment against its original timestamp and the
+current exact source snapshot, then maps its validated decisions onto the current
+packet's passage IDs through the normal response validator. No stale packet IDs
+are returned. Stored corruption fails before inference. Existing exact-snapshot
+scoped entries can seed the new cache without another model call; no bulk cache
+rewrite or deletion occurs. Scope proposals and returned assessments remain private.
+
+Twelve additional tests cover timestamp-only reuse, correct rebinding, scope/cache
+tampering, changed full sources, coverage/title/alias/model invalidation and legacy
+entry reuse. 518 offline tests pass. This removes an unnecessary model call from
+future scoped refreshes; it does not prevent all legacy report/build churn, establish
+semantic correctness, or make private artifacts safe for public publication.

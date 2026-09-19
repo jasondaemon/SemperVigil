@@ -1304,3 +1304,25 @@ Rollback: disable scope admission/model use for scoped requests with
 or restore worker `293ad11` and admin `bddeff1`, preserving the v3 profile. Never
 leave a running model request orphaned to accelerate rollback. The unused scoped
 profile may remain for audit, with no ordinary pipeline routing to it.
+
+## Scoped cache stability follow-up, local only (07:35 UTC)
+
+Inspected the current public report path: `_handle_event_report_llm` builds from
+summaries/context, parses model output and calls `update_event_report`, which
+overwrites `meta.report` and touches `updated_at`. It does not supply an immutable
+validated revision or transactional source-version comparison. No publication
+approval may be inferred from this legacy path. Its behavior was not changed.
+
+Prepared the narrower, integrated scoped-cache correction in
+`EVENTS_INCIDENT_SCOPING.md`: exclude only report timestamp from cache identity,
+retain full source/coverage/configuration identity, and revalidate/rebind cached
+decisions to current snapshot IDs. Import an existing valid exact-snapshot scoped
+cache without another inference. No request/prompt/schema change. 518 offline tests
+pass (12 new); no deployment, new admission, public write, or model call for this
+slice. The three live scoped jobs remain queued behind normal backfill (155 jobs
+at the 07:34 check), without errors. Keep their runtime stable until evaluated.
+
+Public revision work must keep immutable candidates separate from the last accepted
+publication pointer, compare current source/scope versions inside activation's
+transaction, and preserve the old pointer on failed/stale assessment. Do not reuse
+`update_event_report` as that gate or treat an exact quotation as semantic approval.
