@@ -66,17 +66,23 @@ def scoped_enabled() -> bool:
     return value == "1"
 
 
-def payload_for(event_id: str, aliases: list[str], *, scope: dict | None = None) -> dict:
+def payload_for(event_id: str, aliases: list[str], *, scope: dict | None = None,
+                article_id: int | None = None) -> dict:
     if not _text(event_id, 128) or not event_id.strip():
         raise ValueError("invalid_event_id")
     payload = {"event_id": event_id, "aliases": _aliases(aliases), "workflow": WORKFLOW}
     if scope is not None:
         from .event_scope import declaration
         payload["scope"] = declaration(scope, event_id)
+    if article_id is not None:
+        if type(article_id) is not int or article_id <= 0 or scope is None:
+            raise ValueError("invalid_assessment_source")
+        payload["article_id"] = article_id
     return payload
 
 
-def submit(connection_factory, *, event_id: str, aliases: list[str], scope: dict | None = None) -> str:
+def submit(connection_factory, *, event_id: str, aliases: list[str], scope: dict | None = None,
+           article_id: int | None = None) -> str:
     """Own the admission connection; serialize duplicate requests transactionally.
 
     This operation is only called behind admin authorization. It neither reads
@@ -86,7 +92,7 @@ def submit(connection_factory, *, event_id: str, aliases: list[str], scope: dict
         raise PermissionError("private_review_disabled")
     if scope is not None and not scoped_enabled():
         raise PermissionError("private_scope_disabled")
-    payload = payload_for(event_id, aliases, scope=scope)
+    payload = payload_for(event_id, aliases, scope=scope, article_id=article_id)
     # Serialize every review admission, including queue-size checks, not just
     # requests for one event. This is a low-volume manual pilot operation.
     lock_id = int(_version({"namespace": JOB_TYPE})[:15], 16)
@@ -142,7 +148,8 @@ def run(payload: dict, *, complete=None) -> dict:
     if not enabled():
         return {"status": "skipped", "reason": "private_review_disabled", "public_eligible": False}
     if type(payload) is not dict or payload.keys() not in (
-            {"event_id", "aliases", "workflow"}, {"event_id", "aliases", "workflow", "scope"}):
+            {"event_id", "aliases", "workflow"}, {"event_id", "aliases", "workflow", "scope"},
+            {"event_id", "aliases", "workflow", "scope", "article_id"}):
         raise ValueError("invalid_private_review_payload")
     scope = payload.get("scope")
     if "scope" in payload:
@@ -150,7 +157,8 @@ def run(payload: dict, *, complete=None) -> dict:
             raise PermissionError("private_scope_disabled")
         if scope is None or complete is None:
             raise ValueError("private_scope_model_required")
-    canonical = payload_for(payload["event_id"], payload["aliases"], scope=scope)
+    article_id = payload.get("article_id")
+    canonical = payload_for(payload["event_id"], payload["aliases"], scope=scope, article_id=article_id)
     if payload != canonical:
         raise ValueError("invalid_private_review_payload")
     root = artifact_root()
@@ -165,7 +173,7 @@ def run(payload: dict, *, complete=None) -> dict:
         page = save(packet, root)
     else:
         from .event_assessment_cache import reuse
-        assessment, cache_hit = reuse(packet, complete, root, scope=scope)
+        assessment, cache_hit = reuse(packet, complete, root, scope=scope, article_id=article_id)
         page = save(packet, root, assessment=assessment)
     summary = None
     if assessment is not None:
@@ -174,6 +182,8 @@ def run(payload: dict, *, complete=None) -> dict:
                    "assessed": len(decisions), "not_assessed": assessment["omitted_passages"],
                    "included": decisions.count("include"), "held": decisions.count("hold"),
                    "excluded": decisions.count("exclude"), "status": "proposal_only"}
+        if article_id is not None:
+            summary["article_id"] = article_id
     return {"status": "review_ready", "event_id": payload["event_id"],
             "workflow": WORKFLOW, "packet_version": packet["packet_version"],
             "artifact": str(page.relative_to(root)), "documents": len(packet["documents"]),

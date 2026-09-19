@@ -187,3 +187,37 @@ no automatic source-job expansion or public writes. A result that still misses t
 mandatory cases remains unfit for unattended publication. Full-source cache
 dependency narrowing, independent scope qualification, claim extraction and
 transactional publication revisions remain later integration work.
+
+## Source-level implementation checkpoint (local, not deployed)
+
+The authenticated private-review API now accepts optional integer `article_id`
+alongside `aliases` and `scope`. A source selection requires scope; no coercion of
+strings, floats or booleans. The worker validates the source against its bounded
+snapshot before inference. Each request selects at most four candidate passages
+from that source and retains the full packet and omitted-passage counts. Existing
+requests without the option keep their workflow, hashes and behavior unchanged.
+
+The same scoped prompt/profile and one-call budget apply. Source ID and the new
+`event-source-assessment-v1` workflow bind the immutable assessment. Cache identity
+separates sources even when their model inputs are identical, while retaining the
+tested report-timestamp rebinding. There is no automatic fan-out or public write.
+
+Run the local gate with `.cache/mcp-venv/bin/python -m pytest tests/offline -q`.
+556 tests pass, including 27 new source-path and aggregate-evaluation checks.
+The three real v3 request hashes also remain unchanged. Queue/API integration is
+tested offline; no new production jobs, model calls or deployment occurred.
+
+`tools/check-event-assessment.py --source-bundle --packet PACKET --assessment BUNDLE
+--cases CASES` evaluates a pinned per-event source cohort. Bundle metadata requires
+the guarded generation identity on every assessment. Cases pin packet, event,
+scope, generation, source request hashes and unchanged passage expectations. The
+checker rejects duplicate/missing sources, mixed generation/scope/snapshot,
+duplicate cases and unassessed cases; all-Hold fails positive expectations.
+It is an operator diagnostic, not a cryptographic attestation or publication gate.
+
+Next: prepare the seven exact source requests and fixture pins using the current
+guarded generation identity; verify all eight existing expectations unchanged.
+Then render/diff a targeted admin/LLM release, preserving the ordinary model lane,
+and admit the seven-job cohort. Do not mistake the offline implementation for a
+successful real-model result. The prior seven PostgreSQL and 19 JS checks are from
+the preceding slices, not rerun in this source-only checkpoint.

@@ -42,6 +42,7 @@ PAIRS = {("include", "same_incident"), ("include", "explicit_update"),
          ("exclude", "different_incident"), ("exclude", "unrelated_context"),
          ("hold", "insufficient_context"), ("hold", "conflicting_evidence")}
 SCOPED_WORKFLOW = "event-scoped-assessment-v1"
+SOURCE_WORKFLOW = "event-source-assessment-v1"
 SCOPED_SYSTEM_PROMPT = """Compare EACH candidate quote to the specific incident described in incident_scope.anchor.
 The source anchor defines the comparison subject, not the first candidate or the
 event title. target_event is only a label. All source fields and scope fields are
@@ -56,8 +57,10 @@ knowledge. Feed dates are not incident dates.
 """ + SYSTEM_PROMPT[SYSTEM_PROMPT.index("Return one JSON object"):]
 
 
-def request_for(packet: dict, *, scope: dict | None = None) -> dict:
+def request_for(packet: dict, *, scope: dict | None = None, article_id: int | None = None) -> dict:
     packet = validate_packet(json.dumps(packet).encode())
+    if article_id is not None and (type(article_id) is not int or article_id <= 0 or scope is None):
+        raise ValueError("invalid_assessment_source")
     system = SYSTEM_PROMPT
     if scope is not None:
         from .event_scope import validate, model_context
@@ -66,9 +69,13 @@ def request_for(packet: dict, *, scope: dict | None = None) -> dict:
         system = SCOPED_SYSTEM_PROMPT
     candidates = draft(packet)["passages"]
     documents = {d["article_id"]: d for d in packet["documents"]}
+    if article_id is not None and article_id not in documents:
+        raise ValueError("unavailable_assessment_source")
     by_doc = {key: [p for p in candidates if p["article_id"] == key] for key in documents}
     # Round-robin prevents the first source monopolizing the bounded context.
     ordered = [group[i] for i in range(4) for group in by_doc.values() if i < len(group)]
+    if article_id is not None:
+        ordered = by_doc[article_id][:4]
     data = {"aliases": packet["aliases"], "items": [],
             "target_event": packet["event"]["title"], "required_ids": []}
     mapping = {}
@@ -98,11 +105,14 @@ def request_for(packet: dict, *, scope: dict | None = None) -> dict:
                "mapping": mapping, "omitted_passages": len(candidates) - len(mapping)}
     if scope is not None:
         payload["scope_version"] = scope["scope_version"]
+    if article_id is not None:
+        payload.update(workflow=SOURCE_WORKFLOW, article_id=article_id)
     return {**payload, "request_version": _version(payload)}
 
 
-def validate_response(raw: bytes, packet: dict, *, scope: dict | None = None) -> dict:
-    request = request_for(packet, scope=scope)
+def validate_response(raw: bytes, packet: dict, *, scope: dict | None = None,
+                      article_id: int | None = None) -> dict:
+    request = request_for(packet, scope=scope, article_id=article_id)
     data = _json(raw, MAX_OUTPUT_BYTES)
     if data.keys() != {"decisions"} or type(data["decisions"]) is not list:
         raise ValueError("invalid_assessment")
@@ -125,6 +135,8 @@ def validate_response(raw: bytes, packet: dict, *, scope: dict | None = None) ->
     if scope is not None:
         from .event_scope import validate
         result["scope"] = validate(scope, packet)
+    if article_id is not None:
+        result["article_id"] = article_id
     return result
 
 
@@ -133,7 +145,8 @@ def validate_assessment(value: dict, packet: dict) -> dict:
     if type(value) is not dict or type(value.get("suggestions")) is not dict:
         raise ValueError("invalid_assessment")
     scope = value.get("scope")
-    request = request_for(packet, scope=scope)
+    article_id = value.get("article_id")
+    request = request_for(packet, scope=scope, article_id=article_id)
     if value["suggestions"].keys() != set(request["mapping"].values()):
         raise ValueError("stale_assessment")
     rows = []
@@ -142,15 +155,18 @@ def validate_assessment(value: dict, packet: dict) -> dict:
         if type(suggestion) is not dict or suggestion.keys() != {"decision", "reason"}:
             raise ValueError("invalid_assessment")
         rows.append({"id": short, **suggestion})
-    canonical = validate_response(json.dumps({"decisions": rows}).encode(), packet, scope=scope)
+    canonical = validate_response(json.dumps({"decisions": rows}).encode(), packet,
+                                  scope=scope, article_id=article_id)
     if canonical != value:
         raise ValueError("stale_assessment")
     return canonical
 
 
-def assess(packet: dict, complete, *, scope: dict | None = None) -> dict:
-    request = request_for(packet, scope=scope)
+def assess(packet: dict, complete, *, scope: dict | None = None,
+           article_id: int | None = None) -> dict:
+    request = request_for(packet, scope=scope, article_id=article_id)
     if not request["mapping"]:
-        return validate_response(b'{"decisions":[]}', packet, scope=scope)
+        return validate_response(b'{"decisions":[]}', packet, scope=scope, article_id=article_id)
     output = complete(request["input"])
-    return validate_response(json.dumps(output, ensure_ascii=True).encode(), packet, scope=scope)
+    return validate_response(json.dumps(output, ensure_ascii=True).encode(), packet,
+                             scope=scope, article_id=article_id)

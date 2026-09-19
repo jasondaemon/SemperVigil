@@ -19,13 +19,16 @@ def _scoped_request_version(packet: dict, request: dict) -> str:
     # Keep all other snapshot fields, including omitted/truncated coverage.
     snapshot = {k: v for k, v in packet.items() if k != "packet_version"}
     snapshot["event"] = {k: v for k, v in packet["event"].items() if k != "updated_at"}
-    return _version({"workflow": "event-scoped-reuse-v1", "snapshot": snapshot,
+    identity = {"workflow": "event-scoped-reuse-v1", "snapshot": snapshot,
                      "scope_version": request["scope_version"],
-                     "system": request["system"], "input": request["input"]})
+                     "system": request["system"], "input": request["input"]}
+    if "article_id" in request:
+        identity.update(workflow="event-source-reuse-v1", article_id=request["article_id"])
+    return _version(identity)
 
 
 def _read(folder: int, name: str, packet: dict, request: str, generation: str,
-          *, scope: dict | None = None) -> dict | None:
+          *, scope: dict | None = None, article_id: int | None = None) -> dict | None:
     try:
         fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=folder)
     except FileNotFoundError:
@@ -44,7 +47,7 @@ def _read(folder: int, name: str, packet: dict, request: str, generation: str,
     if scope is not None:
         original = {**packet, "event": {**packet["event"], "updated_at": entry["event_updated_at"]}}
         original["packet_version"] = _version({k: v for k, v in original.items() if k != "packet_version"})
-        prior_request = request_for(original, scope=scope)
+        prior_request = request_for(original, scope=scope, article_id=article_id)
         assessment = validate_assessment(entry["assessment"], original)
         if (assessment["request_version"] != prior_request["request_version"]
                 or _scoped_request_version(original, prior_request) != request):
@@ -52,21 +55,22 @@ def _read(folder: int, name: str, packet: dict, request: str, generation: str,
         # Rebind exact validated decisions to the current packet's passage IDs.
         response = {"decisions": [{"id": key, **assessment["suggestions"][identity]}
                                   for key, identity in prior_request["mapping"].items()]}
-        return validate_response(json.dumps(response).encode(), packet, scope=scope)
+        return validate_response(json.dumps(response).encode(), packet, scope=scope, article_id=article_id)
     assessment = validate_assessment(entry["assessment"], packet)
     if assessment["request_version"] != request:
         raise ValueError("stale_assessment_cache")
     return assessment
 
 
-def reuse(packet: dict, complete: Callable[[str], dict], root: Path, *, scope: dict | None = None) -> tuple[dict, bool]:
+def reuse(packet: dict, complete: Callable[[str], dict], root: Path, *, scope: dict | None = None,
+          article_id: int | None = None) -> tuple[dict, bool]:
     """Only a guarded completion with a versioned configuration may use cache."""
     generation = getattr(complete, "cache_identity", None)
     if generation is None:
-        return assess(packet, complete, scope=scope), False
+        return assess(packet, complete, scope=scope, article_id=article_id), False
     if type(generation) is not str or not re.fullmatch(r"[0-9a-f]{64}", generation):
         raise ValueError("invalid_assessment_cache_identity")
-    full_request = request_for(packet, scope=scope)
+    full_request = request_for(packet, scope=scope, article_id=article_id)
     request = (_scoped_request_version(packet, full_request) if scope is not None
                else full_request["request_version"])
     name = _version({"request": request, "generation": generation}) + ".json"
@@ -79,7 +83,7 @@ def reuse(packet: dict, complete: Callable[[str], dict], root: Path, *, scope: d
             pass
         folder = os.open("assessment-cache", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root_fd)
         try:
-            cached = _read(folder, name, packet, request, generation, scope=scope)
+            cached = _read(folder, name, packet, request, generation, scope=scope, article_id=article_id)
             if cached is not None:
                 return cached, True
             value = None
@@ -90,7 +94,7 @@ def reuse(packet: dict, complete: Callable[[str], dict], root: Path, *, scope: d
                 value = _read(folder, legacy_name, packet, legacy_request, generation)
             imported = value is not None
             if value is None:
-                value = assess(packet, complete, scope=scope)
+                value = assess(packet, complete, scope=scope, article_id=article_id)
             entry = {"request_version": request, "generation_version": generation, "assessment": value}
             if scope is not None:
                 entry["event_updated_at"] = packet["event"]["updated_at"]
@@ -108,7 +112,7 @@ def reuse(packet: dict, complete: Callable[[str], dict], root: Path, *, scope: d
                     os.link(temporary, name, src_dir_fd=folder, dst_dir_fd=folder, follow_symlinks=False)
                 except FileExistsError:
                     # Another complete immutable result wins; never overwrite it.
-                    winner = _read(folder, name, packet, request, generation, scope=scope)
+                    winner = _read(folder, name, packet, request, generation, scope=scope, article_id=article_id)
                     if winner is None:
                         raise ValueError("assessment_cache_race")
                     return winner, False

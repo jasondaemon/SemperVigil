@@ -3220,6 +3220,7 @@ class EventPublishRequest(BaseModel):
 class EventPrivateReviewRequest(BaseModel):
     aliases: list[str]
     scope: dict[str, object] | None = None
+    article_id: int | None = None
     model_config = {"extra": "forbid", "strict": True}
 
 
@@ -3231,6 +3232,8 @@ def api_event_private_review(event_id: str, payload: EventPrivateReviewRequest) 
     from .event_review_jobs import submit
     try:
         options = {"scope": payload.scope} if payload.scope is not None else {}
+        if payload.article_id is not None:
+            options["article_id"] = payload.article_id
         job_id = submit(_get_conn, event_id=event_id, aliases=payload.aliases, **options)
     except PermissionError as exc:
         raise HTTPException(status_code=503, detail="private_review_disabled") from exc

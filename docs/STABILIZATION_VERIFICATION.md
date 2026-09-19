@@ -1383,3 +1383,23 @@ Next bounded implementation/test is source-level assessment, not further prompt-
 tuning: same model/profile/one-call jobs, at most four passages from one explicitly
 selected source, retaining all eight cases across seven source jobs. See
 `EVENTS_INCIDENT_SCOPING.md` for the exact scope and gates. No new calls admitted yet.
+
+## Source-level queue path, September 19 local checkpoint
+
+Added optional explicit source selection through the authenticated private API,
+queue payload, assessment, immutable metadata and cache. Same scoped prompt and
+one-call profile; all evidence remains visible in the private packet. Unknown
+sources fail before inference; source IDs cannot alias cache entries even with
+identical text. Timestamp-only reuse rebinds current passage IDs as before.
+
+Added a strict aggregate evaluation mode for pinned source cohorts. It refuses
+mixed scopes/generations/snapshots, missing or duplicate sources/cases, and absent
+case coverage. Positive expectations still fail all-Hold. These are provisional
+quality checks, not public-report approval.
+
+556 offline tests pass (27 new); `git diff --check` passes. Real Odido, Vercel and
+Commission v3 request hashes verified unchanged against the stored private packets.
+Seven PostgreSQL and 19 JS tests were previously passed, not rerun this checkpoint.
+Live admin and LLM Deployments both Ready at the start of this heartbeat. Production
+unchanged; no new inference, build, queue admission or rollout. Source-cohort pins
+and targeted release verification remain next; do not claim this is deployed.
