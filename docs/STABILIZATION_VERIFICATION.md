@@ -1591,3 +1591,31 @@ Read-only queue sample: five paired diagnostic jobs still queued; 80 normal CVE
 threat-actor jobs queued and one running. No reprioritization or retry performed.
 `.cache/collect-paired-cohort.py` is a read-only collector validating each completed
 cache entry, pinned generation/request, and immutable HTML hash. It does not enqueue.
+
+## Receipt release prepared, September 19 09:50 UTC
+
+Source `78a0739` is committed/pushed. Built its source-only image on the unchanged
+dependency base; a network-disabled container imports the receipt, worker and admin
+modules and confirms the new route. Image config digest
+`sha256:ea86519e70648d3e6923c0b4863f1c2140061475d20b892ac90dea53adfcdb10`;
+manifest `sha256:be977ffc8bc3c159543cfbac9e5385de66971f16c10efcbe892285b46cf19429`.
+The image is imported on all four eligible nodes, but no Deployment is changed.
+
+Rendered prospective admin and LLM manifests using platform values plus explicit
+image overrides. Server-side dry-run comparisons show only each Deployment's main
+and permission-init container image moving from `670558c` to `78a0739`. No service,
+ingress, environment, model setting, resource policy or builder change. Prospective
+files are ignored `.cache/events-receipt-admin.yaml` and
+`.cache/events-receipt-worker.yaml`; re-render/recompare at deployment time.
+Platform source values deliberately remain aligned with the currently running tag.
+
+Public checks passed at 09:53:16 UTC, including Events, homepage, search, metrics,
+sampled historical JSON and current feed index. API and etcd readiness passed.
+These are sampled HTTP checks, not semantic acceptance or whole-history proof.
+Read-only queue inspection shows ordinary CVE backlog reduced from 80 to 47, with
+the five diagnostic jobs still pending. Do not interrupt/reprioritize them.
+
+Deployment is deferred until this cohort is complete. Then preserve `670558c` as
+rollback, drain normally, change only the two source-of-truth image overrides,
+apply only the affected Deployments, verify a no-inference receipt cache-hit pilot,
+and confirm local/remote/platform/runtime agreement. No direct Hugo execution.

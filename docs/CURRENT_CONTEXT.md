@@ -7,7 +7,7 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
-## Current release checkpoint: September 19, 09:20 UTC
+## Current release checkpoint: September 19, 09:50 UTC
 
 - App source and runtime behavior: this repository. Environment values:
   `k8s-platform/apps/sempervigil/values.yaml`. Theme: `sempervigil-hugo`.
@@ -17,7 +17,10 @@
   diagnostics. See `EVENTS_PRIVATE_QUEUE.md` for current guards/profile IDs.
 - No new autonomous Events admission or validated public-report pipeline is enabled.
   Legacy Events behavior is not evidence that the new correctness gates are met.
-- One paired Vercel diagnostic is pending; do not repeat old pilot submissions.
+- Paired Vercel diagnostic passed; five remaining bounded source jobs are pending.
+  One over-budget source remains explicitly unassessed. Do not repeat submissions.
+- Private revision receipt release `78a0739` is built/imported and dry-run compared,
+  but not deployed. Platform values remain aligned with current runtime `670558c`.
 - Public checks passed after the last targeted rollout. Use the dated evidence in
   `STABILIZATION_VERIFICATION.md`, not this checkpoint as a live health monitor.
 - Preserve one local LLM job, API-driven publishing, incremental feed history and
