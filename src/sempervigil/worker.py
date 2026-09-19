@@ -7477,13 +7477,32 @@ def _private_review_completion(conn, job, logger):
         raise ValueError("private_review_provider_required")
     from .investigation import _version
     def completion(text):
-        output = run_profile(conn, profile_id, text, logger, context={
-            "stage": "event_review_private", "job_type": "event_review_private", "job_id": job.id})
-        current = _private_review_completion(conn, job, logger)
-        if current is None or current.cache_identity != completion.cache_identity:
-            raise ValueError("private_review_configuration_changed")
-        if not isinstance(output, dict) or output.get("schema_valid") is not True:
-            raise ValueError("private_review_router_result")
+        started = time.monotonic()
+        output = None
+        def record(error=None):
+            raw = output.get("raw") if isinstance(output, dict) else None
+            insert_llm_run(
+                conn, job_id=job.id, provider_id=profile["primary_provider_id"],
+                model_id=profile["primary_model_id"],
+                prompt_name=prompt.get("name") or "event_review_private",
+                input_chars=len(text), output_chars=len(raw) if isinstance(raw, str) else 0,
+                latency_ms=max(0, int((time.monotonic() - started) * 1000)),
+                ok=error is None, error=type(error).__name__ if error is not None else None,
+            )
+        try:
+            output = run_profile(conn, profile_id, text, logger, context={
+                "stage": "event_review_private", "job_type": "event_review_private", "job_id": job.id})
+            current = _private_review_completion(conn, job, logger)
+            if current is None or current.cache_identity != completion.cache_identity:
+                raise ValueError("private_review_configuration_changed")
+            if (not isinstance(output, dict) or output.get("schema_valid") is not True
+                    or not isinstance(output.get("parsed"), dict)):
+                raise ValueError("private_review_router_result")
+        except Exception as exc:
+            record(exc)
+            raise
+        # Generation success is not assessment validity or publication approval.
+        record()
         return output.get("parsed")
     # Hash configuration, not credentials; no raw endpoint or source text in metadata.
     completion.cache_identity = _version({

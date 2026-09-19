@@ -93,6 +93,27 @@ to advance its version timestamp before reusing results. Cache coverage is the
 bounded evidence packet, not omitted source text. Cache is an optimization for
 unverified suggestions, never evidence that a report is safe to publish.
 
+### Suggested reading and timing (local, release pending)
+
+Assessed reviews gain a separate expandable Suggested reading section. It is
+assembled deterministically from model-included, exact source passages, retaining
+source links, character spans, feed-date caveats and coverage counts. Held and
+excluded passages remain in the evidence review. This section does not set human
+Include choices, confirm incident identity, publish a report, or make another model
+call. An empty model selection explicitly produces no incident account.
+
+Private profile invocations record job/provider/model attribution, input/output
+character counts and elapsed milliseconds in the existing `llm_runs` table, on
+both success and error. No new schema or admin-side inference is involved.
+Errors store only the exception type, not source text or provider response bodies.
+Cache hits and extractive jobs make no model call and add no inference row.
+Success here means generation/envelope handling succeeded; subsequent assessment
+validation or factual review can still fail. These records are already available
+through the admin LLM-runs API. Older CVE and other job types are not all metered,
+so this table must not be described as complete platform inference usage. A hard
+process kill may also leave missing telemetry. Automatic budget admission must
+account for these gaps before it is enabled.
+
 A **distinct job type** is essential: an older worker could ignore a private-mode
 payload on `event_report_llm` and publish a normal report. Old workers do not know
 this new type, so a staged request remains queued rather than falling through to

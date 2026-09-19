@@ -92,6 +92,7 @@ def test_multi_source_budget_and_explicit_coverage(database):
 def configured(monkeypatch):
     monkeypatch.setenv("SV_EVENT_REVIEW_MODEL_ENABLED", "1")
     monkeypatch.setenv("SV_EVENT_REVIEW_PROFILE_ID", "review-profile")
+    monkeypatch.setattr(worker, "insert_llm_run", Mock())
     profile = {"id":"review-profile", "primary_model_id":"local-model", "primary_provider_id":"local",
                "prompt_id":"review-prompt", "fallback":[], "params":{
                    "temperature":0, "max_tokens":1024, "max_input_chars":12000}}
@@ -166,6 +167,7 @@ def test_model_worker_dispatch_is_private_and_fails_closed(monkeypatch, tmp_path
         repeated = worker.run_claimed_job(None, None, job, logging.getLogger("test"))
         assert repeated["model_cache_hit"] is True
         assert repeated["artifact"] == result["artifact"]
+        worker.insert_llm_run.assert_called_once()
     else:
         with pytest.raises(ValueError):
             worker.run_claimed_job(None, None, job, logging.getLogger("test"))

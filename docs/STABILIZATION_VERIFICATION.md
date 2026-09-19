@@ -987,3 +987,26 @@ last sample; no duplication or priority bypass. Real model quality/latency and
 live cache reuse remain unverified. Rollback should disable model assessment
 before returning to the previous image because `bddeff1` has the known router
 envelope mismatch. The extractive review mode and existing artifacts remain usable.
+
+## Suggested reading and private timing (September 19 UTC, local)
+
+Added an expandable private Suggested reading draft from model-included exact
+quotations, with source links/spans, coverage and explicit non-approval/date
+caveats. It never selects human Include choices. Held/excluded material remains
+auditable below; no included passages means no inferred account. No new model
+call or public export path. HTML tests verify escaped source content, retained
+citations, non-invention on empty selections, and unchanged extractive-only mode.
+
+Private profile calls now insert one attributed `llm_runs` record on success or
+failure. Timing includes router work and configuration recheck, not queue wait.
+Only counts and exception type are stored, not source bodies/provider errors.
+Generation success is not semantic assessment approval. Cache-hit dispatch is
+tested to produce neither a second call nor a second timing row. Existing table
+coverage is incomplete for other job types and hard-killed requests; future
+automatic admission cannot assume complete inference accounting.
+
+433 offline tests and 14 JavaScript tests pass. No new schema, dependency, model,
+concurrency or Hugo behavior. Release pending; original model pilot remains
+queued behind ordinary CVEs. Real model quality and live timing rows are not yet
+verified. This slice moves private review toward a readable automated draft, not
+an approved public Event report.

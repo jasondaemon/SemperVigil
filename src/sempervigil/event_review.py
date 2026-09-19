@@ -187,6 +187,34 @@ def validate_review(raw: bytes, packet: dict) -> dict:
     return review
 
 
+def _suggested_reading(packet: dict, proposal: dict, assessment: dict | None) -> str:
+    if assessment is None:
+        return ""
+    selected = [p for p in proposal["passages"]
+                if assessment["suggestions"].get(p["id"], {}).get("decision") == "include"]
+    sections = []
+    for doc in sorted(packet["documents"], key=lambda d: (d["feed_day"] or "9999", d["article_id"])):
+        passages = [p for p in selected if p["article_id"] == doc["article_id"]]
+        if not passages:
+            continue
+        quotes = "".join(f'<blockquote>{escape(p["quote"])}</blockquote>'
+                         f'<p class="muted">Source characters {p["start"]}-{p["end"]}</p>' for p in passages)
+        sections.append(f'<section><h2><a href="{escape(doc["url"], quote=True)}" '
+                        f'target="_blank" rel="noopener noreferrer">{escape(doc["title"])}</a></h2>'
+                        f'<p class="muted">Stored feed date: {escape(doc["feed_day"] or "Unknown")}</p>'
+                        f'{quotes}</section>')
+    coverage = len(assessment["suggestions"])
+    body = "".join(sections) or '<p>No passages were selected by the model. No account of the incident is inferred.</p>'
+    return (f'<details class="source" id="model-reading"><summary>Suggested reading - '
+            f'{len(selected)} unverified passage{"s" if len(selected) != 1 else ""}</summary>'
+            '<p class="banner">Private model-selected draft, not an approved report. '
+            'These are attributed source quotations, not independently confirmed facts. '
+            'Feed dates are not incident dates; shared organization names do not establish one incident.</p>'
+            f'<p class="muted">{coverage} passages assessed; {assessment["omitted_passages"]} '
+            'not assessed. Held and excluded passages remain available in the evidence review below.</p>'
+            f'{body}</details>')
+
+
 def render(packet: dict, review: dict | None = None, *, assessment: dict | None = None) -> str:
     proposal = draft(packet)
     if assessment is not None:
@@ -222,6 +250,7 @@ def render(packet: dict, review: dict | None = None, *, assessment: dict | None 
         "TITLE": escape(packet["event"]["title"]), "EVENT": escape(packet["event"]["id"]),
         "VERSION": packet["packet_version"], "WORKFLOW": WORKFLOW,
         "ALIASES": escape(", ".join(packet["aliases"])),
+        "MODELDRAFT": _suggested_reading(packet, proposal, assessment),
         "REVIEWID": _version({"review": review, "assessment": assessment}) if assessment else _version(review),
         "SCRIPTHASH": base64.b64encode(hashlib.sha256(script.encode()).digest()).decode(),
         "COUNT": str(len(packet["documents"])), "PASSAGES": str(len(proposal["passages"])),
