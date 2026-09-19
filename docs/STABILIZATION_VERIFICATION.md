@@ -1403,3 +1403,54 @@ Seven PostgreSQL and 19 JS tests were previously passed, not rerun this checkpoi
 Live admin and LLM Deployments both Ready at the start of this heartbeat. Production
 unchanged; no new inference, build, queue admission or rollout. Source-cohort pins
 and targeted release verification remain next; do not claim this is deployed.
+
+## Source-level release, September 19 08:37 UTC
+
+Admin and serialized LLM worker now run source `e93b6f0`; fixture/document commit
+`0e4a517`, platform values `aadba3a`, all pushed. Dependency base remains `27b9fb3`.
+Image manifest `sha256:cd58e77d37c2493b85fed4339cf044c52e7face99f8e8aa2eba7a0733c8a6c81`
+was imported to all four eligible nodes. Server-side comparisons verified only
+the two Deployments' container/init-container images changed. No ConfigMap,
+builder, fetch worker, web, model/profile, concurrency or resource-policy change.
+
+This release also activates the previously local scoped timestamp-cache reuse,
+legacy report stale-write guard and private job coverage display. Their prior
+seven disposable PostgreSQL checks passed; latest 557 offline and 19 JS tests,
+plus JS syntax, pass. No database migration. Unrelated platform edits preserved.
+
+Orchestrator was paused, its pod fully terminated, then the LLM/launch lane was
+rechecked empty before the worker was drained. Both targeted rollouts completed;
+orchestrator restored and Ready. Post-apply diffs empty. The guarded scoped factory
+returned the pinned generation identity without inference before and after rollout.
+All seven live packet/request hashes match the pinned local cases exactly.
+
+The seven private jobs were admitted through authenticated admin, unchanged low
+priority and single-attempt policy:
+
+- Odido 21505: `job_020cf63278d94e3584f2235415a0ccf9`
+- Odido 22331: `job_401bce323195455c9423d309646d67a1`
+- Vercel 26190: `job_6b06a8643ef049b5bacdea95d4f6fa5a`
+- Commission 21216: `job_85be3ec21fd448f4b5e85563d74c8160`
+- Commission 21218: `job_0edebac8fe654745b5773b106e6775c3`
+- Commission 23638: `job_639da8d43619476e8b4679b6fc6a74c3`
+- Commission 25303: `job_c836509331af459c9facde004f93c96c`
+
+Pending behind ordinary work at this checkpoint; do not duplicate or reprioritize.
+Read-only collector `.cache/collect-source-pilot.py` checks stored job/artifact and
+cache identities; aggregate evaluator must retain all eight pinned expectations.
+All three event fingerprints remain unchanged. Existing Commission private HTML
+hash unchanged; authenticated download remains 200, no-store and sandboxed.
+New coverage JavaScript served at the template's actual `/ui/static/admin/` path;
+no browser acceptance claimed. An initial diagnostic used the wrong static URL
+(404) and nonexistent queue sort column; corrected read-only probes succeeded.
+
+Public checker passed before release and at 08:37:20 UTC after release, including
+pages/assets and sampled historical JSON. API/etcd readiness passed; all workloads
+Ready, new admin/LLM pods zero restarts. This is point verification, not sustained
+availability proof. Public reporting remains gated; no new public Events output.
+
+Rollback: restore only admin/LLM tags to `6141d61` in platform values, render/diff,
+drain the serialized lane, apply only those Deployments and restore scheduling.
+Keep scoped profile/config and private artifacts; older worker rejects new
+source-level payloads rather than silently processing them as whole-event jobs.
+Avoid rollback with pending source jobs unless they are first handled explicitly.

@@ -232,3 +232,9 @@ Inputs contain three or four passages and 4,887-5,942 bytes including system tex
 557 offline tests pass. Source runtime image `e93b6f0` is prepared; targeted
 admin/LLM server-side spec comparisons show only container/init-container images
 changing from `6141d61`. Rollout and actual model results are not yet verified.
+
+Update: targeted `e93b6f0` rollout verified, platform `aadba3a`; all seven live
+request hashes and guarded generation identities matched before admission. Jobs
+are queued at unchanged priority. Exact IDs, public checks, cache/attachment
+verification and rollback are in `STABILIZATION_VERIFICATION.md`. Semantic quality
+is still pending; no public permission follows from a completed private job.
