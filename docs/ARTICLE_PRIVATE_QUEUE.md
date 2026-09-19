@@ -102,11 +102,17 @@ were 5,578 and 3,759 characters; their resulting summary requests are 11,823 and
 transport or malformed evidence, now causes the loss of event-relevant quantities,
 attack path, impact and uncertainty.
 
-`article-evidence-v6` therefore raises only the bounded sidecar capacity to 24.
-The 16KB output, 15KB request, 48-passage, one-call and strict validation limits
-remain in force. Existing daily summaries and JSON are unchanged. Re-validating
-the saved responses yields 8, 20 and 15 valid passage-bound facts without a model
-call. Deployment and semantic review of V6 remain pending.
+V6 raised the bounded sidecar capacity to 24 and was deployed as image `10fa79f`.
+Job `job_e9338577ee2a4aae9c66f0c7c886e65f` proved the model also ignores the
+summary schema's array limits. It produced 29 WaterPlum facts, and otherwise-valid
+summaries with eight sentences or ten bullets. Nothing was admitted or published.
+
+`article-evidence-v7` sets the hard evidence ceiling to 32, enough for all observed
+atomic facts while still bounded by the existing 16KB output, 15KB request and
+48-passage limits. The summary prompt now explicitly states its exact root, fields,
+four-sentence maximum and seven-bullet maximum. One call, no repair, strict schema
+validation and unchanged daily summaries/JSON remain in force. V7 deployment and
+semantic review remain pending.
 
 ## Operation
 

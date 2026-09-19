@@ -171,7 +171,7 @@ def test_context_prompt_states_exact_root_and_field_contract():
     assert "exactly one key named facts" in prompt
     assert "Use statement, never fact or fact_text" in prompt
     assert '"date_text":null,"date_role":"none"' in prompt
-    assert "at most 24 objects" in prompt
+    assert "at most 32 objects" in prompt
     assert evidence.context_schema()["properties"]["facts"]["maxItems"] == evidence.MAX_FACTS
 
 
@@ -180,6 +180,16 @@ def test_context_fact_count_remains_bounded():
     data["facts"] *= evidence.MAX_FACTS + 1
     with pytest.raises(ValueError, match="invalid_shape"):
         evidence.validate_context(encode(data), ARTICLE, GEN)
+
+
+def test_summary_prompt_states_exact_root_and_count_contract():
+    prompt = evidence.SUMMARY_PROMPT
+    words = " ".join(prompt.split())
+    assert "exactly one JSON object" in prompt
+    assert "exactly summary_sentences and" in prompt
+    assert "at most four objects" in words
+    assert "at most seven objects" in words
+    assert '"fact_ids":["f1"]' in prompt
 
 
 def test_empty_context_abstains_before_summary_request():
