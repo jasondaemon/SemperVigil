@@ -224,6 +224,8 @@ def _call_with_profile(
     ctx.setdefault("prompt_name", prompt_name)
     ctx.setdefault("provider_name", provider.get("name") or "")
     ctx.setdefault("model_name", model.get("model_name") or "")
+    if provider["type"] == "ollama_native" and schema:
+        ctx["ollama_response_schema"] = schema["json_schema"]
     if "openai_background_enabled" not in ctx:
         try:
             runtime = load_runtime_config(conn)
@@ -369,6 +371,11 @@ def _call_provider(
         response_format = None
         if assessment_ids is not None or deconstruction_source is not None or support_phase is not None:
             response_format = assessment_format
+        elif isinstance((context or {}).get("ollama_response_schema"), dict):
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {"schema": (context or {})["ollama_response_schema"]},
+            }
         elif bool((context or {}).get("json_response_format_enabled")):
             response_format = {"type": "json_object"}
         return _call_ollama_native(

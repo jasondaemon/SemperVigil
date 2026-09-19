@@ -13,12 +13,14 @@ failure, not a prompt or model-content failure. The same CVE through Ollama's
 native chat API with top-level `think=false` returned valid product JSON in 4.43s.
 
 Added an explicit native Ollama transport with deterministic non-thinking mode,
-JSON/schema mapping, token telemetry and private-review support. OpenAI and existing
-LiteLLM behavior are unchanged. Targeted router/event/private-review tests pass
-165/165; the full offline suite passes 981 with two skips. No profile, prompt,
+JSON/schema mapping, profile-schema forwarding, token telemetry and private-review
+support. OpenAI and existing LiteLLM behavior are unchanged. Targeted
+router/event/private-review tests pass; the full offline suite passes 982 with two skips. No profile, prompt,
 article, CVE, event, feed or public-site data was changed. The worker remains at
 zero replicas until the candidate image is deployed and the full real-input suite
-passes through that image. Cutover and rollback are model-reference transactions;
+passes through that image. The initial deployed candidate run passed six stages;
+article-product extraction exposed schema extras before profile-schema forwarding
+was added. Cutover and rollback are model-reference transactions;
 do not alternate loaded models during qualification.
 
 ## September 19, 20:23 UTC: passage-bound private article trial

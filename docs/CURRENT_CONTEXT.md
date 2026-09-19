@@ -15,8 +15,9 @@ an adapter defect: LiteLLM 1.77.7 places `think=false` inside Ollama generation
 options, so Qwen returns hidden reasoning and can leave visible JSON empty. No
 production profile was switched. A source-controlled `ollama_native` transport now
 sends top-level `think=false`, retains existing profile prompts and validation,
-and supports strict private-review schemas. A direct CVE probe returned valid JSON
-in 4.43 seconds. All 981 offline tests pass with two existing skips. The local LLM
+and forwards every existing profile schema to Ollama's constrained-output field,
+including strict private-review schemas. A direct CVE probe returned valid JSON
+in 4.43 seconds. All 982 offline tests pass with two existing skips. The local LLM
 worker remains paused for candidate qualification; production cutover is pending
 deployed seven-stage validation and must be one atomic profile transaction.
 

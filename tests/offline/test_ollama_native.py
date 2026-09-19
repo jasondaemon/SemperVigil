@@ -74,6 +74,41 @@ def test_native_private_transport_uses_strict_schema(monkeypatch):
     assert captured["payload"]["think"] is False
 
 
+def test_profile_schema_is_forwarded_to_native_ollama(monkeypatch):
+    schema = {
+        "type": "object",
+        "properties": {"items": {"type": "array"}},
+        "required": ["items"],
+        "additionalProperties": False,
+    }
+    profile = {
+        "name": "Products",
+        "primary_provider_id": "local",
+        "primary_model_id": "qwen",
+        "prompt_id": "prompt",
+        "schema_id": "schema",
+        "params": {},
+        "fallback": [],
+    }
+    captured = {}
+    monkeypatch.setattr(router, "get_profile", lambda conn, profile_id: profile)
+    monkeypatch.setattr(router, "get_provider", lambda conn, provider_id: _provider())
+    monkeypatch.setattr(router, "get_model", lambda conn, model_id: {"model_name": "ollama/qwen3.5:9b-q4_K_M"})
+    monkeypatch.setattr(router, "get_prompt", lambda conn, prompt_id: {
+        "name": "products", "system_template": "system", "user_template": "{{input}}"})
+    monkeypatch.setattr(router, "get_schema", lambda conn, schema_id: {"json_schema": schema})
+    monkeypatch.setattr(router, "load_provider_secret", lambda conn, provider_id: None)
+    monkeypatch.setattr(router, "load_runtime_config", lambda conn: type("C", (), {"llm": {}})())
+    monkeypatch.setattr(router, "_http_request", lambda method, url, headers, payload, provider,
+                        context=None: captured.update(payload=payload) or {
+                            "message": {"content": '{"items":[]}'}})
+
+    result = router.run_profile(object(), "profile", "input", router.logging.getLogger("test"))
+
+    assert result["schema_valid"] is True
+    assert captured["payload"]["format"] == schema
+
+
 def test_native_transport_rejects_empty_visible_content(monkeypatch):
     monkeypatch.setattr(
         router,
