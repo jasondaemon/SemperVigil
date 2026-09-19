@@ -1047,3 +1047,25 @@ Three bounded private calls are the explicit pilot, not permission for unlimited
 backfill. Evaluate actual aggregate timing before further admissions; pause
 expansion if it consumes the provisional 10% budget or delays fresh work.
 Commission's mixed-incident sources are a required quality counterexample.
+
+## First model cohort rejected; prompt correction (September 19 UTC)
+
+All three jobs failed with `invalid_assessment_values`. Generation times were
+9,785 ms (Odido), 10,680 ms (Vercel), and 12,529 ms (Commission): 32,994 ms total.
+The generation-only success records are not assessment approval. Bounded response
+inspection found slash-joined decision values and free-text reasons, matching the
+ambiguous shorthand in the prompt. No validator bypass, artifact or publication.
+Read-only `md5(to_jsonb(e)::text)` hashes for all three events match the pre-pilot
+values above. A different `row_to_json` serialization gives different hashes and
+must not be mistaken for changed rows.
+
+Commission output additionally merged parts of the staff MDM and cloud/Europa
+incidents, despite distinguishing some passages. This is a semantic failure, not
+fixed merely by a valid JSON response. Public reporting remains gated.
+
+Local assessment v2 uses explicit JSON decision/reason combinations, excludes
+generic company background at passage level, and warns against using the first
+source as incident definition. No change to accepted values, model, token cap,
+concurrency, router repair behavior, public data or Hugo. 437 offline tests pass;
+four new regressions cover prompt examples and rejection of observed bad values.
+Deployment and real-model v2 evaluation pending.

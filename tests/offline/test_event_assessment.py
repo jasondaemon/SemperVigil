@@ -29,6 +29,29 @@ def test_bounded_context_and_exact_source_mapping(database):
     assert "Shared company names" in request["system"]
 
 
+def test_prompt_examples_match_validator_without_slash_shorthand():
+    examples = [json.loads(line) for line in assessment.SYSTEM_PROMPT.splitlines()
+                if line.startswith('{"decision":')]
+    assert {(row["decision"], row["reason"]) for row in examples} == assessment.PAIRS
+    assert all(row.keys() == {"decision", "reason"} for row in examples)
+    assert "first passage" in assessment.SYSTEM_PROMPT
+
+
+@pytest.mark.parametrize("reason", ["same_incident", "Both passages describe the same breach."])
+def test_pilot_joined_decision_values_remain_rejected(database, reason):
+    packet = get_packet(database)
+    bad = response(packet, decision="include/same_incident", reason=reason)
+    with pytest.raises(ValueError, match="invalid_assessment_values"):
+        assessment.validate_response(json.dumps(bad).encode(), packet)
+
+
+def test_free_text_reason_is_not_silently_coerced(database):
+    packet = get_packet(database)
+    bad = response(packet, reason="Both passages describe the same breach.")
+    with pytest.raises(ValueError, match="invalid_assessment_values"):
+        assessment.validate_response(json.dumps(bad).encode(), packet)
+
+
 def test_model_suggestions_never_approve_reading_view(database, tmp_path):
     packet = get_packet(database)
     complete = Mock(return_value=response(packet))

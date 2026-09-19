@@ -194,10 +194,18 @@ content or per-job detail retrieval is added to the dashboard.
 - User gave initial positive visual feedback on the private review pages. This
   does not validate their facts or the newly changed dashboard in a live browser.
 
-Next check: observe model pilot `job_2be77141919a403592ce6ca21ce8e8a3`, verify its
-attachment and suggestions, measure inference latency/coverage, and confirm the
-event-row fingerprint remains `92ce5376ad269aa1f073fafdc75f98d4`. Do not assume a
-changed row was caused by the pilot; investigate concurrent normal enrichment.
-Then evaluate multiple incidents and advance automated evidence/change admission
-and reporting. A successful private pilot is not completion of automated public
-Events. Do not resubmit this pending pilot or bypass the ordinary queue.
+The first three model jobs failed closed with `invalid_assessment_values`:
+the model returned slash-joined decisions and prose reasons instead of the exact
+two-field codes. They used 32,994 ms in total and produced no review artifacts.
+All three event-row `md5(to_jsonb(e)::text)` fingerprints remained unchanged.
+The Commission response also confused separate incidents; structural compliance
+alone must not unlock publication.
+
+Assessment v2 replaces ambiguous slash shorthand with exact JSON field examples,
+clarifies passage-level relevance and rejects using the first source as incident
+identity. The validator is unchanged: no coercion of invalid model output, extra
+repair call or public permission. Request/workflow versions invalidate old caches.
+437 offline tests pass, including the observed invalid-output pattern. Deployment
+and a bounded new cohort are pending. These tests do not establish model quality.
+Evaluate the Commission counterexample and other real incidents before automated
+evidence admission or public reporting. Private success is not the final goal.
