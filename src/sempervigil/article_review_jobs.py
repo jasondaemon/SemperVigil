@@ -102,7 +102,7 @@ def complete(conn, job_id: str, request: dict) -> str:
 def run(conn, job, *, generate=None) -> dict:
     require_enabled()
     payload = job.payload or {}
-    if (job.job_type != JOB_TYPE or job.result or job.attempt_count != 1 or job.max_attempts != 1
+    if (job.job_type != JOB_TYPE or job.result or job.attempt_count != 0 or job.max_attempts != 1
             or job.queue_name != "llm_local" or job.status != "running"
             or set(payload) != {"workflow", "generation", "articles"}
             or payload["workflow"] != evidence.WORKFLOW):

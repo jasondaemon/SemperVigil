@@ -2,11 +2,12 @@
 
 ## Status
 
-Implemented locally, not deployed. No new provider calls or production writes.
-Image build/release access is unresolved: the local Docker daemon is unavailable
-and attempted SSH access to the deployment node failed authentication. Do not
-copy Python into running production containers as a workaround. Disposable
-PostgreSQL integration and rendered/live manifest review remain release gates.
+Release validation in progress. The earlier access blocker was an operator-context
+error: prior successful releases use the designated remote image builder, import
+the image into K3s/containerd and apply scoped Helm-rendered Deployments. Local
+Docker is not required. The established account/key were recovered from prior
+release records and verified. See KUBERNETES_RELEASE.md. Never copy code into live
+containers as a workaround. Actual model results are recorded after the canary.
 
 ## Operation
 

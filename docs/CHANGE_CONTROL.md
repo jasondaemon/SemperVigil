@@ -1,5 +1,22 @@
 # Change Control Log
 
+## 2026-09-19: Kubernetes release recovery and queue integration gate
+
+- Recovered and verified the established remote image-builder/K3s import path
+  from prior successful release commands. Local Docker was never required; the
+  prior access blocker was an operator-context error. Documented the workflow.
+- Corrected the admin connection lifetime (DBConn is not a context manager) and
+  private guard to match claim_next_job's unchanged zero attempt_count. Persistent
+  result reservation, not that unused counter, prevents automatic replay.
+- 1004 offline tests pass, one skip. One disposable PostgreSQL lifecycle test
+  passes in an isolated Kubernetes pod, exercising admission, deduplication after
+  success, actual claim and private result persistence with mocked inference.
+- The initial full bootstrap exposed an existing products-table ordering issue;
+  no production migration was run or changed. The queue integration test uses
+  explicit disposable tables matching the queue fields, not a full migration test.
+- Scope for release: admin and local LLM worker images plus private comparison
+  flag only. Strict normal validation stays off; no builder/web/public changes.
+
 ## 2026-09-19: Private article comparison queue, local only
 
 - Add separate default-disabled admin admission/LLM queue dispatch and dashboard

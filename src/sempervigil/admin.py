@@ -3342,13 +3342,17 @@ def api_article_private_review(payload: ArticlePrivateReviewRequest) -> dict:
     if not os.environ.get("SV_ADMIN_TOKEN"):
         raise HTTPException(status_code=503, detail="private_review_auth_required")
     from .article_review_jobs import submit
+    conn = None
     try:
-        with _get_conn() as conn:
-            job_id = submit(conn, payload.article_ids)
+        conn = _get_conn()
+        job_id = submit(conn, payload.article_ids)
     except PermissionError:
         raise HTTPException(status_code=503, detail="article_review_disabled") from None
     except ValueError:
         raise HTTPException(status_code=400, detail="article_review_invalid") from None
+    finally:
+        if conn is not None:
+            conn.close()
     return {"job_id": job_id, "public_eligible": False}
 
 

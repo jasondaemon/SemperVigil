@@ -9,6 +9,14 @@
 
 ## Current direction: strengthen and reuse article enrichment
 
+Release-workflow correction: local Docker/guessed SSH were not prerequisites.
+Recovered the established remote image-builder account/key from prior successful
+release commands; production remains K3s/containerd. See KUBERNETES_RELEASE.md.
+During pre-release integration, corrected admin DBConn lifecycle and private
+job's attempt-count expectation (claim leaves it zero; result reservation blocks
+replay). Validation and scoped release are in progress; older blocker notes below
+are superseded.
+
 Latest local work: `article_review_private` implements default-disabled queued
 comparison of up to three stored articles (six calls maximum, no retries/repair).
 Admin admission and dashboard registry are wired; outputs only go to private jobs.

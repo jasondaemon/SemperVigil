@@ -24,7 +24,7 @@ def harness(monkeypatch):
 
 
 def job(count=1):
-    return SimpleNamespace(id='test', job_type=review.JOB_TYPE, result=None, attempt_count=1,
+    return SimpleNamespace(id='test', job_type=review.JOB_TYPE, result=None, attempt_count=0,
         max_attempts=1, queue_name='llm_local', status='running', payload={
             'workflow': evidence.WORKFLOW, 'generation': GEN,
             'articles': [{**ARTICLE, 'id': 7+i} for i in range(count)]})
@@ -182,3 +182,14 @@ def test_default_error_path_preserves_deployed_behavior(monkeypatch):
     monkeypatch.setattr(worker, 'record_article_enrichment_error', lambda *a, **kw: pytest.fail('strict enabled'))
     worker._article_enrichment_error(object(), 7, kind='summary', error='missing_content')
     assert writes[0]['summary_llm'] is None and writes[0]['summary_error'] == 'missing_content'
+
+
+def test_admin_admission_closes_non_context_manager_connection(monkeypatch):
+    from sempervigil import admin
+    closed = []
+    conn = SimpleNamespace(close=lambda: closed.append(True))
+    monkeypatch.setenv('SV_ADMIN_TOKEN', 'offline-test-only')
+    monkeypatch.setattr(admin, '_get_conn', lambda: conn)
+    monkeypatch.setattr(review, 'submit', lambda c, ids: 'private-test')
+    result = admin.api_article_private_review(admin.ArticlePrivateReviewRequest(article_ids=[7]))
+    assert result['job_id'] == 'private-test' and closed == [True]
