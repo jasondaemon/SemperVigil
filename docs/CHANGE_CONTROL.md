@@ -1,5 +1,20 @@
 # Change Control Log
 
+## 2026-09-19: Replay determinism and measured comparison-rule correction
+
+- V3 actual results: eleven of twelve bad claims rejected, one falsely accepted;
+  two of five supported claims accepted, two rejected and one held. Frozen gold
+  remains unchanged. Recorded reasons expose reversed entailment (requiring the
+  summary to repeat every citation detail) and an invented category relationship.
+- V4 explicitly preserves entailment direction and forbids assumed security-label
+  equivalence. No new authority or resource changes. New five-claim source cohort
+  frozen before its first audit; actual V4 results pending.
+- Fix source request field ordering on sorted artifact reload while retaining the
+  exact original snapshot wire order and existing live cache keys. Regression test
+  reconstructs the original source receipt from saved JSON without new inference.
+- Add offline fixed-cohort evaluator: missing cases, duplicates, holds and false
+  decisions cannot be counted as a pass. No expectation changes to improve scores.
+
 ## 2026-09-19: Isolate quotation support from source-context audit
 
 - V3 asks one textual comparison at a time. Quotation phase receives no article,

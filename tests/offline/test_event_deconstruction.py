@@ -66,6 +66,16 @@ def test_request_is_full_source_bounded_and_timestamp_independent(database):
     assert len((first["system"] + first["input"]).encode()) <= draft.MAX_INPUT_BYTES
 
 
+def test_saved_sorted_packet_reconstructs_identical_source_receipt(database):
+    packet = get_packet(database)
+    scope = proposal(packet)
+    result = draft.validate_response(json.dumps(response(packet)).encode(), packet, scope, 1)
+    result['generation_version'] = 'a' * 64
+    loaded = json.loads(json.dumps(packet, sort_keys=True))
+    assert draft.request_for(loaded, scope, 1) == draft.request_for(packet, scope, 1)
+    assert draft.validate_result(result, loaded, scope, 1, 'a' * 64) == result
+
+
 def test_exact_claim_evidence_and_private_status(database):
     packet = get_packet(database)
     result = draft.validate_response(json.dumps(response(packet)).encode(), packet, proposal(packet), 1)

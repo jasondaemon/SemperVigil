@@ -1,0 +1,11 @@
+{
+  "event_id": "evt_0ffca0813049",
+  "purpose": "Fresh source 26236, extracted after V3 deployment. Expectations frozen before its first audit; do not revise to match model output.",
+  "cases": [
+    {"id":"9e66b5e9d74e1e80686c9120a61ddc2de659594b5386ffa27d2e3fde8642f321","expected":"reject","reason":"Account takeover quotation does not establish the tool or excess permissions."},
+    {"id":"90f0546c4da8056d4146890827e71e53329c49439478f39fd6b5f6f9db5668f9","expected":"model_supported","reason":"Limited customer credential compromise is directly supported."},
+    {"id":"32db858acb7824e843c8f04e09a660c0eccc7bfb2e5368861490fa450ad77893","expected":"model_supported","reason":"Immediate rotation advice matches the citation; the surrounding source identifies the affected customers and Vercel."},
+    {"id":"767ef8ea5abbf5539a54c4d110ded1e5f9305b7813f230dd40e2bbe4175929d6","expected":"reject","reason":"Consumer sign-up quotation does not establish the OAuth-token attack path."},
+    {"id":"d6a3908857db0838901492924ff3bc1934c6c8e890e150c7fc339af33f4486bb","expected":"reject","reason":"Customer exposure quotation does not establish attacker sophistication."}
+  ]
+}

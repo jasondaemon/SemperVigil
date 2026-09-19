@@ -72,7 +72,9 @@ def request_for(packet: dict, scope: dict, article_id: int) -> dict:
     doc = next((d for d in packet["documents"] if d["article_id"] == article_id), None)
     if doc is None:
         raise ValueError("deconstruction_source_unavailable")
-    data = {"incident_scope": model_context(scope, packet), "source": doc}
+    # Preserve the original snapshot wire order even after sorted artifact JSON reload.
+    source = {key: doc[key] for key in ("article_id", "title", "url", "feed_day", "text")}
+    data = {"incident_scope": model_context(scope, packet), "source": source}
     encoded = json.dumps(data, ensure_ascii=True, separators=(",", ":"))
     if len((SYSTEM_PROMPT + encoded).encode()) > MAX_INPUT_BYTES:
         raise ValueError("deconstruction_source_over_budget")
