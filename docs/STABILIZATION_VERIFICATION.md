@@ -2009,6 +2009,54 @@ All expected production replicas were ready at this checkpoint's opening.
 - Semantic synthesis, real-model evaluation, correction adjudication and guarded
   publication remain open. Prior PostgreSQL/JS results were not rerun this slice.
 
+# September 19, 2026: real queued claim support evaluation
+
+- Admin `eff906d`, LLM worker `3148e06`, platform `023f17c`. Render/live scoped
+  diff empty. Only admin/LLM images and private support config changed. Drained
+  queues, paused/resumed orchestrator admission and waited for old LLM pod deletion
+  before requesting inference. No overlapping pilot inference. Image tag was
+  quoted after pre-apply rendering caught YAML scientific-notation coercion.
+- Explicit `audit_source` uses the existing private-review API/job/viewer with
+  current source validation and no fallback extraction. No schema, builder, web,
+  feed, model/context/resources or concurrency changes. No direct Hugo invocation.
+- Dedicated profiles created through the authenticated AI API: v1
+  `3c32c1f5-99fb-5d7e-92a7-708e7c74e9d7` (now disabled), v2
+  `51ab710c-fe80-59fb-897e-0653ab078f8b`. Same local model, no fallback, temperature
+  zero, 15KB input budget, max output 1536. No automatic audit admission.
+- Frozen 17-case expectations committed BEFORE inference in
+  `tests/fixtures/event_claim_support_pilot.json`: five supported, twelve rejected.
+  V1 jobs `job_15d6ce4138db43b4a90eb2891471e675`,
+  `job_45e683e7b9b7479288acc9827ca45879`,
+  `job_8ee626dab5684fa5b81a255485406f89` completed with one call each, respectively
+  14.562s, 14.946s, 12.374s. One false acceptance, three false rejections. Several
+  correct aggregate rejections had wrong reasons, especially null-date failure.
+  This did NOT establish semantic validity.
+- V2 checks one claim per call, serially, preserving per-claim cache on later
+  failure. No asserted date is a deterministic supported/non-assertion dimension.
+  Expectations unchanged. Jobs `job_41e282c072db44d59d771aa53d0e7b53` (six calls,
+  17.754s), `job_e662e452722e4d30b91b321f37808490` (six, 17.820s), and
+  `job_6a2999b7697548dbb25ad8c9585c525a` (five, 14.870s) all succeeded.
+  Total 50.444s / 17 calls, about 2.97s each. Five negative cases rejected, seven
+  negatives held, all five positives held. ZERO accepted claims is not a passing
+  classifier. Publication-quality acceptance remains FAILED. No further prompt
+  iterations were run; do not convert uncertainty into approval to raise yield.
+- Cache replay jobs `job_91169a6ba9d94ec086899e337f96dc0e`,
+  `job_05f8c429869b44fca339103d38990592`,
+  `job_5f52908997054d899a23021fd5c8cf54` all succeeded with cache hits and ZERO
+  llm_runs. Results remain private, with no approval receipt/public write.
+- 856 offline tests pass, one Linux-only skip, existing deprecation warnings.
+  Tests cover real worker dispatch with mocked inference, existing artifact
+  reader, disabled admission, schema transport restrictions, partial-cache resume,
+  and deterministic absent dates. PostgreSQL/JS suites not rerun this slice.
+- Publication checks passed all 20 tests at 17:43 and 17:53 UTC. All Deployments
+  ready and API readiness healthy; Ollama on GPU, successful calls and no grammar
+  crashes in recent logs. All 5,060 archive days retained. Public Vercel revision
+  remains `c44cc56060cba571615cc697fc2d4930edacacdb94bbedf92104d9ce46a90252`.
+  These are sampled checks, not zero-interruption or DB-completeness guarantees.
+- Next: isolate quote entailment from independent factual certainty, then evaluate
+  without weakening frozen expectations. Automatic narrative publication remains
+  unfinished. Existing quotation-only production automation is unchanged.
+
 # September 19, 2026: local claim support audit
 
 - Added `event_claim_support.py`: six independent support dimensions over exact

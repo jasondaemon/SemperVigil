@@ -7,7 +7,21 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
-## Latest local implementation: claim support audit
+## Latest deployment: queued claim support audit
+
+Admin `eff906d`, LLM worker `3148e06`, platform `023f17c`. Explicit `audit_source`
+admission uses existing private jobs/artifact viewer and a separate pinned profile.
+Builder/web/feed/schema/concurrency unchanged. V1 real evaluation failed: one
+false acceptance, three false rejections, and incorrect null-date reasons.
+V2 isolates one claim per serialized call and handles absent dates in code, with
+per-claim resumable cache. Frozen 17-claim expectations remain unchanged. V2 real
+pilot finished: five negative cases rejected, seven negatives held, all five
+positives also held. It accepts nothing; do not call this a passing semantic gate.
+Total model time 50.444s over 17 calls. Next separate quotation entailment from
+factual certainty; do not relabel holds or weaken the frozen expectations.
+856 offline tests pass, one Linux-only skip. See EVENT_CLAIM_SUPPORT.md.
+
+## Earlier local implementation: claim support audit
 
 `event_claim_support.py` now supplies a bounded, full-source audit contract for
 six separate support dimensions, strict complete claim inventory and an isolated
