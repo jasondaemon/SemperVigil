@@ -2080,6 +2080,10 @@ function wireJobs() {
           ? `<div class="truncate" title="${esc(text)}">${esc(text)}</div>`
           : `<span class="muted">—</span>`;
       }
+      if (job.job_type === "event_review_private" && job.status === "succeeded"
+          && job.result?.status === "review_ready" && job.result?.public_eligible === false) {
+        resultHtml += `<a href="/admin/api/jobs/${encodeURIComponent(job.id)}/private-review">Download private review</a>`;
+      }
       const row = document.createElement("tr");
       row.innerHTML = `
         <td>${renderShortId(job.id, `/ui/jobs/${job.id}`)}</td>
@@ -5328,6 +5332,33 @@ function wireEvents() {
   }
   load(1).catch((err) => setError(err.message || String(err)));
 }
+function wirePrivateEventReview() {
+  const button = document.getElementById("event-review-queue");
+  const input = document.getElementById("event-review-aliases");
+  const status = document.getElementById("event-review-status");
+  const eventId = document.getElementById("event-detail")?.dataset.eventId;
+  if (!button || !input || !status || !eventId) return;
+  apiFetch("/admin/api/private-reviews/status").then(data => {
+    button.disabled = data.enabled !== true;
+    status.textContent = data.enabled ? "Private review available. Nothing is published automatically." : "Private review admission is disabled.";
+  }).catch(() => { status.textContent = "Private review unavailable. Check admin authentication."; });
+  button.onclick = async () => {
+    if (button.disabled) return;
+    button.disabled = true;
+    try {
+      const aliases = input.value.split(",").map(value => value.trim()).filter(Boolean);
+      const result = await apiFetch(`/admin/api/events/${encodeURIComponent(eventId)}/private-review`, {
+        method: "POST", body: JSON.stringify({aliases}),
+      });
+      status.textContent = `Queued ${result.job_id}. Follow Private review jobs and downloads below.`;
+    } catch (err) {
+      status.textContent = `Could not queue review: ${err.message || String(err)}`;
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
+
 function wireEventDetail() {
   const container = document.getElementById("event-detail");
   if (!container) {
@@ -6509,6 +6540,7 @@ document.addEventListener("DOMContentLoaded", () => {
   wireBriefDetail();
   wireEvents();
   wireEventDetail();
+  wirePrivateEventReview();
   wireProducts();
   wireProductDetail();
   wireDangerZone();

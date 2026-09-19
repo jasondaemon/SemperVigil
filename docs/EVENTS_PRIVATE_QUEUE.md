@@ -63,9 +63,16 @@ ID, packet version, relative artifact path, coverage counts, and
   a skipped result if a private review was already queued; requeue explicitly when
   enabled again rather than assuming disabled work will resume automatically.
 
-Artifacts currently require authorized operator retrieval. A dedicated admin
-artifact viewer/download route is not implemented; the existing Jobs detail view
-shows the bounded result metadata. Do not link `/log` directly into the website.
+Event Detail now has a private-review queue control with explicit aliases and
+availability feedback. Completed private jobs expose an authenticated attachment
+download at `/admin/api/jobs/{job_id}/private-review`. Requests cannot specify
+filesystem paths. Reads reject wrong job types/states, symlinked artifact folders
+or files, nonregular files, oversized files, malformed paths, and changed HTML
+bytes. Private evidence fails closed when the admin token is not configured.
+Responses are non-cacheable sandboxed attachments, never inline admin HTML.
+Downloads remain available when admission is disabled. They are historical
+snapshots, not a claim that current evidence still matches or publication is safe.
+Do not link `/log` directly into the website.
 
 ## Dashboard corrections
 

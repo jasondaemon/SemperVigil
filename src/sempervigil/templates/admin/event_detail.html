@@ -31,6 +31,15 @@
     </div>
   </div>
   <div class="panel">
+    <div class="panel-header"><h2>Private Evidence Review</h2></div>
+    <p>Prepare source excerpts for this incident. This does not publish a report or call the LLM.</p>
+    <label for="event-review-aliases">Organization or incident names (one to five, comma-separated)</label>
+    <input class="input" id="event-review-aliases" maxlength="404" placeholder="Example Organization, Example Incident">
+    <button class="btn secondary" id="event-review-queue" type="button" disabled>Queue Private Review</button>
+    <p id="event-review-status" role="status">Checking availability...</p>
+    <a href="/ui/jobs?job_type=event_review_private">Private review jobs and downloads</a>
+  </div>
+  <div class="panel">
     <div class="panel-header"><h2>CVEs</h2></div>
     <table class="table" id="event-cves-table">
       <thead>

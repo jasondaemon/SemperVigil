@@ -1,6 +1,9 @@
 """Opt-in queue integration for private extractive review, never publication."""
 import json
 import os
+import hashlib
+import re
+import stat
 from pathlib import Path
 
 from .event_review import WORKFLOW, _aliases, draft, save, snapshot
@@ -8,6 +11,45 @@ from .investigation import EVIDENCE_SCOPE, READ_SCOPE, _text, _version, postgres
 from .storage import enqueue_job
 
 JOB_TYPE = "event_review_private"
+MAX_REVIEW_BYTES = 16 * 1024 * 1024
+
+
+def read_artifact(job) -> bytes:
+    """Read only the immutable HTML named by a completed private job.
+
+    Open directory/file descriptors without following symlinks so validation
+    cannot race a path replacement. Never accept a client-supplied path.
+    """
+    result = job.result
+    if (job.job_type != JOB_TYPE or job.status != "succeeded"
+            or not isinstance(result, dict) or result.get("status") != "review_ready"
+            or result.get("workflow") != WORKFLOW or result.get("public_eligible") is not False):
+        raise ValueError("private_review_unavailable")
+    version = result.get("packet_version")
+    artifact = result.get("artifact")
+    if not isinstance(version, str) or not re.fullmatch(r"[0-9a-f]{64}", version):
+        raise ValueError("private_review_unavailable")
+    if not isinstance(artifact, str) or not re.fullmatch(
+            re.escape(version) + r"/review-[0-9a-f]{16}\.html", artifact):
+        raise ValueError("private_review_unavailable")
+    root_fd = os.open(artifact_root(), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        folder_fd = os.open(version, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root_fd)
+        try:
+            name = artifact.split("/")[1]
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=folder_fd)
+            with os.fdopen(fd, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= MAX_REVIEW_BYTES:
+                    raise ValueError("private_review_unavailable")
+                data = stream.read(MAX_REVIEW_BYTES + 1)
+                if len(data) > MAX_REVIEW_BYTES or hashlib.sha256(data).hexdigest()[:16] != name[7:-5]:
+                    raise ValueError("private_review_unavailable")
+                return data
+        finally:
+            os.close(folder_fd)
+    finally:
+        os.close(root_fd)
 
 
 def enabled() -> bool:

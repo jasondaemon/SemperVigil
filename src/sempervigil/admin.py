@@ -10,7 +10,7 @@ from typing import Any
 from pathlib import Path
 
 from fastapi import Body, APIRouter, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 try:
     from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -2186,6 +2186,40 @@ def debug_products_smoke(payload: ProductsSmokeRequest) -> dict[str, object]:
     return result
 
 
+@app.get("/admin/api/jobs/{job_id}/private-review", dependencies=[Depends(_require_admin_token)])
+def download_private_review(job_id: str) -> Response:
+    # Unlike legacy admin routes, private evidence must fail closed without auth.
+    if not os.environ.get("SV_ADMIN_TOKEN"):
+        raise HTTPException(status_code=503, detail="private_review_auth_required")
+    from .event_review_jobs import read_artifact
+    conn = _get_conn()
+    try:
+        job = get_job(conn, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="private_review_unavailable")
+        try:
+            data = read_artifact(job)
+        except (OSError, ValueError):
+            raise HTTPException(status_code=404, detail="private_review_unavailable") from None
+    finally:
+        conn.close()
+    return Response(data, media_type="text/html", headers={
+        "Content-Disposition": 'attachment; filename="sempervigil-private-review.html"',
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "sandbox; default-src 'none'; frame-ancestors 'none'",
+        "Referrer-Policy": "no-referrer",
+    })
+
+
+@app.get("/admin/api/private-reviews/status", dependencies=[Depends(_require_admin_token)])
+def private_review_status() -> dict[str, object]:
+    from .event_review_jobs import enabled
+    if not os.environ.get("SV_ADMIN_TOKEN"):
+        raise HTTPException(status_code=503, detail="private_review_auth_required")
+    return {"enabled": enabled(), "public_eligible": False}
+
+
 @app.get("/jobs")
 def jobs(
     page: int = 1,
@@ -3190,6 +3224,8 @@ class EventPrivateReviewRequest(BaseModel):
 @app.post("/admin/api/events/{event_id}/private-review",
           dependencies=[Depends(_require_admin_token)])
 def api_event_private_review(event_id: str, payload: EventPrivateReviewRequest) -> dict[str, object]:
+    if not os.environ.get("SV_ADMIN_TOKEN"):
+        raise HTTPException(status_code=503, detail="private_review_auth_required")
     from .event_review_jobs import submit
     try:
         job_id = submit(_get_conn, event_id=event_id, aliases=payload.aliases)

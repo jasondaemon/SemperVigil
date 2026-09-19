@@ -796,3 +796,15 @@ no schema or public-content changes to undo. Keep private admission disabled.
 Application changes and SemperVigil platform values are committed/pushed. The
 platform worktree has pre-existing unrelated appliance-proxy/certificate edits;
 they were preserved and excluded, so the entire platform repo is not clean.
+
+## Private operator workflow (September 19 UTC, pilot preparation)
+
+Added an explicit Event Detail queue control, admission status API, and completed
+job attachment download. Private admission/retrieval require configured admin
+authentication; disabling admission does not destroy historical downloads.
+Descriptor-based bounded reads reject folder/file symlinks, nonregular/oversized
+files, path traversal and byte/hash mismatch. Headers force private no-store
+attachment delivery with a sandbox policy. No client-supplied filesystem path.
+390 offline Python and 14 JS tests pass. Real production pilot is next; no public
+report or model-generation behavior changed. User requested continued overnight
+implementation; a bounded eight-run hourly continuation is configured.
