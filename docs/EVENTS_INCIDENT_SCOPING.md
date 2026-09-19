@@ -335,3 +335,11 @@ Update: `670558c` deployed to admin/LLM only, platform `c98e9e4`; the dedicated
 profile and two paired settings are verified. Existing scoped generation unchanged.
 One diagnostic job `job_557d20eb1f2449d0979fadfa3c1fe6a9` is queued; no quality result
 yet. See `STABILIZATION_VERIFICATION.md` for preflight, public checks and rollback.
+
+Latest: the Vercel paired diagnostic passed its unchanged positive case in one
+4.505-second call (3,114 input / 79 output tokens). Schema transport and private
+artifact integrity are verified; the event row is unchanged. Five more original
+sources are now queued under the same paired method, reusing Vercel. Commission
+23638 is over budget and remains explicitly unassessed, without a model call or
+silent fallback. The paired cohort evaluator cannot count this as a semantic pass.
+See the latest verification section for job IDs and the 588-test offline result.

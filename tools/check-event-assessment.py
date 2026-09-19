@@ -5,7 +5,7 @@ import json
 import re
 from pathlib import Path
 
-from sempervigil.event_assessment import SOURCE_WORKFLOW, request_for, validate_assessment
+from sempervigil.event_assessment import PAIR_WORKFLOW, SOURCE_WORKFLOW, request_for, validate_assessment
 from sempervigil.event_review import draft, validate_packet
 
 
@@ -96,16 +96,88 @@ def evaluate_sources(packet: dict, bundle: dict, cases: dict) -> dict:
             "review_status": "assistant-reviewed provisional cases"}
 
 
+def evaluate_pairs(packet: dict, bundle: dict, cases: dict) -> dict:
+    """Account for every pinned source; budget refusals are NOT model passes."""
+    if (type(bundle) is not dict or bundle.keys() != {"generation_version", "assessments"}
+            or type(bundle["generation_version"]) is not str
+            or not re.fullmatch(r"[0-9a-f]{64}", bundle["generation_version"])
+            or bundle["generation_version"] != cases.get("generation_version")
+            or type(bundle["assessments"]) is not list
+            or not 0 <= len(bundle["assessments"]) <= 12
+            or cases.get("event_id") != packet["event"]["id"]
+            or cases.get("packet_version") != packet["packet_version"]):
+        raise ValueError("evaluation_bundle_mismatch")
+    requests = cases.get("source_requests")
+    if type(requests) is not dict or not requests or not cases.get("checks"):
+        raise ValueError("evaluation_source_cases_required")
+    passages = {p["id"]: str(p["article_id"]) for p in draft(packet)["passages"]}
+    groups = {key: [] for key in requests}
+    seen = set()
+    for case in cases["checks"]:
+        if (type(case) is not dict or case.keys() != {"passage_id", "label", "allowed"}
+                or type(case["passage_id"]) is not str or case["passage_id"] in seen
+                or passages.get(case["passage_id"]) not in groups
+                or type(case["label"]) is not str or not case["label"]
+                or type(case["allowed"]) is not list or not case["allowed"]
+                or any(v not in ("include", "hold", "exclude") for v in case["allowed"])):
+            raise ValueError("evaluation_case_coverage")
+        seen.add(case["passage_id"])
+        groups[passages[case["passage_id"]]].append(case)
+    if any(not group for group in groups.values()):
+        raise ValueError("evaluation_case_coverage")
+    results = {}
+    for value in bundle["assessments"]:
+        if (type(value) is not dict or value.keys() != {"generation_version", "assessment"}
+                or value["generation_version"] != bundle["generation_version"]):
+            raise ValueError("evaluation_generation_mismatch")
+        result = validate_assessment(value["assessment"], packet)
+        key = str(result.get("article_id"))
+        if (result["workflow"] != PAIR_WORKFLOW or key not in requests or key in results
+                or result["scope"] != cases.get("scope")):
+            raise ValueError("evaluation_source_mismatch")
+        results[key] = result
+    reports, refused = [], []
+    for key, expected in requests.items():
+        if type(key) is not str or not key.isdecimal() or str(int(key)) != key:
+            raise ValueError("evaluation_source_mismatch")
+        try:
+            request = request_for(packet, scope=cases["scope"], article_id=int(key), paired=True)
+        except ValueError as exc:
+            if (str(exc) != "assessment_pair_over_budget" or expected != "assessment_pair_over_budget"
+                    or key in results):
+                raise ValueError("evaluation_budget_mismatch") from exc
+            refused.append({"article_id": int(key), "reason": str(exc),
+                            "unassessed_checks": len(groups[key])})
+            continue
+        if request["request_version"] != expected:
+            raise ValueError("evaluation_snapshot_mismatch")
+        if key not in results:
+            raise ValueError("evaluation_missing_source")
+        reports.append(evaluate(packet, results[key], {
+            "event_id": cases["event_id"], "packet_version": cases["packet_version"],
+            "request_version": expected, "checks": groups[key]}))
+    return {"event_id": cases["event_id"],
+            "passed": not refused and all(r["passed"] for r in reports),
+            "assessed_checks_passed": bool(reports) and all(r["passed"] for r in reports),
+            "checked_passages": sum(r["checked_passages"] for r in reports),
+            "unassessed_checks": sum(r["unassessed_checks"] for r in refused),
+            "budget_refusals": refused, "reports": reports, "public_eligible": False,
+            "review_status": "assistant-reviewed provisional cases"}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--packet", required=True, type=Path)
     parser.add_argument("--assessment", required=True, type=Path)
     parser.add_argument("--cases", required=True, type=Path)
     parser.add_argument("--source-bundle", action="store_true")
+    parser.add_argument("--paired-bundle", action="store_true")
     args = parser.parse_args()
     try:
         packet = validate_packet(args.packet.read_bytes())
-        evaluator = evaluate_sources if args.source_bundle else evaluate
+        if args.source_bundle and args.paired_bundle:
+            raise ValueError("evaluation_mode_conflict")
+        evaluator = evaluate_pairs if args.paired_bundle else evaluate_sources if args.source_bundle else evaluate
         report = evaluator(packet, json.loads(args.assessment.read_text()), json.loads(args.cases.read_text()))
     except (ValueError, OSError, KeyError, TypeError) as exc:
         print(json.dumps({"passed": False, "error_type": type(exc).__name__, "public_eligible": False}))

@@ -1531,3 +1531,48 @@ drain, apply only ConfigMap and those Deployments, then restore scheduling. Keep
 prior private artifacts/profile. Handle any pending paired job explicitly before
 rollback; the older worker rejects the new payload instead of dropping its mode.
 No new public reports or automatic admissions have been enabled.
+
+## Paired diagnostic result and bounded cohort, September 19 09:30 UTC
+
+Vercel `job_557d20eb1f2449d0979fadfa3c1fe6a9` succeeded in one 4,505 ms call.
+The unchanged positive case passes (include/same_incident). Four passages assessed:
+three included, one excluded; 36 remain unassessed. Filtered worker HTTP telemetry
+confirms strict JSON-schema response format, 3,114 prompt tokens and 79 output
+tokens. This establishes the real constrained-format path for this request, not
+general model accuracy. All six cohorts so far used 20 calls / 99,697 ms before
+the five new jobs below.
+
+Authenticated download: 200, private/no-store, sandbox CSP; 109,734 bytes, SHA256
+`79e7391491770fd262c4366d705a17c35a7f08aec2e884a863102d8655f68f7d`.
+Cache/request/generation identities revalidated by the read-only collector.
+Vercel row fingerprint remains `de70b60cd209cb493f75a529c78524e8`.
+No production objects, model settings, priority or public content changed here.
+
+Next bounded cohort uses the same paired method on all seven original sources,
+retaining every original label. Six pairs fit; Commission 23638 deterministically
+rejects `assessment_pair_over_budget`, with no inference/truncation/fallback. That
+case remains **unassessed**, not a model pass even though its allowed labels include
+hold. The existing Vercel result is reused without another call. Five additional
+jobs were preflighted against live packet/request/generation identities and queued
+through admin at unchanged priority:
+
+| Source | Job |
+| --- | --- |
+| Odido 21505 | `job_0b508e1d4f7342d09d0c738938e474f4` |
+| Odido 22331 | `job_b800393904f3431c9e9919af5fcd6ce3` |
+| Commission 21216 | `job_0583780f4de34f109e4a0817b3a4b6cc` |
+| Commission 21218 | `job_1b012fb29ab844d8868fd02e8ec42db1` |
+| Commission 25303 | `job_c1d617c9d91e48958c0cadf4536c9ae3` |
+
+Do not duplicate admissions. Ignored `.cache/paired-cohort-plan.json` records all
+exact inputs, pins, cases and the explicit refusal; `.cache/paired-cohort-jobs.jsonl`
+records admissions. `tools/check-event-assessment.py --paired-bundle` validates
+complete source accounting, same generation/scope, unique results and exact request
+pins. It independently recomputes budget refusal and reports it separately; the
+overall semantic gate remains false when any case is unassessed. Eight new checks
+cover tampering/missing/duplicate/mixed inputs and genuine over-budget behavior.
+All 588 offline tests pass; no runtime deployment required for this evaluator.
+
+Next: collect these results once, retain failures and all coverage. The private
+pilot is still not automatic public reporting: independent incident qualification,
+revision/publication integration and reader-facing verification remain pending.
