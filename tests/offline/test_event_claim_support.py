@@ -44,7 +44,7 @@ def test_full_source_and_exact_claim_bound_request(database):
     jsonschema.validate(answer(), request["response_format"]["json_schema"]["schema"])
 
 
-@pytest.mark.parametrize("dimension", support.DIMENSIONS)
+@pytest.mark.parametrize("dimension", [d for d in support.DIMENSIONS if d != 'date'])
 @pytest.mark.parametrize("verdict,decision", [("unsupported", "reject"), ("uncertain", "hold")])
 def test_one_failed_dimension_prevents_model_supported(database, dimension, verdict, decision):
     packet, scope, source = setup(database)
@@ -195,6 +195,38 @@ def test_audit_reject_takes_precedence_over_uncertainty(database):
     raw["audits"][0]["entailment"] = "unsupported"
     result = support.validate_response(json.dumps(raw).encode(), packet, scope, source)
     assert result["suggestions"][0]["decision"] == "reject"
+
+
+def test_absent_date_is_not_a_model_question(database):
+    packet, scope, source = setup(database)
+    request = support.request_for(packet, scope, source)
+    fields = request['response_format']['json_schema']['schema']['properties']['audits']['items']['properties']
+    assert fields['date']['enum'] == ['supported']
+    raw = answer()
+    raw['audits'][0]['date'] = 'unsupported'
+    result = support.validate_response(json.dumps(raw).encode(), packet, scope, source)
+    assert result['suggestions'][0]['dimensions']['date'] == 'supported'
+    assert result['suggestions'][0]['decision'] == 'model_supported'
+
+
+def test_serial_single_claim_calls_and_partial_cache_resume(database, tmp_path):
+    packet, scope, source = setup(database)
+    candidate = response(packet)
+    candidate['claims'].append({**candidate['claims'][0], 'statement': 'Acme reported an incident.'})
+    source = draft.validate_response(json.dumps(candidate).encode(), packet, scope, 1)
+    source['generation_version'] = 'a' * 64
+    complete = Mock(side_effect=[answer(), RuntimeError('interrupted')])
+    complete.cache_identity = 'b' * 64
+    with pytest.raises(RuntimeError):
+        support.assess(packet, scope, source, complete, tmp_path)
+    for call in complete.call_args_list:
+        assert len(json.loads(call.args[0]['input'])['claims']) == 1
+    complete.side_effect = None
+    complete.return_value = answer()
+    result, hit = support.assess(packet, scope, source, complete, tmp_path)
+    assert not hit and complete.call_count == 3 and len(result['suggestions']) == 2
+    assert support.assess(packet, scope, source, complete, tmp_path)[1]
+    assert complete.call_count == 3
 
 
 def test_queued_audit_uses_existing_worker_viewer_and_cache(database, monkeypatch, tmp_path):

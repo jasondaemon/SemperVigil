@@ -7545,7 +7545,9 @@ def _private_review_completion(conn, job, logger):
             if deconstruct:
                 context["event_deconstruction_source"] = json.loads(text)["source"]["text"]
             if support:
-                context["event_claim_support_ids"] = json.loads(text)["required_ids"]
+                audit_input = json.loads(text)
+                context["event_claim_support_ids"] = audit_input["required_ids"]
+                context["event_claim_support_no_date"] = all(row["date_value"] is None for row in audit_input["claims"])
             output = run_profile(conn, profile_id, text, logger, context=context)
             current = _private_review_completion(conn, job, logger)
             if current is None or current.cache_identity != completion.cache_identity:
@@ -7580,7 +7582,7 @@ def _private_review_completion(conn, job, logger):
     if support:
         from .event_claim_support import response_format as support_format
         completion.cache_identity = _version({"generation": completion.cache_identity,
-            "workflow": "event-claim-support-v1", "format": support_format(["c1"])})
+            "workflow": "event-claim-support-v2", "format": support_format(["c1"])})
     return completion
 
 

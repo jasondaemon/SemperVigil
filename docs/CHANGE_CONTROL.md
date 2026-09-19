@@ -1,5 +1,17 @@
 # Change Control Log
 
+## 2026-09-19: Narrow support audit after failed batch evaluation
+
+- The actual 17-claim batch completed, but rejected three supported claims,
+  falsely accepted one actor attribution, and used unsupported-date judgments
+  for null dates. Aggregate decisions alone overstated its ability to detect
+  citation mismatches. No publication occurred.
+- V2 asks one claim per serialized call, with resumable per-claim cache. At most
+  eight calls per source instead of one; this explicit private pilot remains
+  low-priority/manual. Null dates are deterministic no-assertion cases, not LLM
+  judgments. No model, context, resources, concurrency or publication changes.
+- Frozen expectations remain unchanged. V2 runtime evaluation pending.
+
 ## 2026-09-19: Private support queue integration
 
 - Add explicit `audit_source` digest admission to existing private-review jobs,

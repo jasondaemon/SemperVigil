@@ -345,7 +345,10 @@ def _call_provider(
                 or (context or {}).get("stage") != "event_review_private"):
             raise ValueError("unsupported_private_support_format")
         from ..event_claim_support import response_format as support_format
-        assessment_format = support_format(support_ids)
+        no_date = (context or {}).get("event_claim_support_no_date", False)
+        if type(no_date) is not bool:
+            raise ValueError("unsupported_private_support_format")
+        assessment_format = support_format(support_ids, no_date=no_date)
     if deconstruction_source is not None:
         if (type(deconstruction_source) is not str or not 0 < len(deconstruction_source) <= 32000
                 or assessment_ids is not None or provider_type != "openai_compatible"
