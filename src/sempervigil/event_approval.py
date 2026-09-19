@@ -102,12 +102,22 @@ evidence and promotes using a principal unable to mint qualification records.
     if not enabled():
         raise PermissionError("event_approval_disabled")
     approval = approval_for(job, **selection)
+    return record_approval(factory, approval)
+
+
+def record_approval(factory, approval: dict, *, authority_check=None) -> dict:
+    """Persist a server-qualified decision through the restricted admission role.
+
+    Not an API: callers must independently qualify decisions before entering here.
+    """
     raw = json.dumps(approval, sort_keys=True, ensure_ascii=True)
     if len(raw.encode()) > MAX_APPROVAL_BYTES:
         raise ValueError("event_approval_too_large")
     identity, q = _version(approval), approval["qualification"]
     qid, event_id = _version(q), q["event_id"]
     with locked_current_snapshot(factory, approval["packet"]) as conn:
+        if authority_check is not None:
+            authority_check(conn)
         # Admission cannot promote its own approval.
         writable = conn.execute("""SELECT
             has_table_privilege(current_user,'event_public_pointers','INSERT,UPDATE,DELETE,TRUNCATE')

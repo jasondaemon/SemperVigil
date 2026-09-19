@@ -597,11 +597,54 @@ def test_human_approval_queue_to_qualified_exports(restricted_database, tmp_path
         assert result["revision_id"] in rendered and "Unqualified legacy" not in rendered
         index_files = list((tmp_path / "static").rglob("*.json"))
         assert len(index_files) == 1 and result["revision_id"] in index_files[0].read_text()
+        # Automatic scoped admission uses the same restricted transaction/worker,
+        # with a real queued private review and immutable receipt (model stubbed).
+        from sempervigil import event_automation as auto, storage, event_review_jobs
+        monkeypatch.setenv("SV_DB_URL", admission_dsn)
+        monkeypatch.setenv("SV_EVENT_APPROVAL_DB_URL", admission_dsn)
+        monkeypatch.setenv("SV_EVENT_AUTO_SCOPES", json.dumps({"one": result["revision_id"]}))
+        for flag in ("SV_EVENT_REVIEW_ENABLED", "SV_EVENT_REVIEW_SCOPE_ENABLED", "SV_EVENT_REVIEW_PAIR_ENABLED"):
+            monkeypatch.setenv(flag, "1")
+        admin.execute("UPDATE jobs SET status='succeeded' WHERE id=%s", (admitted["job_id"],))
+        admin.execute("""INSERT INTO articles VALUES (2,'second','Followup','https://example.net/update',
+            '2026-05-02',NULL,'Acme confirmed that its contact system was breached by an attacker.')""")
+        admin.execute("INSERT INTO event_articles VALUES ('one',2)")
+        # get_job assumes public schema; this disposable fixture uses its own schema.
+        monkeypatch.setattr(auto, "get_job", lambda conn, identity: storage._row_to_job(
+            conn.execute(f"SELECT {storage._JOB_SELECT_COLUMNS} FROM jobs WHERE id=%s", (identity,)).fetchone()))
+        queued_review = auto.advance(admin, "one", result["revision_id"])
+        assert queued_review["status"] == "review_queued"
+        assert auto.advance(admin, "one", result["revision_id"])["status"] == "review_pending"
+        payload = json.loads(admin.execute("SELECT payload_json FROM jobs WHERE id=%s",
+                            (queued_review["job_id"],)).fetchone()[0])
+        def model(text):
+            return {"decisions": [{"id": key, "decision":"include", "reason":"same_incident"}
+                                  for key in json.loads(text)["required_ids"]]}
+        model.cache_identity = "a"*64
+        reviewed = event_review_jobs.run(payload, complete=model)
+        admin.execute("UPDATE jobs SET status='succeeded',result_json=%s WHERE id=%s",
+                      (json.dumps(reviewed), queued_review["job_id"]))
+        auto_admission = auto.advance(admin, "one", result["revision_id"])
+        assert auto_admission["status"] == "queued" and auto_admission["added_article_id"] == 2
+        assert auto.advance(admin, "one", result["revision_id"])["status"] == "promotion_pending"
+        promoted_auto = approval.run({"approval_id": auto_admission["approval_id"]}, factory=promote)
+        assert promoted_auto["status"] == "promoted"
+        admin.execute("UPDATE jobs SET status='succeeded' WHERE id=%s", (auto_admission["job_id"],))
+        assert auto.advance(admin, "one", result["revision_id"])["status"] == "unchanged"
+        exported = publication.load_export(promote, ["one"])
+        assert len(exported["qualified_revisions"]["one"]["qualification"]["quotes"]) == 2
+        admin.execute("""UPDATE event_quote_qualifications SET revoked_at='test'
+            WHERE qualification_id=(SELECT qualification_id FROM event_public_revisions WHERE revision_id=%s)""",
+                      (result["revision_id"],))
+        with pytest.raises(ValueError, match="authority_unavailable"):
+            auto.advance(admin, "one", result["revision_id"])
         with pytest.raises(psycopg.errors.RaiseException):
             admin.execute("DELETE FROM event_review_approvals")
-        admin.execute("UPDATE event_quote_qualifications SET revoked_at='test'")
-        with pytest.raises(ValueError, match="qualification_unavailable"):
+        admin.execute("UPDATE event_quote_qualifications SET revoked_at='test' WHERE revoked_at IS NULL")
+        with pytest.raises(ValueError, match="stale_revision_snapshot"):
             approval.run(queued.payload, factory=promote)
+        with pytest.raises(ValueError, match="qualification_unavailable"):
+            approval.run({"approval_id": auto_admission["approval_id"]}, factory=promote)
     finally:
         admin.execute(sql.SQL("DROP OWNED BY {}").format(admission_role))
         admin.execute(sql.SQL("DROP ROLE {}").format(admission_role))

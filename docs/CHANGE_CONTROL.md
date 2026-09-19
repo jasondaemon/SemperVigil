@@ -1,5 +1,15 @@
 # Change Control Log
 
+## 2026-09-19: Bounded automatic Events admission
+
+- User requested continued implementation until updates elevate through the
+  production path. Add default-disabled enrollment of already reviewed scopes,
+  paired private review admission and deterministic short-quotation policy.
+- No build/activation, Hugo, feed, inference concurrency or source scrape changes.
+  Only orchestrator needs a new image and restricted admission credentials.
+  Policy decisions enqueue the existing promotion worker; that worker triggers
+  the existing dirty-build path. See EVENT_AUTOMATION.md for limits and rollback.
+
 ## 2026-09-19: Explicitly approved atomic guarded switch
 
 - User approved the narrow atomic-switch correction after transient public 404s

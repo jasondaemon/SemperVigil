@@ -167,6 +167,9 @@ admin:
 
 orchestrator:
   enabled: true
+  imageTag: ""
+  # Explicit event-id -> previously reviewed revision; empty disables automation.
+  eventAutoScopes: "{}"
   replicaCount: 1
   tickSeconds: 30
   leaseSeconds: 120

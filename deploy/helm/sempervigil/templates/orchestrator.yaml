@@ -1,4 +1,9 @@
 {{- if .Values.orchestrator.enabled }}
+{{- if ne (.Values.orchestrator.eventAutoScopes | default "{}") "{}" }}
+{{- if or (not .Values.eventPublication.existingSecret) (ne .Values.env.SV_EVENT_PUBLICATION_ENABLED "1") (ne .Values.env.SV_EVENT_HUMAN_APPROVAL_ENABLED "1") }}
+{{- fail "Events automatic enrollment requires guarded publication and admission credentials" }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,7 +26,7 @@ spec:
       serviceAccountName: {{ include "sempervigil.serviceAccountName" . }}
       initContainers:
         - name: sempervigil-fix-perms
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}:{{ default .Values.image.tag .Values.orchestrator.imageTag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             runAsUser: 0
@@ -48,7 +53,7 @@ spec:
               mountPath: /site
       containers:
         - name: sempervigil-orchestrator
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}:{{ default .Values.image.tag .Values.orchestrator.imageTag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             runAsUser: {{ .Values.env.SV_UID | int }}
@@ -64,6 +69,15 @@ spec:
             - configMapRef:
                 name: {{ include "sempervigil.fullname" . }}-env
           env:
+            - name: SV_EVENT_AUTO_SCOPES
+              value: {{ .Values.orchestrator.eventAutoScopes | default "{}" | quote }}
+            {{- if ne (.Values.orchestrator.eventAutoScopes | default "{}") "{}" }}
+            - name: SV_EVENT_APPROVAL_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.eventPublication.existingSecret | quote }}
+                  key: SV_EVENT_APPROVAL_DB_URL
+            {{- end }}
             - name: SV_DB_URL
               valueFrom:
                 secretKeyRef:

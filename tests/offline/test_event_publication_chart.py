@@ -49,3 +49,30 @@ def test_publication_credentials_are_role_scoped(enabled):
 def test_invalid_publication_configuration_refuses_render(settings, message):
     result = render(*settings)
     assert result.returncode != 0 and message in result.stderr
+
+
+def test_automatic_enrollment_changes_only_orchestrator_credentials_and_image(tmp_path):
+    values = tmp_path / 'values.yaml'
+    values.write_text(yaml.safe_dump({
+        'orchestrator': {'eventAutoScopes': '{"event":"' + 'a'*64 + '"}', 'imageTag': 'auto-test'},
+        'eventPublication': {'existingSecret': 'event-roles'},
+        'env': {'SV_EVENT_PUBLICATION_ENABLED': '1', 'SV_EVENT_ACTIVATION_CHECK': '1',
+                'SV_EVENT_HUMAN_APPROVAL_ENABLED': '1'}}))
+    result = subprocess.run(['helm','template','test',str(CHART),'-f',str(values)],capture_output=True,text=True)
+    assert result.returncode == 0, result.stderr
+    deployments = {d['metadata']['name']:d for d in yaml.safe_load_all(result.stdout)
+                   if d and d.get('kind') == 'Deployment'}
+    for name, deployment in deployments.items():
+        container = deployment['spec']['template']['spec']['containers'][0]
+        if name.endswith('-orchestrator'):
+            assert container['image'].endswith(':auto-test')
+            env = {v['name']:v for v in container['env']}
+            assert env['SV_EVENT_APPROVAL_DB_URL']['valueFrom']['secretKeyRef']['key'] == 'SV_EVENT_APPROVAL_DB_URL'
+            assert 'SV_EVENT_PROMOTION_DB_URL' not in env
+        else:
+            assert not container['image'].endswith(':auto-test')
+
+
+def test_auto_enrollment_without_publication_fails_render():
+    result = render('orchestrator.eventAutoScopes=invalid-but-nonempty')
+    assert result.returncode != 0 and 'automatic enrollment requires' in result.stderr

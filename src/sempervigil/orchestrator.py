@@ -422,6 +422,9 @@ def run_once(orchestrator_id: str) -> int:
             lease_seconds,
         )
         _tick_auto_catchup(conn, config, logger, orchestrator_id)
+        from .event_automation import tick as event_automation_tick
+        for result in event_automation_tick(conn):
+            log_event(logger, logging.INFO, "event_automation_tick", **result)
         builds = _tick_build_admission(conn, config, logger)
         launches = _tick_runner_launches(conn, logger)
         _log_queue_stats(conn, logger)
