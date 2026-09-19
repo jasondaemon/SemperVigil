@@ -1,6 +1,13 @@
 # Private Events jobs and admin visibility
 
-Status: implemented and tested, **not deployed or enabled**.
+Status: admin and LLM worker deployed at `ee91658`, **admission disabled**.
+The new API exposes 35 job types and rejects private requests with 503 while
+disabled. Live dashboard verification exposed pre-existing slow backlog queries
+and overlapping ten-second refreshes. A single-request browser guard is tested;
+its admin-only follow-up rollout and final visual verification are pending.
+
+The chart supports `workerLlm.image` overrides (inheriting shared image defaults)
+so this private workflow can be released without replacing unrelated workers.
 
 ## Runtime path
 

@@ -725,3 +725,21 @@ User confirmed local review pages look good; this is initial visual feedback,
 not factual approval or new dashboard browser verification. Next rollout must
 verify admin/worker together with private admission disabled before a bounded
 request. New LLM proposal/semantic evaluation remains unimplemented and gated.
+
+## Private queue guarded rollout (2026-09-19 UTC, in progress)
+
+Admin and LLM worker now run `ee91658`; source-only image manifest
+`sha256:70c18459d5676f2cb4c94c5e49524752e8fa514e403fabb252e4493f66fae171`
+was imported on all four schedulable nodes. Rendered diff contained four image
+substitutions only. New per-worker chart override leaves shared ingest, builder,
+and web images untouched. Orchestrator was temporarily scaled down, termination
+confirmed, then the pending LLM launch drained before replacement. Scheduling
+resumed on the unchanged image; no task canceled or directly rewritten.
+
+373 offline tests and 11 JavaScript tests pass (six PostgreSQL checks remain from
+the prior queue implementation). API catalogue includes 35 types including private
+reviews and daily briefs. Disabled private admission returns 503 before DB access.
+Dashboard verification exposed pre-existing expensive Need queries and overlapping
+ten-second browser polling. Single-flight refresh guard is tested, pending an
+admin-only follow-up deployment. No SQL/count semantics changed. Final visual
+acceptance and post-release public checks remain pending at this checkpoint.

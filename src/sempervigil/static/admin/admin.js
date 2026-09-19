@@ -421,16 +421,24 @@ function wireDashboard() {
     jobCountsContainer.innerHTML = "";
     jobCountsContainer.appendChild(wrapper);
   }
+  let metricsLoading = false;
   async function loadMetrics() {
-    const data = await apiFetch("/admin/api/dashboard/metrics");
-    renderJobCounts(
-      data.job_counts_by_type_status || {},
-      data.job_types || [],
-      data.job_groups || [],
-      data.job_counts_since || null,
-      data.queueable_by_job_type || {},
-      data.build_state || {}
-    );
+    // A slow backlog calculation must not accumulate requests on every poll.
+    if (metricsLoading) return;
+    metricsLoading = true;
+    try {
+      const data = await apiFetch("/admin/api/dashboard/metrics");
+      renderJobCounts(
+        data.job_counts_by_type_status || {},
+        data.job_types || [],
+        data.job_groups || [],
+        data.job_counts_since || null,
+        data.queueable_by_job_type || {},
+        data.build_state || {}
+      );
+    } finally {
+      metricsLoading = false;
+    }
   }
   async function loadQueueDiagnostics() {
     if (!queueBanner || !staleMinutes) {

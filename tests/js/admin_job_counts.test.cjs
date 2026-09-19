@@ -37,3 +37,28 @@ test('canceled counts and encoded filtered links escape historical job names', (
   assert.ok(rows[0].innerHTML.includes('job_type=' + encodeURIComponent(name)));
   assert.ok(!rows[0].innerHTML.includes('<script>'));
 });
+
+test('slow dashboard refreshes never overlap and can retry after errors', async () => {
+  const begin = source.indexOf('  let metricsLoading = false;');
+  const finish = source.indexOf('  async function loadQueueDiagnostics()', begin);
+  let calls = 0;
+  let resolve, reject;
+  const context = {apiFetch: () => {
+    calls++;
+    return new Promise((yes, no) => {resolve = yes; reject = no;});
+  }, renderJobCounts: () => {}};
+  vm.createContext(context);
+  vm.runInContext(source.slice(begin, finish), context);
+  const first = context.loadMetrics();
+  await context.loadMetrics();
+  assert.equal(calls, 1);
+  resolve({});
+  await first;
+  const second = context.loadMetrics();
+  reject(new Error('request failed'));
+  await assert.rejects(second, /request failed/);
+  const third = context.loadMetrics();
+  assert.equal(calls, 3);
+  resolve({});
+  await third;
+});

@@ -1,4 +1,8 @@
 {{- if .Values.workerLlm.enabled }}
+{{- $workerImage := .Values.workerLlm.image | default dict }}
+{{- $imageRepository := default .Values.image.repository $workerImage.repository }}
+{{- $imageTag := default .Values.image.tag $workerImage.tag }}
+{{- $imagePullPolicy := default .Values.image.pullPolicy $workerImage.pullPolicy }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,8 +25,8 @@ spec:
       serviceAccountName: {{ include "sempervigil.serviceAccountName" . }}
       initContainers:
         - name: sempervigil-fix-perms
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: "{{ $imageRepository }}:{{ $imageTag }}"
+          imagePullPolicy: {{ $imagePullPolicy }}
           securityContext:
             runAsUser: 0
             runAsGroup: 0
@@ -48,8 +52,8 @@ spec:
               mountPath: /site
       containers:
         - name: {{ include "sempervigil.componentFullname" (list . "worker-llm") }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: "{{ $imageRepository }}:{{ $imageTag }}"
+          imagePullPolicy: {{ $imagePullPolicy }}
           securityContext:
             runAsUser: {{ .Values.env.SV_UID | int }}
             runAsGroup: {{ .Values.env.SV_GID | int }}
