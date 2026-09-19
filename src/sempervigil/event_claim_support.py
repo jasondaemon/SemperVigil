@@ -7,6 +7,7 @@ from pathlib import Path
 from . import event_deconstruction as extraction
 from .event_review import _immutable_write, _json
 from .investigation import _version
+from .event_passages import citation_context
 
 WORKFLOW = "event-claim-support-v4"
 DIMENSIONS = ("quotation", "context")
@@ -213,23 +214,68 @@ def assess(packet: dict, scope: dict, source: dict, complete, root: Path) -> tup
     return result, all_cached
 
 
-def render(result: dict, packet: dict, scope: dict, source: dict) -> str:
+def _phase_details(result: dict, packet: dict, scope: dict, source: dict, root: Path) -> dict:
+    """Read and validate existing reasons without invoking the model or rewriting caches."""
+    details = {}
+    generation = result["generation_version"]
+    for row in result["suggestions"]:
+        details[row["claim_id"]] = {}
+        for phase, expected in row["dimensions"].items():
+            if expected == "not_assessed":
+                continue
+            request = phase_request(packet, scope, source, row["claim_id"], phase)
+            cached = extraction._load(root / "claim-support-cache", extraction._cache_name(request, generation))
+            if cached is None:
+                raise ValueError("support_phase_receipt_missing")
+            verdict = validate_phase(json.dumps(cached.get("result")).encode())
+            if (cached != {"request_version": request["request_version"],
+                           "generation_version": generation, "result": verdict,
+                           "public_eligible": False} or verdict["verdict"] != expected):
+                raise ValueError("support_phase_receipt_mismatch")
+            details[row["claim_id"]][phase] = verdict["reason"]
+    return details
+
+
+def render(result: dict, packet: dict, scope: dict, source: dict, *, cache_root: Path | None = None) -> str:
     if type(result) is not dict:
         raise ValueError("invalid_support_cache")
     result = validate_result(result, packet, scope, source, result.get("generation_version"))
     claims = {row["id"]: row for row in source["claims"]}
+    text = json.loads(extraction.request_for(packet, scope, source["article_id"])["input"])["source"]["text"]
+    details = _phase_details(result, packet, scope, source, cache_root) if cache_root is not None else {}
     lines = ['<!doctype html><html lang="en"><meta charset="utf-8">',
              '<meta name="viewport" content="width=device-width,initial-scale=1">',
              '<title>Private claim support audit</title>',
              '<h1>Private claim support audit</h1>',
              '<p>Model suggestions only, not independent verification or publication approval. '
-             'The original claims are preserved; nothing has been repaired or published.</p>']
+             'The original claims are preserved; nothing has been repaired or published.</p>',
+             '<h2>Draft coverage for this source</h2>',
+             '<p>Counts show extraction coverage, not verified facts. Zero means no claim '
+             'was extracted, not that the source has no relevant evidence.</p><ul>']
+    for section, title in extraction.SECTIONS.items():
+        selected = [row for row in result["suggestions"] if claims[row["claim_id"]]["section"] == section]
+        supported = sum(row["decision"] == "model_supported" for row in selected)
+        lines.append('<li>' + escape(title) + ': ' + str(len(selected)) +
+                     ' extracted; ' + str(supported) + ' model-supported (unverified)</li>')
+    dated = sum(claim["date_value"] is not None for claim in claims.values())
+    lines.extend(['</ul><p>Claims with proposed dates: ' + str(dated) + '</p>'])
     for row in result["suggestions"]:
         claim = claims[row["claim_id"]]
         lines.extend(['<h2>' + escape(row["decision"]) + '</h2>',
                       '<p>' + escape(claim["statement"]) + '</p>',
                       '<blockquote>' + escape(claim["quote"]) + '</blockquote>',
                       '<p>' + escape("; ".join(k + ": " + v for k, v in row["dimensions"].items())) + '</p>'])
+        for phase, reason in details.get(row["claim_id"], {}).items():
+            lines.append('<p>' + escape(phase + ' reason: ' + reason) + '</p>')
+        if not details:
+            lines.append('<p>Phase reasons not loaded.</p>')
+        context = citation_context(text, claim["start"], claim["end"], claim["quote"])
+        lines.extend(['<details><summary>Original source context: ' + escape(context["status"]) + '</summary>',
+                      '<p>Display context only; not evidence supplied to the quotation check. '
+                      'This does not resolve an antecedent or change the verdict.</p>',
+                      '<p>Source offsets ' + str(context["start"]) + ':' + str(context["end"]) +
+                      '; citation ' + str(claim["start"]) + ':' + str(claim["end"]) + '</p>',
+                      '<pre style="white-space:pre-wrap">' + escape(context["text"]) + '</pre></details>'])
     return '\n'.join(lines + ['</html>'])
 
 
@@ -245,7 +291,7 @@ def save(packet, scope, article_id, source_key, complete, root):
     if extraction._cache_name(original, source["generation_version"]) != source_key + '.json':
         raise ValueError("support_source_key_mismatch")
     result, hit = assess(packet, scope, source, complete, root)
-    page = render(result, packet, scope, source).encode()
+    page = render(result, packet, scope, source, cache_root=root).encode()
     folder = root / packet["packet_version"]
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     if folder.is_symlink():

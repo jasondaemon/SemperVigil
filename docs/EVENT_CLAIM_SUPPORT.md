@@ -7,6 +7,40 @@ private extraction and public quotation publication are unchanged.
 
 ## Current V4 contract and measured acceptance
 
+### Local diagnostic rendering (not deployed)
+
+`render(..., cache_root=...)` now verifies each assessed phase receipt against the
+original request, generation, and aggregate verdict before showing its reason.
+Missing/mismatched receipts fail closed; context phases never run just to render.
+Calls without a cache root explicitly say reasons were not loaded. Existing
+private `save` supplies the root; job result and inference/cache contracts do not
+change. Old HTML remains immutable; new rendering produces a new artifact hash.
+
+`event_passages.citation_context` retains the exact citation plus adjacent
+sentence-sized spans inside a paragraph, with source binding and exact offsets.
+Blank lines stop expansion. More than 2400 UTF-8 bytes omits the whole context
+window, leaving the original citation with an explicit over-budget status.
+Punctuation is a display heuristic, not semantic segmentation or pronoun
+resolution. Context never changes the original claim, citation, verdict or
+publication eligibility and is not sent to the model by this change.
+
+Coverage lists extracted and model-supported claim counts per section, explicitly
+unverified, plus proposed dated-claim count. An empty section is an extraction gap,
+not proof the underlying article lacks evidence. Four actual V4 source audits
+rendered locally from validated receipts with no inference or production writes.
+881 offline tests pass, one Linux-only skip. Tests cover offsets, Unicode byte
+limits, paragraph boundaries, repeated quotes, escaping and receipt mismatches.
+No config/deployment/model/profile changes; rollback is reverting this local slice.
+
+Next controlled experiment: evidence-first extraction with stable passage choices
+before paraphrasing. The current schema orders statement before quote; actual
+drafts sometimes have relevant statements paired with adjacent but non-supporting
+sentences. Field order is a hypothesis to evaluate, not a proven explanation.
+Use independent fixtures including cross-incident paragraphs, antecedents,
+protected/unprotected categories, advice versus completed recovery and uncertain
+dates. Preserve original frozen evaluations and do not automatically repair old
+claims with neighboring text.
+
 The older six-dimension V1/V2 description below is historical. V4 checks quotation
 support without the full document first, then full-source context only if the
 quotation supports the statement. Each phase returns a short reason and verdict.

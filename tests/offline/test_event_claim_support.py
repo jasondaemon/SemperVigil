@@ -320,3 +320,40 @@ def test_quote_failure_never_calls_context_or_counts_as_supported(database, tmp_
 def test_phase_validation_fails_closed(bad):
     with pytest.raises(ValueError):
         support.validate_phase(json.dumps(bad).encode())
+
+
+def test_render_explains_cached_reasons_and_coverage_without_inference(database, tmp_path):
+    packet, scope, source = setup(database)
+    complete = Mock(return_value={'verdict': 'unsupported', 'reason': '<script>not evidence</script>'})
+    complete.cache_identity = 'b' * 64
+    result, _ = support.assess(packet, scope, source, complete, tmp_path)
+    page = support.render(result, packet, scope, source, cache_root=tmp_path)
+    assert 'quotation reason: &lt;script&gt;not evidence&lt;/script&gt;' in page
+    assert '<script>' not in page
+    assert 'Draft coverage for this source' in page
+    assert 'Original source context: available' in page
+    assert 'not evidence supplied to the quotation check' in page
+    assert 'context reason:' not in page
+    assert 'What happened: 1 extracted; 0 model-supported' in page
+    assert 'Response and recovery: 0 extracted' in page
+    complete.assert_called_once()
+
+
+@pytest.mark.parametrize('change', ['missing', 'verdict', 'generation', 'request'])
+def test_render_rejects_missing_or_mismatched_phase_receipts(database, tmp_path, change):
+    packet, scope, source = setup(database)
+    complete = Mock(return_value=phase_answer('unsupported'))
+    complete.cache_identity = 'b' * 64
+    result, _ = support.assess(packet, scope, source, complete, tmp_path)
+    path = next((tmp_path / 'claim-support-cache').glob('*.json'))
+    cached = json.loads(path.read_text())
+    if change == 'missing':
+        path.unlink()
+    else:
+        if change == 'verdict': cached['result']['verdict'] = 'supported'
+        if change == 'generation': cached['generation_version'] = 'c' * 64
+        if change == 'request': cached['request_version'] = 'd' * 64
+        path.write_text(json.dumps(cached))
+    with pytest.raises(ValueError, match='support_phase_receipt_'):
+        support.render(result, packet, scope, source, cache_root=tmp_path)
+    complete.assert_called_once()

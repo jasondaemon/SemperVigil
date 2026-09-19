@@ -7,7 +7,23 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
-## Latest checkpoint: September 19, 18:32 UTC
+## Latest local work: source-context diagnostics
+
+Private audit rendering now loads validated per-phase reasons, shows exact bounded
+neighboring source text with offsets, and reports extraction counts by section and
+dated-claim count. This is diagnostic display, not additional model evidence or
+automatic citation repair. Current inference requests/cache identities unchanged.
+881 offline tests pass, one skip. Four real V4 audits rendered locally from their
+existing production receipts with zero inference or production writes. Not deployed.
+
+The cached reasons confirm reversed entailment and incorrect security-category
+equivalence persist. Adjacent source context exposes wrong-sentence citations and
+a legitimate pronoun antecedent. Next extraction experiment should select evidence
+before drafting a statement (current schema generates statement before quote),
+with explicit passage IDs/offsets and frozen independent tests. This is a proposed
+experiment, not an established cause or a reason to relax the support gate.
+
+## Latest deployment checkpoint: September 19, 18:32 UTC
 
 Admin remains `eff906d`; LLM worker `d80f98a`, platform `3200453`.
 V4 performs serial quotation/context checks with separately resumable caches.

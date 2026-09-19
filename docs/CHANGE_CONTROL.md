@@ -1,5 +1,17 @@
 # Change Control Log
 
+## 2026-09-19: Private evidence inspection without new inference
+
+- Add bounded, offset-preserving source context and source-section/date coverage
+  to private audit rendering. Load and validate cached phase reasons against
+  request/generation/verdict before displaying them. No additional model calls.
+- Exact quotes and decisions remain unchanged. Neighboring text is marked as
+  display-only, not retroactive support or automatic pronoun resolution.
+- 881 offline tests pass, one skip; four real cached audits rendered locally.
+  No production deployment, config, model, schema, publication, or build changes.
+- Rollback: revert this local rendering/module/test slice. Existing immutable
+  artifacts and V4 inference receipts remain valid and unchanged.
+
 ## 2026-09-19: Replay determinism and measured comparison-rule correction
 
 - V3 actual results: eleven of twelve bad claims rejected, one falsely accepted;
