@@ -7,8 +7,24 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
-This doc is the **single source of truth** for the current running state, operational behavior, and known pitfalls.
-Use it first when starting a new chat or debugging issues.
+## Current release checkpoint: September 19, 09:20 UTC
+
+- App source and runtime behavior: this repository. Environment values:
+  `k8s-platform/apps/sempervigil/values.yaml`. Theme: `sempervigil-hugo`.
+- Admin/LLM worker: `670558c`; platform release: `c98e9e4`.
+- Shared fetch/OpenAI workers and orchestrator: `27b9fb3`; builder: `889b2de`.
+- Private Events review supports ordinary, scoped, source-level and opt-in paired
+  diagnostics. See `EVENTS_PRIVATE_QUEUE.md` for current guards/profile IDs.
+- No new autonomous Events admission or validated public-report pipeline is enabled.
+  Legacy Events behavior is not evidence that the new correctness gates are met.
+- One paired Vercel diagnostic is pending; do not repeat old pilot submissions.
+- Public checks passed after the last targeted rollout. Use the dated evidence in
+  `STABILIZATION_VERIFICATION.md`, not this checkpoint as a live health monitor.
+- Preserve one local LLM job, API-driven publishing, incremental feed history and
+  daily JSON compatibility. No direct Hugo calls or production `init_db` diagnostics.
+
+Use this checkpoint and the linked verification notes first. The February topology
+and operational notes below are retained as historical context and can be stale.
 
 ---
 

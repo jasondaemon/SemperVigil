@@ -29,8 +29,11 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 </div>
 <section id="now" class="notice">
 <span class="badge active">Current priority</span>
-<h2>Prove that every daily download is complete.</h2>
-<p>Initial checks established valid JSON and matching declared counts. A deeper audit found that valid JSON can still omit database records. Export completeness now takes precedence over adding event features.</p>
+<h2>Make Events reliable enough to follow.</h2>
+<p>Private source-backed review is deployed. Automatic public reports are not ready: the source-level cohort passes seven checks, but Vercel failed. One bounded paired-context diagnostic is pending. Preserve every original expectation and the existing single-model queue.</p>
+<p><strong>After that result:</strong> qualify incident scopes and evidence, integrate immutable revisions and stale-input checks, then release reader-facing reports through the existing atomic publish process. Passing one private diagnostic does not complete those steps or authorize publication.</p>
+<h3>Verified feed baseline</h3>
+<p>Earlier audits found that valid JSON could omit database records. The repairs and sampled verification below remain release invariants; full-history repair is not claimed complete.</p>
 <p><strong>Repaired in production:</strong> September 8 now has 1,031 CVEs (previously 10); September 15 has 982 (previously 5). Exact exported article/CVE ID sets match the database on both days.</p>
 <p><strong>Deployed:</strong> complete-day serialization, uncapped CVE downloads, suppression filtering, dependency fingerprints, and locked atomic archive writes. The first build refreshed 38 dates and retained all 5,059 files; 5,021 files retained identical bytes and timestamps.</p>
 <p><strong>Read-only production evidence:</strong> inventory of 5,084 database dates took 0.40s; uncapped selections returned 1,031 and 982 unique CVEs in 0.14s and 0.06s. These timings exclude serialization and publishing.</p>
@@ -49,7 +52,7 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 <section id="event-review" class="notice">
 <span class="badge active">Ready for local review</span>
 <h2>Private Events workbench</h2>
-<p><span class="badge active">V3 quality result</span> All three jobs completed; 12 passages each, 14.7 seconds total inference. Six of eight provisional cases pass, but two unsafe inclusions remain. Attachments are private and event records unchanged. Stop prompt-only iterations; implement explicit source-grounded incident scope next. <a href="EVENTS_INCIDENT_SCOPING.md">Evidence-driven design checkpoint</a>. Automatic public reports are not ready.</p>
+<p><span class="badge active">Current quality gate</span> Source-level assessment fixed the observed Odido and Commission cases (3/3 and 4/4). Vercel remains unresolved; its single paired-context diagnostic is pending. Requests are bounded and private; malformed output fails closed. <a href="EVENTS_INCIDENT_SCOPING.md">Evidence and current diagnostic</a>. Automatic public reports are not ready.</p>
 <p><span class="badge active">Scoped evaluation / not publication-ready</span> All three jobs completed in 18.1 seconds total model time. Explicit anchors fixed the Commission incident split, but Odido background was still included and Vercel reporting excluded. Six of eight unchanged cases pass. No public write; private attachment integrity and unchanged event records verified. Next: one source per bounded job, retaining all eight cases across seven source jobs. This granularity change is a hypothesis to test, not a promised quality fix.</p>
 <p><span class="badge done">Local / reuse stabilization</span> Scoped cache reuse now ignores only report-written event timestamps, while retaining full source, coverage, scope and model identity. Cached decisions are revalidated against current evidence and mapped to current passage IDs. Twelve new checks pass, including changed text outside the model excerpt. Not deployed while the scoped pilot is pending.</p>
 <p><span class="badge done">Local / stale-write protection</span> Legacy report writes now reject changed event versions and concurrent metadata edits instead of overwriting them; rejected writes do not request a site build. Eleven new offline checks and a real PostgreSQL concurrent-writer test pass. This does not establish semantic validity or replace the planned revision/publication gate. <a href="EVENT_REPORT_STALE_WRITES.md">Scope and limits</a>.</p>

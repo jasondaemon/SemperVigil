@@ -1,8 +1,41 @@
 # Private Events jobs and admin visibility
 
-Status: admin `bddeff1`, LLM worker `2de5845`, platform `683abb8`.
+## Current status: September 19, 09:20 UTC
+
+Admin and LLM worker run `670558c`; platform values are `c98e9e4`.
 **Authenticated operator-triggered private admission and bounded model suggestions
-are enabled.** Autonomous admission and public publication are not.
+are enabled.** Autonomous admission and new public-report publication are not.
+All private jobs use the existing single local-model lane, priority -10 and one
+attempt. No admin inference. Existing public serving, feed JSON and builder remain
+unchanged. Current modes:
+
+| Mode | Required request fields beyond aliases | Guarded profile |
+| --- | --- | --- |
+| Ordinary private v3 | None | `a2ccda1b-95c1-5085-8de7-22c2d328faa0` |
+| Incident-scoped / one source | `scope`; optional `article_id` | `fe0ae074-117d-560f-8350-83c9da87ed67` |
+| Paired full-source diagnostic | `scope`, `article_id`, `paired: true` | `49780c82-fd75-53dd-829b-e8fd8bf7e7bb` |
+
+Each mode has separate default-disabled guards; paired requests reject oversized
+complete evidence rather than truncating. Ordinary/scoped calls keep the 12,000
+byte request bound, paired calls use an explicit 15,000-byte bound. The paired
+profile is diagnostic only, not automatic queue expansion or publication approval.
+
+The seven-source cohort finished: six valid private artifacts, Odido 3/3 and
+Commission 4/4 checks passed, Vercel invalid structure and wrong raw relevance
+decision. The full gate fails. One follow-up paired Vercel job is queued:
+`job_557d20eb1f2449d0979fadfa3c1fe6a9`. Do not duplicate or reprioritize it.
+All original quality expectations remain unchanged. Exact release, timing,
+artifact hashes and rollback: `STABILIZATION_VERIFICATION.md`. Implementation
+contracts and remaining semantic gates: `EVENTS_INCIDENT_SCOPING.md`.
+
+Job coverage and selected-source labels are deployed, authenticated private
+downloads retain no-store/sandbox headers, and existing artifacts remain immutable.
+No browser acceptance of the latest labels is claimed. Older checkpoints below
+are historical records, not instructions to re-enable old profiles or repeat jobs.
+
+## Initial private pilot (historical)
+
+Initial release: admin `bddeff1`, LLM worker `2de5845`, platform `683abb8`.
 Extractive pilot `job_05152e7dd57246d48c01bb47ead61d93` succeeded: seven documents,
 23 passages, authenticated attachment hash verified, event row unchanged.
 Model-assisted pilot `job_2be77141919a403592ce6ca21ce8e8a3` targets the same Odido
@@ -42,7 +75,7 @@ inference. With the separate model flag enabled, it uses the guarded profile
 described below and participates in model admission. Neither mode alters public
 event reports, runner concurrency, build commands or publication behavior.
 
-### Optional bounded model assessment (deployed, real-model pilot pending)
+### Optional bounded model assessment (initial contract; subsequent versions above)
 
 `SV_EVENT_REVIEW_MODEL_ENABLED=0` retains the deployed extractive behavior.
 With an explicitly enabled worker and `SV_EVENT_REVIEW_PROFILE_ID`, the same
