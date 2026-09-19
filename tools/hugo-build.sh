@@ -220,7 +220,7 @@ EOF
     case "${SV_EVENT_ACTIVATION_CHECK:-0}" in
       0) ln -sfn "$rel_release" "$CURRENT_LINK" ;;
       1)
-        if ! python3 -m sempervigil.event_activation "$release_dir" "$CURRENT_LINK"; then
+        if ! "${SV_EVENT_ACTIVATION_PYTHON:-python3}" -m sempervigil.event_activation "$release_dir" "$CURRENT_LINK"; then
           echo "error: Events activation failed; no unguarded activation attempted"
           exit 1
         fi

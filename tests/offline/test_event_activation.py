@@ -168,6 +168,7 @@ def test_actual_shell_activation_branch_without_running_hugo(tmp_path, flag, gua
     env = {**os.environ, "CURRENT_LINK": str(current), "rel_release": "releases/new",
            "release_dir": str(tmp_path / "releases/new")}
     env.pop("SV_EVENT_ACTIVATION_CHECK", None)
+    env.pop("SV_EVENT_ACTIVATION_PYTHON", None)
     if flag is not None: env["SV_EVENT_ACTIVATION_CHECK"] = flag
     # Execute only the extracted switch branch, with no build executable involved.
     result = subprocess.run(["sh", "-c", f"python3() {{ return {guard_result}; }}\n" + branch],
@@ -183,3 +184,20 @@ def test_cli_failure_does_not_disclose_connection_details(monkeypatch, capsys):
     assert activation.main() == 1
     output = capsys.readouterr().err
     assert "RuntimeError" in output and "secret" not in output
+
+
+@pytest.mark.parametrize("flag", ["0", "1"])
+def test_builder_passes_its_application_interpreter_without_running_hugo(monkeypatch, tmp_path, flag):
+    from sempervigil import builder
+    monkeypatch.setenv("SV_EVENT_ACTIVATION_CHECK", flag)
+    def popen(cmd, **kwargs):
+        assert cmd == ["/bin/sh", "/app/tools/hugo-build.sh"]
+        if flag == "1":
+            assert kwargs["env"]["SV_EVENT_ACTIVATION_PYTHON"] == builder.sys.executable
+        else:
+            assert kwargs["env"] is None
+        raise RuntimeError("test-before-spawn")
+    monkeypatch.setattr(builder.subprocess, "Popen", popen)
+    with pytest.raises(RuntimeError, match="test-before-spawn"):
+        builder._run_hugo_until_done(None, "test", "test",
+            {"stdout": tmp_path / "out", "stderr": tmp_path / "out"}, 60)

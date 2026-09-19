@@ -199,6 +199,8 @@ def _run_hugo_until_done(
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            env=({**os.environ, "SV_EVENT_ACTIVATION_PYTHON": sys.executable}
+                 if os.environ.get("SV_EVENT_ACTIVATION_CHECK", "0") == "1" else None),
         )
         line_queue: queue.Queue[str | None] = queue.Queue()
 

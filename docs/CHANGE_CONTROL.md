@@ -1,5 +1,13 @@
 # Change Control Log
 
+## 2026-09-19: Activation interpreter correction during pilot
+
+- API build `job_32279890e4874b38b337bc0f8b170d0e` completed Hugo rendering but
+  refused activation: system `python3` lacked `psycopg`. Prior release stayed live.
+- The builder now passes its own `sys.executable` to the approved activation hook.
+  No dependency installation or Hugo command changes; disabled builds inherit
+  their environment exactly as before. Added no-spawn interpreter regression tests.
+
 ## 2026-09-19: Builder-owned qualified Events release integration
 
 - Problem: `worker._publish_events` wrote shared Events inputs independently of
