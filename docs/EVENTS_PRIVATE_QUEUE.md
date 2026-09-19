@@ -1,6 +1,6 @@
 # Private Events jobs and admin visibility
 
-Status: admin `bddeff1`, LLM worker `0e826ed`, platform `3b02a14`.
+Status: admin `bddeff1`, LLM worker `2de5845`, platform `683abb8`.
 **Authenticated operator-triggered private admission and bounded model suggestions
 are enabled.** Autonomous admission and public publication are not.
 Extractive pilot `job_05152e7dd57246d48c01bb47ead61d93` succeeded: seven documents,
@@ -93,7 +93,7 @@ to advance its version timestamp before reusing results. Cache coverage is the
 bounded evidence packet, not omitted source text. Cache is an optimization for
 unverified suggestions, never evidence that a report is safe to publish.
 
-### Suggested reading and timing (local, release pending)
+### Suggested reading and timing (deployed, real pilot pending)
 
 Assessed reviews gain a separate expandable Suggested reading section. It is
 assembled deterministically from model-included, exact source passages, retaining

@@ -1010,3 +1010,24 @@ concurrency or Hugo behavior. Release pending; original model pilot remains
 queued behind ordinary CVEs. Real model quality and live timing rows are not yet
 verified. This slice moves private review toward a readable automated draft, not
 an approved public Event report.
+
+## Reading/timing worker release (September 19 UTC)
+
+Worker `2de5845`, platform `683abb8`; admin remains `bddeff1`. Source-only image
+manifest `sha256:dd3ef97882109bf75e6e1824573560e678605d4d35f095cc3f7f09732e8ca4a8`
+imported on all four schedulable nodes. Render/diff showed only the worker and its
+init-container image substitutions. Orchestrator fully stopped, active LLM work
+drained, old worker deleted, replacement Ready, orchestrator restored. Post-apply
+diff empty. Live read-only preflight passed the actual profile guard and confirmed
+existing timing columns; no inference or schema change in preflight.
+
+Original model pilot remains queued (24 ordinary CVEs ahead at last sample).
+Do not requeue it. Its completed result must be checked for a valid assessment,
+private suggested reading, attributed timing and unchanged public eligibility;
+factual quality remains a separate gate. The first extractive pilot and recovery
+CVE reruns were already verified. No changes to public renderers, JSON contracts,
+builder, model, prompts or concurrency in this release.
+
+Rollback is a worker-only return to `0e826ed` if needed: it retains corrected
+router handling and cache, but lacks suggested reading/timing. Preserve artifacts.
+Automatic evidence refresh and public reporting are still not enabled.
