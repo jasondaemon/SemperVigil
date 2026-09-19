@@ -76,6 +76,22 @@ Docker is not required. The established account/key were recovered from prior
 release records and verified. See KUBERNETES_RELEASE.md. Never copy code into live
 containers as a workaround.
 
+## Qwen 3.5 structural correction: local verification
+
+The first Qwen 3.5 frozen-cohort job, `job_87fab52cb9224c9596e0250e90d3ead8`,
+made three context calls and no summary calls. Ollama received the complete JSON
+schema in its native `format` field, but all three responses used a top-level
+array, obsolete statement keys, invalid date roles, or null date roles. Strict
+validation rejected every response; no article, Event, feed, or build data changed.
+
+A direct production-model probe reproduced that Ollama 0.20.0 does not constrain
+this Qwen 3.5 response to the supplied schema. A second probe succeeded only after
+the prompt explicitly required the root object, exact field names, enum values,
+and null-date pairing. `article-evidence-v5` adds those generation instructions
+without accepting, coercing, repairing, or retrying malformed output. The schema
+and validators are unchanged. The full offline suite passes: 983 tests, two skips.
+This is locally verified and not yet deployed or semantically accepted.
+
 ## Operation
 
 `article_review_private` is a distinct operator-triggered job on `llm_local`, with

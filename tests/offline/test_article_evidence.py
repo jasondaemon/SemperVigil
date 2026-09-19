@@ -165,6 +165,14 @@ def test_date_role_requires_explicit_date_wording():
         evidence.validate_context(encode(data), ARTICLE, GEN)
 
 
+def test_context_prompt_states_exact_root_and_field_contract():
+    prompt = evidence.CONTEXT_PROMPT
+    assert "exactly one JSON object" in prompt
+    assert "exactly one key named facts" in prompt
+    assert "Use statement, never fact or fact_text" in prompt
+    assert '"date_text":null,"date_role":"none"' in prompt
+
+
 def test_empty_context_abstains_before_summary_request():
     result = evidence.validate_context(encode({'facts': []}), ARTICLE, GEN)
     with pytest.raises(ValueError, match='no_facts'):
