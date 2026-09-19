@@ -1,4 +1,5 @@
 import json
+import copy
 from pathlib import Path
 
 import pytest
@@ -82,3 +83,48 @@ def test_index_symlinks_refused_before_page_changes(database, tmp_path, target):
     with pytest.raises(ValueError, match="index"):
         export(tmp_path, bundle, identity)
     assert state(tmp_path) == before
+
+
+def test_withdrawal_removes_page_and_index_without_legacy_fallback(database, tmp_path):
+    bundle, identity = approved_fixture(database)
+    export(tmp_path, bundle, identity)
+    authorization = {"qualified_revisions": {}, "promoted_revision_ids": {},
+                     "managed_event_ids": ["event"], "withheld": {},
+                     "withdrawn": {"event": "qualification_revoked"}}
+    pages, index = publish.write_events_authorized_snapshot([event("event"), event("legacy")],
+        str(tmp_path / "content"), str(tmp_path / "static"), authorization=authorization)
+    assert [Path(p).name for p in pages] == ["legacy.md"]
+    assert not (tmp_path / "content/events/event.md").exists()
+    assert [r["event_id"] for r in json.loads(Path(index).read_text())] == ["legacy"]
+
+
+@pytest.mark.parametrize("fault", ["hold", "missing_state", "overlap", "reason", "duplicate", "missing_pointer"])
+def test_authorization_conflicts_never_rewrite_previous_outputs(database, tmp_path, fault):
+    bundle, identity = approved_fixture(database)
+    export(tmp_path, bundle, identity)
+    before = state(tmp_path)
+    authorization = {"qualified_revisions": {"event": bundle}, "promoted_revision_ids": {"event": identity},
+                     "managed_event_ids": ["event"], "withheld": {}, "withdrawn": {}}
+    if fault in {"hold", "missing_state", "reason"}:
+        authorization.update(qualified_revisions={}, promoted_revision_ids={})
+    if fault == "hold": authorization["withheld"] = {"event": "evidence_changed"}
+    if fault == "overlap": authorization["withdrawn"] = {"event": "qualification_revoked"}
+    if fault == "reason": authorization["withdrawn"] = {"event": "model_disagrees"}
+    if fault == "duplicate": authorization["managed_event_ids"].append("event")
+    if fault == "missing_pointer": authorization["promoted_revision_ids"] = {}
+    with pytest.raises(ValueError):
+        publish.write_events_authorized_snapshot([event("event")], str(tmp_path / "content"),
+            str(tmp_path / "static"), authorization=authorization)
+    assert state(tmp_path) == before
+
+
+def test_authorized_snapshot_uses_same_projection_and_preserves_caller_input(database, tmp_path):
+    bundle, identity = approved_fixture(database)
+    authorization = {"qualified_revisions": {"event": bundle}, "promoted_revision_ids": {"event": identity},
+                     "managed_event_ids": ["event"], "withheld": {}, "withdrawn": {}}
+    original = copy.deepcopy(authorization)
+    pages, index = publish.write_events_authorized_snapshot([event("event")], str(tmp_path / "content"),
+        str(tmp_path / "static"), authorization=authorization)
+    assert identity in Path(pages[0]).read_text()
+    assert json.loads(Path(index).read_text())[0]["event_revision"] == identity
+    assert authorization == original

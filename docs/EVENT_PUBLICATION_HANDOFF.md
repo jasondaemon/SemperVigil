@@ -45,6 +45,8 @@ private model suggestions. Current production versions and pilot evidence are in
    The local bounded revocation-aware reader is now tested; worker withdrawal/hold
    handling and authorization recheck at build activation are still open. Never
    interpret a managed withheld/withdrawn revision as eligible legacy fallback.
+   Local export selection now enforces disjoint managed states, aborts on holds
+   and excludes withdrawals from both outputs. No runtime caller is enabled.
 3. Persist evidence qualification separately from model proposals. Bind exact
    incident scope, source versions, citation spans, assertion/date roles and
    reviewer/policy identity. Model-selected `include` is relevance, not factual
@@ -83,6 +85,10 @@ private model suggestions. Current production versions and pilot evidence are in
    citations, desktop/mobile, daily JSON compatibility and unchanged archive files.
    A disabled qualified path must leave old serving intact; rollback restores the
    previous pointer and republishes through the same API.
+   Inspection of `tools/hugo-build.sh` confirms direct activation after build
+   success, with no Events authorization hook. Preserve `BUILD_PIPELINE.md`'s
+   explicit-approval invariant: propose/review the smallest activation strategy
+   before changing that script or enabling a workflow that requires such a check.
 
 ## Acceptance that remains open
 

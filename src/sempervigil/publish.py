@@ -296,6 +296,46 @@ def write_events_exports(events: Iterable[dict[str, object]], base_content_dir: 
     return pages, str(path)
 
 
+def write_events_authorized_snapshot(events: Iterable[dict[str, object]], base_content_dir: str,
+                                     base_static_dir: str, *, authorization: dict) -> tuple[list[str], str]:
+    """Consume all authorization states explicitly; never legacy-fallback a hold.
+
+    The caller supplies a complete trusted pointer snapshot for this export. This
+    does not replace activation-time authorization checks or build coordination.
+    """
+    if type(authorization) is not dict or authorization.keys() != {
+            "qualified_revisions", "promoted_revision_ids", "managed_event_ids", "withheld", "withdrawn"}:
+        raise ValueError("invalid_event_export_authorization")
+    bundles, pointers = authorization["qualified_revisions"], authorization["promoted_revision_ids"]
+    managed, held, withdrawn = (authorization[k] for k in ("managed_event_ids", "withheld", "withdrawn"))
+    if (any(type(m) is not dict for m in (bundles, pointers, held, withdrawn))
+            or type(managed) is not list
+            or any(type(v) is not str or not v for v in managed)
+            or len(set(managed)) != len(managed)):
+        raise ValueError("invalid_event_export_authorization")
+    active, hold_ids, withdrawal_ids = set(pointers), set(held), set(withdrawn)
+    if (set(bundles) != active or set(managed) != active | hold_ids | withdrawal_ids
+            or active & hold_ids or active & withdrawal_ids or hold_ids & withdrawal_ids
+            or any(v != "evidence_changed" for v in held.values())
+            or any(v not in ("qualification_revoked", "event_unavailable", "evidence_unavailable")
+                   for v in withdrawn.values())):
+        raise ValueError("inconsistent_event_export_authorization")
+    if held:
+        raise ValueError("event_export_withheld")
+    selected, identities = [], set()
+    for event in events:
+        event_id = event.get("id")
+        if type(event_id) is not str or not event_id or event_id in identities:
+            raise ValueError("invalid_event_export_identity")
+        identities.add(event_id)
+        if event_id not in withdrawal_ids:
+            selected.append(event)
+    if active - identities:
+        raise ValueError("unmatched_event_publication_pointer")
+    return write_events_exports(selected, base_content_dir, base_static_dir,
+                               qualified_revisions=bundles, promoted_revision_ids=pointers)
+
+
 def write_events_markdown(
     events: Iterable[dict[str, object]], base_content_dir: str, *,
     qualified_revisions: dict[str, dict] | None = None,

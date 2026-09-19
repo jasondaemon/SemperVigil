@@ -267,3 +267,32 @@ and timestamp-only snapshots, source edits, suppression, link removal, event
 visibility and qualification revocation. All 662 offline tests pass, including
 seven new preconnection/empty-selection checks. Disposable database container
 and tunnel were removed. No production schema, role, file, image or model changes.
+
+## Authorization-state export selection (local, not deployed)
+
+`write_events_authorized_snapshot` consumes the complete reader result, not merely
+its two eligible maps. It verifies that every managed event has exactly one active,
+held or withdrawn state. Any hold aborts before file writes. Withdrawn events are
+excluded from both page and index output; unaffected unmanaged legacy events keep
+their existing output path. Inconsistent/missing/overlapping states and duplicate
+event identities are refused. Qualified entries use the existing matched-output
+preflight and pointer checks. No caller input is mutated.
+
+This does not enable publication or authorize a raw client-supplied snapshot. The
+future caller must supply the complete trusted pointer inventory for its export,
+coordinate with builders and handle retries without publishing partial source
+writes. Holding an entire export is conservative; it can delay other withdrawals
+when one event needs requalification. A coordinator must resolve that condition
+without silently reintroducing legacy output.
+
+Eight new offline tests cover successful qualified exports, withdrawal from page
+and index, caller-input preservation, and held/inconsistent state rejection with
+unchanged prior files. All 670 offline tests pass. Prior ten PostgreSQL and 21 JS
+gates were not rerun for this pure export selection change.
+
+The repository build script currently activates a successful release directly;
+there is no Events-specific authorization check between Hugo success and activation.
+`BUILD_PIPELINE.md` prohibits modifying that script/pipeline without a concrete
+case and explicit approval. No build script, mount, activation behavior or Hugo
+command changed. A reviewed activation/withdrawal strategy is a release gate,
+not a reason to bypass the invariant or claim production automation complete.

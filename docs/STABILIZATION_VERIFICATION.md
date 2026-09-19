@@ -1850,3 +1850,23 @@ calls or build. This reader is not a lease covering later build activation:
 withdrawal handling, coordinated build admission and authorization recheck remain
 mandatory integration work. Private review is still the deployed feature, not
 autonomous public reporting.
+
+## Explicit managed-state export selection, September 19 11:40 UTC
+
+Local authorization wrapper now consumes the entire export snapshot: managed IDs
+must partition into active, held or withdrawn states, with matching bundle/pointer
+keys. Holds abort before writes; withdrawn events are omitted from page and index
+output rather than falling back to old narrative. Unmanaged events preserve the
+legacy rendering path. Duplicate event IDs and inconsistent state are refused.
+
+Eight new tests and all 670 offline tests pass, covering qualified output, caller
+input immutability, withdrawal cleanup and preserved prior files on holds/missing/
+overlapping/invalid state. No SQL/JS changes; prior ten PostgreSQL and 21 JS gates
+were not rerun. No production changes, new model calls or Hugo invocation.
+
+Read-only inspection confirms `tools/hugo-build.sh` activates a successful release
+without a new Events-specific authorization hook. `BUILD_PIPELINE.md` explicitly
+protects that pipeline against unapproved modification. It was not changed.
+A reviewed activation/withdrawal strategy remains required; neither an earlier
+database snapshot nor helper tests establish authorization at activation time.
+All expected production replicas were ready at this checkpoint's opening.
