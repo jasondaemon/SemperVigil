@@ -753,3 +753,46 @@ jobs, but dashboard tables still waited behind legacy content-wide queries.
 Added an optional counter-only first request; full metrics remain the default and
 load afterward. This preserves counters, backlog eligibility, and external metric
 semantics. New tests cover early-return isolation and unknown (not zero) Need.
+
+## Private queue deployment accepted (2026-09-19 UTC)
+
+Supersedes the in-progress notes above. Admin runs `32ad342`; LLM worker runs
+`ee91658`. Platform configuration is committed as `e9c6bf2`. Admin image manifest
+is `sha256:f695a91df70520a2efa481ef3960c00a8b76681eba8ad9627ce8c0d84571a17f`,
+imported on its chart-pinned node. Worker image is present on all four schedulable
+nodes. Every follow-up was rendered/diffed and applied only to the admin Deployment.
+Final rendered admin/LLM Deployments have no diff against production. Admin source,
+storage, JS, template, and worker/private-handler hashes match committed sources.
+
+- 375 offline Python and 12 JS tests pass. Six PostgreSQL queue tests passed in
+  the preceding implementation slice; they were not rerun during this deployment.
+- Browser shows all 35 job types, including daily briefs and private review, and
+  all four dashboard groups. Clicking the private-review row selects that type
+  on Jobs and returns an empty list, as expected with admission disabled.
+- Counter-only API returned in 0.71 seconds. Need is unknown until the full
+  response arrives. Full dashboard rendering also verified, but legacy content-wide
+  Need queries are slow; SQL optimization remains separate work. The single-flight
+  guard is per browser page, not a cross-client/server cache.
+- Authenticated private admission returns 503 `private_review_disabled`. No private
+  production job/artifact was admitted, no event was published by this feature,
+  and no model proposal or automatic review was enabled.
+- Normal CVE enrichment succeeded on the new worker; two sampled model calls
+  took 1.975s and 1.897s. Automatic build `job_0328f8c8062e4de58a930e95bbf539c8`
+  succeeded at 03:43:55 UTC. No manual Hugo invocation or extra build was needed.
+- All application Deployments ready; replacement pods have zero restarts.
+  Kubernetes readiness including etcd passed; public checker passed 20 checks.
+  These are point checks, not a continuous availability or full-history audit.
+
+One diagnostic request exceeded its 25-second timeout. A later full-metrics probe
+was terminated with its old admin pod during the follow-up rollout; it is not an
+OOM claim. No direct SQL writes, schema changes, or count-definition changes were
+made. Shared ingest/orchestrator remains `27b9fb3`, builder `889b2de`, web unchanged.
+
+Rollback: restore admin tag `6c0d2d9`, remove the worker image override (inherits
+`27b9fb3`), render/diff, drain the LLM launch after stopping orchestration, and apply
+only the affected Deployments. Restore orchestration after readiness. There are
+no schema or public-content changes to undo. Keep private admission disabled.
+
+Application changes and SemperVigil platform values are committed/pushed. The
+platform worktree has pre-existing unrelated appliance-proxy/certificate edits;
+they were preserved and excluded, so the entire platform repo is not clean.

@@ -1,10 +1,10 @@
 # Private Events jobs and admin visibility
 
-Status: admin and LLM worker deployed at `ee91658`, **admission disabled**.
-The new API exposes 35 job types and rejects private requests with 503 while
-disabled. Live dashboard verification exposed pre-existing slow backlog queries
-and overlapping ten-second refreshes. A single-request browser guard is tested;
-its admin-only follow-up rollout and final visual verification are pending.
+Status: LLM worker deployed at `ee91658`; admin follow-up at `32ad342`.
+**Admission remains disabled.** The API exposes 35 job types and rejects private
+requests with 503 while disabled. Live Jobs filters and all four dashboard groups
+were verified. Follow-ups correct a stale script cache version, serialize browser
+refreshes, and display counters before legacy slow backlog queries.
 
 The dashboard's initial request now uses `include_backlog=false` to display the
 same job-status counters and type catalogue without waiting for content-wide Need
