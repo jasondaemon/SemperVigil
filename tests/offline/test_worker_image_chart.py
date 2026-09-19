@@ -14,10 +14,14 @@ def test_private_review_chart_configuration(enabled):
     chart = Path(__file__).resolve().parents[2] / "deploy/helm/sempervigil"
     raw = subprocess.check_output(["helm", "template", "test", str(chart),
         "--show-only", "templates/configmap-env.yaml", "--set-string",
-        "env.SV_EVENT_REVIEW_ENABLED=" + enabled], text=True)
+        "env.SV_EVENT_REVIEW_ENABLED=" + enabled,
+        "--set-string", "env.SV_EVENT_REVIEW_MODEL_ENABLED=" + enabled,
+        "--set-string", "env.SV_EVENT_REVIEW_PROFILE_ID=private-profile"], text=True)
     data = yaml.safe_load(raw)["data"]
     assert data["SV_EVENT_REVIEW_ENABLED"] == enabled
     assert data["SV_EVENT_REVIEW_DIR"] == "/log/event-reviews"
+    assert data["SV_EVENT_REVIEW_MODEL_ENABLED"] == enabled
+    assert data["SV_EVENT_REVIEW_PROFILE_ID"] == "private-profile"
 
 
 @pytest.mark.skipif(not shutil.which("helm"), reason="Helm is not installed")

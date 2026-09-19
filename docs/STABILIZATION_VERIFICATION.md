@@ -837,3 +837,38 @@ Rollback: set private admission to 0 in platform values, render/apply ConfigMap,
 restart admin and safely drain/restart LLM worker to adopt it. Preserve artifacts
 and last good public output. Image rollback remains possible to admin `32ad342`
 and LLM `ee91658`; no schema rollback. Retain low-priority scheduling during pilot.
+
+## Bounded private model assessment (September 19 UTC, local only)
+
+Added an opt-in worker callback through the existing profile router. The default
+remains extractive. The dedicated profile must match the active CVE local model
+and provider, use the exact evidence-assessment prompt, have no fallback, and
+respect explicit input/output budgets. At most twelve exact passages are selected
+round-robin within 12,000 input bytes. Responses must cover known IDs exactly
+once; invalid/incomplete responses create no review HTML. Model annotations never
+select Include, approve facts, dirty a build, or write public reports.
+
+412 offline tests and 14 JavaScript tests pass, including real worker dispatch
+with fake model responses, no-publication guards, invalid-output failure, stale
+evidence rejection and rendered chart configuration keys. Tests ran in the
+existing `.cache/mcp-venv` environment; the system Python lacks FastAPI and its
+initial collection failed. No dependency change was needed. The prior six
+PostgreSQL integration checks were not rerun for this slice.
+
+At 04:34 UTC the Odido pilot remained queued behind 37 CVEs. Ordinary CVE job
+`job_6dce65b8967645cba7020d4f3c01e1ff` entered its model HTTP request at
+04:15:52 UTC and had not returned at the next sample. The configured socket
+timeout is 1,200 seconds; the router also retries certain URL timeout failures,
+so that value is not an overall wall-time guarantee. Ollama remained Ready with
+the existing model loaded (16,384 context, 100% GPU placement); sampled GPU memory
+was 5,730 MiB of 12,288 MiB and GPU utilization 38%. This is not proof that the
+request is healthy or that a restart is warranted. No inference or job was
+canceled, reprioritized, or duplicated. Event row fingerprint remains unchanged.
+
+At 04:35 UTC the public checker passed; all application Deployments were Ready
+and Kubernetes readiness passed. These are point checks. New assessment code
+is not deployed, no dedicated profile exists yet, and model quality/latency are
+unmeasured. Platform/theme repos and production were not changed during this
+slice. Next: resolve/observe the ordinary request, finish pilot attachment
+verification, then release and measure the guarded assessment using the same
+single-job worker. Public automated reporting remains an open milestone.

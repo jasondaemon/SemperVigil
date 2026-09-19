@@ -187,8 +187,11 @@ def validate_review(raw: bytes, packet: dict) -> dict:
     return review
 
 
-def render(packet: dict, review: dict | None = None) -> str:
+def render(packet: dict, review: dict | None = None, *, assessment: dict | None = None) -> str:
     proposal = draft(packet)
+    if assessment is not None:
+        from .event_assessment import validate_assessment
+        assessment = validate_assessment(assessment, packet)
     review = validate_review(json.dumps(review).encode(), packet) if review is not None else {
         "workflow": WORKFLOW, "packet_version": packet["packet_version"], "decisions": {}, "note": ""}
     cards = []
@@ -198,11 +201,15 @@ def render(packet: dict, review: dict | None = None) -> str:
     for doc in sorted(packet["documents"], key=lambda d: (d["feed_day"] or "9999", d["article_id"])):
         entries = []
         for p in by_doc.get(doc["article_id"], []):
+            suggestion = (assessment or {}).get("suggestions", {}).get(p["id"])
+            model_note = (f'<p class="muted">Model suggestion: {escape(suggestion["decision"])} '
+                          f'({escape(suggestion["reason"])}). Not verified or approved.</p>'
+                          if suggestion else '')
             selected = review["decisions"].get(p["id"], "hold")
             options = "".join(f'<option value="{v}"{(" selected" if selected == v else "")}>{label}</option>'
                               for v, label in (("hold", "Needs review"), ("include", "Include in reading view"),
                                                ("exclude", "Exclude from reading view")))
-            entries.append(f'<div class="passage" data-passage="{p["id"]}"><blockquote>{escape(p["quote"])}</blockquote>'
+            entries.append(f'<div class="passage" data-passage="{p["id"]}"><blockquote>{escape(p["quote"])}</blockquote>{model_note}'
                            f'<div class="passage-tools"><span>Source characters {p["start"]}-{p["end"]} · proposed scope</span>'
                            f'<label>Decision <select aria-label="Decision for source characters {p["start"]} to {p["end"]}">{options}</select></label></div></div>')
         body = "".join(entries) or '<p class="muted">No bounded alias-matched passage found. Inspect the source; absence is not proof of irrelevance.</p>'
@@ -215,7 +222,7 @@ def render(packet: dict, review: dict | None = None) -> str:
         "TITLE": escape(packet["event"]["title"]), "EVENT": escape(packet["event"]["id"]),
         "VERSION": packet["packet_version"], "WORKFLOW": WORKFLOW,
         "ALIASES": escape(", ".join(packet["aliases"])),
-        "REVIEWID": _version(review),
+        "REVIEWID": _version({"review": review, "assessment": assessment}) if assessment else _version(review),
         "SCRIPTHASH": base64.b64encode(hashlib.sha256(script.encode()).digest()).decode(),
         "COUNT": str(len(packet["documents"])), "PASSAGES": str(len(proposal["passages"])),
         "OMITTED": str(len(packet["omissions"])), "TRUNCATED": "Yes" if packet["links_truncated"] else "No",
@@ -248,13 +255,16 @@ def _immutable_write(path: Path, data: bytes) -> None:
         os.unlink(temporary)
 
 
-def save(packet: dict, root: Path, review: dict | None = None) -> Path:
-    page = render(packet, review)
+def save(packet: dict, root: Path, review: dict | None = None, *, assessment: dict | None = None) -> Path:
+    page = render(packet, review, assessment=assessment)
     folder = root / packet["packet_version"]
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     if folder.is_symlink():
         raise ValueError("symlink_artifact_directory")
     _immutable_write(folder / "packet.json", json.dumps(packet, sort_keys=True, ensure_ascii=True).encode())
+    if assessment is not None:
+        _immutable_write(folder / ("assessment-" + _version(assessment) + ".json"),
+                         json.dumps(assessment, sort_keys=True, ensure_ascii=True).encode())
     if review is not None:
         _immutable_write(folder / ("decisions-" + _version(review) + ".json"),
                          json.dumps(review, sort_keys=True, ensure_ascii=True).encode())

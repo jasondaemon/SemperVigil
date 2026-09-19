@@ -5340,7 +5340,9 @@ function wirePrivateEventReview() {
   if (!button || !input || !status || !eventId) return;
   apiFetch("/admin/api/private-reviews/status").then(data => {
     button.disabled = data.enabled !== true;
-    status.textContent = data.enabled ? "Private review available. Nothing is published automatically." : "Private review admission is disabled.";
+    status.textContent = !data.enabled ? "Private review admission is disabled."
+      : data.model_assessment_enabled ? "Private review with model suggestions available. Nothing is published automatically."
+      : "Private extractive review available (no model call). Nothing is published automatically.";
   }).catch(() => { status.textContent = "Private review unavailable. Check admin authentication."; });
   button.onclick = async () => {
     if (button.disabled) return;

@@ -2217,7 +2217,8 @@ def private_review_status() -> dict[str, object]:
     from .event_review_jobs import enabled
     if not os.environ.get("SV_ADMIN_TOKEN"):
         raise HTTPException(status_code=503, detail="private_review_auth_required")
-    return {"enabled": enabled(), "public_eligible": False}
+    return {"enabled": enabled(), "public_eligible": False,
+            "model_assessment_enabled": os.environ.get("SV_EVENT_REVIEW_MODEL_ENABLED", "0") == "1"}
 
 
 @app.get("/jobs")

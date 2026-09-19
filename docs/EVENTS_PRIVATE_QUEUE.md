@@ -5,7 +5,9 @@ platform configuration `1db6492`. **Authenticated operator-triggered private
 admission is enabled.** Autonomous admission and public publication are not.
 Pilot job `job_05152e7dd57246d48c01bb47ead61d93` targets Odido
 (`evt_69844df3a97f`, aliases `["Odido"]`). It was queued behind 113 ordinary CVE
-jobs at the last check; completion/download verification remains pending. Preserve
+jobs at admission. At 04:34 UTC, 37 ordinary CVEs remained queued, with one
+model request waiting since 04:15:52 UTC (configured HTTP timeout 1200 seconds).
+Completion/download verification remains pending. Preserve
 its low priority and single-job runner policy rather than bypassing normal work.
 Live Event Detail shows the enabled private control; all 35 job types and four
 dashboard groups were verified in the preceding release.
@@ -34,6 +36,34 @@ the tested extractive review service. This job does not call an LLM or alter
 public event reports. It is not in the set of jobs that require model admission.
 No runner concurrency, model configuration, build process, or publish behavior
 changes are introduced.
+
+### Optional bounded model assessment (local implementation, not deployed)
+
+`SV_EVENT_REVIEW_MODEL_ENABLED=0` retains the deployed extractive behavior.
+With an explicitly enabled worker and `SV_EVENT_REVIEW_PROFILE_ID`, the same
+serialized job can make one bounded inference call. No admin-side inference,
+automatic admission, extra runner, or public report write is introduced.
+
+The dedicated profile must reuse the currently active CVE enrichment provider
+and local model, have no fallback, and use the exact system prompt in
+`event_assessment.SYSTEM_PROMPT` with user template `{{input}}`. Its parameters
+must contain only `temperature: 0`, `max_tokens: 1024` (allowed 512-1536), and
+`max_input_chars: 12000`. Create it through the authenticated AI configuration
+API, not by modifying existing stage profiles. No such profile has been created
+for this release yet. Changing enablement requires a safely drained worker
+restart because model-job classification is initialized at process startup.
+
+Input is capped at 12,000 bytes including system instructions, with at most 12
+exact source passages selected round-robin. Output is capped at 12,000 bytes and
+must cover every supplied ID exactly once using constrained decision/reason
+pairs. Unknown IDs, incomplete output, stale packet versions, and extra fields
+fail closed. Coverage omissions remain explicit; an empty packet makes no call.
+
+Suggestions and request fingerprints are saved alongside immutable private
+evidence and shown as unverified annotations. Every reading-view choice remains
+on hold. Structural validation is not semantic validation, incident approval, or
+permission to publish. Real-model latency and multi-incident quality evaluation
+are still required before enabling automatic event/report decisions.
 
 A **distinct job type** is essential: an older worker could ignore a private-mode
 payload on `event_report_llm` and publish a normal report. Old workers do not know

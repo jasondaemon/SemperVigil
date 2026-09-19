@@ -434,6 +434,8 @@ _LLM_JOB_TYPES = {
     "event_report_llm",
     "build_daily_brief",
 }
+if os.environ.get("SV_EVENT_REVIEW_MODEL_ENABLED", "0") == "1":
+    _LLM_JOB_TYPES.add("event_review_private")
 
 
 class _JobHeartbeat:
@@ -550,6 +552,8 @@ def _coerce_profile(value: object) -> dict[str, object] | None:
 
 def _resolve_profile_ids_for_job(conn, job) -> list[str]:
     profile_ids: list[str] = []
+    if job.job_type == "event_review_private" and os.environ.get("SV_EVENT_REVIEW_MODEL_ENABLED") == "1":
+        profile_ids.append(os.environ.get("SV_EVENT_REVIEW_PROFILE_ID", ""))
     payload = job.payload or {}
     payload_profile = payload.get("profile_id")
     if isinstance(payload_profile, str) and payload_profile:
@@ -7438,6 +7442,40 @@ def _parse_event_report_output(result: dict[str, object], incident_date: str = "
     return cleaned
 
 
+def _private_review_completion(conn, job, logger):
+    """Opt-in, pinned local profile; normal extractive reviews need no inference."""
+    flag = os.environ.get("SV_EVENT_REVIEW_MODEL_ENABLED", "0")
+    if flag not in {"0", "1"}:
+        raise ValueError("invalid_private_review_model_enablement")
+    if flag == "0":
+        return None
+    from .event_assessment import SYSTEM_PROMPT, MAX_INPUT_BYTES
+    from .services.ai_service import get_prompt
+    profile_id = os.environ.get("SV_EVENT_REVIEW_PROFILE_ID", "")
+    profile = get_profile(conn, profile_id) if profile_id else None
+    reference = _coerce_profile(get_active_profile_for_stage(conn, "cve_enrich_products"))
+    if not profile or not reference or profile.get("fallback"):
+        raise ValueError("private_review_profile_required")
+    if any(not profile.get(k) or profile.get(k) != reference.get(k)
+           for k in ("primary_provider_id", "primary_model_id")):
+        raise ValueError("private_review_requires_existing_local_model")
+    model = get_model(conn, profile["primary_model_id"]) or {}
+    if not str(model.get("model_name", "")).startswith("ollama/"):
+        raise ValueError("private_review_requires_local_model")
+    prompt = get_prompt(conn, profile.get("prompt_id")) or {}
+    if prompt.get("system_template") != SYSTEM_PROMPT or prompt.get("user_template") != "{{input}}":
+        raise ValueError("private_review_prompt_mismatch")
+    params = profile.get("params") or {}
+    tokens = params.get("max_tokens")
+    if (set(params) != {"max_tokens", "temperature", "max_input_chars"}
+            or type(tokens) is not int or not 512 <= tokens <= 1536
+            or params.get("temperature") != 0
+            or params.get("max_input_chars") != MAX_INPUT_BYTES):
+        raise ValueError("private_review_profile_budget")
+    return lambda text: run_profile(conn, profile_id, text, logger, context={
+        "stage": "event_review_private", "job_type": "event_review_private", "job_id": job.id})
+
+
 def _handle_event_report_llm(
     conn, config, payload: dict[str, object], logger: logging.Logger
 ) -> dict[str, object]:
@@ -9568,7 +9606,8 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         return _handle_event_report_llm(conn, config, job.payload or {}, logger)
     if job.job_type == "event_review_private":
         from .event_review_jobs import run
-        return run(job.payload or {})
+        completion = _private_review_completion(conn, job, logger)
+        return run(job.payload or {}) if completion is None else run(job.payload or {}, complete=completion)
     if job.job_type == "rebuild_vendor_products":
         return _handle_rebuild_vendor_products(conn, config, logger)
     if job.job_type == "smoke_test":

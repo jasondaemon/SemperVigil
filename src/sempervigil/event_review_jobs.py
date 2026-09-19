@@ -125,7 +125,7 @@ def artifact_root() -> Path:
     return root
 
 
-def run(payload: dict) -> dict:
+def run(payload: dict, *, complete=None) -> dict:
     if not enabled():
         return {"status": "skipped", "reason": "private_review_disabled", "public_eligible": False}
     if type(payload) is not dict or payload.keys() != {"event_id", "aliases", "workflow"}:
@@ -139,9 +139,16 @@ def run(payload: dict) -> dict:
         raise ValueError("worker_database_required")
     packet = snapshot(lambda: postgres_reader(dsn), event_id=payload["event_id"],
                       aliases=payload["aliases"], scopes=frozenset({READ_SCOPE, EVIDENCE_SCOPE}))
-    page = save(packet, root)
+    if complete is None:
+        page = save(packet, root)
+    else:
+        from .event_assessment import assess
+        assessment = assess(packet, complete)
+        page = save(packet, root, assessment=assessment)
     return {"status": "review_ready", "event_id": payload["event_id"],
             "workflow": WORKFLOW, "packet_version": packet["packet_version"],
             "artifact": str(page.relative_to(root)), "documents": len(packet["documents"]),
             "passages": len(draft(packet)["passages"]), "omissions": len(packet["omissions"]),
-            "links_truncated": packet["links_truncated"], "public_eligible": False}
+            "links_truncated": packet["links_truncated"],
+            "model_assessed": complete is not None and bool(assessment["suggestions"]),
+            "public_eligible": False}
