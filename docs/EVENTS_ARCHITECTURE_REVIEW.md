@@ -8,6 +8,14 @@ claim-auditor iteration sequence, not the existing publication safety contracts.
 
 ## Decision
 
+**Reuse correction:** the existing article summary and context jobs already
+produce facts and timelines used by the legacy event report. The source-extraction
+steps and call counts below are ceilings for missing/changed information, not a
+new mandatory Events stage. Strengthen and reuse that shared output first; see
+[article enrichment quality](ARTICLE_ENRICHMENT_QUALITY.md). Existing eligible
+facts cost zero extraction calls. All article-generation work still counts against
+the same finite experiment budget. No duplicate per-event extraction pipeline.
+
 Keep the reliable publication foundation. Stop developing the same-model,
 per-claim auditor as a prerequisite to report writing. Prove one complete,
 readable, incrementally maintained report with a much smaller workflow before

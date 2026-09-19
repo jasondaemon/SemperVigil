@@ -9779,6 +9779,15 @@ def update_article_content(
     conn.commit()
 
 
+def record_article_enrichment_error(conn: Any, article_id: int, *, kind: str, error: str) -> None:
+    """Record a failed attempt without erasing or re-stamping the previous output."""
+    columns = {"summary": "summary_error", "context": "context_error"}
+    if kind not in columns:
+        raise ValueError("invalid_article_enrichment_kind")
+    conn.execute(f"UPDATE articles SET {columns[kind]} = %s WHERE id = %s", (error, article_id))
+    conn.commit()
+
+
 def update_article_summary(
     conn: Any,
     article_id: int,

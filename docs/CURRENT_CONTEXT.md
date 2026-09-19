@@ -7,7 +7,19 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
-## Current direction: architecture reset (review only)
+## Current direction: strengthen and reuse article enrichment
+
+See `ARTICLE_ENRICHMENT_QUALITY.md`. Article context already supplies facts and
+timelines; do not add routine per-event extraction. Read-only latest-100 sampling
+found 39 context records failing the live schema, while 100 summary records passed
+basic shape checks (not factual verification). Workers ignore schema failures and
+accept raw fallback; local correction validates before storage and preserves prior
+output on failed replacement. 943 offline tests pass, one skip; NOT deployed.
+No inference/profile/public-output changes. Do not roll out rejection alone:
+first align generation, measure acceptance and bind provenance/source freshness.
+Events must reuse caveated shared facts and supplement only identified gaps.
+
+## Earlier direction: architecture reset (review only)
 
 Read `EVENTS_ARCHITECTURE_REVIEW.md` before implementing more Events work. It
 supersedes the per-claim judge iteration sequence. Keep publication safeguards;

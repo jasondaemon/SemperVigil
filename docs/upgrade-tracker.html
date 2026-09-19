@@ -30,6 +30,7 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 <section id="now" class="notice">
 <span class="badge active">Current priority</span>
 <h2>One useful report, not another model judge</h2>
+<p><span class="badge active">Shared article quality / local only</span> Reuse existing summaries and context facts instead of routine Events re-extraction. A latest-100 sample found 39 contexts failing the live schema; this is not a factual error rate. Local workers now reject invalid structured results and preserve prior output on failure. 943 offline tests pass, one skip. Not deployed: generation acceptance must improve before enabling strict rejection. <a href="ARTICLE_ENRICHMENT_QUALITY.md">Findings, shared contract and canary gate</a>.</p>
 <p>The architecture review found three parallel Events paths, no completed narrative publication contract, and missing correction/history handling. Keep the working publication safeguards; freeze per-claim judge experiments. <a href="EVENTS_ARCHITECTURE_REVIEW.md">Read the findings, component decisions and bounded acceptance test</a>.</p>
 <div class="scroll"><table><thead><tr><th>Slice</th><th>Deliverable</th><th>Status / exit</th></tr></thead><tbody>
 <tr><td>R0</td><td>Architecture assessment</td><td>Complete. Documentation only; live automation unchanged.</td></tr>

@@ -26,6 +26,7 @@ from urllib.parse import urlparse, parse_qsl, urlencode, urlsplit, urlunsplit
 from bs4 import BeautifulSoup
 
 from .feed_inventory import list_feed_content_inventory
+from .article_enrichment import validated_output as validated_article_output
 
 from .config import (
     ConfigError,
@@ -109,6 +110,7 @@ from .storage import (
     update_article_content,
     update_article_summary,
     update_article_context_pack,
+    record_article_enrichment_error,
     update_job_result,
     list_article_ids_missing_content,
     list_article_ids_missing_content_all,
@@ -5796,14 +5798,7 @@ def _handle_summarize_article_llm(
     if not profile:
         profile, reason = get_active_profile_for_stage(conn, "summarize_article")
     if not profile:
-        update_article_summary(
-            conn,
-            int(article_id),
-            summary_llm=None,
-            summary_model=None,
-            summary_generated_at=utc_now_iso(),
-            summary_error=f"llm_stage_{reason}",
-        )
+        record_article_enrichment_error(conn, int(article_id), kind="summary", error=f"llm_stage_{reason}")
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         log_event(
             logger,
@@ -5818,14 +5813,7 @@ def _handle_summarize_article_llm(
     source_name = get_source_name(conn, article["source_id"]) or ""
     content = article.get("content_text") or article.get("summary") or article.get("title") or ""
     if not content.strip():
-        update_article_summary(
-            conn,
-            int(article_id),
-            summary_llm=None,
-            summary_model=None,
-            summary_generated_at=utc_now_iso(),
-            summary_error="missing_content",
-        )
+        record_article_enrichment_error(conn, int(article_id), kind="summary", error="missing_content")
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         raise ValueError("missing_content")
     input_chars = len(content or "")
@@ -5869,16 +5857,9 @@ def _handle_summarize_article_llm(
             context={"stage": "summarize_article", "job_type": job.job_type},
         )
         latency_ms = int((time.time() - start) * 1000)
-        parsed = result.get("parsed")
-        raw = result.get("raw") if isinstance(result, dict) else None
-        if isinstance(parsed, ( dict, list)):
-            summary_payload = json.dumps(parsed)
-            summary_text = parsed.get("summary") if isinstance(parsed, dict) else None
-        elif isinstance(raw, str):
-            summary_payload = json.dumps({"summary": raw})
-            summary_text = raw
-        else:
-            raise ValueError("llm_empty_output")
+        parsed = validated_article_output(result, "summary")
+        summary_payload = json.dumps(parsed)
+        summary_text = parsed["summary"]
         update_article_summary(
             conn,
             int(article_id),
@@ -5924,14 +5905,7 @@ def _handle_summarize_article_llm(
             ok=False,
             error=str(exc),
         )
-        update_article_summary(
-            conn,
-            int(article_id),
-            summary_llm=None,
-            summary_model=None,
-            summary_generated_at=utc_now_iso(),
-            summary_error=str(exc),
-        )
+        record_article_enrichment_error(conn, int(article_id), kind="summary", error=str(exc))
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         raise
     finally:
@@ -5966,14 +5940,7 @@ def _handle_summarize_article_context_llm(
     if not profile:
         profile, reason = get_active_profile_for_stage(conn, "article_context_pack")
     if not profile:
-        update_article_context_pack(
-            conn,
-            int(article_id),
-            context_llm=None,
-            context_model=None,
-            context_generated_at=utc_now_iso(),
-            context_error=f"llm_stage_{reason}",
-        )
+        record_article_enrichment_error(conn, int(article_id), kind="context", error=f"llm_stage_{reason}")
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         log_event(
             logger,
@@ -5988,14 +5955,7 @@ def _handle_summarize_article_context_llm(
     source_name = get_source_name(conn, article["source_id"]) or ""
     content = article.get("content_text") or article.get("summary") or article.get("title") or ""
     if not content.strip():
-        update_article_context_pack(
-            conn,
-            int(article_id),
-            context_llm=None,
-            context_model=None,
-            context_generated_at=utc_now_iso(),
-            context_error="missing_content",
-        )
+        record_article_enrichment_error(conn, int(article_id), kind="context", error="missing_content")
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         raise ValueError("missing_content")
     input_chars = len(content or "")
@@ -6039,16 +5999,9 @@ def _handle_summarize_article_context_llm(
             context={"stage": "article_context_pack", "job_type": job.job_type},
         )
         latency_ms = int((time.time() - start) * 1000)
-        parsed = result.get("parsed")
-        raw = result.get("raw") if isinstance(result, dict) else None
-        if isinstance(parsed, (dict, list)):
-            context_payload = json.dumps(parsed)
-            output_text = json.dumps(parsed)
-        elif isinstance(raw, str):
-            context_payload = json.dumps({"context_pack": raw})
-            output_text = raw
-        else:
-            raise ValueError("llm_empty_output")
+        parsed = validated_article_output(result, "context")
+        context_payload = json.dumps(parsed)
+        output_text = context_payload
         update_article_context_pack(
             conn,
             int(article_id),
@@ -6094,14 +6047,7 @@ def _handle_summarize_article_context_llm(
             ok=False,
             error=str(exc),
         )
-        update_article_context_pack(
-            conn,
-            int(article_id),
-            context_llm=None,
-            context_model=None,
-            context_generated_at=utc_now_iso(),
-            context_error=str(exc),
-        )
+        record_article_enrichment_error(conn, int(article_id), kind="context", error=str(exc))
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         raise
     finally:

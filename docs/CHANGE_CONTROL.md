@@ -1,5 +1,20 @@
 # Change Control Log
 
+## 2026-09-19: Shared article enrichment validation, local only
+
+- Inspected live summary/context profiles and newest 100 paired stored outputs.
+  39 context records fail the existing schema; all summaries pass basic shape.
+  Structural findings do not establish factual accuracy. No model calls or edits
+  to production profiles/data/deployments.
+- Validate router success and usable object/array fields before either worker
+  persists enrichment. Remove raw/list fallbacks. Error-only updates retain prior
+  payload/model/generation stamp instead of erasing results on failed refresh.
+- 943 offline tests pass, one skip, including feed contracts and invalid-output
+  downstream isolation. No DB integration tests or rollout yet. Local rollback:
+  revert this slice. Do not deploy rejection alone given the measured failure rate.
+- Revise architecture to strengthen existing article enrichment and reuse it for
+  Events, not add routine per-event extraction. See ARTICLE_ENRICHMENT_QUALITY.md.
+
 ## 2026-09-19: Events architecture review and sequence reset
 
 - Read-only trace of legacy, managed quotation and private deconstruction paths,
