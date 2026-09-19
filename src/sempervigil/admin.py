@@ -652,12 +652,15 @@ def _job_group_id_for_job_type(job_type: str) -> str:
     return "other"
 
 
-def _build_dashboard_metrics_payload(conn: Any) -> dict[str, object]:
-    metrics = get_dashboard_metrics(conn)
+def _build_dashboard_metrics_payload(conn: Any, *, include_backlog: bool = True) -> dict[str, object]:
+    metrics = get_dashboard_metrics(conn) if include_backlog else get_dashboard_metrics(conn, include_backlog=False)
     visible_job_types = _dashboard_visible_job_types(metrics.get("job_counts_by_type_status") or {})
     metrics["job_types"] = visible_job_types
     metrics["job_groups"] = _dashboard_job_groups(visible_job_types)
     metrics["build_state"] = get_build_state(conn)
+    if not include_backlog:
+        metrics["queueable_by_job_type"] = {}
+        return metrics
     metrics["build_status"] = get_build_status(conn)
     metrics["queue_stats"] = get_queue_stats(conn)
     metrics["runner_health"] = get_runner_health_stats(conn)
@@ -1233,9 +1236,9 @@ def logs_latest_build(stream: str = "stdout", lines: int = 200) -> dict[str, obj
 
 
 @app.get("/admin/api/dashboard/metrics", dependencies=[Depends(_require_admin_token)])
-def dashboard_metrics() -> dict[str, object]:
+def dashboard_metrics(include_backlog: bool = True) -> dict[str, object]:
     conn = _get_conn()
-    return _build_dashboard_metrics_payload(conn)
+    return _build_dashboard_metrics_payload(conn, include_backlog=include_backlog)
 
 
 @app.get("/admin/api/health/vpn", dependencies=[Depends(_require_admin_token)])

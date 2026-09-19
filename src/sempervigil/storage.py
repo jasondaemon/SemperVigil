@@ -1855,7 +1855,7 @@ def count_table(conn: Any, table: str) -> int:
     return int(row[0] or 0)
 
 
-def get_dashboard_metrics(conn: Any) -> dict[str, object]:
+def get_dashboard_metrics(conn: Any, *, include_backlog: bool = True) -> dict[str, object]:
     metrics: dict[str, object] = {}
     metrics["cves_missing_description_count"] = 0
     metrics["cves_missing_products_count"] = 0
@@ -1904,6 +1904,8 @@ def get_dashboard_metrics(conn: Any) -> dict[str, object]:
             job_counts.setdefault(job_type, {})[status] = int(count or 0)
     metrics["job_failures_since"] = failures_since
     metrics["job_counts_since"] = counts_since
+    if not include_backlog:
+        return metrics
     metrics["articles_pending_fetch"] = (
         job_counts.get("fetch_article_content", {}).get("queued", 0)
         + job_counts.get("fetch_article_content", {}).get("running", 0)

@@ -6,6 +6,13 @@ disabled. Live dashboard verification exposed pre-existing slow backlog queries
 and overlapping ten-second refreshes. A single-request browser guard is tested;
 its admin-only follow-up rollout and final visual verification are pending.
 
+The dashboard's initial request now uses `include_backlog=false` to display the
+same job-status counters and type catalogue without waiting for content-wide Need
+queries. It then requests the unchanged full metrics. Need values are absent
+(shown as a dash) until calculated; the default API and Prometheus path retain
+their existing full payload. The refresh guard allows one outstanding metrics
+request per page. This is display isolation, not a fix for slow backlog SQL.
+
 The chart supports `workerLlm.image` overrides (inheriting shared image defaults)
 so this private workflow can be released without replacing unrelated workers.
 

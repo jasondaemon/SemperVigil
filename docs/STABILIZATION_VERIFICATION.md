@@ -747,3 +747,9 @@ acceptance and post-release public checks remain pending at this checkpoint.
 Browser testing also exposed a stale hard-coded August asset version: the new
 API was live but browsers retained old job-filter JavaScript. The follow-up
 admin release bumps the script version as well as serializing refresh requests.
+
+The follow-up browser loaded all 35 Jobs filters and successfully filtered private
+jobs, but dashboard tables still waited behind legacy content-wide queries.
+Added an optional counter-only first request; full metrics remain the default and
+load afterward. This preserves counters, backlog eligibility, and external metric
+semantics. New tests cover early-return isolation and unknown (not zero) Need.

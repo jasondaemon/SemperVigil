@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../../src/sempervigil/static/admin/admin.js'), 'utf8');
 const start = source.indexOf('  function renderJobCounts(');
-const end = source.indexOf('  async function loadMetrics()', start);
+const end = source.indexOf('  let metricsLoading = false;', start);
 assert.ok(start > 0 && end > start);
 function render(counts, types, groups) {
   function element(tag) {
@@ -61,4 +61,16 @@ test('slow dashboard refreshes never overlap and can retry after errors', async 
   assert.equal(calls, 3);
   resolve({});
   await third;
+});
+
+test('initial job counters request omits expensive backlog calculations', async () => {
+  const begin = source.indexOf('  let metricsLoading = false;');
+  const finish = source.indexOf('  async function loadQueueDiagnostics()', begin);
+  const urls = [];
+  const context = {apiFetch: async url => {urls.push(url); return {};}, renderJobCounts: () => {}};
+  vm.createContext(context);
+  vm.runInContext(source.slice(begin, finish), context);
+  await context.loadMetrics(false);
+  await context.loadMetrics();
+  assert.deepEqual(urls, ['/admin/api/dashboard/metrics?include_backlog=false', '/admin/api/dashboard/metrics']);
 });

@@ -422,12 +422,14 @@ function wireDashboard() {
     jobCountsContainer.appendChild(wrapper);
   }
   let metricsLoading = false;
-  async function loadMetrics() {
+  async function loadMetrics(includeBacklog = true) {
     // A slow backlog calculation must not accumulate requests on every poll.
     if (metricsLoading) return;
     metricsLoading = true;
     try {
-      const data = await apiFetch("/admin/api/dashboard/metrics");
+      const data = await apiFetch(includeBacklog
+        ? "/admin/api/dashboard/metrics"
+        : "/admin/api/dashboard/metrics?include_backlog=false");
       renderJobCounts(
         data.job_counts_by_type_status || {},
         data.job_types || [],
@@ -548,7 +550,9 @@ function wireDashboard() {
     });
   }
   loadAutoCatchupToggle().catch(() => undefined);
-  loadMetrics().catch((err) => showToast(err.message || String(err)));
+  loadMetrics(false)
+    .catch((err) => showToast(err.message || String(err)))
+    .finally(() => loadMetrics().catch(() => undefined));
   loadQueueDiagnostics().catch(() => undefined);
   setInterval(() => {
     loadMetrics().catch(() => undefined);
