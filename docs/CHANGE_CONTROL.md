@@ -1,5 +1,17 @@
 # Change Control Log
 
+## 2026-09-19: Stored article baseline comparison, read only
+
+- Compare three saved security articles to existing LLM summaries and context;
+  record source-grounded qualification, attribution, date and structure findings.
+  Save a local self-contained review and freeze expected candidate outcomes.
+- Read-only database transaction, bounded three-record export to ignored local
+  data. No model, profile, production data, deployment or application changes.
+- Reproduce candidate unique-quote failure on duplicated stored source text; do
+  not describe candidate prompts as evaluated. All three full requests fit budget.
+- Documentation-only slice; local contract checks exercised against saved data.
+  No full regression or integration rerun. Rollback: remove review/docs entry.
+
 ## 2026-09-19: Private versioned article evidence contract
 
 - Pure context/summary request and validation functions retain exact provenance,

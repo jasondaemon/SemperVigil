@@ -9,6 +9,13 @@
 
 ## Current direction: strengthen and reuse article enrichment
 
+Read-only baseline comparison now covers stored articles 35613-35615. Existing
+context retains details lost in summaries; output can upgrade allegations or
+substitute publication dates. See `article-quality-comparison.html`. No new model
+calls or production writes. It also reproduces a v2 unique-quote rejection on
+duplicated stored article text; resolve occurrence selection before canary. New
+prompt quality remains unmeasured. Snapshot is local ignored data, not Git.
+
 Latest local slice: `article_evidence.py` supplies candidate v2 context/summary
 contracts with source spans, attribution/uncertainty/date roles and fact-linked
 summary sentences. Pure private preview only; no runtime caller or model calls.

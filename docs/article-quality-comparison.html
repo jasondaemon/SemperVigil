@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SemperVigil: Stored Article Quality Comparison</title>
+<style>
+:root{color-scheme:light;--ink:#18352e;--paper:#f5f3eb;--line:#c8d0c6;--accent:#875616}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:17px/1.6 Georgia,serif}
+main{max-width:1120px;margin:auto;padding:40px 24px}h1{font-size:clamp(2rem,5vw,3.2rem);line-height:1.15;max-width:850px}
+h2{line-height:1.3}header{border-bottom:3px solid var(--ink);padding-bottom:24px}.label{font:700 12px/1.5 monospace;text-transform:uppercase;letter-spacing:.12em;color:var(--accent)}
+article{margin:32px 0;padding:24px;background:#fffef8;border:1px solid var(--line);border-radius:8px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:28px}
+h3{font-size:1rem;margin-top:0}a{color:#19664f}code{overflow-wrap:anywhere;font-size:.8em}small,.muted{color:#51645d}li{margin:8px 0}
+.warning{border-left:4px solid var(--accent);padding:12px 20px;background:#eee6d6}footer{border-top:1px solid var(--line);padding-top:16px}
+@media(max-width:740px){.grid{grid-template-columns:1fr;gap:12px}main{padding:24px 16px}article{padding:18px}}
+</style>
+</head>
+<body><main>
+<header><div class="label">Read-only baseline / September 19, 2026</div>
+<h1>What survives the summary?</h1>
+<p>Three stored articles compared with their already-generated LLM summaries and context. Source meaning is assessed against the saved article text, not independently verified reporting.</p>
+<p><strong>No new model generation. No production changes.</strong> These are diagnostic examples, not a random sample or an accuracy score. The new v2 prompts have not been evaluated.</p></header>
+
+<article><div class="label">Article 35613 / qualification lost</div>
+<h2>SolarWinds ARM vulnerability</h2>
+<div class="grid"><section><h3>Stored source</h3><p>The vendor did not mention exploitation. That does not establish whether evidence exists elsewhere.</p></section>
+<section><h3>Existing LLM output</h3><p>The bullet says <q>No evidence of exploitation in the wild as of now.</q> The context correctly retains the narrower vendor-reporting limitation.</p></section>
+<section><h3>Required outcome</h3><p>Preserve that limitation. Retain affected ARM versions, fixed version and the hard-coded-key cause. Keep other products' vulnerabilities separate.</p></section></div>
+<p class="warning">New-contract finding: the stored article body is duplicated. A valid qualification appears twice and fails the v2 unique-quotation check. Resolve citation occurrences deterministically before this becomes a canary acceptance criterion; do not silently remove source text.</p>
+<small><a href="https://thehackernews.com/2026/09/solarwinds-patches-arm-hard-coded-key.html">Original article</a> / Existing summary and context pass local shape checks.</small></article>
+
+<article><div class="label">Article 35614 / useful context omitted</div>
+<h2>WaterPlum campaign</h2>
+<div class="grid"><section><h3>Stored source</h3><p>The advisory reports at least 30,000 devices during December 2025 through July 2026, with more than $10.7 million transferred to North Korea.</p></section>
+<section><h3>Existing LLM output</h3><p>The summary drops the reporting period and attribution, and rounds the amount. A bullet changes the lower bound to <q>over 30,000</q>. The context retains the dates, lower bound and more precise amount.</p></section>
+<section><h3>Required outcome</h3><p>Reuse those context facts with advisory attribution. Preserve quantities, units and time scope. Distinguish defensive advice from completed recovery and attempted theft from confirmed results.</p></section></div>
+<p>The context's numbers are JSON numbers rather than the configured strings. That structural defect does not make its useful facts false, but prevents treating the record as contract-compliant.</p>
+<small><a href="https://www.bleepingcomputer.com/news/security/north-korean-waterplum-hackers-infected-30-000-devices-worldwide/">Original article</a> / Summary shape passes; context shape fails.</small></article>
+
+<article><div class="label">Article 35615 / allegation promoted</div>
+<h2>ShinyHunters and Clop</h2>
+<div class="grid"><section><h3>Stored source</h3><p>The reporter confirmed file upload and defacement. The vulnerability explanation comes from the attackers; claimed theft of logs, source code and keys was not independently verified.</p></section>
+<section><h3>Existing LLM output</h3><p>The narrative retains the theft allegation, but a bullet presents the Grav CMS attack method as established. Another misspells Clop. Context is wrapped in an escaped string and assigns the publication date to the attack despite relative timing in the source.</p></section>
+<section><h3>Required outcome</h3><p>Keep confirmed observations separate from attacker claims. Leave the relative attack timing unresolved; do not substitute publication day. Do not treat a historical Oracle CVE as the current breach's vulnerability.</p></section></div>
+<small><a href="https://www.bleepingcomputer.com/news/security/shinyhunters-hacks-clop-leak-site-threatens-to-extort-ransomware-gang/">Original article</a> / Summary shape passes; context shape fails.</small></article>
+
+<h2>Next comparison</h2>
+<ol><li>Keep this source snapshot and baseline unchanged. Freeze the required outcomes above before generating candidate output.</li>
+<li>Resolve the duplicated-passage citation case without weakening semantic requirements or editing production source content.</li>
+<li>Generate candidate context and summaries privately through the existing serial LLM queue. Compare source, baseline and candidate side by side.</li>
+<li>Measure omissions, unsupported assertions, qualifiers, timing, structure, attempts and latency. Keep production output until the candidate passes; no bulk rewrite.</li></ol>
+<footer><p>Snapshot captured at 2026-09-19 19:14:37 UTC. Full stored text and generated payloads are kept locally in the ignored data directory, not committed. All three complete inputs fit the candidate request budget. Existing structural checks do not establish historical router validation or factual correctness.</p>
+<p><a href="upgrade-tracker.html">Upgrade tracker</a> / <a href="ARTICLE_ENRICHMENT_QUALITY.md">Contract and rollout notes</a></p></footer>
+</main></body></html>

@@ -4,6 +4,38 @@ September 19, 2026. Local hardening implemented and tested; NOT deployed.
 This corrects the Events architecture reset: reuse existing article enrichment,
 not routine re-extraction of each article for each event.
 
+## Stored-article comparison: September 19
+
+Read-only comparison of articles 35613, 35614 and 35615 against their already
+generated summary/context is in [the local review](article-quality-comparison.html).
+No new inference, profile changes, deployment or production data writes. This
+purposive diagnostic sample is not a factual accuracy estimate. Original saved
+reporting is the comparison reference, not independent verification of events.
+
+Findings: summary generation can discard qualifications and useful time/quantity
+details that existing context retained. One bullet upgrades an attacker claim to
+an established method. The Clop context is an escaped wrapper, not the expected
+object, and invents an exact incident day from publication timing. WaterPlum
+context contains numeric items instead of strings. All three summary shapes pass;
+only the SolarWinds context passes the local shape validator. No historical router
+validation status is inferred from this check.
+
+The baseline also found a defect in the proposed v2 contract: duplicated stored
+SolarWinds article text causes valid quotes to fail the unique-occurrence rule.
+The qualification occurs twice; local validation reproduces
+`article_evidence_quote_not_unique`. Fix deterministic occurrence selection before
+the queued comparison, without silently changing stored source content or claiming
+that repeated quotations prove semantic support. All three full requests fit the
+current byte budget. Candidate generation is still pending; no before/after quality
+improvement has been measured. Required outcomes are frozen in the local review.
+
+Snapshot is ignored at `data/article-quality-comparison/snapshot.json`, captured
+2026-09-19T19:14:37.021907+00:00. Stored text SHA-256 fingerprints:
+
+- 35613: `5794549698ec322e994bb59d07e8cb8f5270f517c79d7d309dd2881844b51658`
+- 35614: `23c1088b13099dc727142b10edb282a25166585a6f6a441870cc052f3d355661`
+- 35615: `66bbe33fb23bcceb20811399d08aca8119547052156887dcf9583e621b126b58`
+
 ## Versioned private contract: implemented locally
 
 `article_evidence.py` now defines the candidate v2 context and summary contracts.
