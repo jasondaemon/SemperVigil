@@ -1,5 +1,12 @@
 # SemperVigil — Current Context (2026-02-19)
 
+> September 19, 2026 release override: the topology notes below are historical.
+> Read `STABILIZATION_VERIFICATION.md` and `EVENTS_PRIVATE_QUEUE.md` for current
+> deployment tags, inference recovery, private assessment flags and pending pilot
+> verification. The HTML upgrade tracker distinguishes deployed work from open
+> automatic-publication gates. Do not infer current production settings from the
+> February snapshot alone.
+
 This doc is the **single source of truth** for the current running state, operational behavior, and known pitfalls.
 Use it first when starting a new chat or debugging issues.
 

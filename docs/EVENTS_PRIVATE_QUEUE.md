@@ -1,14 +1,14 @@
 # Private Events jobs and admin visibility
 
-Status: admin and LLM worker deployed at `0087db6`; chart wiring `205cf91`;
-platform configuration `1db6492`. **Authenticated operator-triggered private
-admission is enabled.** Autonomous admission and public publication are not.
-Pilot job `job_05152e7dd57246d48c01bb47ead61d93` targets Odido
-(`evt_69844df3a97f`, aliases `["Odido"]`). It was queued behind 113 ordinary CVE
-jobs at admission. At 04:34 UTC, 37 ordinary CVEs remained queued, with one
-model request waiting since 04:15:52 UTC (configured HTTP timeout 1200 seconds).
-Completion/download verification remains pending. Preserve
-its low priority and single-job runner policy rather than bypassing normal work.
+Status: admin and LLM worker deployed at `bddeff1`, platform `f276b4b`.
+**Authenticated operator-triggered private admission and bounded model suggestions
+are enabled.** Autonomous admission and public publication are not.
+Extractive pilot `job_05152e7dd57246d48c01bb47ead61d93` succeeded: seven documents,
+23 passages, authenticated attachment hash verified, event row unchanged.
+Model-assisted pilot `job_2be77141919a403592ce6ca21ce8e8a3` targets the same Odido
+event (`evt_69844df3a97f`, aliases `["Odido"]`). It is pending behind normal CVE
+work; no model quality or latency result is claimed yet. Preserve its low priority
+and single-job runner policy rather than bypassing normal work.
 Live Event Detail shows the enabled private control; all 35 job types and four
 dashboard groups were verified in the preceding release.
 
@@ -32,12 +32,12 @@ An authorized admin POST to `/admin/api/events/{event_id}/private-review` accept
 
 The server canonicalizes aliases and admits `event_review_private` to the existing
 `llm_local` queue at priority -10 with one attempt. The existing worker dispatches
-the tested extractive review service. This job does not call an LLM or alter
-public event reports. It is not in the set of jobs that require model admission.
-No runner concurrency, model configuration, build process, or publish behavior
-changes are introduced.
+the tested private review service. Default configuration is extractive without
+inference. With the separate model flag enabled, it uses the guarded profile
+described below and participates in model admission. Neither mode alters public
+event reports, runner concurrency, build commands or publication behavior.
 
-### Optional bounded model assessment (local implementation, not deployed)
+### Optional bounded model assessment (deployed, real-model pilot pending)
 
 `SV_EVENT_REVIEW_MODEL_ENABLED=0` retains the deployed extractive behavior.
 With an explicitly enabled worker and `SV_EVENT_REVIEW_PROFILE_ID`, the same
@@ -52,7 +52,8 @@ must contain only `temperature: 0`, `max_tokens: 1024` (allowed 512-1536), and
 API, not by modifying existing stage profiles. Prepared profile
 `24a0096b-57f0-5493-a1d4-bb5f41f3d216` uses prompt
 `98fb4df1-f96e-5115-840c-6774b97368d9`; neither is routed to an existing stage.
-The production assessment flag remains off. Changing enablement requires a safely drained worker
+The production assessment flag is on for operator-triggered reviews only.
+Changing enablement requires a safely drained worker
 restart because model-job classification is initialized at process startup.
 
 Input is capped at 12,000 bytes including system instructions, with at most 12
@@ -94,7 +95,8 @@ ID, packet version, relative artifact path, coverage counts, and
 - Set environment-specific values in k8s-platform, not application defaults.
 - Confirm the selected log volume is private, writable by the worker, persistent,
   and absent from web serving before enabling. Do not expose raw log/artifact paths.
-- No model calls, automatic catch-up, schema migration, or public publication.
+- Model calls require the separate model flag and guarded profile. No automatic
+  catch-up, schema migration, or public publication.
 - Stopping admission preserves queued jobs/artifacts. A disabled worker returns
   a skipped result if a private review was already queued; requeue explicitly when
   enabled again rather than assuming disabled work will resume automatically.
@@ -141,9 +143,10 @@ content or per-job detail retrieval is added to the dashboard.
 - User gave initial positive visual feedback on the private review pages. This
   does not validate their facts or the newly changed dashboard in a live browser.
 
-Next check: observe the pilot result, verify the authenticated attachment matches
-the immutable worker artifact, and compare the event-row fingerprint to
-`92ce5376ad269aa1f073fafdc75f98d4` (before the pilot). Do not assume a changed row
-was caused by the pilot; investigate concurrent normal enrichment if it changes.
-Then advance the staged automated evidence/correlation/reporting plan. The private
-extractive pilot is not completion of the user's automated Events goal.
+Next check: observe model pilot `job_2be77141919a403592ce6ca21ce8e8a3`, verify its
+attachment and suggestions, measure inference latency/coverage, and confirm the
+event-row fingerprint remains `92ce5376ad269aa1f073fafdc75f98d4`. Do not assume a
+changed row was caused by the pilot; investigate concurrent normal enrichment.
+Then evaluate multiple incidents and advance automated evidence/change admission
+and reporting. A successful private pilot is not completion of automated public
+Events. Do not resubmit this pending pilot or bypass the ordinary queue.

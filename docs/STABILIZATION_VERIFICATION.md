@@ -909,3 +909,40 @@ profile `24a0096b-57f0-5493-a1d4-bb5f41f3d216`, prompt
 No inference ran from admin. Assessment remains disabled until the targeted
 application release and real-worker quality/latency pilot. Source-only image
 `bddeff1` was built using the retained base without dependency changes.
+
+## Private pilot verified; assessment deployed (September 19 UTC)
+
+Original extractive pilot `job_05152e7dd57246d48c01bb47ead61d93` succeeded with
+seven documents, 23 passages, no omitted documents and no link truncation. The
+authenticated API returned a 67,698-byte attachment with SHA-256
+`3af71c098185a1446f8563df7783ad954c27def3681b898f8f89b5171e780ba6`, matching the
+immutable worker filename. Private/no-store, attachment, nosniff and sandbox CSP
+headers were present. Event fingerprint remains
+`92ce5376ad269aa1f073fafdc75f98d4`. Both recovery reruns also succeeded with one
+affected-product item each; no original CVE was dropped from the queue.
+
+Deployed source image `bddeff1` to admin and LLM worker only; platform commit
+`f276b4b`. Imported image manifest
+`sha256:8e8a5903c22054b01bd42f28434f7ca44dccd290949358cfb678dcfa74846b2c` on all
+four schedulable nodes. Render/diff showed four image substitutions and two new
+ConfigMap keys only: assessment flag 1 and dedicated profile ID. Orchestration
+was stopped and fully terminated; no local LLM job/launch was running when the
+worker was drained. Applied ConfigMap before replacement Deployments, waited for
+readiness, restored orchestration. Post-apply render diff is empty.
+
+Live admin status reports assessment enabled. A bounded read-only worker preflight
+validated the real profile/prompt/model against the guard without invoking the
+callback; `event_review_private` is in model admission. Submitted exactly one
+model-assisted Odido pilot: `job_2be77141919a403592ce6ca21ce8e8a3`. It remains
+queued behind the next ordinary CVE catch-up batch (191 queued at last sample).
+Do not duplicate or reprioritize it. Real-model output, runtime and semantic
+quality are not yet verified. Default application flags remain disabled; only
+the platform operator workflow is enabled. No automatic public reporting.
+
+At 04:56 UTC the public checker passed; all application Deployments ready,
+replacement worker zero restarts, Kubernetes readiness passed after recovery.
+Builder, web, fetch workers and normal routing unchanged. The HTML tracker and
+queue documentation reflect the pending real-model gate. Unrelated platform
+appliance/certificate edits were preserved, not committed. Rollback: disable the
+assessment flag, retain artifacts, restore admin/worker `0087db6` through the same
+targeted rendered/drained rollout. No schema or public-content rollback needed.
