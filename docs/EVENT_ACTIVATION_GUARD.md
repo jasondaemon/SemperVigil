@@ -1,6 +1,6 @@
 # Events release activation guard
 
-Status: locally implemented and tested, **not deployed or enabled**. The user
+Status: deployed and enabled with builder `00dffeb`. The user
 explicitly approved this narrowly scoped activation-path change on September 19,
 2026. It does not authorize arbitrary build changes or autonomous publication.
 
@@ -9,7 +9,11 @@ The builder now prepares an output-bound version-two manifest named
 `event-publication.json`. The live activation entry point requires version two,
 checks current source evidence and rendered outputs, and refuses the authority-only
 version-one format described below. The older format remains in transaction unit
-tests only. Deployment and API-driven pilot verification are still pending.
+tests only. Two API-driven pilot revisions are publicly verified. A subsequent
+brief 404 window exposed an open switch/NFS-serving risk; atomic replacement of
+the existing unlink/recreate operation was explicitly approved. The local fix
+uses a temporary sibling symlink and atomic rename inside the same bounded
+authorization window. Production verification is pending.
 
 ## Behavior
 
@@ -46,7 +50,8 @@ Immediately before switching, a dedicated READ COMMITTED transaction:
 4. Rereads authority after locking. Superseded/missing pointers, revoked active
    qualifications, broken references and non-reproducible revisions refuse the
    switch. Explicit removals do not reauthorize a revoked report.
-5. Holds these locks through the existing local `ln -sfn` operation. Locks are
+5. Holds these locks through the bounded switch subprocess. The approved fix uses
+   a same-directory `os.replace` of a temporary symlink, not unlink/recreate. Locks are
    **not** held during Hugo, inference or content rendering. Contention fails
    immediately rather than waiting behind other workers.
 
@@ -66,7 +71,7 @@ The activation principal needs SELECT on publication tables and events, UPDATE
 on events for row locking, and UPDATE on pointers for the table lock. It must
 have no qualification write privileges. Credentials are never logged.
 
-**Do not enable this flag yet.** The publication coordinator must first bind the
+**Historical pre-integration requirements (now implemented):** the coordinator must bind the
 manifest to its exact qualified page/JSON export, including removing withdrawn
 pages and index entries, and independently validate current evidence. The guard
 checks publication authority, not rendered-file integrity, source freshness, or

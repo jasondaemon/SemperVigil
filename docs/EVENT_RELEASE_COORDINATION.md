@@ -1,7 +1,9 @@
 # Builder-owned Events publication
 
-The qualified Events runtime is integrated locally. Deployment and an API-driven
-production pilot are separate acceptance steps; this document is not live status.
+The qualified Events runtime is deployed: ingest `e091471`, builder `00dffeb`,
+platform `7cc2096`. Two controlled Vercel pilot revisions passed API publication
+and public HTML/JSON checks. Automatic qualification is not enabled. A transient
+404 after switching remains an open safety finding; see CURRENT_CONTEXT.md.
 
 ## Release contract
 
@@ -61,6 +63,19 @@ Before calling this operational, publish a reviewed revision, verify its public
 HTML/JSON and daily-feed/archive checks, then advance a second revision and verify
 the update. Keep the local LLM at one job. Private model relevance decisions are
 not human approvals; automatic qualification remains a separate gate.
+
+That two-revision pilot completed September 19. The qualification identity is
+`policy / codex-reviewed-pilot`, explicitly not a human reviewer. One short excerpt
+per cited source was inspected and admitted through the restricted approval role;
+the existing queued promotion worker handled both revisions. No model-generated
+prose, invented dates, or source-independence claims were approved.
+
+Production grants: all three roles SELECT the Events/evidence/publication tables
+and have column UPDATE privileges for source-row locking. Admission alone can
+INSERT qualifications/approvals and SELECT/INSERT jobs. Promotion alone can INSERT
+public revisions/pointers. Promotion and activation can UPDATE pointers for their
+locks/CAS. No qualification writes are granted to promotion or activation. There
+are no extra credentials in the LLM, OpenAI or public-fetch containers.
 
 On failure, retain the previous live release and stop new admissions. Do not
 bypass the guard to publish a failed candidate. Coordinate any rollback of all

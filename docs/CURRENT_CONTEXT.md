@@ -7,7 +7,38 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
-## Current release checkpoint: September 19, 11:40 UTC
+## Current release checkpoint: September 19, 13:21 UTC
+
+- **Override of the older checkpoint below:** ingest components now run `e091471`,
+  builder `00dffeb`, platform values `7cc2096`. Qualified publication, human
+  approval and activation flags are enabled with separately restricted credentials.
+- Two explicitly agent-reviewed, quotation-only Vercel pilot revisions have been
+  published at `/events/evt_0ffca0813049/` through the normal worker and API build
+  path. Public Events JSON matches. This was a controlled operator-policy pilot,
+  NOT a human UI approval or autonomous local-LLM qualification.
+- API builds succeeded in 18.81s and 18.26s; an intervening ordinary build took
+  17.33s. All 5,060 daily archive files remain. Builder peak measured 380,858,368
+  bytes, with existing 16Gi limit. 747 offline / 11 PostgreSQL / 26 JS tests pass.
+- **Open release-safety finding:** a brief public 404 window was observed after
+  switching, then recovered. Existing `ln -sfn` is not an atomic replacement and
+  the site is served from a separate NFS client. Exact cache contribution is not
+  established. Narrow atomic-switch approval was granted; the correction is
+  locally tested and awaiting rollout. Do not describe
+  this rollout as zero-interruption or the existing switch as proven atomic.
+- Next: resolve that publication-safety finding, then bounded automatic evidence
+  qualification/refresh admission and reader-facing report improvements. No
+  additional decisions or manual testing are needed for the already-live pilot.
+- See the September 19 pilot entry in `STABILIZATION_VERIFICATION.md` and
+  `EVENT_RELEASE_COORDINATION.md`. The following earlier checkpoint is historical.
+
+Atomic-switch validation: 750 offline tests pass, one Linux-only stress test is
+skipped on macOS. A separate Linux builder-container stress run completed 10,000
+switches and 17,802 concurrent page reads without errors. macOS rapid pathname
+lookup returned EINVAL, so Linux-specific reader behavior is not asserted there.
+Failed rename and candidate validation preserve the previous live link. No Hugo,
+retention, feed, cache, resource or concurrency behavior changes are included.
+
+### Earlier checkpoint: September 19, 11:40 UTC
 
 - App source and runtime behavior: this repository. Environment values:
   `k8s-platform/apps/sempervigil/values.yaml`. Theme: `sempervigil-hugo`.

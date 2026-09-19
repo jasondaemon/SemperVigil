@@ -155,7 +155,7 @@ The caller must supply a dedicated connection and a bounded local switch only.
 
 
 def activate_release(release: Path, current: Path, *, connection_factory=None) -> None:
-    """Switch only a sibling releases directory, using the existing ln operation."""
+    """Atomically replace the live link, inside the bounded authority window."""
     release, current = release.absolute(), current.absolute()
     if (current.name != "current" or release.parent != current.parent / "releases"
             or release.is_symlink() or not (release / "index.html").is_file()):
@@ -169,8 +169,8 @@ def activate_release(release: Path, current: Path, *, connection_factory=None) -
             raise ValueError("event_activation_database_required")
         connection_factory = lambda: psycopg.connect(dsn, connect_timeout=3)
     authorize_and_activate(connection_factory, manifest,
-                           lambda: subprocess.run(["ln", "-sfn", "releases/" + release.name,
-                                                   str(current)], check=True, timeout=2), release=release)
+                           lambda: subprocess.run([sys.executable, "-m", "sempervigil.release_switch",
+                                                   str(release), str(current)], check=True, timeout=2), release=release)
 
 
 def main() -> int:

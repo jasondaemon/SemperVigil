@@ -1,5 +1,16 @@
 # Change Control Log
 
+## 2026-09-19: Explicitly approved atomic guarded switch
+
+- User approved the narrow atomic-switch correction after transient public 404s
+  during pilot verification. Replace only the enabled guard's `ln -sfn` callback
+  with a same-directory temporary symlink and `os.replace` rename. The disabled
+  legacy shell branch is unchanged. Retention, Hugo and feed generation unchanged.
+- A child process preserves the existing two-second callback timeout and source/
+  authority locks remain held. Tests cover concurrent readers without an absent
+  live name, failed-rename retention, and invalid candidates. Real API build and
+  public checks during switching are required before closing the observed issue.
+
 ## 2026-09-19: Activation interpreter correction during pilot
 
 - API build `job_32279890e4874b38b337bc0f8b170d0e` completed Hugo rendering but

@@ -1,5 +1,12 @@
 # Events publication handoff: remaining integration
 
+September 19 deployment update: builder-owned export, output-bound activation,
+restricted credentials/schema and a two-revision operator-reviewed pilot are now
+live. See `EVENT_RELEASE_COORDINATION.md` and the latest verification entry. The
+steps below preserve the earlier implementation rationale, not current rollout
+status. Automatic qualification/maintenance admission remains open, as does the
+newly observed transient release-switch 404 finding.
+
 Inspected September 19, 2026. This plan does not enable publication or approve
 private model suggestions. Current production versions and pilot evidence are in
 `STABILIZATION_VERIFICATION.md`; the upgrade tracker remains the status index.

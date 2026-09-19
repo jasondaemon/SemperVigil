@@ -1870,3 +1870,39 @@ protects that pipeline against unapproved modification. It was not changed.
 A reviewed activation/withdrawal strategy remains required; neither an earlier
 database snapshot nor helper tests establish authorization at activation time.
 All expected production replicas were ready at this checkpoint's opening.
+# September 19: guarded Events publication pilot
+
+- Deployed ingest `e091471`, builder `00dffeb`, platform values `7cc2096`.
+  Explicit additive schema provisioning and three restricted DB roles precede the
+  rollout. Credentials stay in Kubernetes, not git. Manifests were rendered and
+  diffed before applying only shared application config and seven application
+  Deployments. Web/SearxNG, commands, mounts, limits and LLM concurrency unchanged.
+- Stopped orchestrator and waited for termination, then verified no running jobs.
+  Rollback source archive: `/log/release-snapshots/events-20260919T130606Z` outside
+  Hugo inputs. Imported immutable images on all four schedulable nodes, waited
+  for all workers, resumed admission. Render/live values agree for affected fields.
+- First API build `job_32279890e4874b38b337bc0f8b170d0e` safely refused activation
+  because system Python lacked psycopg. The previous live release remained
+  `20260919123939`. Corrected hook interpreter selection in `00dffeb`; real image
+  imports and 747 offline tests pass. PostgreSQL 11 and JS 26 tests also pass.
+- Pilot event `evt_0ffca0813049`: operator-policy identity `codex-reviewed-pilot`,
+  NOT a human approval or autonomous local-model decision. Exact short CSO excerpt
+  first, then an additional SecurityWeek excerpt. Unknown dates/independence stay
+  unknown; eight other linked sources remain explicitly unrepresented.
+- Promotion jobs: `job_0a1d3a03304e48fca36165d1a6bdccf6` and
+  `job_9672f74858324b359a375a989fe4844c`, both succeeded.
+- API builds: `job_1bdcf1e9116449dfb61a1ff85e211626` 18.81s;
+  `job_c6ad0c0b6f5b413fb4b7138645f19f27` 18.26s. Intervening automatic build
+  `job_9021e978a4fb4ce084eacfd10aea5da7` 17.33s.
+- Public page and `/sempervigil/index/events.json` advanced from
+  `6b2828e7bdc9fdd319ebbcef18306dfad9b36a779928ec1a7a4bca68781fb439` to
+  `d06c840ec6d2b0ecf75db1901fb157c333082316ccbd123d9659ec1176b01ca2` at stable URLs.
+  Desktop browser shows both citations and intact theme/navigation.
+- Peak cgroup memory 380,858,368 bytes; all 5,060 feed day files remain. Nodes
+  Ready without MemoryPressure; API ready; no new kernel OOM entries on build host.
+- **Open finding:** HTTP checks briefly failed around 13:19 UTC after the second
+  switch. Nginx logged `/events/` and favicon 404s at 13:19:24, then success by
+  13:19:32. Source/output/authorization remained correct. Existing `ln -sfn` is an
+  unlink/recreate switch on shared NFS, not atomic rename. Exact cache contribution
+  is not proven. Narrow approval was granted to replace the switch and verify it.
+  No zero-interruption claim. The static feed JSON remained available during checks.
