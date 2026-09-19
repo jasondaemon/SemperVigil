@@ -49,8 +49,10 @@ and local model, have no fallback, and use the exact system prompt in
 `event_assessment.SYSTEM_PROMPT` with user template `{{input}}`. Its parameters
 must contain only `temperature: 0`, `max_tokens: 1024` (allowed 512-1536), and
 `max_input_chars: 12000`. Create it through the authenticated AI configuration
-API, not by modifying existing stage profiles. No such profile has been created
-for this release yet. Changing enablement requires a safely drained worker
+API, not by modifying existing stage profiles. Prepared profile
+`24a0096b-57f0-5493-a1d4-bb5f41f3d216` uses prompt
+`98fb4df1-f96e-5115-840c-6774b97368d9`; neither is routed to an existing stage.
+The production assessment flag remains off. Changing enablement requires a safely drained worker
 restart because model-job classification is initialized at process startup.
 
 Input is capped at 12,000 bytes including system instructions, with at most 12

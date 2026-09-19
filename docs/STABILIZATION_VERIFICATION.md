@@ -872,3 +872,40 @@ unmeasured. Platform/theme repos and production were not changed during this
 slice. Next: resolve/observe the ordinary request, finish pilot attachment
 verification, then release and measure the guarded assessment using the same
 single-job worker. Public automated reporting remains an open milestone.
+
+## Inference recovery and assessment preparation (September 19 UTC)
+
+At 04:43 UTC the runner had exceeded its 1,500-second launch window. The prior
+CVE job still showed running, while a new request was admitted. Source inspection
+confirmed that runner termination does not finalize the child job; a running DB
+row therefore does not prove a live subprocess. Ollama had not completed a
+generation since 04:15:25. LiteLLM forwarded `options: {}` with JSON mode: the
+active CVE profile had no output-token bound. This is a containment defect, not
+proof of the exact model-level cause of the stall.
+
+Recovery: stopped orchestration, canceled only the two affected CVE jobs and
+current LLM launch through the authenticated admin API, then stopped the LLM
+runner. Patched that CVE profile's params from `{}` to `{"max_tokens":1024}` via
+the AI API; no prompt, model, provider, fallback or routing change. A server dry
+run/diff showed only Ollama's restart annotation changing before its targeted
+Recreate restart. No image, resources, context size or parallelism changed.
+Both affected CVEs were requeued through the existing rerun API, then the single
+LLM worker and orchestrator were restored to one ready replica each. No direct
+DB updates or Hugo commands. Public services were not restarted.
+
+By 04:47 UTC normal model calls succeeded in 1.03-2.98 seconds with 16-64 output
+tokens. Requeued IDs: `job_2f07c8baa5b6451f9864a2fc34499bf4` and
+`job_f24d79cb96f6414097e0d7685cd930d4`; completion still needs checking. Original
+private pilot remains pending at low priority. The runner's orphaned-job and
+upstream cancellation behavior needs a separate tested correction, not a claim
+that this restart solves it permanently. Roll back the profile cap through the
+same API with params `{}` only if a demonstrated valid-output regression requires
+it; unbounded generation is not the preferred normal configuration.
+
+Prepared an unrouted Events assessment prompt/profile through the AI API and
+verified its readback against the exact source prompt and guarded budgets:
+profile `24a0096b-57f0-5493-a1d4-bb5f41f3d216`, prompt
+`98fb4df1-f96e-5115-840c-6774b97368d9`. Existing routing and model remain unchanged.
+No inference ran from admin. Assessment remains disabled until the targeted
+application release and real-worker quality/latency pilot. Source-only image
+`bddeff1` was built using the retained base without dependency changes.
