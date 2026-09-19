@@ -1,5 +1,17 @@
 # Change Control Log
 
+## 2026-09-19: Isolate quotation support from source-context audit
+
+- V3 asks one textual comparison at a time. Quotation phase receives no article,
+  scope metadata or extraction confidence label that could substitute for citation
+  support. Only a supported quotation proceeds to full-source/incident context.
+- Both phases return a bounded reason and verdict and have separate immutable
+  caches. Context not performed is explicitly `not_assessed`, never inferred as
+  a pass. The full source still binds cache identity; no source truncation.
+- At most two serial calls per claim, with early rejection and resumable caching.
+  No model/context/resources/concurrency change or publication authorization.
+  Frozen pilot expectations remain unchanged; real V3 validation pending.
+
 ## 2026-09-19: Narrow support audit after failed batch evaluation
 
 - The actual 17-claim batch completed, but rejected three supported claims,

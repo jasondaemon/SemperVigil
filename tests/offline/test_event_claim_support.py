@@ -27,7 +27,12 @@ def setup(database):
 
 
 def answer(value="supported"):
-    return {"audits": [{"id": "c1", **{d: value for d in support.DIMENSIONS}}]}
+    return {"audits": [{"id": "c1", "quotation": value,
+                       "context": "supported" if value == "supported" else "not_assessed"}]}
+
+
+def phase_answer(value="supported"):
+    return {"reason": "The supplied wording supports the comparison.", "verdict": value}
 
 
 def test_full_source_and_exact_claim_bound_request(database):
@@ -41,7 +46,7 @@ def test_full_source_and_exact_claim_bound_request(database):
     serialized = json.dumps(request["response_format"])
     assert '"pattern"' not in serialized and '"anyOf"' not in serialized
     import jsonschema
-    jsonschema.validate(answer(), request["response_format"]["json_schema"]["schema"])
+    jsonschema.validate(phase_answer(), request["response_format"]["json_schema"]["schema"])
 
 
 @pytest.mark.parametrize("dimension", [d for d in support.DIMENSIONS if d != 'date'])
@@ -50,6 +55,8 @@ def test_one_failed_dimension_prevents_model_supported(database, dimension, verd
     packet, scope, source = setup(database)
     raw = answer()
     raw["audits"][0][dimension] = verdict
+    if dimension == 'quotation':
+        raw['audits'][0]['context'] = 'not_assessed'
     result = support.validate_response(json.dumps(raw).encode(), packet, scope, source)
     assert result["suggestions"][0]["decision"] == decision
     assert result["public_eligible"] is False
@@ -86,19 +93,19 @@ def test_duplicate_json_keys_rejected(database):
 
 def test_reuse_no_call_and_separate_checker_identity(database, tmp_path):
     packet, scope, source = setup(database)
-    complete = Mock(return_value=answer())
+    complete = Mock(return_value=phase_answer())
     complete.cache_identity = "b" * 64
     first, hit = support.assess(packet, scope, source, complete, tmp_path)
     assert hit is False
     second, hit = support.assess(packet, scope, source, complete, tmp_path)
     assert second == first and hit is True
-    assert complete.call_count == 1
+    assert complete.call_count == 2
     packet["event"]["updated_at"] = "2026-09-20"
     resign(packet)
     assert support.assess(packet, scope, source, complete, tmp_path) == (first, True)
     complete.cache_identity = "c" * 64
     support.assess(packet, scope, source, complete, tmp_path)
-    assert complete.call_count == 2
+    assert complete.call_count == 4
 
 
 def test_empty_extraction_abstains_without_model(database, tmp_path):
@@ -139,7 +146,7 @@ def test_changed_canonical_claim_has_new_audit_request(database):
 
 def test_cache_tamper_fails_without_retry(database, tmp_path):
     packet, scope, source = setup(database)
-    complete = Mock(return_value=answer())
+    complete = Mock(return_value=phase_answer())
     complete.cache_identity = "b" * 64
     support.assess(packet, scope, source, complete, tmp_path)
     path = next((tmp_path / "claim-support-cache").glob('*.json'))
@@ -148,7 +155,7 @@ def test_cache_tamper_fails_without_retry(database, tmp_path):
     path.write_text(json.dumps(cached))
     with pytest.raises(ValueError, match="stale_or_modified"):
         support.assess(packet, scope, source, complete, tmp_path)
-    assert complete.call_count == 1
+    assert complete.call_count == 2
 
 
 def test_no_truncation_when_support_input_exceeds_budget(database, monkeypatch, tmp_path):
@@ -168,7 +175,7 @@ def test_private_render_escapes_model_and_preserves_original(database, tmp_path)
     source = draft.validate_response(json.dumps(candidate).encode(), packet, scope, 1)
     source["generation_version"] = "a" * 64
     before = copy.deepcopy(source)
-    complete = Mock(return_value=answer("unsupported"))
+    complete = Mock(return_value=phase_answer("unsupported"))
     complete.cache_identity = "b" * 64
     result, _ = support.assess(packet, scope, source, complete, tmp_path)
     html = support.render(result, packet, scope, source)
@@ -182,7 +189,7 @@ def test_symlink_cache_refused_before_inference(database, tmp_path):
     target = tmp_path / 'other'
     target.mkdir()
     (tmp_path / 'claim-support-cache').symlink_to(target, target_is_directory=True)
-    complete = Mock(return_value=answer())
+    complete = Mock(return_value=phase_answer())
     complete.cache_identity = "b" * 64
     with pytest.raises(ValueError, match="symlink"):
         support.assess(packet, scope, source, complete, tmp_path)
@@ -191,22 +198,21 @@ def test_symlink_cache_refused_before_inference(database, tmp_path):
 
 def test_audit_reject_takes_precedence_over_uncertainty(database):
     packet, scope, source = setup(database)
-    raw = answer("uncertain")
-    raw["audits"][0]["entailment"] = "unsupported"
+    raw = answer("unsupported")
     result = support.validate_response(json.dumps(raw).encode(), packet, scope, source)
     assert result["suggestions"][0]["decision"] == "reject"
 
 
-def test_absent_date_is_not_a_model_question(database):
+def test_quote_phase_cannot_borrow_support_from_article_or_metadata(database):
     packet, scope, source = setup(database)
-    request = support.request_for(packet, scope, source)
-    fields = request['response_format']['json_schema']['schema']['properties']['audits']['items']['properties']
-    assert fields['date']['enum'] == ['supported']
-    raw = answer()
-    raw['audits'][0]['date'] = 'unsupported'
-    result = support.validate_response(json.dumps(raw).encode(), packet, scope, source)
-    assert result['suggestions'][0]['dimensions']['date'] == 'supported'
-    assert result['suggestions'][0]['decision'] == 'model_supported'
+    claim_id = source['claims'][0]['id']
+    quote = support.phase_request(packet, scope, source, claim_id, 'quotation')
+    context = support.phase_request(packet, scope, source, claim_id, 'context')
+    data = json.loads(quote['input'])
+    assert set(data) == {'phase','citation','statement','date_role','date_value'}
+    assert data['date_value'] is None
+    assert json.loads(context['input'])['source']['text'] == packet['documents'][0]['text']
+    assert quote['request_version'] != context['request_version']
 
 
 def test_serial_single_claim_calls_and_partial_cache_resume(database, tmp_path):
@@ -215,18 +221,18 @@ def test_serial_single_claim_calls_and_partial_cache_resume(database, tmp_path):
     candidate['claims'].append({**candidate['claims'][0], 'statement': 'Acme reported an incident.'})
     source = draft.validate_response(json.dumps(candidate).encode(), packet, scope, 1)
     source['generation_version'] = 'a' * 64
-    complete = Mock(side_effect=[answer(), RuntimeError('interrupted')])
+    complete = Mock(side_effect=[phase_answer(), RuntimeError('interrupted')])
     complete.cache_identity = 'b' * 64
     with pytest.raises(RuntimeError):
         support.assess(packet, scope, source, complete, tmp_path)
     for call in complete.call_args_list:
-        assert len(json.loads(call.args[0]['input'])['claims']) == 1
+        assert 'statement' in json.loads(call.args[0]['input'])
     complete.side_effect = None
-    complete.return_value = answer()
+    complete.return_value = phase_answer()
     result, hit = support.assess(packet, scope, source, complete, tmp_path)
-    assert not hit and complete.call_count == 3 and len(result['suggestions']) == 2
+    assert not hit and complete.call_count == 5 and len(result['suggestions']) == 2
     assert support.assess(packet, scope, source, complete, tmp_path)[1]
-    assert complete.call_count == 3
+    assert complete.call_count == 5
 
 
 def test_queued_audit_uses_existing_worker_viewer_and_cache(database, monkeypatch, tmp_path):
@@ -246,7 +252,7 @@ def test_queued_audit_uses_existing_worker_viewer_and_cache(database, monkeypatc
     monkeypatch.setenv('SV_DB_URL', 'unused')
     monkeypatch.setattr(ai_service, 'get_prompt', lambda *a: {
         'system_template': support.SYSTEM_PROMPT, 'user_template': '{{input}}'})
-    model = Mock(return_value={'parsed': answer(), 'schema_valid': True})
+    model = Mock(return_value={'parsed': phase_answer(), 'schema_valid': True})
     monkeypatch.setattr(worker, 'run_profile', model)
     monkeypatch.setattr(jobs, 'snapshot', lambda *a, **kw: packet)
     monkeypatch.setattr(worker, '_log_job_claimed', lambda *a: None)
@@ -258,13 +264,13 @@ def test_queued_audit_uses_existing_worker_viewer_and_cache(database, monkeypatc
     job = SimpleNamespace(id='support-job', job_type=jobs.JOB_TYPE, payload=payload)
     result = worker.run_claimed_job(None, None, job, logging.getLogger('test'))
     assert model.call_args.args[1] == 'support-profile'
-    assert model.call_args.kwargs['context']['event_claim_support_ids'] == ['c1']
+    assert model.call_args.kwargs['context']['event_claim_support_phase'] == 'context'
     job.status, job.result = 'succeeded', result
     assert b'Private claim support audit' in jobs.read_artifact(job)
     assert not result['public_eligible']
     again = worker.run_claimed_job(None, None, job, logging.getLogger('test'))
     assert again['model_cache_hit'] and again['artifact'] == result['artifact']
-    model.assert_called_once()
+    assert model.call_count == 2
     assert admin.EventPrivateReviewRequest(aliases=['Acme'], audit_source=key).audit_source == key
 
 
@@ -289,9 +295,28 @@ def test_audit_rejects_non_digest_source(database, key):
 def test_audit_schema_local_private_only(monkeypatch):
     call = Mock(return_value={'choices': [{'message': {'content': '{"audits":[]}'}}]})
     monkeypatch.setattr(router, '_http_request', call)
-    context = {'stage': 'event_review_private', 'event_claim_support_ids': ['c1']}
+    context = {'stage': 'event_review_private', 'event_claim_support_phase': 'quotation'}
     router._call_provider('openai_compatible', 'http://localhost', None, 'ollama/test', [], {}, {}, context)
-    assert call.call_args.args[3]['response_format'] == support.response_format(['c1'])
-    for change in ({'stage': 'other'}, {'event_claim_support_ids': ['c1','c1']}, {'event_assessment_ids': ['p1']}):
+    assert call.call_args.args[3]['response_format'] == support.response_format()
+    for change in ({'stage': 'other'}, {'event_claim_support_phase': 'bad'}, {'event_assessment_ids': ['p1']}):
         with pytest.raises(ValueError, match='unsupported_private_support'):
             router._call_provider('openai_compatible', 'http://localhost', None, 'ollama/test', [], {}, {}, {**context, **change})
+
+
+@pytest.mark.parametrize('verdict', ['unsupported', 'uncertain'])
+def test_quote_failure_never_calls_context_or_counts_as_supported(database, tmp_path, verdict):
+    packet, scope, source = setup(database)
+    complete = Mock(return_value=phase_answer(verdict))
+    complete.cache_identity = 'b' * 64
+    result, _ = support.assess(packet, scope, source, complete, tmp_path)
+    complete.assert_called_once()
+    assert result['suggestions'][0]['dimensions']['context'] == 'not_assessed'
+    assert result['suggestions'][0]['decision'] != 'model_supported'
+
+
+@pytest.mark.parametrize('bad', [None, {}, {'reason':'', 'verdict':'supported'},
+    {'reason':'x'*241,'verdict':'supported'}, {'reason':'ok','verdict':'confirmed'},
+    {'reason':'ok','verdict':'supported','approved':True}])
+def test_phase_validation_fails_closed(bad):
+    with pytest.raises(ValueError):
+        support.validate_phase(json.dumps(bad).encode())
