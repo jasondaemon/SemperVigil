@@ -113,3 +113,9 @@ publishable. V3 retains the exact same eight expectations and source snapshots;
 only request hashes change with explicit target/ID inventory and nonduplicated
 context. Use `assessment-*-v3.json` for v3 outputs. Full historical v2 reproduction
 requires its application revision because request validation is workflow-pinned.
+
+V3 live result: all three jobs passed structure. The unchanged provisional cases
+scored 6/8 (Odido 2/3, Vercel 1/1, Commission 3/4). One generic-company inclusion
+and one cross-incident inclusion remain. This is a failed quality gate, not a
+75%-approved report. The Vercel check alone is too narrow to establish full quality.
+Keep these negatives while introducing explicit, provenance-checked incident scope.

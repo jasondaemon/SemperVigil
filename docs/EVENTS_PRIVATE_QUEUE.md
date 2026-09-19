@@ -221,3 +221,9 @@ the quote twice inside context. No public eligibility or safety gate is relaxed.
 V3 is now deployed with three low-priority evaluation jobs; exact release/job IDs
 are in `STABILIZATION_VERIFICATION.md`. No automatic admission or public reporting
 is enabled. Evaluate those jobs before expanding the cohort.
+
+V3 jobs now completed: all pass response structure, but two of eight provisional
+quality cases still fail. All artifacts remain private; exact job/hash/timing data
+are in the verification notes. Do not publish these assessments or continue
+unbounded prompt tweaks. Next: `EVENTS_INCIDENT_SCOPING.md`. A single queued v3
+reuse check remains; do not duplicate it or invalidate its configuration.

@@ -1201,3 +1201,32 @@ a whole-directory transaction or shared cross-writer/Hugo lock. See
 incidentally as part of a private-worker prompt fix or claim measured build savings.
 471 offline tests pass. No production mutation, build or browser test was performed
 for this local writer slice.
+
+## V3 real-model cohort accepted structurally, rejected semantically
+
+All three v3 jobs completed and produced private attachments. Model timings:
+Odido 5,117 ms, Vercel 4,812 ms, Commission 4,753 ms (14,682 ms total; all three
+cohorts total 62,054 ms). Each assessed 12 passages; omitted candidate counts were
+11, 28 and 29 respectively. These omissions are distinct from snapshot omissions
+and do not mean evidence does not exist.
+
+Pinned provisional cases: Odido 2/3, Vercel 1/1, Commission 3/4, total 6/8. Unsafe
+includes remain: Odido's repeated generic company description and Commission's
+staff-phone/MDM intrusion. Vercel's single positive check is not whole-report
+approval. Stop prompt-wording iterations; public reporting remains gated. The
+next design is explicit source-grounded incident scoping, documented in
+`EVENTS_INCIDENT_SCOPING.md`, not model self-approval or weakened expectations.
+
+Authenticated downloads verified status 200, sandboxed private/no-store attachment
+headers, and no preselected human Include choices:
+
+- Odido: 74,070 bytes, SHA-256 `9f511c4e225540e423840f9bce34482b532bf8713982af67c16d123ac66b04ce`.
+- Vercel: 113,502 bytes, SHA-256 `6e40fd0fe1328756050dfa1306eacafeb99e05ce29c53d99182577f968812c74`.
+- Commission: 112,236 bytes, SHA-256 `7713566870933d6efd83fa9ca20d467f4f7b067e7427518ca59bd054d418fbc6`.
+
+All three event-row fingerprints remain unchanged. No browser/visual acceptance
+or public revision was claimed. V3 Commission reuse check
+`job_99347062943043ee874e5c719e93ed5e` is queued at ordinary private priority.
+Do not duplicate or cancel it merely to deploy another prompt; the v3 runtime
+should remain stable while scope handling is developed locally. Verify cache hit,
+identical artifact and no new `llm_runs` row when it completes.
