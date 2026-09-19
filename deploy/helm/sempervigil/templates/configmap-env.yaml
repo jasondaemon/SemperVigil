@@ -14,6 +14,8 @@ data:
   SV_GID: {{ .Values.env.SV_GID | quote }}
   SV_DATA_DIR: /data
   SV_LOG_DIR: /log
+  SV_EVENT_REVIEW_ENABLED: {{ .Values.env.SV_EVENT_REVIEW_ENABLED | quote }}
+  SV_EVENT_REVIEW_DIR: {{ .Values.env.SV_EVENT_REVIEW_DIR | quote }}
   SV_HUGO_SOURCE_DIR: {{ .Values.env.SV_HUGO_SOURCE_DIR | quote }}
   SV_HUGO_OUTPUT_DIR: {{ .Values.env.SV_HUGO_OUTPUT_DIR | quote }}
   SV_FEED_ARCHIVE_DIR: {{ .Values.env.SV_FEED_ARCHIVE_DIR | quote }}

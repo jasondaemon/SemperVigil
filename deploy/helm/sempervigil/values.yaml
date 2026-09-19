@@ -80,6 +80,8 @@ storage:
     size: 10Gi
 
 env:
+  SV_EVENT_REVIEW_ENABLED: "0"
+  SV_EVENT_REVIEW_DIR: /log/event-reviews
   SV_ENV: prod
   SV_LOG_LEVEL: INFO
   SV_LOG_TZ: America/New_York
