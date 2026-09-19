@@ -1069,3 +1069,41 @@ source as incident definition. No change to accepted values, model, token cap,
 concurrency, router repair behavior, public data or Hugo. 437 offline tests pass;
 four new regressions cover prompt examples and rejection of observed bad values.
 Deployment and real-model v2 evaluation pending.
+
+### V2 deployed; bounded reevaluation admitted
+
+Worker `5324cab`, platform `0bf871f`. Source-only image manifest
+`sha256:da016cb5185691d7f076c26011ec747a0e5284314c8670353b61ddcec7417ec4`
+imported on all four schedulable nodes. Only runtime source change from `2de5845`
+is the assessment prompt/workflow. Rendered/live diff showed the worker and init
+image substitutions plus the dedicated private-profile ID in the ConfigMap.
+Orchestrator fully terminated, no active jobs or pending LLM launches, old worker
+fully terminated, ConfigMap applied before replacement worker. Read-only actual
+profile preflight passed without inference; orchestrator restored Ready. Post-apply
+diff empty. Platform source committed/pushed, unrelated platform changes preserved.
+
+Dedicated v2 prompt `b0357022-e57a-5e7b-8c5a-642267740e19`, profile
+`98dc8957-780b-585c-b311-64dd4fc2a9f2`; created via admin API, leaving v1 intact.
+Same model/provider, temperature 0, 1,024 output tokens, 12,000 input characters,
+no fallback or schema-triggered repair. No public renderer, Hugo, build or schema
+changes. Rollback requires both prior worker `2de5845` and prior private profile
+`24a0096b-57f0-5493-a1d4-bb5f41f3d216`; preserve immutable artifacts.
+
+Reevaluation admitted through the private API at normal private priority -10:
+
+- Odido: `job_2b6480b40694460da676159f09f36d05`
+- Vercel: `job_922e4454388d44dbafda5e3668975646`
+- Commission: `job_8d3d5fd4f6054105b7f58b28a038b853`
+
+These are the only new calls authorized in this cohort; do not duplicate them.
+They remain behind normal CVEs at the latest sample. Public checks passed at
+05:47 and 05:49 UTC, including historical August 15 JSON. Kubernetes/etcd readiness
+passed before rollout; replacement worker Ready with zero restarts. Ordinary model
+calls continue (recent samples roughly 1.2-2.0 seconds, one 5.7-second sample).
+
+Added a local offline evaluation command and eight snapshot-pinned provisional
+cases. These make the observed semantic failure measurable without treating model
+agreement or valid JSON as public approval. They do not change the running worker.
+450 offline tests pass, including malformed/stale inputs, unassessed cases,
+unsafe inclusion and all-hold failure. No new PostgreSQL or browser acceptance
+claim for this evaluator-only slice.

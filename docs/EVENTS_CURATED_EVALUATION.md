@@ -75,3 +75,34 @@ Run the seed with:
 ```sh
 python3 -m pytest tests/offline/test_event_curated_seed.py -q
 ```
+
+## Private assessment regression cohort (September 19 UTC)
+
+Eight additional **assistant-reviewed, provisional** expectations cover Odido,
+Vercel and the European Commission. The fixtures `assessment-*-v2.json` contain
+only identities, snapshot/request hashes and labels, not complete source bodies.
+They pin exact passage IDs, not order-dependent model IDs. Changed inputs fail
+evaluation instead of silently applying old labels to different evidence.
+
+Five negative cases must not be included: two generic Odido company descriptions
+and three Commission staff/MDM breach passages unrelated to the Trivy/cloud
+incident. Hold or exclude are safe for these cases. Three positive cases require
+retaining incident reporting, preventing an all-hold response from being called
+successful. This is a small regression subset, not whole-packet factual approval,
+independent review, exhaustive recall, or a production publication gate. Source
+allegations and company statements must retain attribution even when included.
+
+Run against an immutable private packet and assessment from the same job:
+
+```sh
+PYTHONPATH=src python3 tools/check-event-assessment.py \
+  --packet /private/snapshot/packet.json \
+  --assessment /private/snapshot/assessment-HASH.json \
+  --cases tests/fixtures/events/assessment-commission-v2.json
+```
+
+The command performs no database/network access, inference, or writes. It validates
+the complete assessment contract first, reports checked versus assessed/omitted
+passage counts, and always returns `public_eligible: false`. Exit 0 means only that
+the selected provisional cases pass; 1 means a case failed; 2 means invalid/stale
+inputs or unreadable files. Unassessed required cases cannot silently pass.

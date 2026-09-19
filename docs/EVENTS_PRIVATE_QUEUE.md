@@ -205,7 +205,10 @@ Assessment v2 replaces ambiguous slash shorthand with exact JSON field examples,
 clarifies passage-level relevance and rejects using the first source as incident
 identity. The validator is unchanged: no coercion of invalid model output, extra
 repair call or public permission. Request/workflow versions invalidate old caches.
-437 offline tests pass, including the observed invalid-output pattern. Deployment
-and a bounded new cohort are pending. These tests do not establish model quality.
+437 offline tests passed for the runtime correction, including the observed
+invalid-output pattern. V2 worker/profile deployed; the bounded new cohort is
+listed in `STABILIZATION_VERIFICATION.md`. Do not duplicate its queued jobs.
+The offline quality checker and pinned cases are described in
+`EVENTS_CURATED_EVALUATION.md`. These tests do not establish model quality.
 Evaluate the Commission counterexample and other real incidents before automated
 evidence admission or public reporting. Private success is not the final goal.
