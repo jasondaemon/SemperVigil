@@ -74,6 +74,7 @@ def _base_context(request: Request) -> dict[str, object]:
         "watchlist_exposure_mode": personalization.get("watchlist_exposure_mode") or "private_only",
         "ui_build": ui_build,
         "queue_stale_minutes": queue_stale_minutes,
+        "event_approval_enabled": os.environ.get("SV_EVENT_HUMAN_APPROVAL_ENABLED", "0") == "1",
     }
 
 

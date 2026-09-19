@@ -465,3 +465,107 @@ def test_qualified_publication_transaction(restricted_database):
     admin.execute("UPDATE articles SET content_text='Changed evidence after qualification' WHERE id=1")
     with pytest.raises(ValueError, match="stale_revision_snapshot"): run()
     assert admin.execute("SELECT revision_id FROM event_public_pointers").fetchone()[0] == second["revision_id"]
+
+
+def test_human_approval_queue_to_qualified_exports(restricted_database, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from sempervigil import event_approval as approval, event_publication_store as publication
+    from sempervigil import event_review, event_scope, event_assessment, event_revision, publish
+    admin, dsn, promotion_role = restricted_database
+    schema = admin.execute("SELECT current_schema()").fetchone()[0]
+    admission_name = schema + "_admit"
+    admission_role = sql.Identifier(admission_name)
+    admission_password = secrets.token_urlsafe(32)
+    admin.execute(publication.SCHEMA)
+    admin.execute(approval.SCHEMA)
+    admin.execute("ALTER TABLE event_articles ADD FOREIGN KEY(event_id) REFERENCES events(id)")
+    admin.execute("ALTER TABLE event_articles ADD FOREIGN KEY(article_id) REFERENCES articles(id)")
+    admin.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}").format(promotion_role, promotion_role))
+    admin.execute(sql.SQL("GRANT UPDATE ON events,articles,event_articles,event_public_pointers TO {}").format(promotion_role))
+    admin.execute(sql.SQL("GRANT INSERT ON event_public_revisions,event_public_pointers TO {}").format(promotion_role))
+    admin.execute(sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD {}").format(admission_role, sql.Literal(admission_password)))
+    try:
+        admin.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(promotion_role, admission_role))
+        admin.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}").format(promotion_role, admission_role))
+        admin.execute(sql.SQL("GRANT UPDATE ON events,articles,event_articles TO {}").format(admission_role))
+        admin.execute(sql.SQL("GRANT INSERT ON event_quote_qualifications,event_review_approvals,jobs TO {}").format(admission_role))
+        admin.execute(sql.SQL("ALTER ROLE {} SET search_path TO {}").format(admission_role, promotion_role))
+        admission_dsn = make_conninfo(dsn, user=admission_name, password=admission_password)
+        admit = lambda: psycopg.connect(admission_dsn)
+        promote = lambda: psycopg.connect(dsn)
+        text = "Acme reported a breach affecting its contact system."
+        admin.execute("UPDATE articles SET content_text=%s WHERE id=1", (text,))
+        packet = event_review.snapshot(lambda: postgres_reader(dsn), event_id="one", aliases=["Acme"],
+                    scopes=frozenset({READ_SCOPE, EVIDENCE_SCOPE}))
+        left = text.index("contact system")
+        scope = event_scope.propose(packet, article_id=1, start=0, end=len(text), focus=[
+            {"role": "entity", "start": 0, "end": 4},
+            {"role": "affected_system", "start": left, "end": left+14}])
+        request = event_assessment.request_for(packet, scope=scope)
+        assessment = event_assessment.validate_response(json.dumps({"decisions": [
+            {"id": key, "decision": "hold", "reason": "insufficient_context"}
+            for key in request["mapping"]]}).encode(), packet, scope=scope)
+        monkeypatch.setenv("SV_LOG_DIR", str(tmp_path))
+        monkeypatch.setenv("SV_EVENT_REVIEW_DIR", str(tmp_path / "private"))
+        monkeypatch.setenv("SV_EVENT_HUMAN_APPROVAL_ENABLED", "1")
+        page = event_review.save(packet, tmp_path / "private", assessment=assessment)
+        descriptor = event_revision.save_revision(packet, assessment, "a"*64, page)
+        job = SimpleNamespace(id="human-reviewed-job", job_type="event_review_private", status="succeeded",
+            result={"workflow": event_review.WORKFLOW, "status": "review_ready", "public_eligible": False,
+                    "event_id": "one", "packet_version": packet["packet_version"],
+                    "artifact": str(page.relative_to(tmp_path / "private")), "private_revision": descriptor})
+        selection = {"revision_id": descriptor["version"], "expected_predecessor": None,
+                     "passage_ids": [event_review.draft(packet)["passages"][0]["id"]],
+                     "confirmation": approval.CONFIRMATION}
+        # A failed approval insert rolls back the qualification AND queued job.
+        admin.execute("""CREATE FUNCTION reject_test_approval() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN RAISE EXCEPTION 'test insert failure'; END; $$""")
+        admin.execute("""CREATE TRIGGER reject_test_approval BEFORE INSERT ON event_review_approvals
+            FOR EACH ROW EXECUTE FUNCTION reject_test_approval()""")
+        with pytest.raises(psycopg.errors.RaiseException): approval.submit(admit, job, **selection)
+        for table in ("jobs", "event_quote_qualifications", "event_review_approvals"):
+            assert admin.execute(sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table))).fetchone()[0] == 0
+        admin.execute("DROP TRIGGER reject_test_approval ON event_review_approvals")
+        admitted = approval.submit(admit, job, **selection)
+        assert admitted["status"] == "queued" and admitted["public_eligible"] is False
+        duplicate = approval.submit(admit, job, **selection)
+        assert duplicate["status"] == "reused" and duplicate["job_id"] == admitted["job_id"]
+        with promote() as conn:
+            # The disposable tables intentionally live outside public, whereas
+            # the legacy get_job helper checks public.jobs before selecting.
+            row = conn.execute("SELECT job_type,payload_json,queue_name FROM jobs WHERE id=%s",
+                               (admitted["job_id"],)).fetchone()
+            queued = SimpleNamespace(job_type=row[0], payload=json.loads(row[1]), queue_name=row[2])
+        assert queued.job_type == approval.JOB_TYPE and queued.queue_name == "fetch"
+        assert queued.payload == {"approval_id": admitted["approval_id"]}
+        with admit() as conn:
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                conn.execute("INSERT INTO event_public_pointers VALUES ('one',%s,'test')", ("a"*64,))
+        with promote() as conn:
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                conn.execute("DELETE FROM event_review_approvals")
+        admin.execute("UPDATE articles SET content_text=%s WHERE id=1", (text + " Changed context.",))
+        with pytest.raises(ValueError, match="stale_revision_snapshot"):
+            approval.run(queued.payload, factory=promote)
+        assert admin.execute("SELECT count(*) FROM event_public_pointers").fetchone()[0] == 0
+        admin.execute("UPDATE articles SET content_text=%s WHERE id=1", (text,))
+        result = approval.run(queued.payload, factory=promote)
+        assert result["status"] == "promoted" and result["publication_status"] == "awaiting_export"
+        assert approval.run(queued.payload, factory=promote)["status"] == "reused"
+        authorization = publication.load_export(promote, ["one"])
+        event = {"id": "one", "site_slug": "stable-url", "title": "Unqualified legacy title",
+                 "report": {"overview": "Unqualified legacy narrative"}}
+        publish.write_events_authorized_snapshot([event], str(tmp_path / "content"), str(tmp_path / "static"),
+                                                  authorization=authorization)
+        rendered = (tmp_path / "content/events/stable-url.md").read_text()
+        assert result["revision_id"] in rendered and "Unqualified legacy" not in rendered
+        index_files = list((tmp_path / "static").rglob("*.json"))
+        assert len(index_files) == 1 and result["revision_id"] in index_files[0].read_text()
+        with pytest.raises(psycopg.errors.RaiseException):
+            admin.execute("DELETE FROM event_review_approvals")
+        admin.execute("UPDATE event_quote_qualifications SET revoked_at='test'")
+        with pytest.raises(ValueError, match="qualification_unavailable"):
+            approval.run(queued.payload, factory=promote)
+    finally:
+        admin.execute(sql.SQL("DROP OWNED BY {}").format(admission_role))
+        admin.execute(sql.SQL("DROP ROLE {}").format(admission_role))

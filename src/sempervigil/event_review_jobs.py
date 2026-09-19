@@ -89,6 +89,33 @@ def enabled() -> bool:
     return value == "1"
 
 
+def read_material(job) -> tuple[dict, dict]:
+    """Read receipt-bound source evidence, never a client-supplied file path."""
+    from .event_review import MAX_PACKET_BYTES, validate_packet
+    from .event_assessment import validate_assessment
+    receipt = json.loads(read_revision(job))
+    root = os.open(artifact_root(), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        folder = os.open(receipt["packet_version"], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                         dir_fd=root)
+        try:
+            fd = os.open("packet.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=folder)
+            with os.fdopen(fd, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= MAX_PACKET_BYTES:
+                    raise ValueError("private_packet_unavailable")
+                packet = validate_packet(stream.read(MAX_PACKET_BYTES + 1))
+        finally:
+            os.close(folder)
+    finally:
+        os.close(root)
+    if (packet["packet_version"] != receipt["packet_version"]
+            or packet["event"]["id"] != receipt["event_id"]):
+        raise ValueError("private_packet_mismatch")
+    validate_assessment(receipt["assessment"], packet)
+    return packet, receipt
+
+
 def scoped_enabled() -> bool:
     value = os.environ.get("SV_EVENT_REVIEW_SCOPE_ENABLED", "0")
     if value not in {"0", "1"}:

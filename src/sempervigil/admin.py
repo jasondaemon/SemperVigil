@@ -18,7 +18,7 @@ except Exception:  # noqa: BLE001
     ProxyHeadersMiddleware = None
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .config import (
     ConfigError,
@@ -249,6 +249,7 @@ _DASHBOARD_LLM_JOB_TYPES = [
     "event_review_private",
 ]
 _DASHBOARD_FETCH_JOB_TYPES = [
+    "event_promote_reviewed",
     "fetch_article_content",
     "cve_sync",
     "cve_enrich_kev",
@@ -3247,6 +3248,85 @@ class EventPrivateReviewRequest(BaseModel):
     article_id: int | None = None
     paired: bool = False
     model_config = {"extra": "forbid", "strict": True}
+
+
+class EventApprovalRequest(BaseModel):
+    revision_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    passage_ids: list[str] = Field(min_length=1, max_length=12)
+    expected_predecessor: str | None
+    confirmation: str = Field(max_length=64)
+    model_config = {"extra": "forbid", "strict": True}
+
+
+def _event_approval_job(job_id: str):
+    from .event_approval import enabled
+    if not os.environ.get("SV_ADMIN_TOKEN") or not enabled():
+        raise HTTPException(status_code=503, detail="event_approval_disabled_or_unconfigured")
+    conn = _get_conn()
+    try:
+        job = get_job(conn, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="private_review_unavailable")
+        return job
+    finally:
+        conn.close()
+
+
+@app.get("/ui/jobs/{job_id}/event-approval", dependencies=[Depends(_require_admin_token)])
+def event_approval_screen(request: Request, job_id: str):
+    _event_approval_job(job_id)
+    response = TEMPLATES.TemplateResponse(request, "admin/event_approval.html", {"request": request,
+        "job_id": job_id, "event_approval_enabled": True, "is_authenticated": True})
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
+@app.get("/admin/api/jobs/{job_id}/event-approval", dependencies=[Depends(_require_admin_token)])
+def event_approval_candidate(job_id: str):
+    import psycopg
+    from .event_approval import candidate, connection_factory, CONFIRMATION
+    from .investigation import _version
+    job = _event_approval_job(job_id)
+    try:
+        material = candidate(job)
+        with connection_factory("SV_EVENT_APPROVAL_DB_URL")() as conn:
+            conn.execute("SET LOCAL statement_timeout='3s'")
+            pointer = conn.execute("SELECT revision_id FROM event_public_pointers WHERE event_id=%s",
+                                   (material["packet"]["event"]["id"],)).fetchone()
+    except (PermissionError, psycopg.Error):
+        raise HTTPException(status_code=503, detail="event_approval_database_unavailable") from None
+    except (OSError, ValueError):
+        raise HTTPException(status_code=409, detail="complete_scoped_review_unavailable") from None
+    return JSONResponse({"event_id": material["packet"]["event"]["id"],
+        "revision_id": _version(material["receipt"]), "scope": material["receipt"]["assessment"]["scope"],
+        "documents": material["packet"]["documents"], "passages": material["passages"],
+        "suggestions": material["receipt"]["assessment"]["suggestions"],
+        "expected_predecessor": pointer[0] if pointer else None,
+        "confirmation": CONFIRMATION, "public_eligible": False},
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
+
+
+@app.post("/admin/api/jobs/{job_id}/event-approval", dependencies=[Depends(_require_admin_token)])
+def approve_event_review(request: Request, job_id: str, payload: EventApprovalRequest):
+    import psycopg
+    from .event_approval import submit, connection_factory
+    # Explicit custom header prevents cross-site forms from exercising cookie auth.
+    origin = request.headers.get("origin")
+    if (request.headers.get("X-SV-Event-Approval") != "1"
+            or (origin and origin.rstrip("/") != str(request.base_url).rstrip("/"))
+            or (not origin and not request.headers.get("X-Admin-Token"))):
+        raise HTTPException(status_code=403, detail="same_origin_approval_required")
+    job = _event_approval_job(job_id)
+    try:
+        result = submit(connection_factory("SV_EVENT_APPROVAL_DB_URL"), job, **payload.model_dump())
+    except PermissionError:
+        raise HTTPException(status_code=503, detail="event_approval_disabled_or_unconfigured") from None
+    except (ValueError, OSError):
+        raise HTTPException(status_code=409, detail="event_approval_stale_or_invalid") from None
+    except psycopg.Error:
+        raise HTTPException(status_code=503, detail="event_approval_database_unavailable") from None
+    return JSONResponse(result, headers={"Cache-Control": "private, no-store"})
 
 
 @app.post("/admin/api/events/{event_id}/private-review",

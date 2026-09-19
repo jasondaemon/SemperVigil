@@ -25,16 +25,19 @@
 - Local-only snapshot storage, current-source transaction window and quote-only
   projection preparation and pointer promotion are tested, not deployed.
   The local revocation-aware reader distinguishes managed withheld/withdrawn
-  revisions from unmanaged legacy content. Independent qualification, restricted
-  production roles, export/build coordination and runtime admission remain
-  unimplemented. A narrowly approved, default-disabled activation guard now
+  revisions from unmanaged legacy content. A default-disabled human qualification
+  screen, atomic approval/job admission and restricted-worker promotion now pass
+  a disposable PostgreSQL path through matching page/JSON export. See
+  EVENT_HUMAN_APPROVAL.md. Production roles/schema, coordinated export/build
+  activation, and autonomous qualification remain unimplemented.
+  A narrowly approved, default-disabled activation guard now
   retains authority locks through the existing switch; locally tested only.
   It requires a complete coordinator-produced manifest and separate role before
   enablement. See EVENT_ACTIVATION_GUARD.md. Local Markdown
   and Events JSON preparation use the same pointer-matched quotations with joint
   content preflight and explicit hold/withdrawal selection. No production caller
-  enables them. 703 offline / ten real
-  disposable PostgreSQL tests pass;
+  enables them. 728 offline / eleven real
+  disposable PostgreSQL / 26 JavaScript tests pass;
   legacy bytes and the daily feed contract remain unchanged.
 - Public checks passed after the last targeted rollout. Use the dated evidence in
   `STABILIZATION_VERIFICATION.md`, not this checkpoint as a live health monitor.

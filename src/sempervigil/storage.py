@@ -53,6 +53,7 @@ _QUEUE_NAME_BY_JOB_TYPE: dict[str, str] = {
     "enrich_event_summary_llm": "llm_local",
     "event_report_llm": "llm_local",
     "event_review_private": "llm_local",
+    "event_promote_reviewed": "fetch",
     "build_daily_brief": "openai",
     "write_article_markdown": "publish",
     "build_site": "build",
@@ -1720,6 +1721,7 @@ def enqueue_job(
     available_at: str | None = None,
     parent_job_id: str | None = None,
     dedupe_key: str | None = None,
+    commit: bool = True,
 ) -> str:
     if debounce and _has_pending_job(conn, job_type):
         return _get_latest_job_id(conn, job_type)
@@ -1762,7 +1764,8 @@ def enqueue_job(
             dedupe_key,
         ),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return job_id
 
 

@@ -2086,6 +2086,9 @@ function wireJobs() {
         resultHtml += `<a href="/admin/api/jobs/${encodeURIComponent(job.id)}/private-review">Download private review</a>`;
         if (hasPrivateRevision(job)) {
           resultHtml += ` <a href="/admin/api/jobs/${encodeURIComponent(job.id)}/private-revision">Download revision evidence</a>`;
+          if (document.body.dataset.eventApproval === "1" && job.result?.assessment_summary?.scope_version) {
+            resultHtml += ` <a href="/ui/jobs/${encodeURIComponent(job.id)}/event-approval">Review quotes for staging</a>`;
+          }
         }
       }
       const row = document.createElement("tr");
@@ -6552,6 +6555,88 @@ function wireUtilities() {
     });
   }
 }
+function eventApprovalSelection(data, passageIds, confirmed) {
+  const known = new Set(data.passages.map((p) => p.id));
+  if (!confirmed || !Array.isArray(passageIds) || passageIds.length < 1 || passageIds.length > 12
+      || new Set(passageIds).size !== passageIds.length || passageIds.some((id) => !known.has(id))) {
+    throw new Error("Review the scope and select 1-12 distinct quotations.");
+  }
+  return {revision_id: data.revision_id, passage_ids: passageIds,
+    expected_predecessor: data.expected_predecessor, confirmation: data.confirmation};
+}
+
+async function wireEventApproval() {
+  const root = document.getElementById("event-approval");
+  if (!root) return;
+  const context = document.getElementById("event-approval-context");
+  const status = document.getElementById("event-approval-status");
+  const button = document.getElementById("event-approval-submit");
+  const confirm = document.getElementById("event-approval-confirm");
+  const url = `/admin/api/jobs/${encodeURIComponent(root.dataset.jobId)}/event-approval`;
+  try {
+    const data = await apiFetch(url);
+    const scope = document.createElement("p");
+    scope.textContent = `Incident scope: ${data.scope.focus.map((f) => f.quote).join(" / ")}. Anchor: ${data.scope.anchor.quote}`;
+    context.appendChild(scope);
+    const checks = [];
+    for (const source of data.documents) {
+      const section = document.createElement("section");
+      const title = document.createElement("h3");
+      title.textContent = source.title;
+      section.appendChild(title);
+      const origin = document.createElement("p");
+      origin.textContent = `Source: ${source.url} | Feed date: ${source.feed_day || "unknown"} (not incident date)`;
+      section.appendChild(origin);
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = "Read original source context";
+      const text = document.createElement("p");
+      text.textContent = source.text;
+      details.append(summary, text);
+      section.appendChild(details);
+      for (const passage of data.passages.filter((p) => p.article_id === source.article_id)) {
+        const label = document.createElement("label");
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.value = passage.id;
+        checks.push(check);
+        const quote = document.createElement("span");
+        const suggestion = data.suggestions[passage.id];
+        quote.textContent = `${passage.quote} [${passage.start}-${passage.end}; model: ${suggestion ? suggestion.decision : "not assessed"}]`;
+        label.append(check, quote);
+        const row = document.createElement("p");
+        row.appendChild(label);
+        section.appendChild(row);
+      }
+      context.appendChild(section);
+    }
+    let submitted = false;
+    const update = () => {
+      const count = checks.filter((check) => check.checked).length;
+      button.disabled = submitted || !confirm.checked || count < 1 || count > 12;
+      if (!submitted) status.textContent = `${count} quotations selected. Nothing has been approved or published.`;
+    };
+    checks.forEach((check) => check.addEventListener("change", update));
+    confirm.addEventListener("change", update);
+    update();
+    button.addEventListener("click", async () => {
+      try {
+        const body = eventApprovalSelection(data, checks.filter((check) => check.checked).map((check) => check.value), confirm.checked);
+        submitted = true;
+        update();
+        const result = await apiFetch(url, {method: "POST", headers: {"X-SV-Event-Approval": "1"}, body: JSON.stringify(body)});
+        status.textContent = `Approval ${result.status}; worker job ${result.job_id}. Not published. Track the result in Jobs.`;
+      } catch (error) {
+        submitted = false;
+        update();
+        status.textContent = `${error.message}. Refresh and review again if the evidence or revision has changed.`;
+      }
+    });
+  } catch (error) {
+    status.textContent = `Review unavailable: ${error.message}`;
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   wireNavDropdowns();
   wireVpnHealthBanner();
@@ -6585,6 +6670,7 @@ document.addEventListener("DOMContentLoaded", () => {
   wireEvents();
   wireEventDetail();
   wirePrivateEventReview();
+  wireEventApproval();
   wireProducts();
   wireProductDetail();
   wireDangerZone();

@@ -1,0 +1,15 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "system" %}
+{% set nav_subactive = "jobs" %}
+{% block content %}
+<section class="panel" id="event-approval" data-job-id="{{ job_id }}">
+  <h2>Review attributed event coverage</h2>
+  <p>This is a human-reviewed pilot, not automatic publication. Review the incident scope and original source context before selecting quotations. Model suggestions are not approvals.</p>
+  <p>Approved quotations will remain attributed to their sources. Incident dates and source independence remain unknown. A worker rechecks the evidence and stages a revision; this action does not build or activate the public site.</p>
+  <div id="event-approval-context"></div>
+  <label><input type="checkbox" id="event-approval-confirm"> I reviewed the proposed incident scope and source context. Each selected quotation concerns this incident and is suitable for attributed publication.</label>
+  <p><button class="btn" type="button" id="event-approval-submit" disabled>Approve selected quotes for staging</button></p>
+  <p id="event-approval-status" role="status" aria-live="polite">Loading verified review evidence...</p>
+  <a href="/ui/jobs">Back to Jobs</a>
+</section>
+{% endblock %}
