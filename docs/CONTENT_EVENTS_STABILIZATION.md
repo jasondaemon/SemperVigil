@@ -4,9 +4,9 @@ Date: 2026-09-19
 
 Status: authoritative implementation sequence for article enrichment, event
 identification, curation and narrative publication. S1 passage-bound extraction
-is implemented and offline-tested in the existing private queue, but is not
-deployed or model-tested. The current article summaries, daily downloads and
-public Events remain served while the replacement path is evaluated.
+is deployed and privately model-tested. Reference integrity passed, but semantic
+and coverage acceptance failed. Automatic evidence admission is blocked. The
+current article summaries, daily downloads and public Events remain served.
 
 ## Outcome
 
@@ -89,9 +89,11 @@ and rollback images/configuration are identified. This stage changes no content.
 
 ### S1 - Passage-bound article evidence in shadow
 
-Implementation status: local contract and private-queue integration complete.
+Implementation status: contract, private queue and real-model comparison complete.
 The model selects stable passage IDs; code attaches exact source text/offsets and
-binds uncertainties to passages. Real-model quality evaluation remains pending.
+binds uncertainties to passages. The model still confused advisory/incident dates,
+omitted material facts and inconsistently classified allegations. S1 failed its
+semantic exit gate; do not enable automatic admission.
 
 Deliverables:
 
@@ -114,19 +116,22 @@ Exit gate:
 If the local model misses this gate, stop. Decide explicitly between a stronger
 model, narrower extraction scope or editorial review; do not add recursive judges.
 
-### S2 - New-article evidence canary
+### S2 - Reviewed evidence canary
 
 Deliverables:
 
-- Default-disabled admission for newly stored full-text articles only.
+- Default-disabled suggestions for newly stored full-text articles only.
 - Lower priority than fresh summary/context/CVE work, with admission paused while
   those queues are pending or the measured inference budget is exhausted.
-- Last-good sidecar pointer and visible failure/hold reasons in the existing admin
-  jobs view.
+- Explicit accept/hold/reject curation before a sidecar revision becomes eligible
+  for incident matching, plus visible evidence and reasons in the existing admin
+  jobs view. Nothing is selected by default.
 
 Exit gate: seven days of new articles show no summary publication delay, queue
 growth, resource regression or public-output change. Evidence acceptance and
-coverage stay within the S1 bounds. No broad historical backfill yet.
+coverage stay within the S1 bounds after review. No broad historical backfill yet.
+Removing routine review requires a separately evaluated stronger model or policy;
+job success is not sufficient.
 
 ### S3 - Conservative incident identification
 
@@ -196,13 +201,15 @@ deleted as part of stabilization.
 
 ## Immediate implementation order
 
-1. Freeze the S0 corpus and acceptance rubric from already stored articles.
-2. Implement deterministic passage segmentation and passage-ID selection in the
-   existing private article queue; keep all results private.
-3. Run the bounded comparison and make a model-capability decision from the
-   complete output, not job success or schema compliance alone.
-4. Add durable sidecar revisions only after the private output passes.
-5. Enable the new-article canary before changing event discovery or public output.
+1. Completed: freeze the S0 corpus and acceptance rubric from stored articles.
+2. Completed: deploy deterministic passage segmentation and passage-ID selection
+   in the private article queue.
+3. Completed: run the bounded comparison. Reference integrity passed; semantic
+   acceptance failed, so automatic admission remains disabled.
+4. Next: retain v4 output as review assistance and implement deterministic,
+   non-publishing incident candidates with explicit enrollment/hold/reject states.
+5. Add durable accepted sidecar revisions only through the reviewed evidence
+   canary. Do not change public output before that gate passes.
 
 This order deliberately postpones prompt changes to the live summary publisher.
 Better evidence may later feed a revised per-article summary, but that becomes a

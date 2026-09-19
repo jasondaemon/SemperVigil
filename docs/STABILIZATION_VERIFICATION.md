@@ -1,5 +1,28 @@
 # Stabilization verification
 
+## September 19, 20:23 UTC: passage-bound private article trial
+
+Application `e2c7abf`, platform `c0d9ec8`. Admin and the local LLM worker use the
+same immutable image so private admission and execution share workflow v4. Other
+workload images, model profile, concurrency, resources, normal prompts, builder,
+web and feed behavior are unchanged. Rendered admin/worker manifests match live;
+all workloads are Ready with no new restarts; Kubernetes readiness passes.
+
+The full offline suite passes 1,003 tests with one skip. No database integration
+suite was run because no disposable database was configured; queue/storage code
+was unchanged. The three saved article requests fit the existing byte budget.
+Private job `job_eedd71ca19d34ebd85e09fca7c3d3744` completed six serial calls in
+65.828 seconds with no retries. Exact passage references validated for all three
+contexts, but the semantic gate failed on date role, coverage, allegation typing
+and one summary fact reference. Nothing was promoted or retried.
+
+The frozen article title, stored text, summary, context and generation timestamps
+are unchanged. Nineteen sampled public HTTP/markup/asset/JSON checks pass; the
+feed index contains 5,060 days and today's sampled download contains 17 articles
+and 24 CVEs. The shared LLM queue is empty. No Hugo/site build ran. Automatic
+evidence admission remains disabled; five shared experiment attempts remain and
+are not authorized for prompt iteration.
+
 ## September 19, 18:32 UTC: private two-phase audit
 
 LLM worker `d80f98a`, platform `3200453`; admin `eff906d` unchanged. Only worker

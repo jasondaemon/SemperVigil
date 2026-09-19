@@ -16,24 +16,24 @@ h3{font-size:1rem;margin-top:0}a{color:#19664f}code{overflow-wrap:anywhere;font-
 </style>
 </head>
 <body><main>
-<header><div class="label">Read-only baseline / September 19, 2026</div>
+<header><div class="label">Private v4 evaluation / September 19, 2026</div>
 <h1>What survives the summary?</h1>
 <p>Three stored articles compared with their already-generated LLM summaries and context. Source meaning is assessed against the saved article text, not independently verified reporting.</p>
-<p><strong>Real queued comparison completed; candidate quality failed.</strong> Three context calls took 20.092 seconds total. Each failed citation validation, so summary generation was skipped. Stored article data and public content are unchanged. These diagnostic examples are not a random sample or an accuracy score.</p>
-<p class="warning">The earlier sections compare the saved baseline. Candidate findings below come from the deployed private v3 trial, job <code>job_86bd8979191e493797025e9a71d790fc</code>. No automatic repairs or retries were used.</p></header>
+<p><strong>Passage attachment worked; semantic quality still failed.</strong> Job <code>job_eedd71ca19d34ebd85e09fca7c3d3744</code> used six serial calls and 65.828 seconds. All three contexts resolved exact code-attached passages. Two summaries validated structurally; one used a passage ID as a fact ID and was rejected. Stored article data and public content are unchanged.</p>
+<p class="warning">These diagnostic examples are not a random sample or an accuracy score. No automatic repairs or retries were used. The earlier v3 job failed quotation copying; v4 removes that mechanical failure but does not prove meaning.</p></header>
 
 <article><div class="label">Article 35613 / qualification lost</div>
 <h2>SolarWinds ARM vulnerability</h2>
-<p><strong>Candidate: rejected.</strong> One fact, invalid attribution span. It also classifies the advisory release date as an incident date. The candidate does not establish improvement over existing context.</p>
+<p><strong>V4 candidate: rejected.</strong> Exact passages resolve, but one broad fact still classifies the September 17 advisory release date as an incident date. The summary then expands that one fact into three additional bullets rather than retaining atomic extracted facts.</p>
 <div class="grid"><section><h3>Stored source</h3><p>The vendor did not mention exploitation. That does not establish whether evidence exists elsewhere.</p></section>
 <section><h3>Existing LLM output</h3><p>The bullet says <q>No evidence of exploitation in the wild as of now.</q> The context correctly retains the narrower vendor-reporting limitation.</p></section>
 <section><h3>Required outcome</h3><p>Preserve that limitation. Retain affected ARM versions, fixed version and the hard-coded-key cause. Keep other products' vulnerabilities separate.</p></section></div>
-<p class="warning">New-contract finding: the stored article body is duplicated. A valid qualification appears twice and failed the v2 unique-quotation check. Locally corrected in v3: both exact spans are retained, with the first only a display anchor. A manual evidence fixture passes; this is not new model output or semantic approval. Stored source text is unchanged.</p>
+<p class="warning">Passage IDs remove the duplicate-quotation ambiguity: both repeated source sections remain addressable. Date-role meaning and extraction coverage remain incorrect.</p>
 <small><a href="https://thehackernews.com/2026/09/solarwinds-patches-arm-hard-coded-key.html">Original article</a> / Existing summary and context pass local shape checks.</small></article>
 
 <article><div class="label">Article 35614 / useful context omitted</div>
 <h2>WaterPlum campaign</h2>
-<p><strong>Candidate: rejected.</strong> One headline-based fact with added quotation marks absent from the source and attribution taken from another location. Coverage of the campaign is inadequate.</p>
+<p><strong>V4 candidate: rejected.</strong> Two exact passage-bound facts preserve the 30,000-device lower bound, date range and $10.7 million amount. Material campaign, method and advisory-provenance context is omitted. The summary references <code>p001</code> as a fact ID and is rejected.</p>
 <div class="grid"><section><h3>Stored source</h3><p>The advisory reports at least 30,000 devices during December 2025 through July 2026, with more than $10.7 million transferred to North Korea.</p></section>
 <section><h3>Existing LLM output</h3><p>The summary drops the reporting period and attribution, and rounds the amount. A bullet changes the lower bound to <q>over 30,000</q>. The context retains the dates, lower bound and more precise amount.</p></section>
 <section><h3>Required outcome</h3><p>Reuse those context facts with advisory attribution. Preserve quantities, units and time scope. Distinguish defensive advice from completed recovery and attempted theft from confirmed results.</p></section></div>
@@ -42,17 +42,17 @@ h3{font-size:1rem;margin-top:0}a{color:#19664f}code{overflow-wrap:anywhere;font-
 
 <article><div class="label">Article 35615 / allegation promoted</div>
 <h2>ShinyHunters and Clop</h2>
-<p><strong>Candidate: rejected.</strong> One fact with an altered quotation and attribution outside the passage. It retains a reporting caveat, but does not cover the incident adequately.</p>
+<p><strong>V4 candidate: rejected.</strong> Six statements resolve to exact passages, but attacker claims, disputed history and confirmed observations are all typed as <code>reported_fact</code>. Wording sometimes retains “claims” or “allegedly,” but the structured evidence status is unreliable.</p>
 <div class="grid"><section><h3>Stored source</h3><p>The reporter confirmed file upload and defacement. The vulnerability explanation comes from the attackers; claimed theft of logs, source code and keys was not independently verified.</p></section>
 <section><h3>Existing LLM output</h3><p>The narrative retains the theft allegation, but a bullet presents the Grav CMS attack method as established. Another misspells Clop. Context is wrapped in an escaped string and assigns the publication date to the attack despite relative timing in the source.</p></section>
 <section><h3>Required outcome</h3><p>Keep confirmed observations separate from attacker claims. Leave the relative attack timing unresolved; do not substitute publication day. Do not treat a historical Oracle CVE as the current breach's vulnerability.</p></section></div>
 <small><a href="https://www.bleepingcomputer.com/news/security/shinyhunters-hacks-clop-leak-site-threatens-to-extort-ransomware-gang/">Original article</a> / Summary shape passes; context shape fails.</small></article>
 
-<h2>Next step after the failed trial</h2>
-<ol><li>Keep this source snapshot and baseline unchanged. Freeze the required outcomes above before generating candidate output.</li>
-<li>Duplicate-passage citation handling is locally corrected and tested. Both occurrences remain inspectable; semantic quality still requires review.</li>
-<li>The serial queue trial is complete: three context calls, zero summaries. Investigate selecting passage IDs so code can attach exact evidence instead of asking the model to copy it. This will not by itself establish factual correctness.</li>
-<li>Measure omissions, unsupported assertions, qualifiers, timing, structure, attempts and latency. Keep production output until the candidate passes; no bulk rewrite.</li></ol>
+<h2>Decision after the failed gate</h2>
+<ol><li>Keep the current summary publisher and public content unchanged.</li>
+<li>Retain v4 passages as private review assistance; they are provenance, not automatic factual approval.</li>
+<li>Do not enable the new-article automatic evidence canary or spend the remaining experiment attempts on prompt iteration.</li>
+<li>Proceed with deterministic incident candidates and explicit evidence curation. A stronger model or reduced-review policy requires a separate measured decision.</li></ol>
 <footer><p>Snapshot captured at 2026-09-19 19:14:37 UTC. Full stored text and generated payloads are kept locally in the ignored data directory, not committed. All three complete inputs fit the candidate request budget. Existing structural checks do not establish historical router validation or factual correctness.</p>
 <p><a href="upgrade-tracker.html">Upgrade tracker</a> / <a href="ARTICLE_ENRICHMENT_QUALITY.md">Contract and rollout notes</a></p></footer>
 </main></body></html>

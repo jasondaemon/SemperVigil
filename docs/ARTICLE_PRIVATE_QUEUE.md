@@ -2,7 +2,8 @@
 
 ## Status
 
-Local successor implemented September 19, 2026: `article-evidence-v4` segments
+Deployed September 19, 2026: admin/LLM worker `e2c7abf`, platform `c0d9ec8`.
+`article-evidence-v4` segments
 stored text deterministically into bounded, numbered passages. The private model
 now selects passage IDs and typed facts instead of reproducing quotations. Code
 attaches the exact current source text and offsets, canonicalizes passage order,
@@ -14,11 +15,31 @@ the selected passages entail the proposed statements. The workflow remains priva
 unreviewed and ineligible for publication. The full offline suite passes 1,003
 tests with one skip. The three saved articles produce 5, 6 and 7 passages and
 requests of 4,384, 5,039 and 6,270 bytes, below the existing combined request
-budget. No provider call, database migration, live prompt/profile change, public
-write, site build or deployment was performed. Next: run the same frozen three-
-article comparison through the existing serial private queue after release checks.
+budget. No database migration, live profile change, public write or site build
+was performed.
 
-Deployed September 19, 2026: admin and LLM worker `3d2a981`, platform `583da4c`.
+Real job `job_eedd71ca19d34ebd85e09fca7c3d3744` completed six serial calls in
+65.828 seconds. All three context records were structurally valid and exact source
+passages were attached by code. Two summaries were structurally valid; WaterPlum
+was rejected after using passage ID `p001` as a fact ID. The semantic gate FAILED:
+
+- 35613 still labels the September 17 advisory date as an incident date, extracts
+  one broad fact and lets the summary expand that fact into several omitted details.
+- 35614 extracts the device count and stolen amount but omits material campaign,
+  method and provenance context; its summary is invalid.
+- 35615 extracts six statements, but labels attacker claims and disputed history
+  as `reported_fact` rather than preserving their evidence status consistently.
+
+The passage design solved quotation copying, not meaning or coverage. Automatic
+evidence admission and the new-article canary remain blocked. Do not spend the
+five remaining shared experiment attempts on prompt iteration. The safe next path
+is deterministic incident candidates plus explicit curation of passage-bound
+suggestions; a stronger model or reduced review policy requires a separate measured
+decision. Baseline article fields and generation timestamps are unchanged. All
+19 sampled public checks pass; rendered admin/worker manifests match production,
+all workloads are Ready and the shared LLM queue is empty.
+
+Prior v3 deployment: admin and LLM worker `3d2a981`, platform `583da4c`.
 Private admission is enabled; normal strict validation remains OFF. The scoped
 Helm render matches live. All other deployment images and model concurrency remain
 unchanged. The first real comparison completed; candidate quality FAILED.
