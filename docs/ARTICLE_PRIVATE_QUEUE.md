@@ -89,8 +89,24 @@ this Qwen 3.5 response to the supplied schema. A second probe succeeded only aft
 the prompt explicitly required the root object, exact field names, enum values,
 and null-date pairing. `article-evidence-v5` adds those generation instructions
 without accepting, coercing, repairing, or retrying malformed output. The schema
-and validators are unchanged. The full offline suite passes: 983 tests, two skips.
-This is locally verified and not yet deployed or semantically accepted.
+and validators remained unchanged for that test. The full offline suite passed:
+983 tests, two skips.
+
+V5 was deployed as admin/LLM image `21bfe80`. Job
+`job_d7f1215dcf7245dd990d12813d52789d` showed that the exact root and date contract
+worked: SolarWinds completed context and summary. WaterPlum and ShinyHunters also
+returned exact fields and allowed date roles, but strict validation rejected 20
+and 15 passage-bound facts against the old eight-fact maximum. Those raw outputs
+were 5,578 and 3,759 characters; their resulting summary requests are 11,823 and
+10,899 bytes, below the existing 15KB request ceiling. The old cap, rather than
+transport or malformed evidence, now causes the loss of event-relevant quantities,
+attack path, impact and uncertainty.
+
+`article-evidence-v6` therefore raises only the bounded sidecar capacity to 24.
+The 16KB output, 15KB request, 48-passage, one-call and strict validation limits
+remain in force. Existing daily summaries and JSON are unchanged. Re-validating
+the saved responses yields 8, 20 and 15 valid passage-bound facts without a model
+call. Deployment and semantic review of V6 remain pending.
 
 ## Operation
 

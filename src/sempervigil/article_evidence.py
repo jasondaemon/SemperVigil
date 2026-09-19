@@ -10,11 +10,12 @@ import re
 from .investigation import _version
 from .event_review import _json
 
-WORKFLOW = "article-evidence-v5"
+WORKFLOW = "article-evidence-v6"
 MAX_INPUT_BYTES = 15000
 MAX_OUTPUT_BYTES = 16000
 MAX_PASSAGE_CHARS = 900
 MAX_PASSAGES = 48
+MAX_FACTS = 24
 KINDS = ["reported_fact", "allegation", "recommendation", "uncertainty"]
 DATE_ROLES = ["none", "incident", "disclosure", "publication"]
 CONTEXT_PROMPT = """Extract reusable factual context from ONE article.
@@ -37,7 +38,7 @@ infer a year or use article publication metadata as an incident date. No calenda
 normalization.
 Return exactly one JSON object and nothing else. The first character must be {
 and the last character must be }. The object has exactly one key named facts.
-facts is an array of at most eight objects. Each fact has exactly passage_ids,
+facts is an array of at most 24 objects. Each fact has exactly passage_ids,
 statement, kind, date_text, and date_role. Use statement, never fact or fact_text.
 date_role is exactly one of none, incident, disclosure, or publication. When
 date_text is null, date_role must be none. Example shape:
@@ -70,7 +71,7 @@ def context_schema() -> dict:
            "required": list(fields), "properties": fields}
     return {"type": "object", "additionalProperties": False,
             "required": ["facts"], "properties": {
-                "facts": {"type": "array", "maxItems": 8, "items": row}}}
+                "facts": {"type": "array", "maxItems": MAX_FACTS, "items": row}}}
 
 
 def summary_schema() -> dict:
