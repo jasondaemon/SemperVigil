@@ -1182,3 +1182,22 @@ extractive private artifacts. Preserve all existing snapshots and public output.
 Post-rollout public checker passed at 06:25 UTC, including historical JSON; all
 application Deployments Ready and replacement worker zero restarts. These are
 point checks, not continuous availability or full-history completeness proof.
+
+## Event export reuse (September 19, local only)
+
+While the v3 model cohort waits behind ordinary work, inspected the Events public
+writer. It previously deleted all generated Markdown before rendering replacements,
+including unchanged pages. Its callers are CVE sync and explicit event rebuilds,
+not every Hugo build. Local correction pre-renders inputs, reuses identical files,
+atomically replaces changed files, then prunes stale Markdown; cleanup failures
+surface. Missing/unsafe/colliding slugs fail before writes. All 11 live selected
+published event slugs match the validated form. Publication/lifecycle selection,
+rendered content, daily/index JSON and Hugo behavior are unchanged.
+
+This change is not deployed. A rich synthetic page's byte hash matches the prior
+renderer; unchanged inode/mtime and failure/withdrawal cases are covered. It is not
+a whole-directory transaction or shared cross-writer/Hugo lock. See
+`EVENT_EXPORT_STABILITY.md` for limitations and release checks. Do not deploy it
+incidentally as part of a private-worker prompt fix or claim measured build savings.
+471 offline tests pass. No production mutation, build or browser test was performed
+for this local writer slice.

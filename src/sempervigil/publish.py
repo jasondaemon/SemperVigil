@@ -243,22 +243,24 @@ def write_events_markdown(
     events: Iterable[dict[str, object]], base_content_dir: str
 ) -> list[str]:
     output_dir = os.path.join(base_content_dir, "events")
+    if Path(output_dir).is_symlink():
+        raise ValueError("event_output_directory_symlink")
     os.makedirs(output_dir, exist_ok=True)
-    for existing in Path(output_dir).glob("*.md"):
-        if existing.name in {"_index.md"}:
-            continue
-        try:
-            existing.unlink()
-        except OSError:
-            pass
     written: list[str] = []
+    rendered: list[tuple[Path, str]] = []
+    names: set[str] = set()
     for event in events:
         event_id = str(event.get("id") or "")
         if not event_id:
-            continue
+            raise ValueError("event_id_required")
         site_slug = str(event.get("site_slug") or "").strip()
         if not site_slug:
             site_slug = event_id
+        if (not re.fullmatch(r"[\w][\w.-]*", site_slug)
+                or site_slug.casefold() == "_index" or len(site_slug.encode("utf-8")) > 240
+                or site_slug.casefold() in names):
+            raise ValueError("invalid_or_duplicate_event_slug")
+        names.add(site_slug.casefold())
         frontmatter = {
             "title": event.get("title") or event_id,
             "severity": event.get("severity") or "UNKNOWN",
@@ -462,6 +464,26 @@ def write_events_markdown(
             lines.append("")
         content = "\n".join(lines).strip() + "\n"
         path = os.path.join(output_dir, f"{site_slug}.md")
-        atomic_write_text(path, content)
+        rendered.append((Path(path), content))
         written.append(path)
+    # Render the complete input before touching pages; do not erase the last
+    # source set when serialization or a later write fails.
+    for path, _ in rendered:
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError("invalid_event_output_file")
+    for path, content in rendered:
+        encoded = content.encode("utf-8")
+        try:
+            with path.open("rb") as handle:
+                unchanged = handle.read(len(encoded) + 1) == encoded
+        except FileNotFoundError:
+            unchanged = False
+        if not unchanged:
+            atomic_write_text(path, content)
+    # Only prune after every desired page is present. Surface cleanup failures
+    # rather than silently accepting stale, potentially withdrawn content.
+    expected = {path.name for path, _ in rendered}
+    for existing in Path(output_dir).glob("*.md"):
+        if existing.name != "_index.md" and existing.name not in expected:
+            existing.unlink()
     return written
