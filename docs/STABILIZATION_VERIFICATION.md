@@ -1675,3 +1675,29 @@ undermine source-qualified output. Event CAS alone also does not cover independe
 article-body changes. `EVENT_PUBLICATION_HANDOFF.md` records concrete integration
 boundaries, transactional concurrency tests and separate promotion/export gates.
 Documentation only this checkpoint; no schema, public content or runtime change.
+
+## Private snapshot repository, September 19 10:20 UTC
+
+Local opt-in worker integration stores canonical packet/receipt together in
+`event_private_revisions`, with event FK, bounded text fields, composite identity,
+insert-if-absent and exact duplicate comparison. The dedicated transaction does
+not touch public metadata or pointers. Disabled by default in code/chart;
+no deployment or production schema change. Schema definition is not wired into
+startup migrations; explicit controlled migration is still a release prerequisite.
+
+Eight real PostgreSQL tests passed against a disposable PostgreSQL 18.4 container,
+including concurrent insert/reuse, no overwrite on mismatch, unchanged event data
+and unchanged original recorded time. Existing seven integration checks also pass.
+The first invocation omitted the explicit DB-test switch and skipped tests; only
+the subsequent `--run-db-tests` run is counted. Container removed and SSH loopback
+tunnel stopped after testing. Diagnostics never initialized the production DB.
+
+Additional offline checks cover disabled/no-connection behavior, strict flag values,
+worker integration with cache reuse, and rejection of rehashed malformed generation
+or removed gate metadata before DB access. The latter receipt guards were added
+after the successful PG run; run PG gates again before a persistence rollout.
+Current receipt cache-hit job still pending at the initial checkpoint; no duplicate
+admission. Actual public revision qualification/promotion remains unimplemented.
+
+Final local offline run: 607 passed. Chart renders the new store flag as `"0"`.
+No JavaScript changes this slice; prior 21 JS results remain the current UI gate.

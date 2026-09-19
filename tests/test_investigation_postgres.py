@@ -242,3 +242,38 @@ def test_event_report_compare_and_swap_on_postgres():
             assert final == {"report": {"overview": "Current"}, "editor_note": "keep"}
         finally:
             admin.execute("DROP TABLE public.events")
+
+
+def test_private_revision_store_is_immutable_and_concurrent(restricted_database, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from sempervigil.event_review import snapshot, save
+    from sempervigil.event_assessment import assess, request_for
+    from sempervigil.event_revision import save_revision
+    from sempervigil.event_revision_store import SCHEMA, persist
+    admin, reader_dsn, identifier = restricted_database
+    admin.execute(SCHEMA)
+    admin.execute(sql.SQL("GRANT SELECT,INSERT ON event_private_revisions TO {}").format(identifier))
+    admin.execute("UPDATE articles SET content_text='Incident responders reported an investigation is still ongoing.' WHERE id=1")
+    packet = snapshot(lambda: postgres_reader(reader_dsn), event_id="one", aliases=["Incident"],
+                      scopes=frozenset({READ_SCOPE,EVIDENCE_SCOPE}))
+    request = request_for(packet)
+    result = assess(packet, lambda _: {"decisions": [
+        {"id": key, "decision": "hold", "reason": "insufficient_context"} for key in request["mapping"]]})
+    page = save(packet, tmp_path, assessment=result)
+    descriptor = save_revision(packet, result, "a" * 64, page)
+    raw = (page.parent / ("revision-" + descriptor["version"] + ".json")).read_bytes()
+    def write():
+        return persist(lambda: psycopg.connect(reader_dsn), packet, raw, descriptor,
+                       artifact=page.name, html=page.read_bytes())
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outputs = list(pool.map(lambda _: write(), range(2)))
+    assert sorted(r["status"] for r in outputs) == ["reused", "stored"]
+    assert all(r["public_eligible"] is False for r in outputs)
+    assert admin.execute("SELECT count(*) FROM event_private_revisions").fetchone()[0] == 1
+    assert admin.execute("SELECT title FROM events WHERE id='one'").fetchone()[0] == "Incident"
+    stamp = admin.execute("SELECT recorded_at FROM event_private_revisions").fetchone()[0]
+    assert write()["status"] == "reused"
+    assert admin.execute("SELECT recorded_at FROM event_private_revisions").fetchone()[0] == stamp
+    admin.execute("UPDATE event_private_revisions SET packet_json='{}'")
+    with pytest.raises(ValueError, match="private_revision_conflict"): write()
+    assert admin.execute("SELECT packet_json FROM event_private_revisions").fetchone()[0] == '{}'

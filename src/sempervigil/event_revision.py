@@ -58,11 +58,19 @@ def validate_receipt(raw: bytes, descriptor: dict, *, packet_version: str,
             or not re.fullmatch(r"[0-9a-f]{64}", descriptor["version"])):
         raise ValueError("private_revision_unavailable")
     value = _json(raw, MAX_BYTES)
+    generation = value.get("generation_version")
+    gates = ["incident_qualification", "evidence_qualification",
+             "current_input_transaction", "publication_authorization"]
+    if generation is None:
+        gates.append("generation_provenance")
+    elif type(generation) is not str or not re.fullmatch(r"[0-9a-f]{64}", generation):
+        raise ValueError("private_revision_unavailable")
     if (value.keys() != {"workflow", "event_id", "packet_version", "assessment", "generation_version",
                         "artifact", "artifact_sha256", "status", "public_eligible", "publication_gates"}
             or _version(value) != descriptor["version"]
             or value["workflow"] != WORKFLOW or value["status"] != "proposal_only"
             or value["public_eligible"] is not False or value["event_id"] != event_id
+            or value["publication_gates"] != gates
             or value["packet_version"] != packet_version or value["artifact"] != artifact
             or value["artifact_sha256"] != hashlib.sha256(html).hexdigest()):
         raise ValueError("private_revision_unavailable")

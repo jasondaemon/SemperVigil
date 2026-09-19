@@ -50,3 +50,42 @@ Troubleshooting: older completed jobs legitimately return 404 for this endpoint.
 Do not synthesize generation identity or rewrite their records to make a download
 appear. A new bounded private job can reuse its compatible assessment cache after
 deployment. Immutable conflict or corrupted bytes should fail, not be overwritten.
+
+## Database snapshot handoff (local only, disabled)
+
+`event_revision_store` adds an opt-in worker integration, controlled by
+`SV_EVENT_PRIVATE_REVISION_STORE=0` (default in code/chart). Disabled mode does
+not open a write connection. Only model-assisted jobs with a validated receipt
+can enter the enabled path; the admin does not execute this work.
+
+The proposed `event_private_revisions` table stores canonical full packet and
+receipt JSON together, bounded at 3,000,000 and 65,536 bytes, keyed by event and
+revision. It references the existing event. A dedicated short transaction performs
+insert-if-absent then verifies existing bytes; matching duplicate/concurrent writes
+reuse the original row/time, and mismatches fail without overwrite. Connection,
+lock and statement timeouts are bounded. No report, event field, publish flag or
+public pointer is written. Missing generation provenance is refused.
+
+This is snapshot history, **not** a claim that sources are still current. Current
+source locking, independent qualification, predecessor chains and public pointer
+promotion remain separate pending steps. Public rendering must not read these
+proposal rows as approved content.
+
+Schema DDL is defined by `event_revision_store.SCHEMA` for the isolated test and
+future controlled migration. It is **not registered in startup migrations and is
+never executed by the worker**. Do not enable the flag in production before a
+reviewed additive migration and targeted rollout. Missing tables should fail the
+opt-in operation, not trigger automatic schema initialization or fallback writes.
+
+Local verification includes real PostgreSQL concurrent admission and duplicate
+checks on an explicitly named disposable database, plus the prior seven PG gates:
+
+```sh
+SV_TEST_DB_URL=postgresql://localhost/sempervigil_test \
+  python3 -m pytest --run-db-tests -q tests/test_investigation_postgres.py
+python3 -m pytest -q tests/offline
+```
+
+The disposable container and its loopback tunnel were removed after testing. No
+production schema or data was changed. Rollback while disabled needs no data work;
+future enablement must retain immutable snapshots and turn admission off first.

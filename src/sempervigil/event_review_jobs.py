@@ -224,9 +224,15 @@ def run(payload: dict, *, complete=None) -> dict:
         page = save(packet, root, assessment=assessment)
     summary = None
     revision = None
+    revision_storage = None
     if assessment is not None:
         from .event_revision import save_revision
         revision = save_revision(packet, assessment, getattr(complete, "cache_identity", None), page)
+        from .event_revision_store import enabled as revision_store_enabled, persist_if_enabled
+        if revision_store_enabled():
+            receipt = page.parent / ("revision-" + revision["version"] + ".json")
+            revision_storage = persist_if_enabled(dsn, packet, receipt.read_bytes(), revision,
+                                                  artifact=page.name, html=page.read_bytes())
         decisions = [item["decision"] for item in assessment["suggestions"].values()]
         summary = {"workflow": assessment["workflow"], "scope_version": (scope or {}).get("scope_version"),
                    "assessed": len(decisions), "not_assessed": assessment["omitted_passages"],
@@ -243,4 +249,5 @@ def run(payload: dict, *, complete=None) -> dict:
             "model_cache_hit": cache_hit,
             **({"assessment_summary": summary} if summary is not None else {}),
             **({"private_revision": revision} if revision is not None else {}),
+            **({"revision_storage": revision_storage} if revision_storage is not None else {}),
             "public_eligible": False}
