@@ -1,5 +1,20 @@
 # Change Control Log
 
+## 2026-09-19: Events architecture review and sequence reset
+
+- Read-only trace of legacy, managed quotation and private deconstruction paths,
+  plus live readiness/model/job aggregates. No inference, deployment, profile,
+  scheduler or application changes.
+- Document evidence-backed keep/simplify/retire decisions and missing narrative,
+  correction, lifetime-history and incident-identity contracts. Freeze per-claim
+  judge iteration as a development direction, not a live flag change.
+- Next proposed gate is one report/update/correction/replay plus blind incident,
+  at most 14 provider attempts. No claim of successful report quality or faster
+  measured generation. Tracker marks R1-R4 unimplemented and historical entries
+  are collapsed to avoid competing status instructions.
+- Verification: documentation links/HTML structure and whitespace diff checks.
+  No application tests rerun for documentation-only changes. Rollback: revert docs.
+
 ## 2026-09-19: Private evidence inspection without new inference
 
 - Add bounded, offset-preserving source context and source-section/date coverage

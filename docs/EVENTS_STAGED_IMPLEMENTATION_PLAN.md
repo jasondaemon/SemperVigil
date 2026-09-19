@@ -1,6 +1,13 @@
 # SemperVigil stabilization and Events implementation plan
 
 Date: 2026-09-18
+Direction update, September 19: [Events architecture reset](EVENTS_ARCHITECTURE_REVIEW.md)
+is the authoritative next implementation sequence for Events. R1 must prove a
+complete private report and its maintenance, not another checker. Preserve the
+cross-project constraints below; earlier checkpoints are historical. Per-claim
+same-model auditing is frozen as diagnostic tooling, not the planned production
+quality gate. No runtime flag or production behavior changed in that review.
+
 Status: Staged implementation in progress; consult the tracker for tested and
 deployed slices. Shared retrieval and an optional local stdio MCP adapter pass
 offline and targeted disposable-PostgreSQL tests. They are not deployed to

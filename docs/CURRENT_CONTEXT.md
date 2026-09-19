@@ -7,7 +7,18 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
-## Latest local work: source-context diagnostics
+## Current direction: architecture reset (review only)
+
+Read `EVENTS_ARCHITECTURE_REVIEW.md` before implementing more Events work. It
+supersedes the per-claim judge iteration sequence. Keep publication safeguards;
+freeze auditor experiments; next deliver one private evidence-first report with
+update/correction/replay and blind-incident acceptance, capped at 14 provider
+attempts including one optional structural repair. No runtime was changed or
+inference requested for this review. Production quotation automation remains as is.
+Do not build new infrastructure or tune another judge before that vertical slice.
+R1-R4 in the tracker define the recommended sequence, not completed work.
+
+## Earlier local work: source-context diagnostics
 
 Private audit rendering now loads validated per-phase reasons, shows exact bounded
 neighboring source text with offsets, and reports extraction counts by section and

@@ -18,17 +18,28 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 <div class="eyebrow">Engineering roadmap / Living record</div>
 <h1>SemperVigil, next.</h1>
 <p>Keep the site available. Preserve the data contract. Turn incident coverage into something worth following.</p>
-<div class="eyebrow">Updated September 19, 2026 · First automatic scoped update published and verified</div>
+<div class="eyebrow">Updated September 19, 2026 · Architecture reset / review complete / production unchanged</div>
 </header>
 <main>
 <nav aria-label="Tracker navigation"><a href="#now">Current work</a><a href="#stages">Implementation stages</a><a href="#risks">Open findings</a><a href="#history">Change record</a><a href="EVENTS_STAGED_IMPLEMENTATION_PLAN.md">Detailed plan</a><a href="STABILIZATION_VERIFICATION.md">Verification evidence</a></nav>
 <div class="grid">
-<div class="card"><span class="meta">VERIFIED CHECKS</span><strong>777 offline; 11 PostgreSQL / 26 JS</strong>First automatic scoped update verified in public HTML/JSON. One real local-model call: 5.154 seconds. Linux-only switch stress test skipped on macOS and previously exercised in Linux. Broader autonomous event enrollment remains open.</div>
+<div class="card"><span class="meta">QUALITY STATUS</span><strong>Narrative gate failed</strong>881 offline tests passed in the last code slice; these do not establish report accuracy. V4 audit: 12/17 original decisions correct, 4/5 holdout. Architecture review adds no inference or production changes.</div>
 <div class="card"><span class="meta">PRODUCTION BUILD TIME</span><strong>19.86s</strong>Automatically admitted Events publication build. Builder lifetime peak about 468 MiB; existing memory policy unchanged.</div>
 <div class="card"><span class="meta">INFERENCE CONSTRAINT</span><strong>One job at a time</strong>Qwen 2.5 7B · 16K context · RTX 3060 12 GiB. Preserve serialization.</div>
 </div>
 <section id="now" class="notice">
 <span class="badge active">Current priority</span>
+<h2>One useful report, not another model judge</h2>
+<p>The architecture review found three parallel Events paths, no completed narrative publication contract, and missing correction/history handling. Keep the working publication safeguards; freeze per-claim judge experiments. <a href="EVENTS_ARCHITECTURE_REVIEW.md">Read the findings, component decisions and bounded acceptance test</a>.</p>
+<div class="scroll"><table><thead><tr><th>Slice</th><th>Deliverable</th><th>Status / exit</th></tr></thead><tbody>
+<tr><td>R0</td><td>Architecture assessment</td><td>Complete. Documentation only; live automation unchanged.</td></tr>
+<tr><td>R1</td><td>Readable private report, update, correction, replay and blind second incident</td><td>Next. At most 14 provider attempts / 10 minutes cumulative model time. Stop on factual or budget failure.</td></tr>
+<tr><td>R2</td><td>Versioned narrative qualification and controlled publication</td><td>Blocked on R1. Preserve source locks, guarded activation, stable URLs and daily JSON. Prove withdrawal behavior.</td></tr>
+<tr><td>R3</td><td>One-event maintenance canary</td><td>Blocked on R2. Seven days of updates, no-change reuse and no queue/build regression.</td></tr>
+<tr><td>R4</td><td>Small expansion and discovery evaluation</td><td>Later. No blanket legacy-candidate promotion or deletion.</td></tr>
+</tbody></table></div>
+<p>Evidence-first source work plus one composition pass is a hypothesis to test, not a factual guarantee. No new MCP tools, broad admin screens, infrastructure or prompt-only judge loop before the R1 reader-facing artifact.</p>
+<details><summary>Earlier implementation checkpoints (historical)</summary>
 <p><span class="badge active">Local / evidence diagnostics</span> Private audits now expose validated model reasons, exact surrounding source context and missing section/date coverage. Rendered all four real source audits from existing receipts with zero inference. 881 offline tests pass, one skip. No deployment or model-verdict changes. Context is inspection-only, never an automatic citation repair. Next controlled experiment: select bounded evidence before generating claims, with independent acceptance cases.</p>
 <p><span class="badge active">Deployed / replay verified</span> Admin <code>eff906d</code>, LLM worker <code>d80f98a</code>, platform <code>3200453</code>. Two-phase private audits retain single-job concurrency. Saved-packet receipt ordering fixed without re-extraction. 863 offline tests pass, one skip. Three real replays used zero model calls. All 20 public-site checks pass; rendered configuration matches production. Build and feed behavior unchanged.</p>
 <p><span class="badge risk">Semantic acceptance / still failed</span> V4 got 12/17 frozen decisions correct: one false acceptance and four false rejections remain. A fresh five-case holdout got four right and held one valid contextual reference. 26 serial calls took 43.009 seconds. No generated narrative promoted. Next: passage-bound evidence and antecedent handling, plus recovery/timeline extraction coverage on independent examples; stop prompt-only tuning on the original cohort. <a href="EVENT_CLAIM_SUPPORT.md">Measured results and remaining work</a>.</p>
@@ -56,6 +67,7 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 <p><strong>Availability:</strong> 85 public samples found no outage; homepage, metrics, search, and representative downloads passed. No new build-host OOM events; Kubernetes/etcd readiness passed.</p>
 <p><strong>Bounded repair enabled:</strong> only the builder repairs up to one historical date per refresh; all other workers retain limit 0. August 15 recovered 553 missing CVEs, with exact IDs matching the database. First pass retained all 5,059 files and 5,057 unchanged hashes/timestamps. The next automatic build advanced the backlog again. Full historical repair is still in progress, not complete.</p>
 <p><strong>Preparation incident:</strong> a rollback snapshot was mistakenly placed in Hugo's /data input and caused one pre-rollout build failure. It was moved to /log before validation; the prior published release remained live. No database backup or recurring backup task was added.</p>
+</details>
 </section>
 <h2>Release invariants</h2>
 <ul>
@@ -66,6 +78,7 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 <li>Use the existing model and single-job queue; additions must fit measured spare capacity.</li>
 </ul>
 <section id="event-review" class="notice">
+<details><summary>Earlier private workbench checkpoints (historical)</summary>
 <span class="badge active">Ready for local review</span>
 <h2>Private Events workbench</h2>
 <p><span class="badge done">Local / source-change protection</span> A tested transaction window verifies full source versions while locking event membership and source rows. Concurrent edits, missing foreign-key protection, incomplete snapshots and unsafe autocommit fail closed. It has no publication caller yet and grants no approval. <a href="EVENT_PRIVATE_REVISIONS.md">Transaction contract</a>.</p>
@@ -99,6 +112,7 @@ header{background:#173e35;color:#fffefa;padding:44px max(24px,calc((100vw - 1120
 </ul>
 <p>Choose passages to include, switch to Reading view, and download decisions for durable storage. Changed inputs invalidate old decisions. These linked previews are local and uncommitted; completed worker artifacts are stored privately and available through authenticated admin job downloads. <a href="EVENTS_PRIVATE_REVIEW.md">Reproduction, safety boundaries, and remaining gates</a>.</p>
 <p class="gate">Browser automation blocked local-file navigation; visual/keyboard/download acceptance remains for review. No alternate browser or workaround server was started. This is not the production Events automation rollout.</p>
+</details>
 </section>
 <section id="stages">
 <h2>Staged delivery</h2>
