@@ -71,6 +71,12 @@ incidents, aliases, syndication, conflicting chronologies, and actual 7B model
 outputs still need adjudicated expectations. In particular, source-origin IDs
 are carried but their independence is not established by this validator.
 
+A first [real-source seed](EVENTS_CURATED_EVALUATION.md) now supplies 12 provisional
+review cases across four Odido documents, with short snapshot-pinned excerpts.
+Fourteen offline checks preserve three supported, three structurally rejected,
+and six semantically rejected but structurally passing cases. No actual model
+evaluation or independent review has occurred; the broader gate remains open.
+
 ## Next integration gate
 
 Follow the accepted [MCP/domain-service architecture](EVENTS_MCP_ARCHITECTURE.md).

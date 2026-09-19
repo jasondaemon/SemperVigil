@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "review_status": "assistant_reviewed_provisional",
+  "reviewed_on": "2026-09-18",
+  "incident_id": "odido-2026-customer-contact",
+  "purpose": "Offline regression seed, not publication approval or model accuracy evaluation",
+  "documents": [
+    {
+      "id": "21505",
+      "url": "https://www.bleepingcomputer.com/news/security/odido-data-breach-exposes-personal-info-of-62-million-customers/",
+      "feed_day": "2026-02-12",
+      "text_sha256": "5be862423d67889cc46071fdad4204e0ac21cfce7c9c1eeb9c8a7ce3103fb70d",
+      "text_length": 2972,
+      "excerpts": [
+        {"id": "detection", "start": 541, "end": 613, "text": "The company says they detected the incident on the weekend of February 7", "scope": "odido-2026-customer-contact"}
+      ]
+    },
+    {
+      "id": "22331",
+      "url": "https://www.bleepingcomputer.com/news/security/shinyhunters-extortion-gang-claims-odido-breach-affecting-millions/",
+      "feed_day": "2026-02-24",
+      "text_sha256": "0aef0aa8e25e33d0feabdf8b09ee3c7d3f4e0a0eeb273041332620d1d0ed0194",
+      "text_length": 4413,
+      "excerpts": [
+        {"id": "attribution", "start": 1754, "end": 1797, "text": "While Odido has yet to attribute the attack", "scope": "odido-2026-customer-contact"},
+        {"id": "records", "start": 1884, "end": 1933, "text": "claiming they've stolen nearly 21 million records", "scope": "odido-2026-customer-contact"}
+      ]
+    },
+    {
+      "id": "21648",
+      "url": "https://research.checkpoint.com/2026/16th-february-threat-intelligence-report/",
+      "feed_day": "2026-02-16",
+      "text_sha256": "3b0b0218e21aacb170d6ee19853ae79ac3d1eab0af1e7cd7a14d4c03074dedba",
+      "text_length": 6189,
+      "excerpts": [
+        {"id": "odido", "start": 291, "end": 344, "text": "Dutch telecom provider Odido was hit by a data breach", "scope": "odido-2026-customer-contact"},
+        {"id": "bridgepay", "start": 596, "end": 645, "text": "BridgePay Network Solutions, a US payment gateway", "scope": "bridgepay-separate-incident"}
+      ]
+    },
+    {
+      "id": "22641",
+      "url": "https://www.securityweek.com/in-other-news-attck-advisory-council-russian-cyberattacks-aid-missile-strikes-predator-bypasses-ios-indicators/",
+      "feed_day": "2026-02-27",
+      "text_sha256": "ab264b61999505c72165520aeb478785a1f29aeaea157fc92956d5d53b44218c",
+      "text_length": 8979,
+      "excerpts": [
+        {"id": "customers", "start": 2992, "end": 3057, "text": "confirming personal data exposure for about 6.2 million customers", "scope": "odido-2026-customer-contact"},
+        {"id": "predator", "start": 491, "end": 555, "text": "Predator spyware suppresses iOS camera and microphone indicators", "scope": "predator-separate-topic"}
+      ]
+    }
+  ],
+  "cases": [
+    {"id": "scoped_roundup", "statement": "The roundup reports an Odido data breach.", "citations": ["odido"], "status": "asserted", "expected_review": "supported", "structural_errors": [], "required_gate": "none", "rationale": "The selected passage explicitly concerns Odido, not the whole roundup."},
+    {"id": "bridgepay_contamination", "statement": "Odido operates the payment gateway described here.", "citations": ["bridgepay"], "status": "asserted", "expected_review": "reject", "structural_errors": ["cross_incident_evidence"], "required_gate": "trusted_scope", "rationale": "The payment gateway belongs to a separate incident and entity."},
+    {"id": "predator_contamination", "statement": "The Odido attack suppressed iOS recording indicators.", "citations": ["predator"], "status": "asserted", "expected_review": "reject", "structural_errors": ["cross_incident_evidence"], "required_gate": "trusted_scope", "rationale": "Spyware coverage is a separate roundup topic, not evidence about Odido."},
+    {"id": "mixed_roundup_citations", "statement": "Odido was breached using Predator spyware.", "citations": ["odido", "predator"], "status": "asserted", "expected_review": "reject", "structural_errors": ["cross_incident_evidence"], "required_gate": "trusted_scope", "rationale": "One relevant citation cannot sanitize an unrelated citation."},
+    {"id": "preserve_customer_unit", "statement": "The report describes exposure affecting about 6.2 million customers.", "citations": ["customers"], "status": "asserted", "expected_review": "supported", "structural_errors": [], "required_gate": "none", "rationale": "Preserves the source's approximate count and customer unit."},
+    {"id": "records_are_not_customers", "statement": "Nearly 21 million customers were affected.", "citations": ["records"], "status": "asserted", "expected_review": "reject", "structural_errors": [], "required_gate": "units_and_attribution", "rationale": "The excerpt concerns a claimed record count, not confirmed unique customers."},
+    {"id": "do_not_add_counts", "statement": "The breach affected 27.2 million people.", "citations": ["customers", "records"], "status": "asserted", "expected_review": "reject", "structural_errors": [], "required_gate": "units_and_overlap", "rationale": "Different units and possibly overlapping populations cannot be summed."},
+    {"id": "company_attribution_unknown", "statement": "At the time of this report, Odido had not attributed the attack.", "citations": ["attribution"], "status": "asserted", "expected_review": "supported", "structural_errors": [], "required_gate": "none", "rationale": "Preserves both the speaker and the report-time limitation."},
+    {"id": "invented_company_confirmation", "statement": "Odido confirmed which gang attacked it.", "citations": ["attribution"], "status": "asserted", "expected_review": "reject", "structural_errors": [], "required_gate": "entailment", "rationale": "A valid quote can directly contradict the proposed statement."},
+    {"id": "detection_is_not_exact_start", "statement": "The intrusion began on February 7, 2026.", "citations": ["detection"], "status": "asserted", "date_role": "incident", "date_precision": "day", "date_value": "2026-02-07", "expected_review": "reject", "structural_errors": [], "required_gate": "chronology_and_precision", "rationale": "Detection during a weekend does not establish an exact intrusion start date."},
+    {"id": "feed_day_is_not_incident_day", "statement": "The breach occurred on February 12, 2026.", "citations": ["detection"], "status": "asserted", "date_role": "incident", "date_precision": "day", "date_value": "2026-02-12", "expected_review": "reject", "structural_errors": [], "required_gate": "date_role", "rationale": "A stored article/feed day is not an incident occurrence date."},
+    {"id": "two_reports_not_independence", "statement": "Two independent investigations established the breach.", "citations": ["odido", "customers"], "status": "asserted", "expected_review": "reject", "structural_errors": [], "required_gate": "source_independence", "rationale": "Multiple reporting domains do not establish independent underlying investigations."}
+  ]
+}

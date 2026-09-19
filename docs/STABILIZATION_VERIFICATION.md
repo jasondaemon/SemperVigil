@@ -639,3 +639,27 @@ jobs, or production deployment changed. No test suite rerun for this documentati
 slice; previous 286 offline/four PostgreSQL results remain historical evidence.
 One Kubernetes worker exec returned upstream 502; read-only verification succeeded
 through another existing worker. Ready pod status is not proof of exec recovery.
+
+## Real-source Events evaluation seed (2026-09-18)
+
+Read-only inspection found seven articles linked to the active Odido event,
+including two multi-topic roundups. Four stored documents supplied seven short
+excerpts with exact code-point offsets and full-text SHA-256 provenance anchors.
+Only excerpts, public URLs, and evaluation metadata are committed, not full text
+or private connection information. Scope/review annotations are provisional
+assistant judgments, not model output or independent human adjudication.
+
+Twelve cases cover relevant reporting, unrelated roundup passages, attribution,
+units/overlap, date precision/roles, and unjustified source independence. Three
+supported cases pass, three unrelated-scope cases fail structurally, and six
+misleading claims pass structure but require semantic rejection. The 14 new tests
+record these limitations rather than claiming a semantic implementation.
+
+All 300 offline tests passed in the isolated MCP SDK environment. The seed's
+14 tests also passed separately. Whitespace/error checks passed.
+
+No runtime code, schemas, jobs, model calls, build process, public JSON, or
+production deployment changed. This fixture-only slice does not require a new
+PostgreSQL run; the four prior integration results are unchanged. Larger corpus,
+independent review, actual single-job model evaluation, and disabled shadow-path
+integration remain release gates. See EVENTS_CURATED_EVALUATION.md.

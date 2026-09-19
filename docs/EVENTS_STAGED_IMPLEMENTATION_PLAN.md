@@ -118,6 +118,10 @@ Scope: instrumentation, configuration inventory, and an offline evaluation corpu
   organization, aliases, syndicated reports, conflicting dates, corrections,
   unsupported attacker claims, and prompt-like text inside scraped content.
 - Curate expected outcomes once; this evaluation work is not daily editorial work.
+- First real-source seed: 12 provisional Odido review cases across four documents,
+  tracked in [Events evaluation](EVENTS_CURATED_EVALUATION.md). Six misleading
+  claims still pass structural checks; semantic rejection is a release gate, not
+  implemented behavior. Independent review and actual model evaluation remain.
 - Establish publication and fresh-summary latency targets from measured capacity.
 
 Exit: explain queue behavior with measurements; define event capacity and latency
