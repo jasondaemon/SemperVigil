@@ -9,6 +9,21 @@
 
 ## Current direction: strengthen and reuse article enrichment
 
+Authoritative stabilization sequence: `CONTENT_EVENTS_STABILIZATION.md`. Keep the
+current per-article summary publisher and daily JSON unchanged while developing a
+separate passage-ID-based evidence sidecar. The order is private evidence quality,
+new-article canary, conservative incident candidates, versioned event ledger,
+narrative composition, then guarded publication. No event discovery/publication
+expansion precedes the evidence gate. This is a documented direction, not a new
+runtime or production change.
+
+Latest local slice: `article-evidence-v4` replaces model-copied quotations with
+deterministic passage IDs inside the existing private article queue. Code attaches
+exact text/offsets, canonicalizes references and passage-binds uncertainty. The
+three saved inputs fit the existing request budget with 5, 6 and 7 passages. Full
+offline suite: 1,003 passed, one skipped. Not deployed and no new inference run;
+normal summary/context/publication paths are unchanged.
+
 Latest deployment: admin/LLM `3d2a981`, platform `583da4c`. Private article queue
 enabled; strict normal validation OFF. Render/live diff empty; other images intact.
 Real job `job_86bd8979191e493797025e9a71d790fc`: three calls / 20.092s provider time,

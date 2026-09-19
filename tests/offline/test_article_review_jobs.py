@@ -32,10 +32,9 @@ def job(count=1):
 
 def response(request):
     if request['phase'] == 'context':
-        return json.dumps({'facts': [{'evidence_quote': ARTICLE['content_text'],
-            'statement': ARTICLE['content_text'], 'kind': 'reported_fact', 'attribution_quote': 'Acme',
-            'uncertainty_quote': 'unconfirmed', 'date_quote': None, 'date_role': 'none'}],
-            'uncertainties': ['Recovery remains unconfirmed.']})
+        return json.dumps({'facts': [{'passage_ids': ['p001'],
+            'statement': ARTICLE['content_text'], 'kind': 'uncertainty',
+            'date_text': None, 'date_role': 'none'}]})
     return json.dumps({'summary_sentences': [{'text': ARTICLE['content_text'], 'fact_ids': ['f1']}], 'bullets': []})
 
 

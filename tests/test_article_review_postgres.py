@@ -40,10 +40,9 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
             persisted = storage.get_job(conn, first)
             assert persisted.result['attempts'] > 0
             if request['phase'] == 'context':
-                return json.dumps({'facts':[{'evidence_quote':article['content_text'],
+                return json.dumps({'facts':[{'passage_ids':['p001'],
                     'statement':article['content_text'], 'kind':'reported_fact',
-                    'attribution_quote':'Acme', 'uncertainty_quote':None,
-                    'date_quote':None, 'date_role':'none'}], 'uncertainties':[]})
+                    'date_text':None, 'date_role':'none'}]})
             return json.dumps({'summary_sentences':[{'text':article['content_text'], 'fact_ids':['f1']}], 'bullets':[]})
         result = review.run(conn, claimed, generate=generate)
         storage.complete_job(conn, first, result=result)

@@ -2,6 +2,22 @@
 
 ## Status
 
+Local successor implemented September 19, 2026: `article-evidence-v4` segments
+stored text deterministically into bounded, numbered passages. The private model
+now selects passage IDs and typed facts instead of reproducing quotations. Code
+attaches the exact current source text and offsets, canonicalizes passage order,
+and rejects unknown/duplicate references or date text outside the selected
+passages. Material uncertainty is a passage-bound fact, not an unreferenced note.
+
+This removes the quotation-copying failure mode measured below; it does not prove
+the selected passages entail the proposed statements. The workflow remains private,
+unreviewed and ineligible for publication. The full offline suite passes 1,003
+tests with one skip. The three saved articles produce 5, 6 and 7 passages and
+requests of 4,384, 5,039 and 6,270 bytes, below the existing combined request
+budget. No provider call, database migration, live prompt/profile change, public
+write, site build or deployment was performed. Next: run the same frozen three-
+article comparison through the existing serial private queue after release checks.
+
 Deployed September 19, 2026: admin and LLM worker `3d2a981`, platform `583da4c`.
 Private admission is enabled; normal strict validation remains OFF. The scoped
 Helm render matches live. All other deployment images and model concurrency remain

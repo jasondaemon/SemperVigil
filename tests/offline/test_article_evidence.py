@@ -13,11 +13,10 @@ ARTICLE = {'id': 7, 'title': 'Acme incident update', 'content_text':
 
 
 def context():
-    return {'facts': [{'evidence_quote': 'Acme said unprotected tokens may have been exposed.',
+    return {'facts': [{'passage_ids': ['p001'],
                       'statement': 'Acme said unprotected tokens may have been exposed.',
-                      'kind': 'allegation', 'attribution_quote': 'Acme said',
-                      'uncertainty_quote': 'may have been exposed', 'date_quote': None,
-                      'date_role': 'none'}], 'uncertainties': ['Recovery remains unconfirmed.']}
+                      'kind': 'allegation', 'date_text': None,
+                      'date_role': 'none'}]}
 
 
 def summary():
@@ -37,17 +36,21 @@ def test_private_pipeline_retains_existing_feed_shapes_without_mutating_article(
     assert result['feed_preview'] == {'summary': summary()['summary_sentences'][0]['text'],
                                       'summary_bullets': []}
     fact = result['evidence']['facts'][0]
-    assert ARTICLE['content_text'][fact['start']:fact['end']] == fact['evidence_quote']
-    assert fact['date_quote'] is None
+    passage = fact['evidence_passages'][0]
+    assert passage['id'] == 'p001'
+    assert ARTICLE['content_text'][passage['start']:passage['end']] == passage['text']
+    assert fact['date_text'] is None
 
 
-def test_generation_order_and_schema_use_no_sentence_enum_regex_or_conditionals():
+def test_generation_order_and_schema_use_passage_ids_without_quote_copying():
     schema = evidence.context_schema()
-    assert next(iter(schema['properties']['facts']['items']['properties'])) == 'evidence_quote'
-    for forbidden in ('pattern', 'anyOf', 'oneOf', '$ref'):
-        assert forbidden not in json.dumps(schema)
+    fields = schema['properties']['facts']['items']['properties']
+    assert next(iter(fields)) == 'passage_ids'
+    assert 'evidence_quote' not in fields
     request = evidence.context_request(ARTICLE, GEN)
-    assert json.loads(request['input'])['source']['text'] == ARTICLE['content_text']
+    payload = json.loads(request['input'])
+    assert 'text' not in payload['source']
+    assert ''.join(p['text'] for p in payload['passages']) == ARTICLE['content_text']
 
 
 @pytest.mark.parametrize('change', [{'content_text': ''}, {'content_text': None},
@@ -62,77 +65,97 @@ def test_budget_includes_prompt_schema_and_full_source_without_truncation():
         evidence.context_request({**ARTICLE, 'content_text': '\u00e9' * 5000}, GEN)
 
 
-@pytest.mark.parametrize('quote', ['not in source', ' '])
-def test_absent_or_empty_quote_fails(quote):
-    data = context(); data['facts'][0]['evidence_quote'] = quote
-    with pytest.raises(ValueError, match='quote_missing'):
+@pytest.mark.parametrize('passage_ids', [['p999'], [], ['p001', 'p001']])
+def test_unknown_empty_or_duplicate_passage_ids_fail(passage_ids):
+    data = context(); data['facts'][0]['passage_ids'] = passage_ids
+    with pytest.raises(ValueError, match='unknown_passage|invalid_shape'):
         evidence.validate_context(encode(data), ARTICLE, GEN)
 
 
-def test_duplicate_source_preserves_every_occurrence_without_editing_source():
-    article = {**ARTICLE, 'content_text': ARTICLE['content_text'] + '\n' + ARTICLE['content_text']}
+def test_duplicate_source_paragraphs_have_distinct_exact_passages_without_editing_source():
+    article = {**ARTICLE, 'content_text': ARTICLE['content_text'] + '\n\n' + ARTICLE['content_text']}
     before = copy.deepcopy(article)
-    result = evidence.validate_context(encode(context()), article, GEN)
+    data = context(); data['facts'][0]['passage_ids'] = ['p001', 'p002']
+    result = evidence.validate_context(encode(data), article, GEN)
     fact = result['facts'][0]
-    assert len(fact['occurrences']) == 2
-    assert fact['start'] == fact['occurrences'][0]['start'] == 0
-    for span in fact['occurrences']:
-        assert article['content_text'][span['start']:span['end']] == fact['evidence_quote']
+    assert [p['id'] for p in fact['evidence_passages']] == ['p001', 'p002']
+    for passage in fact['evidence_passages']:
+        assert article['content_text'][passage['start']:passage['end']] == passage['text']
     assert article == before
     assert not result['public_eligible']
     assert evidence.validate_context_record(result, article) == result
     evidence.summary_request(article, result, GEN)
 
 
-def test_repeated_words_do_not_resolve_context_or_prove_statement():
-    article = {**ARTICLE, 'content_text': 'Acme said no. Acme said yes.'}
-    data = context()
-    data['facts'][0].update(evidence_quote='Acme', uncertainty_quote=None,
-                           attribution_quote='Acme', statement='Acme certainly said yes.')
+def test_selected_passages_are_canonicalized_in_source_order():
+    article = {**ARTICLE, 'content_text': 'First fact.\n\nSecond fact.'}
+    data = context(); data['facts'][0]['passage_ids'] = ['p002', 'p001']
     result = evidence.validate_context(encode(data), article, GEN)
-    assert len(result['facts'][0]['occurrences']) == 2
+    assert result['facts'][0]['passage_ids'] == ['p001', 'p002']
+    assert [p['text'] for p in result['facts'][0]['evidence_passages']] == [
+        'First fact.', 'Second fact.']
+
+
+def test_summary_request_deduplicates_passage_text_across_facts():
+    data = context(); data['facts'].append({**data['facts'][0],
+        'statement': 'Customers were advised to rotate tokens.', 'kind': 'recommendation'})
+    result = evidence.validate_context(encode(data), ARTICLE, GEN)
+    request = evidence.summary_request(ARTICLE, result, GEN)
+    payload = json.loads(request['input'])
+    assert [p['id'] for p in payload['passages']] == ['p001']
+    assert [f['id'] for f in payload['facts']] == ['f1', 'f2']
+    assert all('evidence_passages' not in fact for fact in payload['facts'])
+
+
+def test_selected_passage_does_not_prove_statement_semantics():
+    article = {**ARTICLE, 'content_text': 'Acme said no.\n\nAcme said yes.'}
+    data = context()
+    data['facts'][0].update(passage_ids=['p001'], statement='Acme certainly said yes.')
+    result = evidence.validate_context(encode(data), article, GEN)
+    assert result['facts'][0]['evidence_passages'][0]['text'] == 'Acme said no.'
     assert result['status'] == 'unreviewed'
     assert not result['public_eligible']
 
 
-def test_occurrences_include_overlapping_matches_and_have_a_bound():
-    assert evidence._quote_occurrences('aaaa', 'aa') == [
-        {'start': 0, 'end': 2}, {'start': 1, 'end': 3}, {'start': 2, 'end': 4}]
-    with pytest.raises(ValueError, match='too_repetitive'):
-        evidence._quote_occurrences('a' * 33, 'a')
+def test_long_paragraphs_split_at_source_boundaries_with_stable_offsets():
+    article = {**ARTICLE, 'content_text': ('First sentence. ' * 80).strip()}
+    first = evidence.passages_for(article)
+    second = evidence.passages_for({**article, 'updated_at': 'ignored'})
+    assert first == second and len(first) > 1
+    assert all(len(p['text']) <= evidence.MAX_PASSAGE_CHARS for p in first)
+    assert [p['id'] for p in first] == [f'p{i:03d}' for i in range(1, len(first)+1)]
+    assert all(article['content_text'][p['start']:p['end']] == p['text'] for p in first)
 
 
 @pytest.mark.parametrize('change', ['remove', 'move', 'workflow'])
-def test_modified_occurrence_record_or_old_contract_is_rejected(change):
-    article = {**ARTICLE, 'content_text': ARTICLE['content_text'] * 2}
+def test_modified_passage_record_or_old_contract_is_rejected(change):
+    article = {**ARTICLE, 'content_text': ARTICLE['content_text']}
     result = evidence.validate_context(encode(context()), article, GEN)
-    if change == 'remove': result['facts'][0]['occurrences'].pop()
-    elif change == 'move': result['facts'][0]['occurrences'][1]['start'] += 1
-    else: result['workflow'] = 'article-evidence-v2'
+    if change == 'remove': result['facts'][0]['evidence_passages'].pop()
+    elif change == 'move': result['facts'][0]['evidence_passages'][0]['start'] += 1
+    else: result['workflow'] = 'article-evidence-v3'
     with pytest.raises(ValueError, match='stale_or_modified'):
         evidence.summary_request(article, result, GEN)
 
 
-@pytest.mark.parametrize('field', ['attribution_quote', 'uncertainty_quote', 'date_quote'])
-def test_qualifiers_cannot_come_from_other_passages(field):
-    data = context(); data['facts'][0][field] = 'Recovery remains unconfirmed.'
-    with pytest.raises(ValueError, match='qualifier_not_in_quote'):
-        evidence.validate_context(encode(data), ARTICLE, GEN)
+def test_date_text_must_come_from_a_selected_passage():
+    article = {**ARTICLE, 'content_text': 'Incident occurred May 1.\n\nUpdate published May 2.'}
+    data = context(); data['facts'][0].update(
+        passage_ids=['p001'], date_text='May 2', date_role='incident')
+    with pytest.raises(ValueError, match='date_not_in_passage'):
+        evidence.validate_context(encode(data), article, GEN)
 
-
-def test_attribution_required_for_allegation():
-    data = context(); data['facts'][0].update(attribution_quote=None, uncertainty_quote=None)
-    with pytest.raises(ValueError, match='allegation_unattributed'):
-        evidence.validate_context(encode(data), ARTICLE, GEN)
+    data['facts'][0]['passage_ids'] = ['p001', 'p002']
+    result = evidence.validate_context(encode(data), article, GEN)
+    assert result['facts'][0]['date_text'] == 'May 2'
 
 
 def test_relative_incident_date_is_not_normalized_from_publication_metadata():
     article = {**ARTICLE, 'content_text': 'Acme said recovery started yesterday.', 'published_at': '2026-09-19'}
-    data = context(); data['facts'][0].update(evidence_quote=article['content_text'],
-        statement=article['content_text'], kind='reported_fact', uncertainty_quote=None,
-        date_quote='yesterday', date_role='incident')
+    data = context(); data['facts'][0].update(statement=article['content_text'],
+        kind='reported_fact', date_text='yesterday', date_role='incident')
     result = evidence.validate_context(encode(data), article, GEN)
-    assert result['facts'][0]['date_quote'] == 'yesterday'
+    assert result['facts'][0]['date_text'] == 'yesterday'
     assert '2026-09-18' not in json.dumps(result)
 
 
@@ -143,7 +166,7 @@ def test_date_role_requires_explicit_date_wording():
 
 
 def test_empty_context_abstains_before_summary_request():
-    result = evidence.validate_context(encode({'facts': [], 'uncertainties': []}), ARTICLE, GEN)
+    result = evidence.validate_context(encode({'facts': []}), ARTICLE, GEN)
     with pytest.raises(ValueError, match='no_facts'):
         evidence.summary_request(ARTICLE, result, GEN)
 
@@ -158,7 +181,7 @@ def test_unknown_fact_reference_and_blank_summary_rejected():
         evidence.validate_summary(encode({'summary_sentences': [], 'bullets': []}), ARTICLE, result, GEN)
 
 
-@pytest.mark.parametrize('field,value', [('start', 1), ('id', 'fake'), ('statement', 'Changed'),
+@pytest.mark.parametrize('field,value', [('id', 'fake'), ('statement', 'Changed'),
                                        ('date_role', 'publication')])
 def test_modified_records_fail_before_summary(field, value):
     result = evidence.validate_context(encode(context()), ARTICLE, GEN)
