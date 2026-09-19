@@ -4,6 +4,11 @@ September 19, 2026. Local hardening implemented and tested; NOT deployed.
 This corrects the Events architecture reset: reuse existing article enrichment,
 not routine re-extraction of each article for each event.
 
+Latest: [private queued comparison](ARTICLE_PRIVATE_QUEUE.md) is implemented
+locally with no public writes and normal strict validation default-disabled.
+Not deployed or model-tested; release access and DB integration gates are pending.
+Older sections below describe the preceding contract-only checkpoints.
+
 ## Duplicate citation correction: locally verified
 
 The candidate contract is now `article-evidence-v3`. Instead of rejecting repeated

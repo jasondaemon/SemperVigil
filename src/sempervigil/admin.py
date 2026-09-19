@@ -247,6 +247,7 @@ _DASHBOARD_LLM_JOB_TYPES = [
     "cve_enrich_threat_actors",
     "event_report_llm",
     "event_review_private",
+    "article_review_private",
 ]
 _DASHBOARD_FETCH_JOB_TYPES = [
     "event_promote_reviewed",
@@ -3329,6 +3330,26 @@ def approve_event_review(request: Request, job_id: str, payload: EventApprovalRe
     except psycopg.Error:
         raise HTTPException(status_code=503, detail="event_approval_database_unavailable") from None
     return JSONResponse(result, headers={"Cache-Control": "private, no-store"})
+
+
+class ArticlePrivateReviewRequest(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    article_ids: list[int] = Field(min_length=1, max_length=3)
+
+
+@app.post("/admin/api/articles/private-review", dependencies=[Depends(_require_admin_token)])
+def api_article_private_review(payload: ArticlePrivateReviewRequest) -> dict:
+    if not os.environ.get("SV_ADMIN_TOKEN"):
+        raise HTTPException(status_code=503, detail="private_review_auth_required")
+    from .article_review_jobs import submit
+    try:
+        with _get_conn() as conn:
+            job_id = submit(conn, payload.article_ids)
+    except PermissionError:
+        raise HTTPException(status_code=503, detail="article_review_disabled") from None
+    except ValueError:
+        raise HTTPException(status_code=400, detail="article_review_invalid") from None
+    return {"job_id": job_id, "public_eligible": False}
 
 
 @app.post("/admin/api/events/{event_id}/private-review",

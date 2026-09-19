@@ -53,6 +53,7 @@ _QUEUE_NAME_BY_JOB_TYPE: dict[str, str] = {
     "enrich_event_summary_llm": "llm_local",
     "event_report_llm": "llm_local",
     "event_review_private": "llm_local",
+    "article_review_private": "llm_local",
     "event_promote_reviewed": "fetch",
     "build_daily_brief": "openai",
     "write_article_markdown": "publish",

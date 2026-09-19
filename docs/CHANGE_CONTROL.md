@@ -1,5 +1,20 @@
 # Change Control Log
 
+## 2026-09-19: Private article comparison queue, local only
+
+- Add separate default-disabled admin admission/LLM queue dispatch and dashboard
+  registry. Pin source/baseline/generation, deduplicate across final statuses,
+  reserve before inference, reject replay, stop on transport errors, no repairs.
+- Private results only; no article, event, build or profile writes. Three articles
+  imply at most six attempts in the existing serialized lane. Provider timeout
+  retained; ten-minute guard only applies before starting another phase.
+- Gate previous normal article strict-validation work off by default, preserving
+  deployed legacy behavior. Explicit strict-mode tests remain enabled in tests.
+- Not deployed; unavailable local Docker and failed deployment SSH authentication
+  prevent image release. User asked for supported access route. No model calls.
+  Disposable-DB and rendered/live validation remain pending. See ARTICLE_PRIVATE_QUEUE.md.
+- Full offline suite: 1003 passed, one skipped; whitespace diff check passes.
+
 ## 2026-09-19: Duplicate-safe private article evidence
 
 - Version the undeployed contract to v3; preserve all exact quotation occurrences

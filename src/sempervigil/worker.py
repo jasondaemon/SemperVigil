@@ -222,6 +222,7 @@ WORKER_JOB_TYPES = [
     "enrich_event_summary_llm",
     "event_report_llm",
     "event_review_private",
+    "article_review_private",
     "event_promote_reviewed",
     "source_acquire",
     "rebuild_vendor_products",
@@ -255,6 +256,7 @@ QUEUE_WORKER_TYPES = {
         "cve_enrich_threat_actors",
         "event_report_llm",
         "event_review_private",
+        "article_review_private",
         "enrich_event_summary_llm",
         "article_products_backfill",
         "article_threat_actors_backfill",
@@ -304,6 +306,7 @@ HANDLED_JOB_TYPES = {
     "enrich_event_summary_llm",
     "event_report_llm",
     "event_review_private",
+    "article_review_private",
     "event_promote_reviewed",
     "source_acquire",
     "rebuild_vendor_products",
@@ -428,6 +431,7 @@ def _looks_like_thn_teaser(source_id: str | None, content_text: str | None) -> b
 
 
 _LLM_JOB_TYPES = {
+    "article_review_private",
     "summarize_article_llm",
     "summarize_article_context_llm",
     "cve_enrich_llm",
@@ -564,6 +568,7 @@ def _resolve_profile_ids_for_job(conn, job) -> list[str]:
     if isinstance(payload_profile, str) and payload_profile:
         profile_ids.append(payload_profile)
     stage_map = {
+        "article_review_private": ["article_context_pack"],
         "summarize_article_llm": ["summarize_article_llm"],
         "summarize_article_context_llm": ["article_context_pack"],
         "cve_enrich_llm": ["cve_enrich_products"],
@@ -5754,6 +5759,30 @@ def _handle_fetch_article_content(
     return {"article_id": article_id, "has_full_content": has_full_content}
 
 
+def _article_result_payload(result, kind):
+    if os.environ.get("SV_ARTICLE_STRICT_VALIDATION", "0") == "1":
+        parsed = validated_article_output(result, kind)
+        return json.dumps(parsed), parsed["summary"] if kind == "summary" else json.dumps(parsed)
+    # Preserve deployed behavior until the generation canary qualifies strict mode.
+    parsed = result.get("parsed")
+    raw = result.get("raw")
+    if isinstance(parsed, (dict, list)):
+        text = parsed.get("summary") if kind == "summary" and isinstance(parsed, dict) else None
+        return json.dumps(parsed), text if kind == "summary" else json.dumps(parsed)
+    if isinstance(raw, str):
+        return json.dumps({"summary" if kind == "summary" else "context_pack": raw}), raw
+    raise ValueError("llm_empty_output")
+
+
+def _article_enrichment_error(conn, article_id, *, kind, error):
+    if os.environ.get("SV_ARTICLE_STRICT_VALIDATION", "0") == "1":
+        return record_article_enrichment_error(conn, article_id, kind=kind, error=error)
+    prefix = "summary" if kind == "summary" else "context"
+    update = update_article_summary if kind == "summary" else update_article_context_pack
+    return update(conn, article_id, **{prefix + "_llm": None, prefix + "_model": None,
+                                     prefix + "_generated_at": utc_now_iso(), prefix + "_error": error})
+
+
 def _handle_summarize_article_llm(
     conn, config, job: Job, logger: logging.Logger
 ) -> dict[str, object]:
@@ -5798,7 +5827,7 @@ def _handle_summarize_article_llm(
     if not profile:
         profile, reason = get_active_profile_for_stage(conn, "summarize_article")
     if not profile:
-        record_article_enrichment_error(conn, int(article_id), kind="summary", error=f"llm_stage_{reason}")
+        _article_enrichment_error(conn, int(article_id), kind="summary", error=f"llm_stage_{reason}")
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         log_event(
             logger,
@@ -5813,7 +5842,7 @@ def _handle_summarize_article_llm(
     source_name = get_source_name(conn, article["source_id"]) or ""
     content = article.get("content_text") or article.get("summary") or article.get("title") or ""
     if not content.strip():
-        record_article_enrichment_error(conn, int(article_id), kind="summary", error="missing_content")
+        _article_enrichment_error(conn, int(article_id), kind="summary", error="missing_content")
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         raise ValueError("missing_content")
     input_chars = len(content or "")
@@ -5857,9 +5886,7 @@ def _handle_summarize_article_llm(
             context={"stage": "summarize_article", "job_type": job.job_type},
         )
         latency_ms = int((time.time() - start) * 1000)
-        parsed = validated_article_output(result, "summary")
-        summary_payload = json.dumps(parsed)
-        summary_text = parsed["summary"]
+        summary_payload, summary_text = _article_result_payload(result, "summary")
         update_article_summary(
             conn,
             int(article_id),
@@ -5905,7 +5932,7 @@ def _handle_summarize_article_llm(
             ok=False,
             error=str(exc),
         )
-        record_article_enrichment_error(conn, int(article_id), kind="summary", error=str(exc))
+        _article_enrichment_error(conn, int(article_id), kind="summary", error=str(exc))
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         raise
     finally:
@@ -5940,7 +5967,7 @@ def _handle_summarize_article_context_llm(
     if not profile:
         profile, reason = get_active_profile_for_stage(conn, "article_context_pack")
     if not profile:
-        record_article_enrichment_error(conn, int(article_id), kind="context", error=f"llm_stage_{reason}")
+        _article_enrichment_error(conn, int(article_id), kind="context", error=f"llm_stage_{reason}")
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         log_event(
             logger,
@@ -5955,7 +5982,7 @@ def _handle_summarize_article_context_llm(
     source_name = get_source_name(conn, article["source_id"]) or ""
     content = article.get("content_text") or article.get("summary") or article.get("title") or ""
     if not content.strip():
-        record_article_enrichment_error(conn, int(article_id), kind="context", error="missing_content")
+        _article_enrichment_error(conn, int(article_id), kind="context", error="missing_content")
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         raise ValueError("missing_content")
     input_chars = len(content or "")
@@ -5999,9 +6026,7 @@ def _handle_summarize_article_context_llm(
             context={"stage": "article_context_pack", "job_type": job.job_type},
         )
         latency_ms = int((time.time() - start) * 1000)
-        parsed = validated_article_output(result, "context")
-        context_payload = json.dumps(parsed)
-        output_text = context_payload
+        context_payload, output_text = _article_result_payload(result, "context")
         update_article_context_pack(
             conn,
             int(article_id),
@@ -6047,7 +6072,7 @@ def _handle_summarize_article_context_llm(
             ok=False,
             error=str(exc),
         )
-        record_article_enrichment_error(conn, int(article_id), kind="context", error=str(exc))
+        _article_enrichment_error(conn, int(article_id), kind="context", error=str(exc))
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         raise
     finally:
@@ -9677,6 +9702,9 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         from .event_review_jobs import run
         completion = _private_review_completion(conn, job, logger)
         return run(job.payload or {}) if completion is None else run(job.payload or {}, complete=completion)
+    if job.job_type == "article_review_private":
+        from .article_review_jobs import run
+        return run(conn, job)
     if job.job_type == "event_promote_reviewed":
         from .event_approval import run
         result = run(job.payload or {})

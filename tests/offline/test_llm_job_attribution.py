@@ -10,6 +10,7 @@ pytestmark = pytest.mark.offline
 
 @pytest.fixture
 def harness(monkeypatch):
+    monkeypatch.setenv("SV_ARTICLE_STRICT_VALIDATION", "1")
     article = {"id": 7, "source_id": "example", "title": "Example", "content_text": "Evidence"}
     profile = {"id": "profile_example", "name": "Example", "primary_provider_id": "provider_example",
                "primary_model_id": "model_example"}

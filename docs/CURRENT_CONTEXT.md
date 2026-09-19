@@ -9,6 +9,15 @@
 
 ## Current direction: strengthen and reuse article enrichment
 
+Latest local work: `article_review_private` implements default-disabled queued
+comparison of up to three stored articles (six calls maximum, no retries/repair).
+Admin admission and dashboard registry are wired; outputs only go to private jobs.
+Normal article strict validation is now gated OFF by default to preserve deployed
+behavior during a later canary. See ARTICLE_PRIVATE_QUEUE.md. NOT deployed: Docker
+build access is unavailable and SSH authentication failed; user was asked for the
+deployment route. No provider calls made. Disposable-DB and manifest/live release
+verification remain pending; do not confuse offline tests with a completed canary.
+
 Latest local fix: candidate `article-evidence-v3` records all exact quote occurrences
 (maximum 32), with the first only a display anchor. Stored SolarWinds duplicate
 fixture now passes without source edits; records stay unreviewed/private. 31 targeted
