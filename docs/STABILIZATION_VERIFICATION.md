@@ -1905,4 +1905,43 @@ All expected production replicas were ready at this checkpoint's opening.
   13:19:32. Source/output/authorization remained correct. Existing `ln -sfn` is an
   unlink/recreate switch on shared NFS, not atomic rename. Exact cache contribution
   is not proven. Narrow approval was granted to replace the switch and verify it.
+
+## September 19: approved atomic guarded switch deployed
+
+- Application runtime correction `bfa9986`, platform values `4d852c2`, both pushed.
+  Only the builder image changed from `00dffeb`; rendered diff contained its main
+  and init-container image references only. Scheduling was paused for replacement
+  and resumed. All application Deployments are ready. The web was not restarted.
+- Enabled activation now creates a temporary sibling symlink and uses
+  `os.replace` to atomically replace `current`. Authority locks and the existing
+  two-second subprocess timeout remain. Disabled legacy branch, Hugo invocation,
+  source content, feed generation, retention, caches and concurrency are unchanged.
+- 750 offline tests pass; one Linux reader stress test is skipped on macOS.
+  Linux builder-container stress passed 10,000 switches with 17,802 concurrent
+  page reads, zero errors. Rapid macOS pathname reads returned EINVAL; local tests
+  instead verify same-directory rename, existing live link at replacement,
+  failure retention and cleanup. No OS error was silently ignored in that test.
+- API build `job_5b4a179d18f24fb890af24000868d4e5` succeeded, reported build
+  duration 19.31s (including pre-build work, queued-job execution was about 33.5s),
+  release `20260919133406`.
+- API build `job_7916f607bfd540c0bf7794910c45ad07` succeeded, reported build
+  duration 16.77s (job execution about 24.5s), release `20260919133533`.
+- HTTP monitoring across both switches and the subsequent serving window made
+  875 successful requests across home, Events list, pilot report, Events JSON and
+  a historical daily JSON. Zero HTTP/JSON failures or 404s. This is sampled
+  availability evidence, not proof against every NFS/cache failure mode. The
+  earlier pre-fix 404's exact cache contribution remains unproven.
+- Public pilot HTML fragment still hashes to
+  `2d2713f72bed79c6edce927e70d4fa91ab6b9f43797271c8733c0e19574a9cd2`;
+  Events JSON hash `7de42fe062c6dcf27bc34c693f4d4d685889e91ed8d64f2eefda2064111b177f`
+  matches the activated manifest. Both were HTTP 200, Cloudflare DYNAMIC.
+- 5,060 archived JSON files retained; no temporary switch links remain. Builder
+  peak 379,756,544 bytes (about 362 MiB), existing 2Gi request/16Gi limit unchanged.
+  Nodes Ready/no MemoryPressure; API and etcd readiness pass; PostgreSQL 3/3 healthy.
+  Render/live build-worker diff is empty. Previous builder image retained.
+- Post-build publication checker at 13:37 UTC passed all 20 page, asset and JSON
+  checks. No host kernel OOM records since rollout began at 13:30 UTC.
+- Controlled Events publication/update is live. Automatic evidence qualification
+  and changed-input admission remain next work; the pilot is not autonomous LLM
+  qualification. No new background monitor or schedule was created.
   No zero-interruption claim. The static feed JSON remained available during checks.

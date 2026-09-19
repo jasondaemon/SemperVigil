@@ -10,6 +10,9 @@
   authority locks remain held. Tests cover concurrent readers without an absent
   live name, failed-rename retention, and invalid candidates. Real API build and
   public checks during switching are required before closing the observed issue.
+- Deployed as builder `bfa9986` with platform `4d852c2`. Two API builds succeeded;
+  875 sampled public requests across/post switches had no failures. Details and
+  NFS caveat are in STABILIZATION_VERIFICATION.md. No broader behavior changed.
 
 ## 2026-09-19: Activation interpreter correction during pilot
 

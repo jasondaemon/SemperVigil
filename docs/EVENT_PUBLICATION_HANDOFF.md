@@ -4,8 +4,9 @@ September 19 deployment update: builder-owned export, output-bound activation,
 restricted credentials/schema and a two-revision operator-reviewed pilot are now
 live. See `EVENT_RELEASE_COORDINATION.md` and the latest verification entry. The
 steps below preserve the earlier implementation rationale, not current rollout
-status. Automatic qualification/maintenance admission remains open, as does the
-newly observed transient release-switch 404 finding.
+status. Automatic qualification/maintenance admission remains open. The approved
+atomic release-switch correction is deployed; see the verification log for the
+post-fix checks rather than inferring interruption-free operation from build success.
 
 Inspected September 19, 2026. This plan does not enable publication or approve
 private model suggestions. Current production versions and pilot evidence are in

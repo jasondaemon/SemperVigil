@@ -7,10 +7,10 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
-## Current release checkpoint: September 19, 13:21 UTC
+## Current release checkpoint: September 19, 13:36 UTC
 
 - **Override of the older checkpoint below:** ingest components now run `e091471`,
-  builder `00dffeb`, platform values `7cc2096`. Qualified publication, human
+  builder `bfa9986`, platform values `4d852c2`. Qualified publication, human
   approval and activation flags are enabled with separately restricted credentials.
 - Two explicitly agent-reviewed, quotation-only Vercel pilot revisions have been
   published at `/events/evt_0ffca0813049/` through the normal worker and API build
@@ -19,13 +19,13 @@
 - API builds succeeded in 18.81s and 18.26s; an intervening ordinary build took
   17.33s. All 5,060 daily archive files remain. Builder peak measured 380,858,368
   bytes, with existing 16Gi limit. 747 offline / 11 PostgreSQL / 26 JS tests pass.
-- **Open release-safety finding:** a brief public 404 window was observed after
-  switching, then recovered. Existing `ln -sfn` is not an atomic replacement and
-  the site is served from a separate NFS client. Exact cache contribution is not
-  established. Narrow atomic-switch approval was granted; the correction is
-  locally tested and awaiting rollout. Do not describe
-  this rollout as zero-interruption or the existing switch as proven atomic.
-- Next: resolve that publication-safety finding, then bounded automatic evidence
+- **Approved release-safety correction deployed:** the enabled guard now replaces
+  the live link with a same-directory atomic rename inside its authorization
+  window. Two API builds succeeded in 19.31s and 16.77s. The separate NFS client's
+  contribution to the earlier transient 404 is not established; see dated public
+  monitoring results in STABILIZATION_VERIFICATION.md. Do not describe the earlier
+  pilot rollout as uninterrupted. The disabled legacy branch remains unchanged.
+- Next: bounded automatic evidence
   qualification/refresh admission and reader-facing report improvements. No
   additional decisions or manual testing are needed for the already-live pilot.
 - See the September 19 pilot entry in `STABILIZATION_VERIFICATION.md` and

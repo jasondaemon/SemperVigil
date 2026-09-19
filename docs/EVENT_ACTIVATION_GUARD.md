@@ -1,6 +1,6 @@
 # Events release activation guard
 
-Status: deployed and enabled with builder `00dffeb`. The user
+Status: deployed and enabled with builder `bfa9986`. The user
 explicitly approved this narrowly scoped activation-path change on September 19,
 2026. It does not authorize arbitrary build changes or autonomous publication.
 
@@ -13,7 +13,8 @@ tests only. Two API-driven pilot revisions are publicly verified. A subsequent
 brief 404 window exposed an open switch/NFS-serving risk; atomic replacement of
 the existing unlink/recreate operation was explicitly approved. The local fix
 uses a temporary sibling symlink and atomic rename inside the same bounded
-authorization window. Production verification is pending.
+authorization window. Two API-driven builds succeeded with the correction;
+see STABILIZATION_VERIFICATION.md for HTTP monitoring and remaining limits.
 
 ## Behavior
 
