@@ -34,15 +34,14 @@ def configuration(conn) -> tuple[dict, dict, dict, str]:
         "provider": provider["id"], "base_url": provider["base_url"],
         "timeout_s": provider.get("timeout_s"),
         "revisions": [str(x.get("updated_at") or "") for x in (profile, model, provider)],
-        "context_prompt": evidence.CONTEXT_PROMPT, "summary_prompt": evidence.SUMMARY_PROMPT,
-        "context_schema": evidence.context_schema(), "summary_schema": evidence.summary_schema()})
+        "context_prompt": evidence.CONTEXT_PROMPT, "context_schema": evidence.context_schema()})
     return profile, model, provider, version
 
 
 def snapshot(conn, article_id: int) -> dict:
     article = get_article_by_id(conn, article_id)
-    if not article or not article.get("summary_llm") or not article.get("context_llm"):
-        raise ValueError("article_review_baseline_missing")
+    if not article:
+        raise ValueError("article_review_source_missing")
     return {k: article.get(k) for k in ("id", "title", "content_text", "summary_llm", "context_llm")}
 
 
@@ -139,50 +138,37 @@ def run(conn, job, *, generate=None) -> dict:
                "baseline_summary": article["summary_llm"], "baseline_context": article["context_llm"],
                "phases": []}
         result["articles"].append(row)
-        context = None
-        for phase in ("context", "summary"):
-            require_enabled()
-            if time.monotonic() - started >= 600:
-                result["status"] = "time_budget_exhausted"
-                persist()
-                return result
-            if snapshot(conn, article["id"]) != article:
-                raise ValueError("article_review_baseline_changed")
-            request = (evidence.context_request(article, generation) if phase == "context" else
-                       evidence.summary_request(article, context, generation))
-            attempt = {"phase": phase, "request_version": request["request_version"], "status": "started"}
-            row["phases"].append(attempt)
-            result["attempts"] += 1
-            persist()  # Reserve before sending. An interrupted job cannot replay the request.
-            tick = time.monotonic()
-            try:
-                raw = generate(request)
-            except Exception as exc:
-                attempt.update(status="transport_failed", error=type(exc).__name__)
-                result["status"] = "stopped"
-                persist()
-                return result
-            attempt["latency_ms"] = int((time.monotonic()-tick)*1000)
-            attempt["raw"] = raw[:evidence.MAX_OUTPUT_BYTES]
-            try:
-                if phase == "context":
-                    context = evidence.validate_context(raw.encode(), article, generation)
-                    attempt["candidate"] = context
-                    if not context["facts"]:
-                        attempt["status"] = "abstained"
-                        persist()
-                        break
-                else:
-                    candidate = evidence.validate_summary(raw.encode(), article, context, generation)
-                    attempt["candidate"] = candidate
-                    row["feed_preview"] = {"summary": " ".join(x["text"] for x in candidate["summary_sentences"]),
-                                           "summary_bullets": [x["text"] for x in candidate["bullets"]]}
-                attempt["status"] = "structurally_valid_unreviewed"
-            except ValueError as exc:
-                attempt.update(status="invalid", error=str(exc))
-                persist()
-                break
+        require_enabled()
+        if time.monotonic() - started >= 600:
+            result["status"] = "time_budget_exhausted"
             persist()
+            return result
+        if snapshot(conn, article["id"]) != article:
+            raise ValueError("article_review_baseline_changed")
+        request = evidence.context_request(article, generation)
+        attempt = {"phase": "context", "request_version": request["request_version"], "status": "started"}
+        row["phases"].append(attempt)
+        result["attempts"] += 1
+        persist()  # Reserve before sending. An interrupted job cannot replay the request.
+        tick = time.monotonic()
+        try:
+            raw = generate(request)
+        except Exception as exc:
+            attempt.update(status="transport_failed", error=type(exc).__name__)
+            result["status"] = "stopped"
+            persist()
+            return result
+        attempt["latency_ms"] = int((time.monotonic()-tick)*1000)
+        attempt["raw"] = raw[:evidence.MAX_OUTPUT_BYTES]
+        if snapshot(conn, article["id"]) != article:
+            raise ValueError("article_review_baseline_changed")
+        try:
+            candidate = evidence.validate_context(raw.encode(), article, generation)
+            attempt["candidate"] = candidate
+            attempt["status"] = ("structurally_valid_unreviewed" if candidate["facts"] else "abstained")
+        except ValueError as exc:
+            attempt.update(status="invalid", error=str(exc))
+        persist()
     result["status"] = "comparison_ready"
     persist()
     return result

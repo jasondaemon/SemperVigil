@@ -10,7 +10,7 @@ import re
 from .investigation import _version
 from .event_review import _json
 
-WORKFLOW = "article-evidence-v7"
+WORKFLOW = "article-evidence-v8"
 MAX_INPUT_BYTES = 15000
 MAX_OUTPUT_BYTES = 16000
 MAX_PASSAGE_CHARS = 900

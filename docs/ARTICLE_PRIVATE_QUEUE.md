@@ -114,6 +114,19 @@ four-sentence maximum and seven-bullet maximum. One call, no repair, strict sche
 validation and unchanged daily summaries/JSON remain in force. V7 deployment and
 semantic review remain pending.
 
+V7 image `6b60236` completed all three context phases with 13, 20 and 24 facts.
+The redundant private summary phases still ignored count constraints or returned
+truncated JSON. That phase duplicates the existing production summary pipeline and
+is not required by the evidence-first Events architecture.
+
+`article-evidence-v8` makes the private queue evidence-only: one context call per
+article, no replacement summary and no feed preview. It accepts stored raw text
+without requiring prior summary/context output, which makes bounded historical
+repair possible. It checks the article snapshot again after inference and rejects
+stale evidence if source text or existing comparison fields changed during the
+call. Existing production summary jobs, article fields, daily JSON and Events are
+unchanged. Durable reviewed sidecar storage remains the next gate.
+
 ## Operation
 
 `article_review_private` is a distinct operator-triggered job on `llm_local`, with
@@ -148,19 +161,18 @@ running job result before calling the provider. Interrupted/retried jobs are not
 replayed. Results and per-phase raw output are private job data, not article data.
 
 The active article-context profile selects the existing local model/provider;
-private code supplies the versioned prompts/schema and fixed temperature 0,
+private code supplies the versioned context prompt/schema and fixed temperature 0,
 maximum 2048 output tokens. Active AI profiles are not edited. Configuration
 changes invalidate admission. No fallback provider, automatic schema repair,
-transport retry or additional worker is used. Context runs before summary; an
-invalid/empty context skips its summary. Transport failure stops the batch.
+transport retry, summary call or additional worker is used. Transport failure
+stops the batch.
 
-At most six provider attempts for this three-article cohort, counted against the
-existing shared 14-attempt experiment budget. The ten-minute elapsed check prevents
+At most three provider attempts for this three-article cohort. The ten-minute elapsed check prevents
 starting further phases; it is not cancellation of a running provider request.
 The existing provider timeout is retained, not reduced to release the queue while
 inference may still be active. Inspect a transport failure before further admission.
 
-The job result includes baseline output, candidate evidence/summary, source and
+The job result includes baseline output, candidate evidence, source and
 request fingerprints, raw bounded responses, validation status and latency.
 `comparison_ready` means inspectable, not factually correct. Every result remains
 `public_eligible: false`. Only job bookkeeping and LLM-run telemetry are written;
@@ -181,7 +193,7 @@ Full offline suite: 1004 passed, one skipped. One real disposable PostgreSQL que
 lifecycle test passed with mocked inference. Actual provider results are above.
 The test pod and forwarding were removed. No production migration was performed.
 
-Offline tests cover serial six-call bounds, failed-context skip, one-attempt HTTP,
+Offline tests cover serial three-call bounds, failed-context handling, one-attempt HTTP,
 source/configuration changes, replay refusal, reservation failure, admission
 deduplication, payload injection rejection, registry visibility and default legacy
 behavior. Run:

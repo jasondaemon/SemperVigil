@@ -38,7 +38,7 @@ def response(request):
     return json.dumps({'summary_sentences': [{'text': ARTICLE['content_text'], 'fact_ids': ['f1']}], 'bullets': []})
 
 
-def test_three_articles_use_six_serial_calls_and_only_private_results(harness):
+def test_three_articles_use_three_serial_evidence_calls_and_only_private_results(harness):
     current = job(3); before = copy.deepcopy(current.payload); phases = []
     def generate(request):
         assert harness[-1]['attempts'] == len(phases)+1
@@ -46,13 +46,14 @@ def test_three_articles_use_six_serial_calls_and_only_private_results(harness):
         phases.append(request['phase'])
         return response(request)
     result = review.run(object(), current, generate=generate)
-    assert phases == ['context', 'summary']*3
-    assert result['attempts'] == 6 and not result['public_eligible']
+    assert phases == ['context']*3
+    assert result['attempts'] == 3 and not result['public_eligible']
     assert current.payload == before
-    assert all(r['feed_preview']['summary'] == ARTICLE['content_text'] for r in result['articles'])
+    assert all(r['phases'][0]['candidate']['facts'] for r in result['articles'])
+    assert all('feed_preview' not in r for r in result['articles'])
 
 
-def test_invalid_context_skips_summary_without_repair(harness):
+def test_invalid_context_stops_article_without_repair(harness):
     result = review.run(object(), job(), generate=lambda request: '{}')
     assert result['attempts'] == 1
     assert result['articles'][0]['phases'][0]['status'] == 'invalid'
@@ -146,6 +147,15 @@ def test_bad_admission_never_queues(harness, ids):
     with pytest.raises(ValueError): review.submit(object(), ids)
 
 
+def test_evidence_snapshot_requires_raw_article_not_prior_enrichment(monkeypatch):
+    monkeypatch.setattr(review, 'get_article_by_id', lambda conn, article_id: {
+        'id': article_id, 'title': 'Acme', 'content_text': 'Stored raw text.',
+        'summary_llm': None, 'context_llm': None})
+    result = review.snapshot(object(), 7)
+    assert result['content_text'] == 'Stored raw text.'
+    assert result['summary_llm'] is None and result['context_llm'] is None
+
+
 def test_admin_request_rejects_payload_injection_and_inference(harness, monkeypatch):
     from pydantic import ValidationError
     from sempervigil import admin
@@ -159,7 +169,7 @@ def test_admin_request_rejects_payload_injection_and_inference(harness, monkeypa
     assert caught.value.status_code == 503
 
 
-def test_source_change_between_phases_prevents_second_call(harness, monkeypatch):
+def test_source_change_during_inference_rejects_stale_evidence(harness, monkeypatch):
     def generate(request):
         monkeypatch.setattr(review, 'snapshot', lambda conn, n: {**ARTICLE, 'content_text': 'Edited'})
         return response(request)
