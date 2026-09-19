@@ -59,6 +59,13 @@ def response_format(text: str) -> dict:
               "date_precision": {"type": "string", "enum": ["unknown", "year", "month", "day"]},
               "date_value": {"type": ["string", "null"]}}
     row = {"type": "object", "additionalProperties": False, "required": list(fields), "properties": fields}
+    row["anyOf"] = [
+        {"properties": {"date_precision": {"const": "unknown"}, "date_value": {"type": "null"}}},
+        *[{"properties": {"date_precision": {"const": precision},
+                           "date_value": {"type": "string", "pattern": pattern}}}
+          for precision, pattern in (("year", r"^\d{4}$"), ("month", r"^\d{4}-\d{2}$"),
+                                     ("day", r"^\d{4}-\d{2}-\d{2}$"))],
+    ]
     schema = {"type": "object", "additionalProperties": False, "required": ["claims"],
               "properties": {"claims": {"type": "array", "maxItems": 8, "items": row}}}
     return {"type": "json_schema", "json_schema": {

@@ -24,6 +24,17 @@ def test_constrained_format_quotes_are_exact_and_dates_have_enums():
     assert "incident" not in fields["section"]["enum"]
 
 
+def test_generation_schema_rejects_null_with_month_precision(database):
+    import jsonschema
+    packet = get_packet(database)
+    schema = draft.response_format(packet["documents"][0]["text"])["json_schema"]["schema"]
+    value = response(packet)
+    jsonschema.validate(value, schema)
+    value["claims"][0]["date_precision"] = "month"
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(value, schema)
+
+
 def test_transport_applies_schema_only_to_private_local_mode(monkeypatch):
     call = Mock(return_value={"choices": [{"message": {"content": '{"claims":[]}'}}]})
     monkeypatch.setattr(router, "_http_request", call)
