@@ -99,3 +99,16 @@ def test_scoped_evaluation_requires_scoped_request_pin(database):
     cases["request_version"] = assessment.request_for(packet)["request_version"]
     with pytest.raises(ValueError, match="snapshot_mismatch"):
         checker.evaluate(packet, result, cases)
+
+
+def test_scoped_pilot_keeps_all_eight_previous_expectations():
+    fixtures = Path(__file__).parents[1] / "fixtures/events"
+    total = 0
+    for old_path in fixtures.glob("assessment-*-v3.json"):
+        old = json.loads(old_path.read_text())
+        new = json.loads(old_path.with_name(old_path.name.replace("-v3", "-scoped-v1")).read_text())
+        assert old["request_version"] != new["request_version"]
+        assert {k: v for k, v in old.items() if k != "request_version"} == {
+            k: v for k, v in new.items() if k != "request_version"}
+        total += len(new["checks"])
+    assert total == 8

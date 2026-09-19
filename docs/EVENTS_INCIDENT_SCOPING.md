@@ -79,6 +79,25 @@ stale-source rejection before model invocation, one-call reuse, escaping and
 scope-aware quality-case pins. A scoped real-model cohort, live admin integration,
 independent qualification and automatic publication remain unverified/unimplemented.
 
+### Scoped pilot prepared
+
+The chart now exposes the separate scope flag/profile with disabled defaults;
+rendered overrides are tested. Three explicitly selected anchors retain all eight
+v3 case labels unchanged in `assessment-*-scoped-v1.json`. Candidate coverage stays
+12 per event; total request bytes are 11,165 (Odido), 10,650 (Vercel), and 10,731
+(Commission), including system text. Source choices are provisional assistant
+review, not independent qualification:
+
+- Odido: article 21505, characters 694-833; customer contact system breach.
+- Vercel: article 26194, characters 0-555; Context.ai compromise and Workspace access.
+- Commission: article 25303, characters 0-168; Trivy/API-key/AWS compromise.
+
+The unused scoped profile `fe0ae074-117d-560f-8350-83c9da87ed67` and prompt
+`9ca763f0-f8af-5a8c-9e15-5238d530c8f6` were created/read back through admin. Same local
+provider/model, temperature zero, 1,024 output tokens, 12,000 input characters, no
+fallback/schema. Existing v3 profile and stage routing remain unchanged. No scoped
+inference or public report has been requested at this preparation checkpoint.
+
 ## Automation and publication boundary
 
 New-event discovery should retain its originating evidence and proposed scope,
