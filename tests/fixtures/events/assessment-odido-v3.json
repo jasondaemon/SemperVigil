@@ -1,0 +1,10 @@
+{
+  "event_id": "evt_69844df3a97f",
+  "packet_version": "d78eb12d0da4e2fa00eb07a00b34c071e9f32694cb9239f79580f5d58d567f8c",
+  "request_version": "f1c29a40228b58a45bb96348d11b9ac9b6eb1a611be85359b3934298d677d8e3",
+  "checks": [
+    {"passage_id": "71b64a4a484e332503c0babccfe8f650452833bac2a23a72682c776784c6f4b4", "label": "Odido customer breach reporting retained", "allowed": ["include"]},
+    {"passage_id": "f946f0ff3abcc509223621c883da327cc5ca55ba482768eb865c4d8e3652b70e", "label": "Generic company services are not incident evidence", "allowed": ["exclude", "hold"]},
+    {"passage_id": "e4714fad3630f976dcf3e9ac52ae3049b9f0f2e26c88bfa04c2e5eb43f5dc9e2", "label": "Repeated generic company description excluded", "allowed": ["exclude", "hold"]}
+  ]
+}

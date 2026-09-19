@@ -106,3 +106,10 @@ the complete assessment contract first, reports checked versus assessed/omitted
 passage counts, and always returns `public_eligible: false`. Exit 0 means only that
 the selected provisional cases pass; 1 means a case failed; 2 means invalid/stale
 inputs or unreadable files. Unassessed required cases cannot silently pass.
+
+V2 live result: Odido/Vercel failed required-ID completeness; Commission passed
+structure but failed all three negative cases (1/4 checks passed). It is not
+publishable. V3 retains the exact same eight expectations and source snapshots;
+only request hashes change with explicit target/ID inventory and nonduplicated
+context. Use `assessment-*-v3.json` for v3 outputs. Full historical v2 reproduction
+requires its application revision because request validation is workflow-pinned.

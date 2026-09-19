@@ -73,3 +73,13 @@ def test_real_fixtures_pin_both_positive_and_negative_cases():
     assert len(rows) == 3
     assert sum(len(row["checks"]) for row in rows) == 8
     assert all(any(c["allowed"] == ["include"] for c in row["checks"]) for row in rows)
+
+
+def test_v3_retains_identical_quality_expectations():
+    fixtures = Path(__file__).parents[1] / "fixtures/events"
+    for old_path in fixtures.glob("assessment-*-v2.json"):
+        old = json.loads(old_path.read_text())
+        new = json.loads(old_path.with_name(old_path.name.replace("-v2", "-v3")).read_text())
+        assert old["request_version"] != new["request_version"]
+        assert {k: v for k, v in old.items() if k != "request_version"} == {
+            k: v for k, v in new.items() if k != "request_version"}

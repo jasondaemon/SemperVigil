@@ -212,3 +212,9 @@ The offline quality checker and pinned cases are described in
 `EVENTS_CURATED_EVALUATION.md`. These tests do not establish model quality.
 Evaluate the Commission counterexample and other real incidents before automated
 evidence admission or public reporting. Private success is not the final goal.
+
+V2 evaluation completed: two incomplete responses, one private attachment whose
+Commission incident-separation checks failed. See the verification notes for IDs,
+timing and artifact integrity. V3 preparation keeps one bounded call and exact
+validation, makes the requested incident/required IDs explicit, and stops sending
+the quote twice inside context. No public eligibility or safety gate is relaxed.

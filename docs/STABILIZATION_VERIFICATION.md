@@ -1107,3 +1107,34 @@ agreement or valid JSON as public approval. They do not change the running worke
 450 offline tests pass, including malformed/stale inputs, unassessed cases,
 unsafe inclusion and all-hold failure. No new PostgreSQL or browser acceptance
 claim for this evaluator-only slice.
+
+## V2 real-model evaluation (September 19, 06:13 UTC)
+
+Normal CVE/product and threat-actor queues drained before private work, without
+priority bypass. Odido and Vercel failed `incomplete_assessment`; Commission
+produced a structurally valid private assessment. Call times: 4,718, 4,827 and
+4,833 ms, respectively (14,378 ms total; both cohorts total 47,372 ms).
+
+Commission failed three of four pinned checks: all three unrelated staff/MDM
+passages were included; the positive Trivy/AWS passage was retained. This fails
+the semantic gate. No automated public report may use this assessment. Its private
+download did work: 114,211 bytes, SHA-256
+`4eb7c4072f358503124903ddf91e3244e1e9f3600ef655e547c4506e0db75256`.
+Suggested reading was present, no human Include option preselected, sandbox,
+attachment, private/no-store and nosniff headers retained. All three event-row
+fingerprints remain unchanged. No new browser/visual acceptance claim.
+
+Bounded inspection verified the actual model request had the exact v2 prompt,
+target metadata and candidate IDs. This was not stale routing/configuration.
+The model skipped IDs in two responses and substituted the first incident for
+the requested one in the Commission response. No automatic retry/repair occurred.
+
+Local v3 makes the requested incident explicitly the question, repeats its target
+and exact required-ID inventory after evidence, and removes duplicated quote text
+from context serialization. The same 200-character before/after context is retained
+losslessly; source snapshots and spans are unchanged. All three packets fit 12
+passages below the unchanged 12,000-byte cap. V3 fixture labels are identical to
+v2 (only request identity changes); 452 offline tests pass. No extra model call,
+model change, concurrency increase, validator coercion or publication bypass.
+V3 is not yet deployed or evaluated. A single Commission v2 reuse check was
+admitted as `job_3909e41559c440e28658dfaa12c6b37e`; observe before replacement.

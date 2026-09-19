@@ -27,6 +27,10 @@ def test_bounded_context_and_exact_source_mapping(database):
     values = json.loads(request["input"])["items"]
     assert values[0]["quote"] in packet["documents"][0]["text"]
     assert "Shared company names" in request["system"]
+    data = json.loads(request["input"])
+    assert data["required_ids"] == list(request["mapping"])
+    assert data["target_event"] == packet["event"]["title"]
+    assert list(data)[-2:] == ["target_event", "required_ids"]
 
 
 def test_prompt_examples_match_validator_without_slash_shorthand():
@@ -35,6 +39,20 @@ def test_prompt_examples_match_validator_without_slash_shorthand():
     assert {(row["decision"], row["reason"]) for row in examples} == assessment.PAIRS
     assert all(row.keys() == {"decision", "reason"} for row in examples)
     assert "first passage" in assessment.SYSTEM_PROMPT
+
+
+def test_context_is_lossless_without_duplicating_quote(database):
+    packet = get_packet(database)
+    request = assessment.request_for(packet)
+    passages = {p["id"]: p for p in review.draft(packet)["passages"]}
+    documents = {d["article_id"]: d for d in packet["documents"]}
+    for item in json.loads(request["input"])["items"]:
+        passage = passages[request["mapping"][item["id"]]]
+        text = documents[passage["article_id"]]["text"]
+        assert item["context_before"] + item["quote"] + item["context_after"] == text[
+            max(0, passage["start"] - 200):passage["end"] + 200]
+        assert len(item["context_before"]) <= 200 and len(item["context_after"]) <= 200
+        assert "context" not in item
 
 
 @pytest.mark.parametrize("reason", ["same_incident", "Both passages describe the same breach."])
@@ -110,6 +128,7 @@ def test_multi_source_budget_and_explicit_coverage(database):
     assert 0 < len(req["mapping"]) <= 12
     assert len((req["system"] + req["input"]).encode()) <= assessment.MAX_INPUT_BYTES
     assert req["omitted_passages"] == 48 - len(req["mapping"])
+    assert json.loads(req["input"])["required_ids"] == list(req["mapping"])
 
 
 def configured(monkeypatch):
