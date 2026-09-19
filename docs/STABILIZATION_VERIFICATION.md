@@ -540,3 +540,24 @@ No runtime imports, dependency changes, MCP endpoint, job admission, inference,
 database migration, build, or deployment. Existing JSON and site behavior are
 untouched. See INVESTIGATION_RETRIEVAL.md for the deliberately limited coverage
 and metadata-versus-evidence version distinction.
+
+## Version-pinned source text (2026-09-18)
+
+Inspected `update_article_content`: text writes do not necessarily change the
+article's `updated_at`. Added `get_article_evidence` with whole-content and source
+metadata hashing rather than timestamp-derived identity. Reads exact database
+text only, with a 131,072-code-point document cap and 2,048-code-point slices.
+Continuation requires the original version; stale reads return no new text.
+Every read rechecks suppression and requires both metadata and evidence scopes.
+No paths, summaries, HTML, network fetches, or inferred incident assignments.
+
+**260 offline tests passed**, including 36 new evidence cases. Expanded the
+disposable PostgreSQL test to cover Unicode slices, content changes, and
+suppression between reads. Could not run it: no local PostgreSQL binaries or
+running Docker daemon. No production database substituted; PostgreSQL behavior,
+query plans, permissions, and coverage remain explicit release gates.
+
+These are current database text snapshots, not persisted immutable evidence or
+validated incident passages. Source IDs are not promoted to independent origin
+IDs. No runtime imports, MCP endpoint, deployment, build, or LLM calls. Tracker
+and retrieval documentation updated; production behavior remains unchanged.

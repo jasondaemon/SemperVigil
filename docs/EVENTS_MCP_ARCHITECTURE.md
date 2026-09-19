@@ -41,9 +41,10 @@ theme repository.
 Names below are proposed, not existing endpoints.
 
 Implementation progress: [bounded retrieval foundation](INVESTIGATION_RETRIEVAL.md)
-provides article discovery and legacy event metadata reads as unreferenced shared
-services. These are not complete versions of all contracts below. No MCP endpoint
-exists yet; exact evidence retrieval, candidate search, and proposals remain pending.
+provides article discovery, legacy event metadata, and separately permission-gated
+exact stored-text slices as unreferenced shared services. These are not complete
+versions of all contracts below. No MCP endpoint exists yet; trusted passage
+scoping/origins, candidate search, and proposals remain pending.
 
 | Operation | Purpose | Boundary |
 | --- | --- | --- |

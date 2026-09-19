@@ -17,6 +17,9 @@ REQUEST_BYTES = 4096
 RESPONSE_BYTES = 65536
 SCAN_ROWS = 200
 READ_SCOPE = "investigation:read"
+EVIDENCE_SCOPE = "investigation:evidence:read"
+DOCUMENT_CHARS = 131072
+PASSAGE_CHARS = 2048
 
 
 def _unique_object(pairs):
@@ -193,3 +196,66 @@ class InvestigationReader:
             record["metadata_version"] = _version(record)
         return {"record": record, "record_kind": "legacy_event_metadata",
                 "validated_revision": False, "linked_evidence_included": False}
+
+    def get_article_evidence(self, raw: bytes, *, scopes: frozenset[str]) -> dict:
+        """Read exact stored text, not a model summary or an incident assignment.
+
+        Subsequent slices require the first response's version. This checks the
+        current DB snapshot but does not persist old text or approve citations.
+        """
+        self._authorize(scopes)
+        if EVIDENCE_SCOPE not in scopes:
+            raise PermissionError("evidence_scope_required")
+        request = parse_request(raw, fields={"article_id", "start", "max_chars", "expected_version"})
+        article_id = request.get("article_id")
+        start, maximum = request.get("start", 0), request.get("max_chars", PASSAGE_CHARS)
+        expected = request.get("expected_version")
+        if not _positive(article_id, 9223372036854775807):
+            raise ValueError("invalid_article_id")
+        if type(start) is not int or not 0 <= start < DOCUMENT_CHARS:
+            raise ValueError("invalid_start")
+        if not _positive(maximum, PASSAGE_CHARS):
+            raise ValueError("invalid_max_chars")
+        if "expected_version" in request and (not isinstance(expected, str)
+                or len(expected) != 64 or any(char not in "0123456789abcdef" for char in expected)):
+            raise ValueError("invalid_expected_version")
+        if start and expected is None:
+            raise ValueError("expected_version_required")
+        with self._session() as conn:
+            row = conn.execute("""SELECT id,
+              CASE WHEN length(source_id) <= 128 THEN source_id END AS source_id,
+              CASE WHEN length(title) <= 512 THEN title END AS title,
+              CASE WHEN length(original_url) <= 2048 THEN original_url END AS url,
+              CASE WHEN length(meta_json) <= 8192 THEN meta_json
+                   WHEN meta_json IS NULL THEN NULL ELSE 'invalid' END AS policy_meta,
+              length(content_text) AS text_length,
+              CASE WHEN length(content_text) <= %s THEN content_text END AS content_text
+              FROM articles WHERE id = %s""", (DOCUMENT_CHARS, article_id)).fetchone()
+        if (row is None or not _visible_metadata(row["policy_meta"])
+                or not _text(row["source_id"], 128) or not _text(row["title"], 512)
+                or not _safe_url(row["url"])):
+            return {"status": "unavailable"}
+        if row["text_length"] is not None and row["text_length"] > DOCUMENT_CHARS:
+            return {"status": "content_too_large"}
+        text = row["content_text"]
+        if text is None or not text.strip():
+            return {"status": "content_missing"}
+        snapshot = {key: row[key] for key in ("id", "source_id", "title", "url", "content_text")}
+        snapshot["version_schema"] = "article_text_v1"
+        version = _version(snapshot)
+        if expected is not None and version != expected:
+            return {"status": "stale_snapshot"}
+        if start >= len(text):
+            raise ValueError("start_past_content")
+        end = min(start + maximum, len(text))
+        result = {"status": "available", "article_id": article_id,
+                  "source_id": row["source_id"], "url": row["url"], "title": row["title"],
+                  "document_version": version, "version_schema": "article_text_v1",
+                  "text_basis": "stored_content_text", "offset_unit": "unicode_code_point",
+                  "start": start, "end": end, "text": text[start:end], "total_chars": len(text),
+                  "next_start": end if end < len(text) else None,
+                  "origin_id": None, "incident_id": None,
+                  "scope_status": "unassigned", "validated_evidence": False}
+        if len(json.dumps(result, ensure_ascii=True).encode()) > RESPONSE_BYTES:
+            raise ValueError("evidence_response_size")
+        return result
