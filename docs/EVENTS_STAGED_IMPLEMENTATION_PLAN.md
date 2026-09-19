@@ -2,9 +2,9 @@
 
 Date: 2026-09-18
 Status: Staged implementation in progress; consult the tracker for tested and
-deployed slices. Shared investigation retrieval passes offline and targeted
-disposable-PostgreSQL tests; the MCP adapter
-is an accepted design direction, not yet implemented.
+deployed slices. Shared retrieval and an optional local stdio MCP adapter pass
+offline and targeted disposable-PostgreSQL tests. They are not deployed to
+production; remote authentication and operator release policy remain pending.
 This document alone does not authorize a runtime rollout.
 
 ## Objective and constraints

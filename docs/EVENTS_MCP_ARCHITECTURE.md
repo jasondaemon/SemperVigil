@@ -2,7 +2,8 @@
 
 Status: accepted design direction; isolated retrieval services tested offline
 and in a targeted disposable-PostgreSQL suite.
-MCP adapter, workflow integration, and deployment remain pending.
+Local stdio MCP adapter implemented and tested; workflow integration and
+production deployment remain pending. No network endpoint is exposed.
 Date: 2026-09-18
 
 ## Purpose and boundaries
@@ -44,8 +45,10 @@ Names below are proposed, not existing endpoints.
 Implementation progress: [bounded retrieval foundation](INVESTIGATION_RETRIEVAL.md)
 provides article discovery, legacy event metadata, and separately permission-gated
 exact stored-text slices as unreferenced shared services. These are not complete
-versions of all contracts below. No MCP endpoint exists yet; trusted passage
-scoping/origins, candidate search, and proposals remain pending.
+versions of all contracts below. The [optional stdio adapter](INVESTIGATION_MCP.md)
+now exposes these three read operations to an authorized local process, with no
+HTTP transport. Trusted passage scoping/origins, candidate search, proposals,
+remote authentication, and production rollout remain pending.
 
 | Operation | Purpose | Boundary |
 | --- | --- | --- |

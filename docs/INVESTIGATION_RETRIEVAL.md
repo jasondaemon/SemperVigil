@@ -1,11 +1,12 @@
 # Read-only investigation foundation
 
 Status: implemented; offline and targeted disposable-PostgreSQL tests passed.
-No runtime integration or deployment.
+Local stdio adapter tested; no production integration or deployment.
 
 `src/sempervigil/investigation.py` implements shared services for future workers
 and the internal MCP adapter. Nothing in existing jobs, API routes, publishing,
-or model execution imports it. No new dependency or schema change is required.
+or model execution imports it. The optional [local MCP adapter](INVESTIGATION_MCP.md)
+now calls these services; no schema change is required.
 
 ## Implemented boundaries
 
@@ -110,10 +111,12 @@ includes exact Unicode slices, instruction-like source text treated as data,
 changed-content/provenance rejection, suppression between pages, permission and
 input boundaries, and maximum document/response sizes.
 
-**Three integration tests passed on PostgreSQL 18.4**, covering SELECT execution,
+**Four integration tests passed on PostgreSQL 18.4**, covering SELECT execution,
 Unicode slicing, changed-content rejection, suppression, read-only transactions,
 statement timeout enforcement, and retrieval with a least-privilege login.
-That login was unable to update source records or create tables even without the
+The suite now also exercises the local stdio MCP subprocess against the test
+database and startup rejection of column-write grants. That login was unable to
+update source records or create tables even without the
 application's read-only transaction flag. Tests clean up their role and schema.
 
 An empty isolated Docker instance supplied the database because the local machine
@@ -124,9 +127,24 @@ and tunnel were removed afterward. The official image was
 `postgres:18.4-alpine` at digest
 `sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15`.
 
-This clears targeted PostgreSQL correctness testing, not production query plans,
-full-schema integration, retrieval recall, or transport authentication. Next:
-measure plans/coverage and implement/authenticate the read-only MCP adapter.
-Trusted incident scoping remains a later gate.
+## Production read-only sampling (2026-09-18)
+
+Aggregate inspection found 35,211 article records: 35,209 have a stored feed date,
+16,280 have nonempty database text, and zero have only a stored text-file path.
+These are raw inventory counts, not public/suppression eligibility or an audit of
+extraction quality. The missing text on 18,931 records limits evidence retrieval;
+this slice did not queue a backfill or change source processing.
+
+One bounded EXPLAIN ANALYZE sample for August 19-September 18 executed in 2.932 ms
+for a 201-row discovery window and 1.095 ms for literal title matching `breach`
+(87 rows). Both used the existing feed-date index through a bitmap scan. These
+are single server-side samples, not network latency, p95, or full-history recall.
+The latest 100 records with stored text had no document-cap exceedances; maximum
+length was 57,801 code points. That does not prove all historical text fits.
+
+Targeted PostgreSQL correctness and initial query-plan sampling now pass. The
+local stdio adapter is tested but not deployed. Full-schema integration, curated
+retrieval recall, evidence quality, and remote authentication remain separate
+gates. Trusted incident scoping remains pending.
 Rollback before integration is simply reverting the isolated files. No production
 or data rollback is needed.

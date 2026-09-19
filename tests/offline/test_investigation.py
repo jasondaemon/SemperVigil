@@ -20,7 +20,8 @@ def request(**updates):
 
 @pytest.fixture
 def setup_reader():
-    db = sqlite3.connect(":memory:")
+    # MCP dispatch runs these serial reads on a worker thread.
+    db = sqlite3.connect(":memory:", check_same_thread=False)
     db.row_factory = sqlite3.Row
     db.executescript("""
       CREATE TABLE articles(id INTEGER PRIMARY KEY, source_id TEXT, title TEXT,

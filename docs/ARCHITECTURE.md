@@ -67,9 +67,11 @@ state, and coordination occurs internally via PostgreSQL.
 ### Planned internal Events investigation interface
 
 The accepted staged direction adds an internal MCP adapter over shared Events
-domain services. Isolated retrieval services pass offline and targeted disposable
-PostgreSQL tests; the MCP adapter
-is **not implemented or deployed**. Workers will use the same
+domain services. Retrieval services and an optional local stdio MCP adapter pass
+offline and targeted disposable-PostgreSQL tests. The adapter is **not deployed**;
+there is no network listener or production credential configuration. Local
+operator/process access is the current boundary; remote authentication remains
+a separate release gate. Workers will use the same
 services directly; MCP is neither a public endpoint nor a publishing dependency.
 Read-only historical evidence retrieval comes first, then separately authorized,
 version-bound draft proposals. No arbitrary SQL, direct publication, or inference

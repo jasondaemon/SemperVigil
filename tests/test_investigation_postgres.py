@@ -3,6 +3,9 @@ from contextlib import contextmanager
 import json
 import os
 import secrets
+import asyncio
+from pathlib import Path
+import sys
 from uuid import uuid4
 
 import psycopg
@@ -12,6 +15,7 @@ from psycopg.conninfo import make_conninfo
 import pytest
 
 from sempervigil.investigation import EVIDENCE_SCOPE, InvestigationReader, READ_SCOPE, postgres_reader
+from sempervigil.investigation_mcp import verify_database_role
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -81,7 +85,8 @@ def test_statement_timeout_is_enforced():
         conn.rollback()
 
 
-def test_least_privilege_role_can_read_but_cannot_write():
+@pytest.fixture
+def restricted_database():
     """Disposable-only role/schema; no application migration or existing data."""
     dsn = os.environ["SV_TEST_DB_URL"]
     name = "sv_investigation_test_" + uuid4().hex[:16]
@@ -104,21 +109,55 @@ def test_least_privilege_role_can_read_but_cannot_write():
             admin.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}").format(identifier, identifier))
             admin.execute(sql.SQL("ALTER ROLE {} SET search_path TO {}").format(identifier, identifier))
             reader_dsn = make_conninfo(dsn, user=name, password=password)
-            reader = InvestigationReader(lambda: postgres_reader(reader_dsn))
-            scopes = frozenset({READ_SCOPE, EVIDENCE_SCOPE})
-            result = reader.search_articles(b'{"start_day":"2026-05-01","end_day":"2026-05-31"}', scopes=scopes)
-            assert [item["id"] for item in result["items"]] == [1]
-            assert reader.get_event_record(b'{"event_id":"one"}', scopes=scopes)["record"]["id"] == "one"
-            assert reader.get_article_evidence(b'{"article_id":1}', scopes=scopes)["text"] == "Exact original text."
-            # Test permissions without the factory's read-only transaction guard.
-            with psycopg.connect(reader_dsn, autocommit=True) as restricted:
-                assert not restricted.execute("SELECT rolsuper FROM pg_roles WHERE rolname=current_user").fetchone()[0]
-                with pytest.raises(psycopg.errors.InsufficientPrivilege):
-                    restricted.execute("UPDATE articles SET title='must not change' WHERE id=1")
-                with pytest.raises(psycopg.errors.InsufficientPrivilege):
-                    restricted.execute("CREATE TABLE must_not_create(id INTEGER)")
-            assert admin.execute("SELECT title FROM articles WHERE id=1").fetchone()[0] == "Incident"
+            yield admin, reader_dsn, identifier
         finally:
             admin.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(identifier))
             admin.execute(sql.SQL("DROP OWNED BY {}").format(identifier))
             admin.execute(sql.SQL("DROP ROLE {}").format(identifier))
+
+
+def test_least_privilege_role_can_read_but_cannot_write(restricted_database):
+    admin, reader_dsn, identifier = restricted_database
+    session = lambda: postgres_reader(reader_dsn)
+    verify_database_role(session)
+    with pytest.raises(PermissionError):
+        verify_database_role(lambda: postgres_reader(os.environ["SV_TEST_DB_URL"]))
+    reader = InvestigationReader(session)
+    scopes = frozenset({READ_SCOPE, EVIDENCE_SCOPE})
+    result = reader.search_articles(b'{"start_day":"2026-05-01","end_day":"2026-05-31"}', scopes=scopes)
+    assert [item["id"] for item in result["items"]] == [1]
+    assert reader.get_event_record(b'{"event_id":"one"}', scopes=scopes)["record"]["id"] == "one"
+    assert reader.get_article_evidence(b'{"article_id":1}', scopes=scopes)["text"] == "Exact original text."
+    with psycopg.connect(reader_dsn, autocommit=True) as restricted:
+        assert not restricted.execute("SELECT rolsuper FROM pg_roles WHERE rolname=current_user").fetchone()[0]
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            restricted.execute("UPDATE articles SET title='must not change' WHERE id=1")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            restricted.execute("CREATE TABLE must_not_create(id INTEGER)")
+    assert admin.execute("SELECT title FROM articles WHERE id=1").fetchone()[0] == "Incident"
+    admin.execute(sql.SQL("GRANT UPDATE(title) ON articles TO {}").format(identifier))
+    with pytest.raises(PermissionError):
+        verify_database_role(session)
+
+
+def test_stdio_client_reads_disposable_database(restricted_database):
+    pytest.importorskip("mcp")
+    from mcp import Client
+    from mcp.client.stdio import StdioServerParameters
+
+    _, reader_dsn, _ = restricted_database
+    server = StdioServerParameters(command=sys.executable,
+        args=["-m", "sempervigil.investigation_mcp"], env={
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+            "SV_INVESTIGATION_MCP_ENABLED": "1", "SV_INVESTIGATION_DB_URL": reader_dsn,
+            "SV_INVESTIGATION_EVIDENCE_ENABLED": "1"})
+    async def check():
+        async with Client(server, read_timeout_seconds=10) as client:
+            assert {tool.name for tool in (await client.list_tools()).tools} == {
+                "search_articles", "get_event_record", "get_article_evidence"}
+            result = await client.call_tool("get_article_evidence", {"article_id": 1})
+            assert not result.is_error
+            assert result.structured_content["text"] == "Exact original text."
+            denied = await client.call_tool("execute_sql", {"query": "DELETE FROM articles"})
+            assert denied.is_error
+    asyncio.run(check())

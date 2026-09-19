@@ -585,3 +585,36 @@ tunnel were stopped and absence verified. Container inspection showed no OOM kil
 All SemperVigil deployments had their desired ready replica counts afterward.
 No production manifests, application behavior, DB data, builds, or inference jobs
 were changed. The downloaded database image remains cached; no test service runs.
+
+## Local MCP adapter and coverage sampling (2026-09-18)
+
+Read-only aggregate inspection: 35,211 articles, 35,209 with stored feed dates,
+16,280 with nonempty database text, zero file-only text references. This leaves
+18,931 records without stored evidence text; suppression/public eligibility and
+extraction quality were not assessed. No backfill or processing change was made.
+For August 19-September 18, a single server-side EXPLAIN ANALYZE measured 2.932 ms
+for bounded discovery and 1.095 ms for literal title filtering. Both used the
+existing feed-date bitmap index path. Latest 100 stored texts had maximum 57,801
+code points and no 131,072-character cap exceedance. Not a recall/p95 benchmark.
+
+Added an optional local stdio MCP adapter, pinned to official SDK 2.2.0. It has
+no network listener or runtime job imports. Explicit startup enablement and a
+dedicated restricted DSN are required; evidence access defaults off. Startup
+rejects privileged roles, ownership, and table/column writes. Three read-only
+tools reuse the shared services, with sanitized errors/audit, bounded framing,
+one concurrent read, and finite per-process admission budgets. No model tools,
+proposals, or publication access. Local OS/process authorization is not remote
+OAuth or multi-user access control; operator rollout policy remains pending.
+
+In an isolated SDK environment, **286 offline tests passed** and `pip check`
+reported no broken requirements. Base environment: **260 passed, one optional
+SDK module skipped**. The initial inherited environment had an unrelated existing
+Torch dependency conflict; the final environment does not inherit system packages.
+No system packages were altered.
+
+**Four disposable PostgreSQL tests passed**, including a real stdio subprocess
+and client, role preflight, column-write rejection, and denied SQL-tool access.
+Temporary database/container and SSH tunnel were removed and absence verified.
+No production role, dependency install, deployment, build, or inference change.
+Full-schema integration, curated evidence evaluation, transitive release locking,
+and authorized operator deployment remain gates before elevation.
