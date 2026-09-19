@@ -256,3 +256,17 @@ Five new JS tests cover coverage, historical results, invalid/untrusted counts,
 ineligible job states and extractive behavior. All 19 JS tests and 529 offline
 Python tests pass, with worker assertions for both scoped and unscoped metadata.
 No browser acceptance or production UI rollout is claimed yet.
+
+### Source-level coverage labels (local follow-up)
+
+The `e93b6f0` release deployed the coverage counts described above. A follow-up
+now names the selected source article in source-level job summaries and private
+HTML. It explicitly says other sources remain unassessed, while retaining their
+full evidence below. The admin display accepts only positive safe-integer IDs for
+the exact source-level workflow; untrusted values are not interpolated. The admin
+script URL version is bumped so a future deployment refreshes browser caches.
+
+557 offline and 20 JavaScript tests pass, plus syntax and diff checks. This small
+display follow-up is local only; no restart while the seven diagnostic jobs are
+pending. Existing non-source review output remains unchanged. The seven jobs still
+wait behind ordinary work; no new admissions or model configuration changes.

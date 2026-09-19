@@ -204,6 +204,12 @@ def _suggested_reading(packet: dict, proposal: dict, assessment: dict | None) ->
                         f'<p class="muted">Stored feed date: {escape(doc["feed_day"] or "Unknown")}</p>'
                         f'{quotes}</section>')
     coverage = len(assessment["suggestions"])
+    source_note = ""
+    if "article_id" in assessment:
+        doc = next(d for d in packet["documents"] if d["article_id"] == assessment["article_id"])
+        source_note = (f'<p class="muted">Assessed source article {doc["article_id"]}: '
+                       f'{escape(doc["title"])}. Other sources remain unassessed in this job; '
+                       'their evidence is retained below.</p>')
     body = "".join(sections) or '<p>No passages were selected by the model. No account of the incident is inferred.</p>'
     scope_html = ""
     if assessment.get("scope") is not None:
@@ -225,7 +231,7 @@ def _suggested_reading(packet: dict, proposal: dict, assessment: dict | None) ->
             'Feed dates are not incident dates; shared organization names do not establish one incident.</p>'
             f'<p class="muted">{coverage} passages assessed; {assessment["omitted_passages"]} '
             'not assessed. Held and excluded passages remain available in the evidence review below.</p>'
-            f'{body}</details>')
+            f'{source_note}{body}</details>')
 
 
 def render(packet: dict, review: dict | None = None, *, assessment: dict | None = None) -> str:

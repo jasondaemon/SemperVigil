@@ -42,6 +42,10 @@ def test_source_selection_preserves_packet_and_omitted_coverage(database):
     complete.assert_called_once_with(request["input"])
     assert result["article_id"] == 2 and not result["public_eligible"]
     assert assessment.validate_assessment(result, packet) == result
+    page = review.render(packet, assessment=result)
+    assert 'Assessed source article 2: Source title.' in page
+    assert 'Other sources remain unassessed in this job' in page
+    assert 'value="hold" selected' in page and 'value="include" selected' not in page
     result["article_id"] = 1
     with pytest.raises(ValueError):
         assessment.validate_assessment(result, packet)

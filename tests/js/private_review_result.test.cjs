@@ -55,3 +55,15 @@ test('extractive output cannot be described as model assessment', () => {
   value.result.model_cache_hit = false;
   assert.match(context.privateReviewResultSummary(value), /no model-assessed passages/);
 });
+test('source-level result names only a valid source id with reconciled coverage', () => {
+  const value = job();
+  Object.assign(value.result.assessment_summary, {workflow:'event-source-assessment-v1', article_id:21505});
+  assert.match(context.privateReviewResultSummary(value), /Assessed source article 21505/);
+  assert.match(context.privateReviewResultSummary(value), /other sources remain unassessed/);
+  for (const invalid of [true, '21505', '<img src=x>', -1, 0, 1.5, Number.MAX_SAFE_INTEGER+1]) {
+    value.result.assessment_summary.article_id = invalid;
+    assert.doesNotMatch(context.privateReviewResultSummary(value), /Assessed source article|<img/);
+  }
+  Object.assign(value.result.assessment_summary, {article_id:21505, workflow:'event-scoped-assessment-v1'});
+  assert.doesNotMatch(context.privateReviewResultSummary(value), /Assessed source article/);
+});
