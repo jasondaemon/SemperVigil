@@ -1,6 +1,6 @@
 # Private Events jobs and admin visibility
 
-Status: admin and LLM worker deployed at `bddeff1`, platform `f276b4b`.
+Status: admin `bddeff1`, LLM worker `0e826ed`, platform `3b02a14`.
 **Authenticated operator-triggered private admission and bounded model suggestions
 are enabled.** Autonomous admission and public publication are not.
 Extractive pilot `job_05152e7dd57246d48c01bb47ead61d93` succeeded: seven documents,
@@ -68,9 +68,9 @@ on hold. Structural validation is not semantic validation, incident approval, or
 permission to publish. Real-model latency and multi-incident quality evaluation
 are still required before enabling automatic event/report decisions.
 
-### Assessment reuse and router correction (local, release pending)
+### Assessment reuse and router correction (deployed, real pilot pending)
 
-The next worker release unwraps the actual router result's `parsed` field before
+The worker unwraps the actual router result's `parsed` field before
 assessment validation and requires `schema_valid: true`. A test exercises the
 real router/parsing/envelope path with only provider transport faked; earlier
 router mocks missed this contract defect. The pending production pilot has not

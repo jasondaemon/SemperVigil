@@ -969,3 +969,21 @@ operators must revise the dedicated profile after such changes.
 dispatch issuing only one mocked inference and retaining identical HTML. No DB
 integration or real model quality claim added. New release is not yet deployed;
 current model pilot remains `job_2be77141919a403592ce6ca21ce8e8a3` at low priority.
+
+## Cache/router worker release (September 19 UTC)
+
+Deployed `0e826ed` to the LLM worker only, platform commit `3b02a14`; admin stays
+`bddeff1`. Render/diff contained only worker and init-container image changes.
+Manifest `sha256:f79a003218819f5e63a8e49159ae177ac9baae0756985ef1a8b94b915c08edc4`
+imported on all four schedulable nodes. Scheduler fully stopped, no LLM launch or
+job running, old worker deleted, replacement Ready, scheduler restored. No
+configuration, prompt, model, concurrency, source content or build change during
+this rollout. Post-apply worker diff is empty. Live read-only preflight validates
+the real profile and produces a 64-character cache identity without inference.
+
+At 05:12 UTC all application Deployments Ready, Kubernetes readiness passed,
+public checker passed. Model pilot still queued, 110 ordinary CVE jobs ahead at
+last sample; no duplication or priority bypass. Real model quality/latency and
+live cache reuse remain unverified. Rollback should disable model assessment
+before returning to the previous image because `bddeff1` has the known router
+envelope mismatch. The extractive review mode and existing artifacts remain usable.
