@@ -20,7 +20,7 @@ def test_constrained_format_quotes_are_exact_and_dates_have_enums():
     fields = draft.response_format(text)["json_schema"]["schema"]["properties"]["claims"]["items"]["properties"]
     assert all(q in text for q in fields["quote"]["enum"])
     assert 'Context.ai was compromised.' in fields["quote"]["enum"]
-    assert fields["date_precision"]["enum"] == ["unknown", "year", "month", "day"]
+    assert "date_precision" not in fields
     assert "incident" not in fields["section"]["enum"]
 
 
@@ -50,7 +50,7 @@ def test_transport_applies_schema_only_to_private_local_mode(monkeypatch):
 def response(packet):
     return {"claims": [{"section": "overview", "statement": "Acme reported a contact-system breach.",
                         "status": "asserted", "quote": packet["documents"][0]["text"],
-                        "date_role": "incident", "date_precision": "unknown", "date_value": None}]}
+                        "date_role": "incident", "date_value": None}]}
 
 
 def test_request_is_full_source_bounded_and_timestamp_independent(database):
@@ -76,7 +76,7 @@ def test_exact_claim_evidence_and_private_status(database):
 
 @pytest.mark.parametrize("key,value", [
     ("section", "other"), ("statement", ""), ("statement", []), ("status", "confirmed"),
-    ("quote", "made up"), ("date_value", "2026-04-01"), ("date_precision", "hour"),
+    ("quote", "made up"), ("date_value", "2026-02-31"), ("date_precision", "hour"),
     ("date_role", "publication"), ("section", []), ("date_value", {}),
 ])
 def test_reject_invalid_claim(database, key, value):
@@ -91,6 +91,17 @@ def test_empty_claims_is_abstention_not_permission(database):
     packet = get_packet(database)
     result = draft.validate_response(b'{"claims":[]}', packet, proposal(packet), 1)
     assert not result["claims"] and result["public_eligible"] is False
+
+
+@pytest.mark.parametrize("value,precision", [(None,"unknown"),("2026","year"),("2026-04","month"),("2026-04-19","day")])
+def test_precision_derived_without_inventing_date(database, value, precision):
+    packet = get_packet(database)
+    candidate = response(packet)
+    candidate["claims"][0]["date_value"] = value
+    result = draft.validate_response(json.dumps(candidate).encode(), packet, proposal(packet), 1)
+    assert result["claims"][0]["date_precision"] == precision
+    assert result["claims"][0]["date_value"] == value
+    assert result["public_eligible"] is False
 
 
 def test_duplicate_and_oversized_json_rejected(database):
