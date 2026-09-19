@@ -1344,3 +1344,17 @@ persistent mounts. Only synthetic data; no production credentials or schema.
 Container reported no OOM, was stopped/removed, and tunnel closed after testing.
 An initial schema-fixture mismatch was corrected in the test, not production code.
 The running scoped pilot remains unchanged; evaluate it before another rollout.
+
+## Admin private-result clarity (local, 07:53 UTC)
+
+Private job results now include actual validated assessment/suggestion coverage;
+the Jobs table labels them unapproved drafts, not publishable reports. Historical
+rows show coverage unavailable, never invented zero counts. Source-scope proposals
+remain explicitly unqualified and reuse is distinguished from a new call. No raw
+evidence text or publication capability added. Same job type and authenticated
+download endpoint, no new inference/admission or public site changes.
+
+529 offline Python tests pass with new metadata assertions, 19 JS tests pass
+(five new), and admin JS syntax checks pass. Prior seven disposable PostgreSQL
+tests apply to the unchanged queue/storage paths. No browser/UI deployment was
+performed; the real scoped cohort remains on its stable deployed image.

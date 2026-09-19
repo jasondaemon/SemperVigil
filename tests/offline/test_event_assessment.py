@@ -202,6 +202,10 @@ def test_model_worker_dispatch_is_private_and_fails_closed(monkeypatch, tmp_path
     if valid:
         result = worker.run_claimed_job(None, None, job, logging.getLogger("test"))
         assert result["model_assessed"] and result["public_eligible"] is False
+        assert result["assessment_summary"] == {
+            "workflow": assessment.WORKFLOW, "scope_version": None,
+            "assessed": 1, "not_assessed": 0, "included": 1, "held": 0,
+            "excluded": 0, "status": "proposal_only"}
         page = (tmp_path / "private" / result["artifact"]).read_text()
         assert "Model suggestion: include" in page
         assert 'value="include" selected' not in page

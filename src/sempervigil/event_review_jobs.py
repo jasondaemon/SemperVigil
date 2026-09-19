@@ -160,12 +160,20 @@ def run(payload: dict, *, complete=None) -> dict:
     packet = snapshot(lambda: postgres_reader(dsn), event_id=payload["event_id"],
                       aliases=payload["aliases"], scopes=frozenset({READ_SCOPE, EVIDENCE_SCOPE}))
     cache_hit = False
+    assessment = None
     if complete is None:
         page = save(packet, root)
     else:
         from .event_assessment_cache import reuse
         assessment, cache_hit = reuse(packet, complete, root, scope=scope)
         page = save(packet, root, assessment=assessment)
+    summary = None
+    if assessment is not None:
+        decisions = [item["decision"] for item in assessment["suggestions"].values()]
+        summary = {"workflow": assessment["workflow"], "scope_version": (scope or {}).get("scope_version"),
+                   "assessed": len(decisions), "not_assessed": assessment["omitted_passages"],
+                   "included": decisions.count("include"), "held": decisions.count("hold"),
+                   "excluded": decisions.count("exclude"), "status": "proposal_only"}
     return {"status": "review_ready", "event_id": payload["event_id"],
             "workflow": WORKFLOW, "packet_version": packet["packet_version"],
             "artifact": str(page.relative_to(root)), "documents": len(packet["documents"]),
@@ -173,4 +181,5 @@ def run(payload: dict, *, complete=None) -> dict:
             "links_truncated": packet["links_truncated"],
             "model_assessed": complete is not None and bool(assessment["suggestions"]),
             "model_cache_hit": cache_hit,
+            **({"assessment_summary": summary} if summary is not None else {}),
             "public_eligible": False}

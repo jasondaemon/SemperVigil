@@ -2082,6 +2082,7 @@ function wireJobs() {
       }
       if (job.job_type === "event_review_private" && job.status === "succeeded"
           && job.result?.status === "review_ready" && job.result?.public_eligible === false) {
+        resultHtml += `<p class="muted">${esc(privateReviewResultSummary(job))}</p>`;
         resultHtml += `<a href="/admin/api/jobs/${encodeURIComponent(job.id)}/private-review">Download private review</a>`;
       }
       const row = document.createElement("tr");
@@ -5332,6 +5333,31 @@ function wireEvents() {
   }
   load(1).catch((err) => setError(err.message || String(err)));
 }
+function privateReviewResultSummary(job) {
+  if (job.job_type !== "event_review_private" || job.status !== "succeeded"
+      || job.result?.status !== "review_ready" || job.result?.public_eligible !== false) return "";
+  const result = job.result;
+  const parts = ["Private draft, not publication approval."];
+  const detail = result.assessment_summary;
+  const count = value => Number.isInteger(value) && value >= 0 && value <= 48;
+  if (detail?.status === "proposal_only"
+      && [detail.assessed, detail.not_assessed, detail.included, detail.held, detail.excluded, result.passages].every(count)
+      && detail.assessed + detail.not_assessed === result.passages
+      && detail.included + detail.held + detail.excluded === detail.assessed) {
+    parts.push(`${detail.assessed} of ${result.passages} candidate passages assessed; ${detail.not_assessed} not assessed.`);
+    parts.push(`Suggestions: ${detail.included} included, ${detail.held} held, ${detail.excluded} excluded.`);
+    if (typeof detail.scope_version === "string" && /^[0-9a-f]{64}$/.test(detail.scope_version)) {
+      parts.push("Source-anchored scope proposal; not independently qualified.");
+    }
+  } else if (result.model_assessed === true) {
+    parts.push("Model suggestions available; detailed coverage unavailable for this older result.");
+  } else {
+    parts.push("Extractive review; no model-assessed passages.");
+  }
+  if (result.model_cache_hit === true) parts.push("Cached assessment reused.");
+  return parts.join(" ");
+}
+
 function wirePrivateEventReview() {
   const button = document.getElementById("event-review-queue");
   const input = document.getElementById("event-review-aliases");

@@ -233,3 +233,22 @@ flag/profile, disabled in chart defaults and enabled for the three-job private
 pilot. See `EVENTS_INCIDENT_SCOPING.md`. The default v3 path and its hashes are
 unchanged. Scoped jobs are queued; semantic acceptance and public automation are
 not claimed.
+
+## Coverage display follow-up (local, not deployed)
+
+New private model-job results include a bounded `assessment_summary`: workflow,
+optional scope version, assessed/not-assessed candidate counts, and include/hold/
+exclude suggestion counts. Its status is always `proposal_only`. No source text
+or claim approval is added to job metadata. Extractive results retain their shape.
+
+The Jobs table explains that a completed private draft is not publication approval,
+shows coverage and suggestion counts, distinguishes unqualified source anchoring,
+and identifies cache reuse. Older results explicitly lack detailed coverage rather
+than displaying fabricated zeros. Counts must be nonnegative integers within the
+48-passage bound and reconcile before display; unknown text is not interpolated.
+The existing authenticated private attachment link is unchanged.
+
+Five new JS tests cover coverage, historical results, invalid/untrusted counts,
+ineligible job states and extractive behavior. All 19 JS tests and 529 offline
+Python tests pass, with worker assertions for both scoped and unscoped metadata.
+No browser acceptance or production UI rollout is claimed yet.

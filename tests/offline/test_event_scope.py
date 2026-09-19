@@ -214,6 +214,10 @@ def test_scoped_real_dispatch_one_call_or_stale_rejection(monkeypatch, tmp_path,
     else:
         result = worker.run_claimed_job(None, None, job, logging.getLogger())
         assert result["model_assessed"] and not result["public_eligible"]
+        assert result["assessment_summary"] == {
+            "workflow": assessment.SCOPED_WORKFLOW, "scope_version": value["scope_version"],
+            "assessed": 1, "not_assessed": 0, "included": 0, "held": 1,
+            "excluded": 0, "status": "proposal_only"}
         again = worker.run_claimed_job(None, None, job, logging.getLogger())
         assert again["model_cache_hit"] and again["artifact"] == result["artifact"]
         router.assert_called_once()
