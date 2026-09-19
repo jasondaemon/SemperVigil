@@ -6600,14 +6600,17 @@ def update_event_report(
     profile_name: str | None = None,
     model_id: str | None = None,
     model_name: str | None = None,
+    expected_updated_at: str | None = None,
 ) -> bool:
     if not _table_exists(conn, "events"):
         return False
     row = conn.execute(
-        "SELECT meta_json FROM events WHERE id = %s",
+        "SELECT meta_json, updated_at FROM events WHERE id = %s",
         (event_id,),
     ).fetchone()
     if not row:
+        return False
+    if expected_updated_at is not None and row[1] != expected_updated_at:
         return False
     meta: dict[str, object] = {}
     if row[0]:
@@ -6628,17 +6631,20 @@ def update_event_report(
         meta["report_model_id"] = str(model_id)
     if model_name:
         meta["report_model_name"] = str(model_name)
-    conn.execute(
+    # Do not overwrite metadata or a newer event revision changed since this read.
+    cursor = conn.execute(
         """
         UPDATE events
         SET meta_json = %s,
             updated_at = %s
         WHERE id = %s
+          AND meta_json IS NOT DISTINCT FROM %s
+          AND updated_at IS NOT DISTINCT FROM %s
         """,
-        (json_dumps(meta), now, event_id),
+        (json_dumps(meta), now, event_id, row[0], row[1]),
     )
     conn.commit()
-    return True
+    return cursor.rowcount == 1
 
 
 def touch_event(conn: Any, event_id: str, seen_at: str) -> None:

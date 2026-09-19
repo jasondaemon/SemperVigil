@@ -1326,3 +1326,21 @@ Public revision work must keep immutable candidates separate from the last accep
 publication pointer, compare current source/scope versions inside activation's
 transaction, and preserve the old pointer on failed/stale assessment. Do not reuse
 `update_event_report` as that gate or treat an exact quotation as semantic approval.
+
+## Legacy report lost-update protection (local, September 19)
+
+Implemented the bounded correction described in `EVENT_REPORT_STALE_WRITES.md`:
+pass the worker's starting event version and compare the current complete metadata
+and timestamp atomically at write time. Failed/stale writes retain the competing
+edit/report and do not mark the site dirty. No new inference, schema migration,
+public fields or live deployment. This is not an immutable revision/publication
+gate and does not establish semantic/source validity.
+
+529 offline tests pass (11 added). Seven disposable PostgreSQL tests pass in
+5.50 seconds, including actual two-connection read/write interleaving. Used a fresh
+PostgreSQL 18.4 alpine test container on docker52, 512 MiB memory/no extra swap,
+0.5 CPU, 256 MiB tmpfs, loopback-only port through a temporary SSH tunnel, no
+persistent mounts. Only synthetic data; no production credentials or schema.
+Container reported no OOM, was stopped/removed, and tunnel closed after testing.
+An initial schema-fixture mismatch was corrected in the test, not production code.
+The running scoped pilot remains unchanged; evaluate it before another rollout.

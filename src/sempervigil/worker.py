@@ -7536,6 +7536,9 @@ def _handle_event_report_llm(
     event = get_event(conn, event_id)
     if not event:
         raise ValueError("event_not_found")
+    expected_updated_at = event.get("updated_at")
+    if not isinstance(expected_updated_at, str) or not expected_updated_at:
+        return {"status": "skipped", "reason": "missing_event_version", "event_id": event_id}
     articles = ((event.get("items") or {}).get("articles") or [])[:20]
     article_rows: list[dict[str, object]] = []
     for item in articles:
@@ -7601,6 +7604,7 @@ def _handle_event_report_llm(
         profile_name=str(profile.get("name") or ""),
         model_id=str(profile.get("primary_model_id") or ""),
         model_name=str(profile.get("model_name") or ""),
+        expected_updated_at=expected_updated_at,
     )
     if updated:
         lifecycle = str(event.get("lifecycle") or event.get("status") or "").lower()
@@ -7609,6 +7613,7 @@ def _handle_event_report_llm(
             mark_build_dirty(conn, reason="event_report_update")
     return {
         "status": "ok" if updated else "skipped",
+        **({"reason": "stale_or_unavailable_event"} if not updated else {}),
         "event_id": event_id,
         "source_articles": len(article_rows),
         "source_web_promoted": len(web_rows),

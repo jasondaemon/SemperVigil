@@ -214,3 +214,31 @@ def test_private_review_concurrent_admission(restricted_database, monkeypatch, t
     assert result["status"] == "review_ready" and result["public_eligible"] is False
     assert (tmp_path / "private" / result["artifact"]).is_file()
     assert admin.execute("SELECT title FROM events WHERE id='one'").fetchone()[0] == "Incident"
+
+
+def test_event_report_compare_and_swap_on_postgres():
+    from sempervigil.storage import update_event_report
+    # Legacy storage explicitly checks public.events, unlike the retrieval service.
+    # The named-disposable guard above applies; never initialize an application DB.
+    with psycopg.connect(os.environ["SV_TEST_DB_URL"], autocommit=True) as admin:
+        admin.execute("CREATE TABLE public.events(id TEXT PRIMARY KEY, meta_json TEXT, updated_at TEXT)")
+        try:
+            admin.execute("INSERT INTO public.events VALUES ('one',%s,'2026-05-01')",
+                          (json.dumps({"report": {"overview": "Previous"}}),))
+            assert not update_event_report(admin, "one", {"overview": "Wrong"}, expected_updated_at="stale")
+            assert update_event_report(admin, "one", {"overview": "Current"}, expected_updated_at="2026-05-01")
+            meta, stamp = admin.execute("SELECT meta_json,updated_at FROM events WHERE id='one'").fetchone()
+            assert json.loads(meta)["report"] == {"overview": "Current"}
+            with psycopg.connect(os.environ["SV_TEST_DB_URL"], autocommit=True) as other:
+                class ConcurrentWriter:
+                    def execute(self, query, params=()):
+                        if query.lstrip().startswith("UPDATE events"):
+                            other.execute("UPDATE events SET meta_json=%s WHERE id='one'",
+                                          (json.dumps({"report": {"overview": "Current"}, "editor_note": "keep"}),))
+                        return admin.execute(query, params)
+                    def commit(self): admin.commit()
+                assert not update_event_report(ConcurrentWriter(), "one", {"overview": "Obsolete"}, expected_updated_at=stamp)
+            final = json.loads(admin.execute("SELECT meta_json FROM events WHERE id='one'").fetchone()[0])
+            assert final == {"report": {"overview": "Current"}, "editor_note": "keep"}
+        finally:
+            admin.execute("DROP TABLE public.events")
