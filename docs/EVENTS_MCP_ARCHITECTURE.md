@@ -1,6 +1,7 @@
 # Events investigation and MCP architecture
 
-Status: accepted design direction; isolated retrieval services tested offline.
+Status: accepted design direction; isolated retrieval services tested offline
+and in a targeted disposable-PostgreSQL suite.
 MCP adapter, workflow integration, and deployment remain pending.
 Date: 2026-09-18
 

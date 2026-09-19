@@ -1,6 +1,7 @@
 # Read-only investigation foundation
 
-Status: implemented and tested offline; no runtime integration or deployment.
+Status: implemented; offline and targeted disposable-PostgreSQL tests passed.
+No runtime integration or deployment.
 
 `src/sempervigil/investigation.py` implements shared services for future workers
 and the internal MCP adapter. Nothing in existing jobs, API routes, publishing,
@@ -92,11 +93,15 @@ SQL search, date scoping, hidden records, bounded scanning and responses, cursor
 progression, legacy event boundaries, metadata versions, and propagated failures.
 They do not prove PostgreSQL planning, production permissions, or retrieval recall.
 
-The separately gated test uses temporary tables in an explicitly disposable
-database and verifies real PostgreSQL read-only enforcement:
+The separately gated tests use temporary tables plus an isolated schema and
+short-lived restricted login in an explicitly disposable database. The suite
+requires a database named `sempervigil_test` or `sempervigil_test_*` and a test
+administrator able to create/drop roles and schemas. Never grant these setup
+permissions to the production retrieval role. The restricted role has SELECT
+and schema USAGE only; generated test credentials are not persisted in the repo.
 
 ```sh
-# Set SV_TEST_DB_URL to a disposable PostgreSQL database, never production.
+# Set SV_TEST_DB_URL to the named disposable PostgreSQL database, never production.
 python3 -m pytest --run-db-tests tests/test_investigation_postgres.py -q
 ```
 
@@ -105,10 +110,23 @@ includes exact Unicode slices, instruction-like source text treated as data,
 changed-content/provenance rejection, suppression between pages, permission and
 input boundaries, and maximum document/response sizes.
 
-The PostgreSQL gate now also tests exact evidence and stale versions, but has not
-been run. The local Docker daemon and PostgreSQL binaries were unavailable when
-checked; no production database was used as a substitute. Next gates: run it in a
-disposable environment, measure query plans/coverage, then implement/authenticate
-the read-only MCP adapter. Trusted incident scoping remains a later gate.
+**Three integration tests passed on PostgreSQL 18.4**, covering SELECT execution,
+Unicode slicing, changed-content rejection, suppression, read-only transactions,
+statement timeout enforcement, and retrieval with a least-privilege login.
+That login was unable to update source records or create tables even without the
+application's read-only transaction flag. Tests clean up their role and schema.
+
+An empty isolated Docker instance supplied the database because the local machine
+had no database runtime. It used a 512 MiB hard memory cap, no additional swap,
+0.5 CPU, 256 MiB temporary storage, and loopback-only access through a temporary
+SSH tunnel. No production volumes, credentials, or data were used. The container
+and tunnel were removed afterward. The official image was
+`postgres:18.4-alpine` at digest
+`sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15`.
+
+This clears targeted PostgreSQL correctness testing, not production query plans,
+full-schema integration, retrieval recall, or transport authentication. Next:
+measure plans/coverage and implement/authenticate the read-only MCP adapter.
+Trusted incident scoping remains a later gate.
 Rollback before integration is simply reverting the isolated files. No production
 or data rollback is needed.

@@ -561,3 +561,27 @@ These are current database text snapshots, not persisted immutable evidence or
 validated incident passages. Source IDs are not promoted to independent origin
 IDs. No runtime imports, MCP endpoint, deployment, build, or LLM calls. Tracker
 and retrieval documentation updated; production behavior remains unchanged.
+
+## Disposable PostgreSQL gate cleared (2026-09-18)
+
+Used an empty, separately bounded Docker database on an existing Docker-capable
+host, not the production PostgreSQL cluster. Image: PostgreSQL 18.4 alpine,
+digest `sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15`.
+Verified 512 MiB memory/no additional swap, 0.5 CPU, 256 MiB tmpfs, no persistent
+mounts, and loopback-only port access through a temporary SSH tunnel. Only
+synthetic fixtures were loaded; no production data or credentials were used.
+
+**Three PostgreSQL tests passed in 2.86 seconds** after adding a named-disposable
+database guard, enforced statement timeout test, and restricted login test. The
+restricted login read through all three services but could not update data or
+create tables even without the application's read-only transaction guard.
+Exact Unicode slices, suppression, stale-content rejection, and transaction
+read-only behavior passed against real PostgreSQL. **260 offline tests passed**
+again. This is not a production performance benchmark or full-schema migration
+test; query plans, recall/coverage, and authenticated MCP transport remain pending.
+
+Temporary schema/login were dropped by the test; the database container and SSH
+tunnel were stopped and absence verified. Container inspection showed no OOM kill.
+All SemperVigil deployments had their desired ready replica counts afterward.
+No production manifests, application behavior, DB data, builds, or inference jobs
+were changed. The downloaded database image remains cached; no test service runs.
