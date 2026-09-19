@@ -330,3 +330,8 @@ keys, with a drained lane and rollback. Preflight the guarded generation identit
 admit one Vercel paired job and inspect actual transport format, prompt/output
 tokens, latency and unchanged semantic expectation. No paired inference or runtime
 deployment has occurred at this checkpoint.
+
+Update: `670558c` deployed to admin/LLM only, platform `c98e9e4`; the dedicated
+profile and two paired settings are verified. Existing scoped generation unchanged.
+One diagnostic job `job_557d20eb1f2449d0979fadfa3c1fe6a9` is queued; no quality result
+yet. See `STABILIZATION_VERIFICATION.md` for preflight, public checks and rollback.

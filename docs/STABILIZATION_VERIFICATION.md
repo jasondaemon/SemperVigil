@@ -1489,3 +1489,45 @@ validated against their job hashes and source-specific cache/generation identiti
 Next is constrained-format/provider and paired-source input analysis, not publishing
 the passing subset as a completed automated feature. Source display follow-up
 `2b5954a` remains local; runtime remains `e93b6f0`. No deployment this checkpoint.
+
+## Paired diagnostic rollout, September 19 09:15 UTC
+
+Runtime admin/LLM `670558c`, platform `c98e9e4`, both committed/pushed. Imported
+manifest `sha256:8b3649a235eef102995a5cafca39ca94e72432d486994042216fcc90eaa304d0`
+to all four eligible nodes. Dependency base stays `27b9fb3`; no Hugo, builder,
+model, context-size, concurrency or resource-policy changes. Only two Deployment
+images and `SV_EVENT_REVIEW_PAIR_ENABLED`/`SV_EVENT_REVIEW_PAIR_PROFILE_ID` changed
+in server-side comparisons. Only those objects were applied; post-apply diffs empty.
+
+Dedicated profile `49780c82-fd75-53dd-829b-e8fd8bf7e7bb` created/read back via admin:
+same existing scoped prompt/provider/model, temperature 0, output 1,024, input cap
+15,000, fallback empty, schema_id null (no router repair loop), is_enabled true.
+The first readback mistakenly checked an unsupported `enabled` field; repository
+inspection identified `is_enabled`, which was verified without recreating or
+changing the profile. Existing scoped profile parameters remain unchanged.
+
+Orchestrator terminated, LLM/launch lane rechecked empty, worker drained before
+rollout; both replacements Ready and scheduling restored. Factory preflight made
+no model call and verified paired generation
+`767cc31100bc1ce61015ea93182201977b356b36224b57db6b1fd6a20c252f06`.
+Existing scoped generation is still
+`58bedc2903733c7b9f840791cc27583f0b0538167c397742249974fb275aa4e1`.
+
+Live Vercel packet/request matched the pinned local case at 14,753 bytes. Exactly
+one paired job admitted through admin: `job_557d20eb1f2449d0979fadfa3c1fe6a9`.
+Do not duplicate or reprioritize it. `.cache/collect-paired-pilot.py` collects its
+result read-only, validating the exact cache/request/generation and HTML artifact.
+Real provider format, tokens, latency and semantic result remain pending.
+
+Public checker passed before and at 09:15:46 UTC after rollout. API/etcd Ready;
+all application workloads Ready and new pods zero restarts. Existing authenticated
+Commission attachment hash unchanged, still no-store/sandbox. Selected-source
+coverage labels are now served with the bumped script URL; no browser acceptance
+claimed. Last local gate: 580 offline and 20 JS tests, syntax/diff checks pass;
+the prior seven PostgreSQL tests were not rerun (no SQL/schema change).
+
+Rollback: set pair flag 0 and restore admin/LLM `e93b6f0` in platform, render/diff,
+drain, apply only ConfigMap and those Deployments, then restore scheduling. Keep
+prior private artifacts/profile. Handle any pending paired job explicitly before
+rollback; the older worker rejects the new payload instead of dropping its mode.
+No new public reports or automatic admissions have been enabled.
