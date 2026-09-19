@@ -7449,6 +7449,13 @@ def _private_review_completion(conn, job, logger):
     """Opt-in, pinned local profile; normal extractive reviews need no inference."""
     scoped = "scope" in (getattr(job, "payload", None) or {})
     paired = (getattr(job, "payload", None) or {}).get("paired", False)
+    deconstruct = (getattr(job, "payload", None) or {}).get("deconstruct", False)
+    if type(deconstruct) is not bool:
+        raise ValueError("invalid_deconstruction_request")
+    if deconstruct:
+        from .event_review_jobs import deconstruction_enabled
+        if not scoped or paired or not deconstruction_enabled():
+            raise PermissionError("private_deconstruction_disabled")
     if type(paired) is not bool:
         raise ValueError("invalid_assessment_pair")
     if paired:
@@ -7468,7 +7475,8 @@ def _private_review_completion(conn, job, logger):
         return None
     from .event_assessment import SYSTEM_PROMPT, SCOPED_SYSTEM_PROMPT, MAX_INPUT_BYTES, PAIR_MAX_INPUT_BYTES, response_format
     from .services.ai_service import get_prompt
-    profile_key = ("SV_EVENT_REVIEW_PAIR_PROFILE_ID" if paired else
+    profile_key = ("SV_EVENT_DECONSTRUCTION_PROFILE_ID" if deconstruct else
+                   "SV_EVENT_REVIEW_PAIR_PROFILE_ID" if paired else
                    "SV_EVENT_REVIEW_SCOPE_PROFILE_ID" if scoped else "SV_EVENT_REVIEW_PROFILE_ID")
     profile_id = os.environ.get(profile_key, "")
     profile = get_profile(conn, profile_id) if profile_id else None
@@ -7483,6 +7491,9 @@ def _private_review_completion(conn, job, logger):
         raise ValueError("private_review_requires_local_model")
     prompt = get_prompt(conn, profile.get("prompt_id")) or {}
     expected_prompt = SCOPED_SYSTEM_PROMPT if scoped else SYSTEM_PROMPT
+    if deconstruct:
+        from .event_deconstruction import SYSTEM_PROMPT as DECONSTRUCTION_PROMPT
+        expected_prompt = DECONSTRUCTION_PROMPT
     if prompt.get("system_template") != expected_prompt or prompt.get("user_template") != "{{input}}":
         raise ValueError("private_review_prompt_mismatch")
     params = profile.get("params") or {}
@@ -7490,7 +7501,7 @@ def _private_review_completion(conn, job, logger):
     if (set(params) != {"max_tokens", "temperature", "max_input_chars"}
             or type(tokens) is not int or not 512 <= tokens <= 1536
             or params.get("temperature") != 0
-            or params.get("max_input_chars") != (PAIR_MAX_INPUT_BYTES if paired else MAX_INPUT_BYTES)
+            or params.get("max_input_chars") != (PAIR_MAX_INPUT_BYTES if paired or deconstruct else MAX_INPUT_BYTES)
             or (paired and tokens != 1024)):
         raise ValueError("private_review_profile_budget")
     provider = get_provider(conn, profile["primary_provider_id"]) or {}

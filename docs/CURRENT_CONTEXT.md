@@ -9,6 +9,13 @@
 
 ## Current release checkpoint: September 19, 14:00 UTC
 
+Later local work: source-level private deconstruction is wired into the existing
+private-review API/job/viewer behind a new default-disabled flag and separate
+profile. It produces unreviewed cited claims, not publishable narrative. No
+production change, real inference or new model profile yet. See
+`EVENT_DECONSTRUCTION.md` for boundaries and the next pilot gate. The user has
+clarified that quotation-only coverage is not the finished Events feature.
+
 - **Latest override:** orchestrator `7fd1010`, platform `7bcfd87`. Other ingest
   components remain `e091471`; builder remains `bfa9986`. Only the scheduler was
   rolled for scoped automatic Events admission. No build/LLM behavior changed.

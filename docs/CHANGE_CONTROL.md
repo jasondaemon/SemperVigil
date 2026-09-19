@@ -1,5 +1,14 @@
 # Change Control Log
 
+## 2026-09-19: Private source-level deconstruction (local only)
+
+- Add an opt-in mode to the existing private review API/job. Separate disabled
+  flag and pinned profile; retain one local LLM queue and existing job viewer.
+- Claims and escaped HTML remain private, with no publication approval receipt.
+  No build, feed, activation, public export, schema or production changes.
+- Real-model evaluation, multi-source synthesis and incremental reuse remain open.
+  See EVENT_DECONSTRUCTION.md. Default-disabled rollback needs no data migration.
+
 ## 2026-09-19: Bounded automatic Events admission
 
 - User requested continued implementation until updates elevate through the

@@ -9,6 +9,50 @@ This document alone does not authorize a runtime rollout.
 
 ## Objective and constraints
 
+### Reader acceptance clarification: September 19, 2026
+
+The user requires a living incident deconstruction, not a quotation digest. The
+live Vercel pilot establishes automatic evidence admission and publication only;
+it does not complete the reader-facing Events feature. Comparison with the live
+UMMC and Odido reports establishes the desired depth, but not their correctness:
+UMMC has repeated sections, and Odido mixes unrelated roundup topics into its
+overview, impact and recovery. Do not restore legacy narrative wholesale.
+
+The target report must contain:
+
+- A coherent, source-linked overview explaining what happened and current status.
+- Initial access / attack vector, distinguishing reported findings from allegations.
+- An ordered attack path: entry, privileges or trust crossed, affected systems,
+  and attacker actions, only where supported. Explicitly identify missing links.
+- Incident milestones with evidence and date precision, distinct from news dates
+  and report publication/update timestamps.
+- Concrete impact: affected parties, exposed data and operational consequences;
+  keep disputed counts and attribution explicit rather than silently reconciling.
+- Containment, remediation and recovery, separating actions taken from advice
+  and distinguishing partial restoration from confirmed recovery.
+- Open questions and a meaningful revision history explaining what changed,
+  including corrections and superseded claims.
+
+Use structured incident-specific claims as the intermediate representation, then
+synthesize readable sections from those claims. The model proposes extraction and
+prose; existing evidence, revision and publication gates remain mandatory. Exact
+citations alone do not prove that a generated claim is supported. Unknown details
+must stay unknown; do not pad missing sections with generic security guidance.
+
+Process new or changed sources in bounded jobs on the existing single-LLM lane,
+cache unchanged extraction, and coalesce synthesis only after material evidence
+changes. Revisit prior claims when sources change or contradict them; do not just
+append new text or repeatedly summarize the previous summary. Oversized-source
+handling needs an evaluated bounded extraction strategy, not silent truncation.
+
+Next acceptance gate: a private Vercel deconstruction with paragraph-level source
+links, supported milestones, attack-path and impact/recovery coverage where the
+evidence permits, and explicit gaps elsewhere. Test an incremental update and a
+correction without losing previously supported details. Then publish through the
+existing worker/API path with matching Events JSON and unchanged daily feed
+contracts. Fix listing publication/update dates without inventing incident dates.
+Do not describe quotation-only publication as completion of this gate.
+
 Make SemperVigil worth reading by producing reliable, continuously updated incident
 coverage with attributable evidence and meaningful changes. AdSense is a secondary
 goal, not the definition of success.

@@ -130,8 +130,15 @@ def paired_enabled() -> bool:
     return value == "1"
 
 
+def deconstruction_enabled() -> bool:
+    value = os.environ.get("SV_EVENT_DECONSTRUCTION_ENABLED", "0")
+    if value not in {"0", "1"}:
+        raise ValueError("invalid_deconstruction_enablement")
+    return value == "1"
+
+
 def payload_for(event_id: str, aliases: list[str], *, scope: dict | None = None,
-                article_id: int | None = None, paired: bool = False) -> dict:
+                article_id: int | None = None, paired: bool = False, deconstruct: bool = False) -> dict:
     if not _text(event_id, 128) or not event_id.strip():
         raise ValueError("invalid_event_id")
     payload = {"event_id": event_id, "aliases": _aliases(aliases), "workflow": WORKFLOW}
@@ -146,11 +153,15 @@ def payload_for(event_id: str, aliases: list[str], *, scope: dict | None = None,
         raise ValueError("invalid_assessment_pair")
     if paired:
         payload["paired"] = True
+    if type(deconstruct) is not bool or (deconstruct and (scope is None or article_id is None or paired)):
+        raise ValueError("invalid_deconstruction_request")
+    if deconstruct:
+        payload["deconstruct"] = True
     return payload
 
 
 def submit(connection_factory, *, event_id: str, aliases: list[str], scope: dict | None = None,
-           article_id: int | None = None, paired: bool = False) -> str:
+           article_id: int | None = None, paired: bool = False, deconstruct: bool = False) -> str:
     """Own the admission connection; serialize duplicate requests transactionally.
 
     This operation is only called behind admin authorization. It neither reads
@@ -160,7 +171,10 @@ def submit(connection_factory, *, event_id: str, aliases: list[str], scope: dict
         raise PermissionError("private_review_disabled")
     if scope is not None and not scoped_enabled():
         raise PermissionError("private_scope_disabled")
-    payload = payload_for(event_id, aliases, scope=scope, article_id=article_id, paired=paired)
+    payload = payload_for(event_id, aliases, scope=scope, article_id=article_id, paired=paired,
+                          deconstruct=deconstruct)
+    if deconstruct and not deconstruction_enabled():
+        raise PermissionError("private_deconstruction_disabled")
     if paired and not paired_enabled():
         raise PermissionError("private_pair_disabled")
     # Serialize every review admission, including queue-size checks, not just
@@ -220,6 +234,7 @@ def run(payload: dict, *, complete=None) -> dict:
     if type(payload) is not dict or payload.keys() not in (
             {"event_id", "aliases", "workflow"}, {"event_id", "aliases", "workflow", "scope"},
             {"event_id", "aliases", "workflow", "scope", "article_id"},
+            {"event_id", "aliases", "workflow", "scope", "article_id", "deconstruct"},
             {"event_id", "aliases", "workflow", "scope", "article_id", "paired"}):
         raise ValueError("invalid_private_review_payload")
     scope = payload.get("scope")
@@ -230,17 +245,30 @@ def run(payload: dict, *, complete=None) -> dict:
             raise ValueError("private_scope_model_required")
     article_id = payload.get("article_id")
     paired = payload.get("paired", False)
-    canonical = payload_for(payload["event_id"], payload["aliases"], scope=scope, article_id=article_id, paired=paired)
+    deconstruct = payload.get("deconstruct", False)
+    canonical = payload_for(payload["event_id"], payload["aliases"], scope=scope, article_id=article_id,
+                            paired=paired, deconstruct=deconstruct)
     if payload != canonical:
         raise ValueError("invalid_private_review_payload")
     if paired and not paired_enabled():
         raise PermissionError("private_pair_disabled")
+    if deconstruct and not deconstruction_enabled():
+        raise PermissionError("private_deconstruction_disabled")
     root = artifact_root()
     dsn = os.environ.get("SV_DB_URL")
     if not dsn:
         raise ValueError("worker_database_required")
     packet = snapshot(lambda: postgres_reader(dsn), event_id=payload["event_id"],
                       aliases=payload["aliases"], scopes=frozenset({READ_SCOPE, EVIDENCE_SCOPE}))
+    if deconstruct:
+        from .event_deconstruction import save as save_deconstruction
+        page, result = save_deconstruction(packet, scope, article_id, complete, root)
+        return {"status": "review_ready", "event_id": payload["event_id"],
+                "workflow": WORKFLOW, "packet_version": packet["packet_version"],
+                "artifact": str(page.relative_to(root)), "model_assessed": True,
+                "model_cache_hit": False, "public_eligible": False,
+                "deconstruction": {"workflow": result["workflow"], "article_id": article_id,
+                                    "claims": len(result["claims"]), "status": "unreviewed"}}
     cache_hit = False
     assessment = None
     if complete is None:

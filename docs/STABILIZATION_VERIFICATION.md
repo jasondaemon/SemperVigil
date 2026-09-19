@@ -1995,3 +1995,16 @@ All expected production replicas were ready at this checkpoint's opening.
   reviewed scopes. General incident discovery/enrollment, revised quoted-document
   qualification, comprehensive coverage and generated narrative are not delivered
   by this slice. See EVENT_AUTOMATION.md for policy and rollback semantics.
+# September 19, 2026: private deconstruction extraction, local only
+
+- Added opt-in source-level claims to existing private-review admission and LLM
+  dispatch, with the existing authenticated artifact reader. Separate flag and
+  pinned model profile default disabled; no automatic admission or public writes.
+- Targeted review/extraction regressions: 103 passed. Full offline suite: 799
+  passed, one Linux-only test skipped on macOS. Existing deprecation warnings.
+  `git diff --check` passed. Real worker dispatch is tested with mocked inference.
+- No production deployment, profile creation, DB migration, live-model call or
+  Hugo/API build performed. PostgreSQL and JavaScript suites not rerun for this
+  slice. Source extraction is not qualified narrative or a publication approval.
+- Next gate: bounded real-model pilot; then evidence reuse, multi-source synthesis
+  and correction handling. See EVENT_DECONSTRUCTION.md.
