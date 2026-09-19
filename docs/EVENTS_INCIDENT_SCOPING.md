@@ -154,3 +154,36 @@ tampering, changed full sources, coverage/title/alias/model invalidation and leg
 entry reuse. 518 offline tests pass. This removes an unnecessary model call from
 future scoped refreshes; it does not prevent all legacy report/build churn, establish
 semantic correctness, or make private artifacts safe for public publication.
+
+## Scoped cohort result and next bounded test
+
+All three scoped jobs completed structurally, one call each, total 18,117 ms.
+Commission improved to 4/4: all three staff/MDM passages excluded, Trivy/AWS
+reporting retained. Odido remained 2/3: one company-services description excluded,
+another similar description incorrectly included. Vercel fell to 0/1: the relevant
+early breach report was incorrectly excluded. Total is still 6/8; no publication.
+The anchors improved incident separation but did not establish reliable passage
+classification. Do not adjust the expected answers or declare the feature ready.
+
+Next, implement an explicit source-level private assessment option: one selected
+article per queued job, at most its four bounded passages plus the same source
+anchor. Keep the current scoped prompt/profile/model/response validator, input
+limit, output cap and single-job policy. This changes task granularity, not prompt
+wording or publication criteria, and matches the staged plan's per-article evidence
+extraction approach. Whether it improves quality remains a testable hypothesis.
+
+Preserve the complete packet and its excluded/unassessed coverage in private
+review, rather than hiding unwanted cases. Unknown or unavailable selected sources
+must fail before inference. Pin selected article identity in request/assessment/
+cache metadata; an unrelated source's cached decisions must not be accepted.
+The same eight positive/negative expectations span seven source jobs:
+Odido 21505 and 22331; Vercel 26190; Commission 21216, 21218, 23638 and 25303.
+Evaluate their union, requiring every case once and rejecting mixed snapshots or
+scope versions. Do not treat missing coverage or all-Hold as success.
+
+Do not enqueue until the new path and aggregate checker pass offline tests and a
+targeted release is verified. At most those seven calls for this diagnostic cohort;
+no automatic source-job expansion or public writes. A result that still misses the
+mandatory cases remains unfit for unattended publication. Full-source cache
+dependency narrowing, independent scope qualification, claim extraction and
+transactional publication revisions remain later integration work.

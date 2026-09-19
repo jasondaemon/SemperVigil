@@ -1358,3 +1358,28 @@ download endpoint, no new inference/admission or public site changes.
 (five new), and admin JS syntax checks pass. Prior seven disposable PostgreSQL
 tests apply to the unchanged queue/storage paths. No browser/UI deployment was
 performed; the real scoped cohort remains on its stable deployed image.
+
+## Scoped pilot evaluated, September 19 08:05 UTC
+
+All three jobs succeeded structurally with one call each: Odido 6,258 ms, Vercel
+5,948 ms, Commission 5,911 ms; total 18,117 ms. All four cohorts to date used
+80,171 ms across 12 model calls. This excludes ordinary work and is not a complete
+platform inference-cost meter. Queue wait behind ordinary backfill is distinct
+from these call times; no pilot priority/concurrency changes were made.
+
+Unchanged pinned cases: Odido 2/3, Vercel 0/1, Commission 4/4, total 6/8. Commission
+cross-incident exclusions are fixed in this sample, but Odido still includes a
+generic company description and Vercel loses relevant reporting. No public output,
+approval or automatic admission. All three event-row fingerprints remain unchanged.
+
+Authenticated private/no-store, sandboxed HTML attachments returned 200 and showed
+unqualified source anchors with no human Include decisions preselected:
+
+- Odido: 73,955 bytes; SHA-256 `d19c6bc6819e27665820df6797991701dc0bf6224e1e654ff6a1252fd7ec2e94`.
+- Vercel: 112,540 bytes; SHA-256 `c61a6f9ec100fb81a66f133abc3f2145702b8fff3501f659c963d1e40ba16f24`.
+- Commission: 112,334 bytes; SHA-256 `1bf3d4ad87920695338ab10d308402b620c69922504840f481019270eabcea36`.
+
+Next bounded implementation/test is source-level assessment, not further prompt-only
+tuning: same model/profile/one-call jobs, at most four passages from one explicitly
+selected source, retaining all eight cases across seven source jobs. See
+`EVENTS_INCIDENT_SCOPING.md` for the exact scope and gates. No new calls admitted yet.

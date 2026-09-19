@@ -234,6 +234,10 @@ pilot. See `EVENTS_INCIDENT_SCOPING.md`. The default v3 path and its hashes are
 unchanged. Scoped jobs are queued; semantic acceptance and public automation are
 not claimed.
 
+Update: the scoped cohort completed, but only 6/8 mandatory provisional checks
+pass. See verification notes. Next is a bounded source-level assessment test,
+not publication or automatic admission of the current results.
+
 ## Coverage display follow-up (local, not deployed)
 
 New private model-job results include a bounded `assessment_summary`: workflow,
