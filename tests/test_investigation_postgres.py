@@ -277,3 +277,42 @@ def test_private_revision_store_is_immutable_and_concurrent(restricted_database,
     admin.execute("UPDATE event_private_revisions SET packet_json='{}'")
     with pytest.raises(ValueError, match="private_revision_conflict"): write()
     assert admin.execute("SELECT packet_json FROM event_private_revisions").fetchone()[0] == '{}'
+
+
+def test_revision_window_locks_sources_and_membership(restricted_database):
+    from sempervigil.event_review import snapshot
+    from sempervigil.event_revision_store import locked_current_snapshot
+    admin, reader_dsn, identifier = restricted_database
+    packet = snapshot(lambda: postgres_reader(reader_dsn), event_id="one", aliases=["Incident"],
+                      scopes=frozenset({READ_SCOPE,EVIDENCE_SCOPE}))
+    with pytest.raises(ValueError, match="revision_membership_constraint_required"):
+        with locked_current_snapshot(lambda: psycopg.connect(reader_dsn), packet):
+            pytest.fail("missing FK cannot guard membership inserts")
+    # Match the existing production FK contract, absent in the minimal fixture.
+    admin.execute("ALTER TABLE event_articles ADD FOREIGN KEY(event_id) REFERENCES events(id)")
+    admin.execute("ALTER TABLE event_articles ADD FOREIGN KEY(article_id) REFERENCES articles(id)")
+    admin.execute(sql.SQL("GRANT UPDATE ON events,articles,event_articles TO {}").format(identifier))
+    admin.execute(sql.SQL("GRANT INSERT,DELETE ON event_articles TO {}").format(identifier))
+    admin.execute("UPDATE articles SET content_text='Incident responders reported an investigation is still ongoing.' WHERE id=1")
+    admin.execute("INSERT INTO articles SELECT 2,source_id,title,original_url,brief_day,meta_json,content_text FROM articles WHERE id=1")
+    packet = snapshot(lambda: postgres_reader(reader_dsn), event_id="one", aliases=["Incident"],
+                      scopes=frozenset({READ_SCOPE,EVIDENCE_SCOPE}))
+    with pytest.raises(ValueError, match="dedicated_revision_transaction_required"):
+        with locked_current_snapshot(lambda: psycopg.connect(reader_dsn, autocommit=True), packet):
+            pytest.fail("unsafe autocommit window")
+    # Report bookkeeping alone is not a changed evidence dataset.
+    admin.execute("UPDATE events SET updated_at='2026-05-02' WHERE id='one'")
+    with locked_current_snapshot(lambda: psycopg.connect(reader_dsn), packet):
+        for statement in (
+            "UPDATE articles SET content_text='changed' WHERE id=1",
+            "INSERT INTO event_articles VALUES ('one',2)",
+            "DELETE FROM event_articles WHERE event_id='one' AND article_id=1",
+        ):
+            with psycopg.connect(reader_dsn) as writer:
+                writer.execute("SET LOCAL lock_timeout = '100ms'")
+                with pytest.raises(psycopg.errors.LockNotAvailable): writer.execute(statement)
+                writer.rollback()
+    admin.execute("UPDATE articles SET content_text='Changed source after collection.' WHERE id=1")
+    with pytest.raises(ValueError, match="stale_revision_snapshot"):
+        with locked_current_snapshot(lambda: psycopg.connect(reader_dsn), packet):
+            pytest.fail("stale evidence accepted")

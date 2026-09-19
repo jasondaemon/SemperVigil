@@ -1,12 +1,15 @@
 """Opt-in immutable private snapshots. No publication or schema initialization."""
 import json
 import os
+from contextlib import contextmanager
 
 import psycopg
+from psycopg.rows import dict_row
 
-from .event_review import MAX_PACKET_BYTES, validate_packet
+from .event_review import MAX_DOCUMENTS, MAX_PACKET_BYTES, snapshot, validate_packet
 from .event_revision import MAX_BYTES, validate_receipt
 from .utils import utc_now_iso
+from .investigation import EVIDENCE_SCOPE, READ_SCOPE, _version
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS event_private_revisions (
@@ -49,6 +52,8 @@ def persist(connection_factory, packet: dict, raw: bytes, descriptor: dict, *,
         raise ValueError("oversized_private_revision")
     event_id, revision_id = packet["event"]["id"], descriptor["version"]
     with connection_factory() as conn:
+        if conn.autocommit or conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+            raise ValueError("dedicated_revision_transaction_required")
         conn.execute("SET LOCAL lock_timeout = '2s'")
         conn.execute("SET LOCAL statement_timeout = '3s'")
         row = conn.execute("""INSERT INTO event_private_revisions
@@ -71,3 +76,64 @@ def persist_if_enabled(dsn: str, packet: dict, raw: bytes, descriptor: dict, *,
         return None
     return persist(lambda: psycopg.connect(dsn, connect_timeout=5), packet, raw, descriptor,
                    artifact=artifact, html=html)
+
+
+def source_version(packet: dict) -> str:
+    """Exclude only bookkeeping timestamps, not source text or coverage."""
+    packet = validate_packet(json.dumps(packet).encode())
+    body = {k: v for k, v in packet.items() if k != "packet_version"}
+    body["event"] = {k: v for k, v in body["event"].items() if k != "updated_at"}
+    return _version(body)
+
+
+@contextmanager
+def locked_current_snapshot(connection_factory, packet: dict):
+    """Yield a short caller-owned promotion window, not publication approval.
+
+    Requires the production event_articles foreign keys. The event FOR UPDATE
+    lock blocks FK-backed membership inserts; existing memberships and all cited
+    articles are also locked. NOWAIT refuses contention instead of stalling ingest.
+    Consumers must perform no inference, network calls or file build in this block.
+    """
+    packet = validate_packet(json.dumps(packet).encode())
+    if packet["omissions"] or packet["links_truncated"]:
+        raise ValueError("incomplete_revision_snapshot")
+    with connection_factory() as conn:
+        if conn.autocommit or conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+            raise ValueError("dedicated_revision_transaction_required")
+        conn.execute("SET LOCAL statement_timeout = '3s'")
+        conn.execute("SET LOCAL idle_in_transaction_session_timeout = '5s'")
+        guarded = conn.execute("""SELECT EXISTS (
+            SELECT 1 FROM pg_constraint c
+            JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attname='event_id'
+            JOIN pg_attribute b ON b.attrelid=c.confrelid AND b.attname='id'
+            WHERE c.conrelid='event_articles'::regclass AND c.confrelid='events'::regclass
+              AND c.contype='f' AND c.convalidated AND NOT c.condeferrable
+              AND c.conkey=ARRAY[a.attnum] AND c.confkey=ARRAY[b.attnum])""").fetchone()[0]
+        if not guarded:
+            raise ValueError("revision_membership_constraint_required")
+        event = conn.execute("SELECT id FROM events WHERE id=%s FOR UPDATE NOWAIT",
+                             (packet["event"]["id"],)).fetchone()
+        if event is None:
+            raise ValueError("revision_event_unavailable")
+        links = conn.execute("""SELECT article_id FROM event_articles WHERE event_id=%s
+            ORDER BY article_id LIMIT %s FOR SHARE NOWAIT""",
+            (packet["event"]["id"], MAX_DOCUMENTS + 1)).fetchall()
+        if len(links) > MAX_DOCUMENTS:
+            raise ValueError("incomplete_revision_snapshot")
+        identities = [row[0] for row in links]
+        if identities != sorted(d["article_id"] for d in packet["documents"]):
+            raise ValueError("stale_revision_snapshot")
+        conn.execute("SELECT id FROM articles WHERE id=ANY(%s) ORDER BY id FOR SHARE NOWAIT",
+                     (identities,)).fetchall()
+
+        @contextmanager
+        def read_session():
+            with conn.cursor(row_factory=dict_row) as cursor:
+                yield cursor
+
+        current = snapshot(read_session, event_id=packet["event"]["id"], aliases=packet["aliases"],
+                           scopes=frozenset({READ_SCOPE, EVIDENCE_SCOPE}))
+        if source_version(current) != source_version(packet):
+            raise ValueError("stale_revision_snapshot")
+        yield conn

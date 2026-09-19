@@ -89,3 +89,27 @@ python3 -m pytest -q tests/offline
 The disposable container and its loopback tunnel were removed after testing. No
 production schema or data was changed. Rollback while disabled needs no data work;
 future enablement must retain immutable snapshots and turn admission off first.
+
+## Current-source transaction window (local, no promotion caller yet)
+
+`locked_current_snapshot` supplies the short transaction boundary for a future
+qualified pointer change. It rejects omitted/truncated packets and requires a
+fresh non-autocommit connection. It checks that the immediate, validated event
+foreign key exists, locks the event, existing memberships and source rows with
+NOWAIT, then recollects and compares the full evidence dataset. Only the event's
+bookkeeping timestamp is excluded; title, membership, text, URLs, feed dates and
+coverage remain part of the comparison. The production FK prerequisite was
+confirmed read-only; no production locks or writes were taken by this helper.
+
+NOWAIT conflicts must abort/defer the prospective promotion, not preempt ingestion
+or invoke automatic retries. Statement and idle-in-transaction timeouts are bounded.
+No network work, inference, or build is permitted inside the yielded block. A
+caller must still establish independent qualification and compare/update the
+expected publication predecessor in that same transaction. No such public caller
+or pointer is enabled yet. Merely entering this context is never approval.
+
+Nine disposable PostgreSQL tests now pass, including concurrent source-body edits,
+membership insert/delete attempts, stale-source rejection, harmless bookkeeping
+updates, missing-FK rejection and unsafe autocommit rejection. All 609 offline
+tests pass. The private persistence test also reran against the stricter receipt
+validator. Disposable container and tunnel were removed again after verification.

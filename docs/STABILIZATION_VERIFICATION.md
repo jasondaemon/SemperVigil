@@ -1701,3 +1701,25 @@ admission. Actual public revision qualification/promotion remains unimplemented.
 
 Final local offline run: 607 passed. Chart renders the new store flag as `"0"`.
 No JavaScript changes this slice; prior 21 JS results remain the current UI gate.
+
+## Current-source locking gate, September 19 10:30 UTC
+
+Local transaction helper rejects incomplete snapshots, unsafe autocommit and a
+missing/non-immediate/nonvalidated event-membership FK. Event FOR UPDATE plus
+membership/source FOR SHARE NOWAIT protect the snapshot while a future caller
+would compare/promote its qualified predecessor. Full data identity ignores only
+event updated_at bookkeeping, not source content or coverage. This is not yet a
+public promotion caller or approval policy.
+
+Nine real PostgreSQL tests passed: concurrent article updates and membership
+insert/deletion attempts time out while the window holds; changed content afterward
+fails snapshot comparison; report timestamp-only changes remain acceptable. The
+prior persistence and seven baseline PG tests reran successfully. 609 offline
+tests passed, including changed off-quote context and early truncation rejection.
+Disposable container removed and loopback tunnel stopped. No production schema,
+locks, model calls, image changes or public writes from this slice.
+
+Read-only production catalogue confirms both event_articles foreign keys exist.
+Receipt verification remains queued; normal CVE threat-actor work completed 166
+jobs since 10:00 and had 32 queued at the initial sample, so the observed delay is
+low-priority queue wait, not a stuck model. No priority adjustment or duplicate.

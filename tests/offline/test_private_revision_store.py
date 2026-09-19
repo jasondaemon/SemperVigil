@@ -4,7 +4,7 @@ import pytest
 
 from sempervigil import event_revision_store as store
 from test_private_revision import revision
-from test_event_review import database
+from test_event_review import database, get_packet, resign
 
 pytestmark = pytest.mark.offline
 
@@ -59,4 +59,26 @@ def test_rehashed_invalid_receipt_rejected_before_database(revision, field, valu
     with pytest.raises(ValueError):
         store.persist(connect, packet, json.dumps(receipt).encode(), descriptor,
                       artifact=html_path.name, html=html_path.read_bytes())
+    connect.assert_not_called()
+
+
+def test_source_version_ignores_only_event_bookkeeping(database):
+    packet = get_packet(database)
+    original = store.source_version(packet)
+    packet["event"]["updated_at"] = "2026-09-20"
+    resign(packet)
+    assert store.source_version(packet) == original
+    packet["documents"][0]["text"] += " New context outside selected quotations."
+    resign(packet)
+    assert store.source_version(packet) != original
+
+
+def test_incomplete_snapshot_refused_before_locks(database):
+    packet = get_packet(database)
+    packet["links_truncated"] = True
+    resign(packet)
+    connect = Mock(side_effect=AssertionError("must not connect"))
+    with pytest.raises(ValueError, match="incomplete_revision_snapshot"):
+        with store.locked_current_snapshot(connect, packet):
+            pytest.fail("incomplete snapshot yielded")
     connect.assert_not_called()
