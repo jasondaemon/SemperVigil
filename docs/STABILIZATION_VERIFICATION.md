@@ -1,9 +1,9 @@
 # Stabilization verification
 
-## September 19: Qwen 3.5 transport candidate
+## September 19: Qwen 3.5 production transport
 
 The 9.7B Qwen 3.5 Q4_K_M weights load completely on the RTX 3060 at 16K context,
-using about 8.5 GiB VRAM and leaving about 3.3 GiB free. A generic gateway probe
+using about 8.54 GiB VRAM and leaving about 3.75 GiB free. A generic gateway probe
 completed, then read-only tests exercised the seven active local stages against a
 current full article and CVE. Summary, context, threat-actor and event contracts
 were usable; article product extraction was production-parseable but included
@@ -15,15 +15,19 @@ native chat API with top-level `think=false` returned valid product JSON in 4.43
 Added an explicit native Ollama transport with deterministic non-thinking mode,
 JSON/schema mapping, profile-schema forwarding, token telemetry and private-review
 support. OpenAI and existing LiteLLM behavior are unchanged. Targeted
-router/event/private-review tests pass; the full offline suite passes 982 with two skips. No profile, prompt,
-article, CVE, event, feed or public-site data was changed. The worker remains at
-zero replicas until the candidate image is deployed and the full real-input suite
-passes through that image. The initial deployed candidate run passed six stages;
+router/event/private-review tests pass; the full offline suite passes 982 with two skips. The initial deployed candidate run passed six stages;
 article-product extraction exposed schema extras before profile-schema forwarding
 was added. A second run proved the original active prompt itself explicitly asks
-for forbidden confidence fields. Migration 037 removes only that contradictory
-instruction from the routed prompt. Cutover and rollback are model-reference transactions;
-do not alternate loaded models during qualification.
+for forbidden confidence fields in both prompt templates. Migrations 037 and 038
+align those templates with the existing two-field schema.
+
+The final deployed seven-stage suite passed: summary 12.97s, context 37.32s,
+article products 3.11s, article actors 1.44s, event derivation 3.84s, CVE products
+1.21s, and CVE actors 0.56s. Eighteen Qwen-backed profiles were switched atomically
+to Ollama native Qwen 3.5; zero still reference Qwen 2.5. The final
+`qwen3.5:9b-q4_K_M-16k` alias reuses the same weights and restores the intended
+16,384-token context. Two normal production jobs succeeded after cutover, and the
+worker remains serialized at one replica. Qwen 2.5 is retained only for rollback.
 
 ## September 19, 20:23 UTC: passage-bound private article trial
 

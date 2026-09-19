@@ -7,23 +7,29 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
-## September 19: Qwen 3.5 candidate qualification
+## September 19: Qwen 3.5 production cutover
 
 Qwen 3.5 9B Q4_K_M is downloaded on the existing RTX 3060 host and fits entirely
 in 12 GiB VRAM at a 16,384-token context. The first LiteLLM-routed trial exposed
 an adapter defect: LiteLLM 1.77.7 places `think=false` inside Ollama generation
 options, so Qwen returns hidden reasoning and can leave visible JSON empty. No
-production profile was switched. A source-controlled `ollama_native` transport now
+production profile was switched until qualification completed. A source-controlled
+`ollama_native` transport now
 sends top-level `think=false`, retains existing profile prompts and validation,
 and forwards every existing profile schema to Ollama's constrained-output field,
 including strict private-review schemas. A direct CVE probe returned valid JSON
-in 4.43 seconds. All 982 offline tests pass with two existing skips. The local LLM
-worker remains paused for candidate qualification; production cutover is pending
-deployed seven-stage validation and must be one atomic profile transaction.
-The deployed candidate suite passed six stages and exposed one pre-existing prompt
-contradiction: article-product extraction required confidence while its two-field
-schema forbade confidence. Migration 037 removes only that paragraph from the
-active prompt; the output schema and extraction meaning are unchanged.
+in 4.43 seconds. All 982 offline tests pass with two existing skips. The deployed
+seven-stage gate passed in 0.56 to 37.32 seconds. It exposed a pre-existing prompt
+contradiction: article-product extraction requested confidence, evidence, and notes
+while its two-field schema forbade them. Migrations 037 and 038 align both prompt
+templates without changing extraction meaning or the stored schema.
+
+Production now runs the `qwen3.5:9b-q4_K_M-16k` Ollama alias, which reuses the
+downloaded Qwen 3.5 weight layers and sets `num_ctx 16384`. Eighteen Qwen-backed
+profiles were changed in one transaction; zero profiles reference Qwen 2.5. The
+single local worker is restored. Normal summary and product jobs completed in 5.56
+and 1.09 seconds. Qwen 3.5 is the only resident model and uses about 8.54 GiB of
+12 GiB VRAM; Qwen 2.5 remains installed only for rollback.
 
 ## Current direction: strengthen and reuse article enrichment
 
