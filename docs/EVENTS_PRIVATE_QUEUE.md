@@ -1,10 +1,14 @@
 # Private Events jobs and admin visibility
 
-Status: LLM worker deployed at `ee91658`; admin follow-up at `32ad342`.
-**Admission remains disabled.** The API exposes 35 job types and rejects private
-requests with 503 while disabled. Live Jobs filters and all four dashboard groups
-were verified. Follow-ups correct a stale script cache version, serialize browser
-refreshes, and display counters before legacy slow backlog queries.
+Status: admin and LLM worker deployed at `0087db6`; chart wiring `205cf91`;
+platform configuration `1db6492`. **Authenticated operator-triggered private
+admission is enabled.** Autonomous admission and public publication are not.
+Pilot job `job_05152e7dd57246d48c01bb47ead61d93` targets Odido
+(`evt_69844df3a97f`, aliases `["Odido"]`). It was queued behind 113 ordinary CVE
+jobs at the last check; completion/download verification remains pending. Preserve
+its low priority and single-job runner policy rather than bypassing normal work.
+Live Event Detail shows the enabled private control; all 35 job types and four
+dashboard groups were verified in the preceding release.
 
 The dashboard's initial request now uses `include_backlog=false` to display the
 same job-status counters and type catalogue without waiting for content-wide Need
@@ -105,9 +109,9 @@ content or per-job detail retrieval is added to the dashboard.
 - User gave initial positive visual feedback on the private review pages. This
   does not validate their facts or the newly changed dashboard in a live browser.
 
-Next elevation: inspect/render the admin and LLM-worker deployment changes, drain
-affected runtime work safely, roll out with review admission **disabled**, and
-verify the dashboard/catalogue and existing job flow. Only then enable a bounded
-private-review request and verify the completed result/artifact. Keep the builder,
-web deployment, daily JSON, and unrelated infrastructure unchanged. Do not enable
-autonomous model review or publication as part of that rollout.
+Next check: observe the pilot result, verify the authenticated attachment matches
+the immutable worker artifact, and compare the event-row fingerprint to
+`92ce5376ad269aa1f073fafdc75f98d4` (before the pilot). Do not assume a changed row
+was caused by the pilot; investigate concurrent normal enrichment if it changes.
+Then advance the staged automated evidence/correlation/reporting plan. The private
+extractive pilot is not completion of the user's automated Events goal.

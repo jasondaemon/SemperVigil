@@ -808,3 +808,32 @@ attachment delivery with a sandbox policy. No client-supplied filesystem path.
 390 offline Python and 14 JS tests pass. Real production pilot is next; no public
 report or model-generation behavior changed. User requested continued overnight
 implementation; a bounded eight-run hourly continuation is configured.
+
+## Overnight pilot deployed (September 19 UTC)
+
+Runtime admin/LLM image `0087db6`, chart wiring `205cf91`, platform `1db6492`.
+Image manifest `sha256:a8c6547c4a80dfc8493be4d4261b4d0d5da5f0d543c37bc05e3b973afabccc75`
+imported on all four schedulable nodes. Render/diff showed four image substitutions
+plus two explicit shared environment keys (private admission 1 and private log
+subdirectory). Chart originally did not pass arbitrary env keys; explicit wiring
+and two rendering tests were added before applying. Total: 392 offline cases and
+14 JS cases. Prior six disposable PostgreSQL tests remain the queue integration
+baseline; not rerun for this UI/download slice.
+
+Scheduler stopped, fully terminated, and a finishing normal LLM launch drained
+before worker replacement. Admin/worker readiness passed; both confirmed enabled,
+private writable log root checked, scheduler restored. Web has no log-volume mount.
+Builder/web images, concurrency, models, public JSON and build behavior unchanged.
+Browser verified the enabled private control and explicit non-publication notice.
+
+Authenticated API admitted only `job_05152e7dd57246d48c01bb47ead61d93` for event
+`evt_69844df3a97f` with alias `Odido`. It is low-priority and was still queued behind
+113 CVE jobs at the last sample. Do not claim completed worker/artifact validation
+yet. Event row hash before and after admission: `92ce5376ad269aa1f073fafdc75f98d4`.
+Next overnight run must inspect this job before submitting anything else. No model
+call or report publication is performed by the private handler.
+
+Rollback: set private admission to 0 in platform values, render/apply ConfigMap,
+restart admin and safely drain/restart LLM worker to adopt it. Preserve artifacts
+and last good public output. Image rollback remains possible to admin `32ad342`
+and LLM `ee91658`; no schema rollback. Retain low-priority scheduling during pilot.
