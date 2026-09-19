@@ -28,6 +28,8 @@ def test_private_review_chart_configuration(enabled):
     assert data["SV_EVENT_REVIEW_PAIR_PROFILE_ID"] == ""
     assert data["SV_EVENT_DECONSTRUCTION_ENABLED"] == "0"
     assert data["SV_EVENT_DECONSTRUCTION_PROFILE_ID"] == ""
+    assert data["SV_EVENT_CLAIM_SUPPORT_ENABLED"] == "0"
+    assert data["SV_EVENT_CLAIM_SUPPORT_PROFILE_ID"] == ""
 
 
 @pytest.mark.skipif(not shutil.which("helm"), reason="Helm is not installed")

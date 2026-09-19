@@ -1,5 +1,6 @@
 """Source-bound, private claim audits. Model agreement is not publication authority."""
 import json
+import hashlib
 from html import escape
 from pathlib import Path
 
@@ -162,3 +163,28 @@ def render(result: dict, packet: dict, scope: dict, source: dict) -> str:
                       '<blockquote>' + escape(claim["quote"]) + '</blockquote>',
                       '<p>' + escape("; ".join(k + ": " + v for k, v in row["dimensions"].items())) + '</p>'])
     return '\n'.join(lines + ['</html>'])
+
+
+def save(packet, scope, article_id, source_key, complete, root):
+    if (type(source_key) is not str or len(source_key) != 64
+            or any(c not in "0123456789abcdef" for c in source_key)):
+        raise ValueError("invalid_support_source_key")
+    source = extraction._load(root / "deconstruction-cache", source_key + '.json')
+    if source is None or source.get("article_id") != article_id:
+        raise ValueError("support_source_unavailable")
+    request_for(packet, scope, source)
+    original = extraction.request_for(packet, scope, article_id)
+    if extraction._cache_name(original, source["generation_version"]) != source_key + '.json':
+        raise ValueError("support_source_key_mismatch")
+    result, hit = assess(packet, scope, source, complete, root)
+    page = render(result, packet, scope, source).encode()
+    folder = root / packet["packet_version"]
+    folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if folder.is_symlink():
+        raise ValueError("symlink_artifact_directory")
+    _immutable_write(folder / 'packet.json', json.dumps(packet, sort_keys=True, ensure_ascii=True).encode())
+    _immutable_write(folder / ('support-' + _version(result) + '.json'),
+                     json.dumps(result, sort_keys=True, ensure_ascii=True).encode())
+    path = folder / ('review-' + hashlib.sha256(page).hexdigest()[:16] + '.html')
+    _immutable_write(path, page)
+    return path, result, hit

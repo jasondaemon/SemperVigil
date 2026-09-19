@@ -336,6 +336,16 @@ def _call_provider(
 ) -> str:
     assessment_ids = (context or {}).get("event_assessment_ids")
     deconstruction_source = (context or {}).get("event_deconstruction_source")
+    support_ids = (context or {}).get("event_claim_support_ids")
+    if support_ids is not None:
+        if (type(support_ids) is not list or not 1 <= len(support_ids) <= 8
+                or support_ids != ["c" + str(i + 1) for i in range(len(support_ids))]
+                or assessment_ids is not None or deconstruction_source is not None
+                or provider_type != "openai_compatible" or not model_name.startswith("ollama/")
+                or (context or {}).get("stage") != "event_review_private"):
+            raise ValueError("unsupported_private_support_format")
+        from ..event_claim_support import response_format as support_format
+        assessment_format = support_format(support_ids)
     if deconstruction_source is not None:
         if (type(deconstruction_source) is not str or not 0 < len(deconstruction_source) <= 32000
                 or assessment_ids is not None or provider_type != "openai_compatible"
@@ -351,7 +361,7 @@ def _call_provider(
         from ..event_assessment import response_format
         assessment_format = response_format(assessment_ids)
     if provider_type == "openai_compatible":
-        if (assessment_ids is not None or deconstruction_source is not None) and _use_openai_background(provider, base_url, context):
+        if (assessment_ids is not None or deconstruction_source is not None or support_ids is not None) and _use_openai_background(provider, base_url, context):
             raise ValueError("unsupported_private_assessment_format")
         if _use_openai_background(provider, base_url, context):
             response = _call_openai_responses_background(
@@ -370,7 +380,7 @@ def _call_provider(
             "messages": messages,
             **_filter_params(params),
         }
-        if assessment_ids is not None or deconstruction_source is not None:
+        if assessment_ids is not None or deconstruction_source is not None or support_ids is not None:
             payload["response_format"] = assessment_format
         elif bool((context or {}).get("json_response_format_enabled")):
             payload["response_format"] = {"type": "json_object"}

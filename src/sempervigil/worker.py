@@ -7450,6 +7450,11 @@ def _private_review_completion(conn, job, logger):
     scoped = "scope" in (getattr(job, "payload", None) or {})
     paired = (getattr(job, "payload", None) or {}).get("paired", False)
     deconstruct = (getattr(job, "payload", None) or {}).get("deconstruct", False)
+    support = (getattr(job, "payload", None) or {}).get("audit_source") is not None
+    if support:
+        from .event_review_jobs import support_enabled
+        if not scoped or paired or deconstruct or not support_enabled():
+            raise PermissionError("private_support_disabled")
     if type(deconstruct) is not bool:
         raise ValueError("invalid_deconstruction_request")
     if deconstruct:
@@ -7475,7 +7480,8 @@ def _private_review_completion(conn, job, logger):
         return None
     from .event_assessment import SYSTEM_PROMPT, SCOPED_SYSTEM_PROMPT, MAX_INPUT_BYTES, PAIR_MAX_INPUT_BYTES, response_format
     from .services.ai_service import get_prompt
-    profile_key = ("SV_EVENT_DECONSTRUCTION_PROFILE_ID" if deconstruct else
+    profile_key = ("SV_EVENT_CLAIM_SUPPORT_PROFILE_ID" if support else
+                   "SV_EVENT_DECONSTRUCTION_PROFILE_ID" if deconstruct else
                    "SV_EVENT_REVIEW_PAIR_PROFILE_ID" if paired else
                    "SV_EVENT_REVIEW_SCOPE_PROFILE_ID" if scoped else "SV_EVENT_REVIEW_PROFILE_ID")
     profile_id = os.environ.get(profile_key, "")
@@ -7491,6 +7497,9 @@ def _private_review_completion(conn, job, logger):
         raise ValueError("private_review_requires_local_model")
     prompt = get_prompt(conn, profile.get("prompt_id")) or {}
     expected_prompt = SCOPED_SYSTEM_PROMPT if scoped else SYSTEM_PROMPT
+    if support:
+        from .event_claim_support import SYSTEM_PROMPT as SUPPORT_PROMPT
+        expected_prompt = SUPPORT_PROMPT
     if deconstruct:
         from .event_deconstruction import SYSTEM_PROMPT as DECONSTRUCTION_PROMPT
         expected_prompt = DECONSTRUCTION_PROMPT
@@ -7501,16 +7510,20 @@ def _private_review_completion(conn, job, logger):
     if (set(params) != {"max_tokens", "temperature", "max_input_chars"}
             or type(tokens) is not int or not 512 <= tokens <= 1536
             or params.get("temperature") != 0
-            or params.get("max_input_chars") != (PAIR_MAX_INPUT_BYTES if paired or deconstruct else MAX_INPUT_BYTES)
+            or params.get("max_input_chars") != (PAIR_MAX_INPUT_BYTES if paired or deconstruct or support else MAX_INPUT_BYTES)
             or (paired and tokens != 1024)):
         raise ValueError("private_review_profile_budget")
     provider = get_provider(conn, profile["primary_provider_id"]) or {}
     if not provider:
         raise ValueError("private_review_provider_required")
-    if (paired or deconstruct) and provider.get("type") != "openai_compatible":
+    if (paired or deconstruct or support) and provider.get("type") != "openai_compatible":
         raise ValueError("private_pair_requires_schema_transport")
     from .investigation import _version
     def completion(text):
+        if support:
+            if type(text) is not dict or text.get("system") != expected_prompt:
+                raise ValueError("private_support_request_mismatch")
+            text = text["input"]
         started = time.monotonic()
         output = None
         def record(error=None):
@@ -7531,6 +7544,8 @@ def _private_review_completion(conn, job, logger):
                 context["event_assessment_ids"] = ids
             if deconstruct:
                 context["event_deconstruction_source"] = json.loads(text)["source"]["text"]
+            if support:
+                context["event_claim_support_ids"] = json.loads(text)["required_ids"]
             output = run_profile(conn, profile_id, text, logger, context=context)
             current = _private_review_completion(conn, job, logger)
             if current is None or current.cache_identity != completion.cache_identity:
@@ -7562,6 +7577,10 @@ def _private_review_completion(conn, job, logger):
     if deconstruct:
         completion.cache_identity = _version({"generation": completion.cache_identity,
                                               "workflow": "event-constrained-deconstruction-v1"})
+    if support:
+        from .event_claim_support import response_format as support_format
+        completion.cache_identity = _version({"generation": completion.cache_identity,
+            "workflow": "event-claim-support-v1", "format": support_format(["c1"])})
     return completion
 
 

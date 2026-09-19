@@ -3248,6 +3248,7 @@ class EventPrivateReviewRequest(BaseModel):
     article_id: int | None = None
     paired: bool = False
     deconstruct: bool = False
+    audit_source: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     model_config = {"extra": "forbid", "strict": True}
 
 
@@ -3344,6 +3345,8 @@ def api_event_private_review(event_id: str, payload: EventPrivateReviewRequest) 
             options["paired"] = True
         if payload.deconstruct:
             options["deconstruct"] = True
+        if payload.audit_source is not None:
+            options["audit_source"] = payload.audit_source
         job_id = submit(_get_conn, event_id=event_id, aliases=payload.aliases, **options)
     except PermissionError as exc:
         raise HTTPException(status_code=503, detail="private_review_disabled") from exc

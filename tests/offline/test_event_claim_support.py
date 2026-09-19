@@ -1,6 +1,8 @@
 import copy
 import json
 from unittest.mock import Mock
+from types import SimpleNamespace
+import logging
 
 import pytest
 
@@ -8,6 +10,10 @@ from sempervigil import event_claim_support as support, event_deconstruction as 
 from test_event_review import database, get_packet, resign
 from test_event_scope import proposal
 from test_event_deconstruction import response
+from test_event_assessment import configured
+from sempervigil import event_review_jobs as jobs, worker, admin
+from sempervigil.services import ai_service
+from sempervigil.llm import router
 
 pytestmark = pytest.mark.offline
 
@@ -189,3 +195,71 @@ def test_audit_reject_takes_precedence_over_uncertainty(database):
     raw["audits"][0]["entailment"] = "unsupported"
     result = support.validate_response(json.dumps(raw).encode(), packet, scope, source)
     assert result["suggestions"][0]["decision"] == "reject"
+
+
+def test_queued_audit_uses_existing_worker_viewer_and_cache(database, monkeypatch, tmp_path):
+    packet, scope, source = setup(database)
+    root = tmp_path / 'private'
+    extract = Mock(return_value=response(packet))
+    extract.cache_identity = 'a' * 64
+    draft.save(packet, scope, 1, extract, root)
+    key = next((root / 'deconstruction-cache').glob('*.json')).stem
+    profile = configured(monkeypatch)
+    profile['params']['max_input_chars'] = 15000
+    for flag in ('SV_EVENT_REVIEW_ENABLED', 'SV_EVENT_REVIEW_SCOPE_ENABLED', 'SV_EVENT_CLAIM_SUPPORT_ENABLED'):
+        monkeypatch.setenv(flag, '1')
+    monkeypatch.setenv('SV_EVENT_CLAIM_SUPPORT_PROFILE_ID', 'support-profile')
+    monkeypatch.setenv('SV_EVENT_REVIEW_DIR', str(root))
+    monkeypatch.setenv('SV_LOG_DIR', str(tmp_path))
+    monkeypatch.setenv('SV_DB_URL', 'unused')
+    monkeypatch.setattr(ai_service, 'get_prompt', lambda *a: {
+        'system_template': support.SYSTEM_PROMPT, 'user_template': '{{input}}'})
+    model = Mock(return_value={'parsed': answer(), 'schema_valid': True})
+    monkeypatch.setattr(worker, 'run_profile', model)
+    monkeypatch.setattr(jobs, 'snapshot', lambda *a, **kw: packet)
+    monkeypatch.setattr(worker, '_log_job_claimed', lambda *a: None)
+    monkeypatch.setattr(worker, 'is_job_canceled', lambda *a: False)
+    def forbidden(*a, **kw): pytest.fail('audit must not publish')
+    for name in ('mark_build_dirty', 'update_event_report', '_handle_event_report_llm'):
+        monkeypatch.setattr(worker, name, forbidden)
+    payload = jobs.payload_for('event', ['Acme'], scope=scope, article_id=1, audit_source=key)
+    job = SimpleNamespace(id='support-job', job_type=jobs.JOB_TYPE, payload=payload)
+    result = worker.run_claimed_job(None, None, job, logging.getLogger('test'))
+    assert model.call_args.args[1] == 'support-profile'
+    assert model.call_args.kwargs['context']['event_claim_support_ids'] == ['c1']
+    job.status, job.result = 'succeeded', result
+    assert b'Private claim support audit' in jobs.read_artifact(job)
+    assert not result['public_eligible']
+    again = worker.run_claimed_job(None, None, job, logging.getLogger('test'))
+    assert again['model_cache_hit'] and again['artifact'] == result['artifact']
+    model.assert_called_once()
+    assert admin.EventPrivateReviewRequest(aliases=['Acme'], audit_source=key).audit_source == key
+
+
+def test_disabled_audit_admission_before_db(database, monkeypatch):
+    packet, scope, source = setup(database)
+    monkeypatch.setenv('SV_EVENT_REVIEW_ENABLED', '1')
+    monkeypatch.setenv('SV_EVENT_REVIEW_SCOPE_ENABLED', '1')
+    monkeypatch.delenv('SV_EVENT_CLAIM_SUPPORT_ENABLED', raising=False)
+    conn = Mock()
+    with pytest.raises(PermissionError, match='support_disabled'):
+        jobs.submit(conn, event_id='event', aliases=['Acme'], scope=scope, article_id=1, audit_source='a'*64)
+    conn.assert_not_called()
+
+
+@pytest.mark.parametrize('key', ['../x', '', 'a'*65, 12])
+def test_audit_rejects_non_digest_source(database, key):
+    packet, scope, source = setup(database)
+    with pytest.raises(ValueError):
+        jobs.payload_for('event', ['Acme'], scope=scope, article_id=1, audit_source=key)
+
+
+def test_audit_schema_local_private_only(monkeypatch):
+    call = Mock(return_value={'choices': [{'message': {'content': '{"audits":[]}'}}]})
+    monkeypatch.setattr(router, '_http_request', call)
+    context = {'stage': 'event_review_private', 'event_claim_support_ids': ['c1']}
+    router._call_provider('openai_compatible', 'http://localhost', None, 'ollama/test', [], {}, {}, context)
+    assert call.call_args.args[3]['response_format'] == support.response_format(['c1'])
+    for change in ({'stage': 'other'}, {'event_claim_support_ids': ['c1','c1']}, {'event_assessment_ids': ['p1']}):
+        with pytest.raises(ValueError, match='unsupported_private_support'):
+            router._call_provider('openai_compatible', 'http://localhost', None, 'ollama/test', [], {}, {}, {**context, **change})

@@ -1,0 +1,23 @@
+{
+  "event_id": "evt_0ffca0813049",
+  "purpose": "Pre-inference expectations from the September 19 private Vercel draft. Do not revise expectations to match model output.",
+  "cases": [
+    {"id":"8f38ca4c052917732d76266ff877f0af676dcc27365728e5faa085b72a9edb22","expected":"model_supported","reason":"Integration access statement is supported by its quotation."},
+    {"id":"ff25c6063c864a05c215dea63e809242efa997dab854bc5576d6163eb0835b6f","expected":"model_supported","reason":"Quoted source explicitly identifies initial OAuth access."},
+    {"id":"6b8d1c4fb8f32a260edf7923116f533f577d00ec7bce3741f5f8dd2b710ee968","expected":"model_supported","reason":"Limited customer credential exposure is directly quoted."},
+    {"id":"a2fec3388a5b1e0eab9285fd9e6d1b3638c879e1d5e3456a6790c25a6c800074","expected":"reject","reason":"Sensitive and unprotected secrets are not interchangeable in this incident."},
+    {"id":"3e98689a0c7be3de96c4a8e415e7b1a87ae98fe5689a4c5feaa62aa4e23cc051","expected":"reject","reason":"Mandiant collaboration quotation does not support attacker sophistication."},
+    {"id":"f986fd92a21ccca6899ea14e2d096d25d3d9beb44db84e229ec6f65e4bc31715","expected":"reject","reason":"Selected quotation does not establish the actor's claimed identity."},
+    {"id":"60cb89c2a79e9fb1ccc6460e234fc1d9aaa48d8ffae1bb9100c2ddf740731071","expected":"reject","reason":"Customer credential exposure quotation does not establish initial compromise."},
+    {"id":"847dd38e25e3e875de74622cc3454bec8c725275555e502a6b8904bf8ddd946d","expected":"reject","reason":"Customer exposure quotation does not establish Workspace attack path."},
+    {"id":"984232d76ce242c2be82789b7bc0cca08c50378acf8929515e95d5f574f518f6","expected":"reject","reason":"Customer exposure quotation does not establish environment access or sensitivity."},
+    {"id":"fcd3117ec8ed3184ff9b5ba4be2c2459109d65d3d5c099afddc5e6b560c5d749","expected":"model_supported","reason":"Reset instructions directly match quoted source."},
+    {"id":"0d96a7c175d38856e298397124a507e4e9aebc4687b91d49da8d120421a25d47","expected":"model_supported","reason":"Continuously updated security notice directly matches quoted source."},
+    {"id":"6550fb947d79b990a996c793fcc059ca9965b4a8e092b3985a21e685145f19d2","expected":"reject","reason":"A moniker does not establish the actor as the actual group."},
+    {"id":"6aa5bb1964b9f25625e12f0bea23e23325ce9a74607d2354b956d86cf4d8f81d","expected":"reject","reason":"Selected access quotation does not identify the third-party tool or its compromise."},
+    {"id":"3ca374a6bc7eca6c44df190a1a4c9b04fa6d73fbbc351fa52dfa7afbd841ed0f","expected":"reject","reason":"Security incident announcement does not support encryption or lack of compromise."},
+    {"id":"59fa5cd21baf1726bdbceafdde7d585811ed0ef0c0fb1909f8dfe8defeca6d7a","expected":"reject","reason":"Account access quotation does not establish Mandiant involvement."},
+    {"id":"b13499c1ea732c0e6b4325865966607ab588cad54ee246f5dcfde3b798b322dc","expected":"reject","reason":"Checking OAuth app usage does not establish token rotation advice."},
+    {"id":"cfe78ba75431599f9ed3120a12dc7ece754fb6a2b50eb2aa95bad7c839cdac9c","expected":"reject","reason":"Claim of responsibility quotation does not support likely-imposter conclusion."}
+  ]
+}

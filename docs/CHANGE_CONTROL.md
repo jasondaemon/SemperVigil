@@ -1,5 +1,15 @@
 # Change Control Log
 
+## 2026-09-19: Private support queue integration
+
+- Add explicit `audit_source` digest admission to existing private-review jobs,
+  separate disabled flag/profile and pinned local schema transport. Load only an
+  existing source-bound extraction; never silently extract or publish.
+- Existing Jobs artifact viewer and LLM telemetry are reused. No new worker lane,
+  model, concurrency, build, schema, public content or automatic scheduling change.
+- 856 offline tests pass, one Linux-only skip. Freeze 17 actual-pilot expectations
+  before real inference. Rollout and measured outcomes pending at this commit.
+
 ## 2026-09-19: Local private claim-support audit contract
 
 - Added a full-source, bounded audit of incident, entailment, attribution,
