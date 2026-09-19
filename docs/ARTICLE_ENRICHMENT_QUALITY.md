@@ -4,6 +4,52 @@ September 19, 2026. Local hardening implemented and tested; NOT deployed.
 This corrects the Events architecture reset: reuse existing article enrichment,
 not routine re-extraction of each article for each event.
 
+## Versioned private contract: implemented locally
+
+`article_evidence.py` now defines the candidate v2 context and summary contracts.
+It has no runtime caller, provider call, database write or public export path.
+Its `preview` returns a private comparison with the existing `summary` string and
+`summary_bullets` string-array shape; it does not replace an article record.
+
+- Require unabridged stored content rather than silently falling back to a title
+  or feed excerpt. This does not assert that the original scrape was complete.
+- Bound prompt + serialized input + schema together to 15KB, with no truncation.
+  Quotes are generated before statements and must resolve uniquely to the source.
+  No duplicated whole-article quote enum, regex or conditional model grammar.
+- At most eight atomic facts retain exact evidence offsets and a source-version
+  identity, reported-fact/allegation/recommendation role, literal attribution and
+  uncertainty spans, and literal date wording with an explicit date role.
+- Unknown dates remain absent. Relative dates remain literal; publication
+  metadata cannot silently supply an incident date or missing year.
+- The summary request consumes those facts, quotations and uncertainties. Every
+  sentence and bullet must reference existing fact IDs. Empty facts abstain before
+  summary generation. No source facts means no fabricated briefing.
+- Source edits, altered receipts and mismatched offsets fail validation; timestamp
+  churn does not change source identity. A supplied generation fingerprint binds
+  each request; the eventual worker must derive it from pinned real configuration.
+
+26 targeted offline tests pass; the full offline suite passes 969 tests with one
+skip. Integration tests were not collected. These test contracts, not actual model quality.
+An explicit false-statement fixture still passes structural citation checks and
+remains `unreviewed` / `public_eligible: false`: reference integrity must never be
+presented as semantic verification. No model/profile change or new model calls.
+
+### Safe canary boundary (still pending)
+
+The current article job handlers write immediately, and the admin profile-test
+endpoint invokes inference synchronously. Neither is a safe canary path. Do not
+use a test profile on live article jobs or bypass the shared single-job queue.
+A default-disabled, distinct queued preview operation must return private job
+results only and explicitly reject attempts to write articles/events/build state.
+Older workers must not interpret the operation as ordinary article summarization.
+
+Before deploying that operation, isolate the previous strict-validation changes
+from normal live jobs: this source branch is NOT currently a safe drop-in worker
+upgrade while the measured context failure rate remains high. Compare rendered
+deployment changes and test legacy behavior preservation before any rollout.
+The actual fixed-cohort model evaluation and factual acceptance remain undone;
+the 14-attempt experiment budget has not been spent by this contract-only slice.
+
 ## Inspected production behavior
 
 - Article Summary has no configured schema, no profile parameter overrides and

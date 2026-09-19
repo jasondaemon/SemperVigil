@@ -1,5 +1,19 @@
 # Change Control Log
 
+## 2026-09-19: Private versioned article evidence contract
+
+- Pure context/summary request and validation functions retain exact provenance,
+  assertion/date roles and fact-linked prose. Private preview preserves feed field
+  types; no runtime caller, schema migration, inference, profile or public writes.
+- 26 targeted tests cover bounds, missing/ambiguous citations, altered evidence,
+  unknown references, dates, abstention and the distinction between provenance
+  and semantic correctness. Real model canary is pending safe queued admission.
+- Do not deploy earlier strict validation into normal article jobs merely to run
+  a canary. Current synchronous admin profile tests are not the shared queue.
+- Rollback: remove this unreferenced module/tests; production is unchanged.
+- Full offline regression suite: 969 passed, one skipped; integration tests were
+  not collected. Whitespace diff checks pass.
+
 ## 2026-09-19: Shared article enrichment validation, local only
 
 - Inspected live summary/context profiles and newest 100 paired stored outputs.

@@ -9,6 +9,16 @@
 
 ## Current direction: strengthen and reuse article enrichment
 
+Latest local slice: `article_evidence.py` supplies candidate v2 context/summary
+contracts with source spans, attribution/uncertainty/date roles and fact-linked
+summary sentences. Pure private preview only; no runtime caller or model calls.
+26 targeted tests and 969 total offline tests pass, with one skip; integration
+tests were not collected. Real canary requires isolated queued preview admission;
+do not use synchronous admin profile tests or live writing article jobs. Do not
+deploy this branch wholesale: previous strict-validation changes must remain off
+the normal pipeline until generation acceptance is demonstrated. See the safe
+canary boundary in ARTICLE_ENRICHMENT_QUALITY.md.
+
 See `ARTICLE_ENRICHMENT_QUALITY.md`. Article context already supplies facts and
 timelines; do not add routine per-event extraction. Read-only latest-100 sampling
 found 39 context records failing the live schema, while 100 summary records passed
