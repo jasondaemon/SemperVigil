@@ -223,11 +223,13 @@ def test_compilation_coverage_and_timestamp_stability(database):
     scope = proposal(packet)
     first = source_result(packet, scope, 1)
     packet["documents"].extend([{**packet["documents"][0], "article_id": 2},
-                                {**packet["documents"][0], "article_id": 3, "text": "x" * 16000}])
+                                {**packet["documents"][0], "article_id": 3, "text": "x" * 16000},
+                                {**packet["documents"][0], "article_id": 4, "text": "x" * 601}])
     resign(packet)
     report = draft.compile_report(packet, scope, [first], "a" * 64)
     assert report["coverage"]["pending"] == [2]
     assert report["coverage"]["over_budget"] == [3]
+    assert report["coverage"]["unextractable"] == [4]
     packet["event"]["updated_at"] = "2026-09-20"
     resign(packet)
     assert draft.compile_report(packet, scope, [first], "a" * 64) == report

@@ -146,6 +146,7 @@ def render(result: dict) -> str:
         lines.append('<p>Current source drafts: ' + str(len(coverage["included"]))
                      + '. Sources awaiting extraction: ' + str(len(coverage["pending"]))
                      + '. Over budget: ' + str(len(coverage["over_budget"]))
+                     + '. No bounded quotations: ' + str(len(coverage["unextractable"]))
                      + '. Unavailable sources: ' + str(coverage["omitted"])
                      + '. Source list truncated: ' + str(coverage["links_truncated"]) + '.</p>')
         lines.append('<p>This is a structured compilation, not yet a synthesized or '
@@ -226,22 +227,26 @@ def compile_report(packet: dict, scope: dict, results: list[dict], generation: s
         canonical = validate_result(result, packet, scope, article_id, generation)
         included.add(article_id)
         claims.extend(canonical["claims"])
-    pending, over_budget = [], []
+    pending, over_budget, unextractable = [], [], []
     for doc in packet["documents"]:
         if doc["article_id"] in included:
             continue
         try:
             request_for(packet, scope, doc["article_id"])
         except ValueError as exc:
-            if str(exc) != "deconstruction_source_over_budget":
+            if str(exc) == "deconstruction_no_bounded_quotes":
+                unextractable.append(doc["article_id"])
+            elif str(exc) == "deconstruction_source_over_budget":
+                over_budget.append(doc["article_id"])
+            else:
                 raise
-            over_budget.append(doc["article_id"])
         else:
             pending.append(doc["article_id"])
     report = {"workflow": "event-deconstruction-compilation-v1", "event_id": packet["event"]["id"],
               "scope_version": scope["scope_version"], "generation_version": generation,
               "claims": sorted(claims, key=lambda row: (row["article_id"], row["id"])),
               "coverage": {"included": sorted(included), "pending": sorted(pending),
+                           "unextractable": sorted(unextractable),
                            "over_budget": sorted(over_budget), "omitted": len(packet["omissions"]),
                            "links_truncated": packet["links_truncated"]},
               "public_eligible": False, "status": "unreviewed"}
@@ -286,7 +291,7 @@ def save(packet: dict, scope: dict, article_id: int, complete, root: Path) -> tu
         try:
             other_request = request_for(packet, scope, doc["article_id"])
         except ValueError as exc:
-            if str(exc) != "deconstruction_source_over_budget":
+            if str(exc) not in {"deconstruction_source_over_budget", "deconstruction_no_bounded_quotes"}:
                 raise
             continue
         other = _load(cache, _cache_name(other_request, generation))
