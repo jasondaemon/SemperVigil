@@ -76,7 +76,7 @@ def complete(conn, job_id: str, req: dict) -> str:
     messages = [{"role": "system", "content": composition.SYSTEM_PROMPT},
                 {"role": "user", "content": req["input"]}]
     response_format = {"type": "json_schema", "json_schema": {
-        "name": "event_ledger_composition", "strict": True, "schema": composition.schema()}}
+        "name": "event_ledger_composition", "strict": True, "schema": req["schema"]}}
     started, raw, error = time.monotonic(), "", None
     try:
         context = {"stage": JOB_TYPE, "job_id": job_id}
@@ -120,14 +120,15 @@ def run(conn, job, *, generate=None) -> dict:
               "attempts": 1, "status": "started", "public_eligible": False}
     if not update_job_result(conn, job.id, result):
         raise ValueError("event_composition_job_not_running")
-    raw = (generate or (lambda request: complete(conn, job.id, request)))({
-        "generation": payload["generation"], "input": req["input"]})
+    raw = (generate or (lambda request: complete(conn, job.id, request)))(req)
+    result.update(raw=raw[:composition.MAX_OUTPUT_BYTES], output_chars=len(raw))
+    if not update_job_result(conn, job.id, result):
+        raise ValueError("event_composition_job_not_running")
     current = ledger_revision(conn, payload["ledger_revision_id"])
     if current["revision_id"] != ledger["revision_id"] or not current["lineage_current"]:
         raise ValueError("event_composition_baseline_changed")
     record = composition.validate(raw.encode(), current, payload["generation"])
-    result.update(status="review_required", composition_id=composition.store_unreviewed(conn, record),
-                  output_chars=len(raw))
+    result.update(status="review_required", composition_id=composition.store_unreviewed(conn, record))
     if not update_job_result(conn, job.id, result):
         raise ValueError("event_composition_job_not_running")
     return result

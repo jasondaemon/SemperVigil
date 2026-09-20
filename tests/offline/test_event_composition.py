@@ -33,18 +33,20 @@ def ledger_revision():
 
 
 def valid_output():
-    return {"overview": [{"text": "Acme reported unauthorized access.", "fact_ids": ["f1"]}],
-            "attack_vector": [], "attack_path": [],
-            "timeline": [{"text": "Acme reported unauthorized access.",
-                          "fact_ids": ["f1"], "date_text": "July 4"}],
-            "impact": [], "response_recovery": [], "mitigations": [], "attribution": [],
-            "open_questions": [{"text": "Recovery is not yet confirmed.", "fact_ids": ["f2"]}]}
+    return {"items": [
+        {"section": "overview", "text": "Acme reported unauthorized access.",
+         "fact_refs": ["F01"], "date_text": ""},
+        {"section": "timeline", "text": "Acme reported unauthorized access.",
+         "fact_refs": ["F01"], "date_text": "July 4"},
+        {"section": "open_questions", "text": "Recovery is not yet confirmed.",
+         "fact_refs": ["F02"], "date_text": ""},
+    ]}
 
 
 def test_request_uses_only_active_exact_evidence_and_remains_private():
     req = composition.request(ledger_revision(), GENERATION)
     payload = json.loads(req["input"])
-    assert [fact["fact_id"] for fact in payload["facts"]] == ["f1", "f2"]
+    assert [fact["ref"] for fact in payload["facts"]] == ["F01", "F02"]
     assert payload["excluded_fact_ids"] == ["f3"]
     record = composition.validate(json.dumps(valid_output()).encode(), ledger_revision(), GENERATION)
     assert record["public_eligible"] is False and record["status"] == "unreviewed"
@@ -53,15 +55,15 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
 
 def test_validation_rejects_unknown_or_inferred_evidence():
     output = valid_output()
-    output["overview"][0]["fact_ids"] = ["unknown"]
-    with pytest.raises(ValueError, match="unknown_fact"):
+    output["items"][0]["fact_refs"] = ["unknown"]
+    with pytest.raises(ValueError, match="invalid_shape"):
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
     output = valid_output()
-    output["timeline"][0]["date_text"] = "July 5"
+    output["items"][1]["date_text"] = "July 5"
     with pytest.raises(ValueError, match="inferred_date"):
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
     output = valid_output()
-    output["open_questions"][0]["fact_ids"] = ["f1"]
+    output["items"][2]["fact_refs"] = ["F01"]
     with pytest.raises(ValueError, match="open_question_not_supported"):
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
 
@@ -106,6 +108,7 @@ def test_job_is_one_attempt_private_and_review_gated(harness):
     assert len(calls) == 1 and result["status"] == "review_required"
     assert result["public_eligible"] is False and result["attempts"] == 1
     assert result["composition_id"].startswith("elc_")
+    assert json.loads(result["raw"])["items"][0]["fact_refs"] == ["F01"]
 
 
 @pytest.mark.parametrize("change", [{"attempt_count": 1}, {"max_attempts": 2},

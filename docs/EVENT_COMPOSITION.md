@@ -22,7 +22,11 @@ dirty, invoke Hugo, or authorize publication.
 ## Evidence contract
 
 The model receives only active ledger facts and their retained exact passages.
-Every narrative item must cite one or more active fact IDs. The validator rejects:
+To keep the local model's structured task small, each request assigns stable
+request-local aliases (`F01`, `F02`, and so on); code maps those aliases back to
+immutable fact IDs before storage. The response is one flat list of atomic items,
+which code groups into sections only after validation. Every narrative item must
+cite one or more active aliases. The validator rejects:
 
 - unknown, superseded, or conflicting fact references;
 - timeline dates not explicitly present on a cited fact;

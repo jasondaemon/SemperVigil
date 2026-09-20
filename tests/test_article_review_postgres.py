@@ -103,9 +103,8 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
         assert listed['ledger']['facts'][0]['exact_passages'][0]['text'] == article['content_text']
         assert listed['ledger']['public_eligible'] is False
         active_fact = listed['ledger']['facts'][0]
-        output = {section: [] for section in event_composition.SECTIONS}
-        output['overview'] = [{'text': active_fact['statement'],
-                               'fact_ids': [active_fact['fact_id']]}]
+        output = {'items': [{'section': 'overview', 'text': active_fact['statement'],
+                             'fact_refs': ['F01'], 'date_text': ''}]}
         record = event_composition.validate(
             json.dumps(output).encode(), listed, '9' * 64)
         composition_id = event_composition.store_unreviewed(conn, record)

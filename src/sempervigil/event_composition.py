@@ -7,7 +7,7 @@ from .event_review import _json
 from .investigation import _version
 from .utils import utc_now_iso
 
-WORKFLOW = "event-ledger-composition-v1"
+WORKFLOW = "event-ledger-composition-v2"
 MAX_INPUT_BYTES = 48000
 MAX_OUTPUT_BYTES = 24000
 SECTIONS = (
@@ -23,36 +23,44 @@ difference between reported actions and recommendations. Never convert advice
 into actions already taken. Never infer incident dates, actors, impact, recovery,
 causation, or technical steps. Omit a section when the facts do not support it.
 
-Write a coherent incident overview, followed where supported by initial access or
-attack vector, attack path, dated timeline, impact, response/recovery, mitigations,
-attribution, and unresolved questions. A timeline item requires explicit date_text
-from a cited fact. Open questions may cite only supplied allegation or uncertainty
-facts. Do not mention excluded superseded or conflicting facts. Do not write a
-change summary; code attaches the deterministic ledger change.
+Return atomic narrative items. Each item has one section, concise text, one or more
+supplied F-number fact_refs, and date_text. Use date_text only for timeline items,
+copying it exactly from a cited fact; otherwise use an empty string. Valid sections
+are overview, attack_vector, attack_path, timeline, impact, response_recovery,
+mitigations, attribution, and open_questions. Include at least one overview item.
+Open questions may cite only supplied allegation or uncertainty facts. Do not
+mention excluded superseded or conflicting facts. Do not write a change summary;
+code attaches the deterministic ledger change.
 
 Return exactly one JSON object matching the supplied schema and nothing else."""
 
 
-def _item_schema(*, timeline: bool = False) -> dict:
+def _item_schema(fact_refs: list[str] | None = None) -> dict:
+    ref_schema = ({"type": "string", "enum": fact_refs} if fact_refs
+                  else {"type": "string", "pattern": "^F[0-9]{2}$"})
     properties = {
+        "section": {"type": "string", "enum": list(SECTIONS)},
         "text": {"type": "string", "minLength": 1, "maxLength": 900},
-        "fact_ids": {"type": "array", "minItems": 1, "maxItems": 10,
-                     "uniqueItems": True, "items": {"type": "string"}},
+        "fact_refs": {"type": "array", "minItems": 1, "maxItems": 10,
+                      "uniqueItems": True, "items": ref_schema},
+        "date_text": {"type": "string", "maxLength": 100},
     }
-    if timeline:
-        properties["date_text"] = {"type": "string", "minLength": 1, "maxLength": 100}
     return {"type": "object", "additionalProperties": False,
             "required": list(properties), "properties": properties}
 
 
-def schema() -> dict:
-    properties = {}
-    for section in SECTIONS:
-        properties[section] = {"type": "array", "maxItems": 8,
-                               "items": _item_schema(timeline=section == "timeline")}
-    properties["overview"]["minItems"] = 1
+def schema(fact_refs: list[str] | None = None) -> dict:
     return {"type": "object", "additionalProperties": False,
-            "required": list(SECTIONS), "properties": properties}
+            "required": ["items"], "properties": {
+                "items": {"type": "array", "minItems": 1, "maxItems": 48,
+                          "items": _item_schema(fact_refs)}}}
+
+
+def _active_facts(ledger: dict) -> tuple[list[dict], dict[str, dict]]:
+    excluded = set(ledger.get("superseded_fact_ids", [])) | set(ledger.get("conflict_fact_ids", []))
+    active = [fact for fact in ledger.get("facts", []) if fact.get("fact_id") not in excluded]
+    aliases = {f"F{index:02d}": fact for index, fact in enumerate(active, 1)}
+    return active, aliases
 
 
 def request(ledger_revision: dict, generation: str) -> dict:
@@ -64,13 +72,10 @@ def request(ledger_revision: dict, generation: str) -> dict:
             or not isinstance(ledger, dict) or ledger.get("public_eligible") is not False):
         raise ValueError("event_composition_ledger_not_current")
     excluded = set(ledger.get("superseded_fact_ids", [])) | set(ledger.get("conflict_fact_ids", []))
-    facts = []
-    for fact in ledger.get("facts", []):
-        if fact.get("fact_id") in excluded:
-            continue
-        facts.append({key: fact[key] for key in (
-            "fact_id", "statement", "kind", "date_text", "date_role", "exact_passages"
-        )})
+    _, aliases = _active_facts(ledger)
+    facts = [{"ref": ref, **{key: fact[key] for key in (
+        "statement", "kind", "date_text", "date_role", "exact_passages")}}
+        for ref, fact in aliases.items()]
     if not facts:
         raise ValueError("event_composition_no_active_facts")
     payload = {
@@ -80,12 +85,13 @@ def request(ledger_revision: dict, generation: str) -> dict:
         "title": ledger["title"], "kind": ledger["kind"], "facts": facts,
         "excluded_fact_ids": sorted(excluded),
     }
+    response_schema = schema(list(aliases))
     encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
-    if len((SYSTEM_PROMPT + encoded + json.dumps(schema())).encode()) > MAX_INPUT_BYTES:
+    if len((SYSTEM_PROMPT + encoded + json.dumps(response_schema)).encode()) > MAX_INPUT_BYTES:
         raise ValueError("event_composition_input_over_budget")
     identity = {"workflow": WORKFLOW, "ledger_revision_id": ledger_revision["revision_id"],
                 "generation": generation, "system": SYSTEM_PROMPT, "input": encoded,
-                "schema": schema()}
+                "schema": response_schema}
     return {**identity, "request_version": _version(identity)}
 
 
@@ -93,28 +99,39 @@ def validate(raw: bytes, ledger_revision: dict, generation: str) -> dict:
     req = request(ledger_revision, generation)
     value = _json(raw, MAX_OUTPUT_BYTES)
     try:
-        jsonschema.validate(value, schema())
+        jsonschema.validate(value, req["schema"])
     except jsonschema.ValidationError as exc:
         raise ValueError("event_composition_invalid_shape") from exc
-    ledger = ledger_revision["ledger"]
-    excluded = set(ledger.get("superseded_fact_ids", [])) | set(ledger.get("conflict_fact_ids", []))
-    active = {fact["fact_id"]: fact for fact in ledger["facts"] if fact["fact_id"] not in excluded}
-    for section in SECTIONS:
-        for item in value[section]:
-            ids = item["fact_ids"]
-            if not item["text"].strip() or not set(ids) <= set(active):
-                raise ValueError("event_composition_unknown_fact")
-            if section == "timeline" and not any(
-                    active[fact_id].get("date_text") == item["date_text"] for fact_id in ids):
+    _, aliases = _active_facts(ledger_revision["ledger"])
+    sections = {section: [] for section in SECTIONS}
+    seen = set()
+    for item in value["items"]:
+        facts = [aliases[ref] for ref in item["fact_refs"]]
+        section, date_text = item["section"], item["date_text"]
+        if section == "timeline":
+            if not date_text or not any(fact.get("date_text") == date_text for fact in facts):
                 raise ValueError("event_composition_inferred_date")
-            if section == "open_questions" and any(
-                    active[fact_id].get("kind") not in {"allegation", "uncertainty"} for fact_id in ids):
-                raise ValueError("event_composition_open_question_not_supported")
+        elif date_text:
+            raise ValueError("event_composition_date_outside_timeline")
+        if section == "open_questions" and any(
+                fact.get("kind") not in {"allegation", "uncertainty"} for fact in facts):
+            raise ValueError("event_composition_open_question_not_supported")
+        ids = [fact["fact_id"] for fact in facts]
+        signature = (section, item["text"].strip(), tuple(ids), date_text)
+        if signature in seen or len(sections[section]) >= 8:
+            raise ValueError("event_composition_duplicate_or_excess_section")
+        seen.add(signature)
+        output = {"text": item["text"].strip(), "fact_ids": ids}
+        if section == "timeline":
+            output["date_text"] = date_text
+        sections[section].append(output)
+    if not sections["overview"]:
+        raise ValueError("event_composition_overview_required")
     return {
         "workflow": WORKFLOW, "ledger_id": ledger_revision["ledger_id"],
         "ledger_revision_id": ledger_revision["revision_id"],
         "generation_version": generation, "request_version": req["request_version"],
-        "sections": value, "change": ledger_revision["change"],
+        "sections": sections, "change": ledger_revision["change"],
         "status": "unreviewed", "public_eligible": False,
     }
 
