@@ -60,6 +60,7 @@ def test_legacy_retirement_only_accepts_unpublished_candidates():
         "site_slug": None,
     }
     assert _eligible(state)
+    assert _eligible({**state, "lifecycle": "archived"})
     assert not _eligible({**state, "publish_state": "published"})
     assert not _eligible({**state, "visibility": "suppressed"})
     assert not _eligible({**state, "candidate": False})

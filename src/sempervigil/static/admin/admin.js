@@ -4970,7 +4970,7 @@ function wireEvents() {
   async function loadRetirementRuns() {
     if (!retirementStatus) return;
     try {
-      const data = await apiFetch("/admin/api/events/legacy-retirement");
+      const data = await apiFetch("/admin/api/event-maintenance/legacy-retirement");
       renderRetirementRun((data.items || [])[0] || null);
     } catch (err) {
       retirementStatus.textContent = err.message || String(err);

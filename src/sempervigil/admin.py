@@ -3858,7 +3858,7 @@ class LegacyEventRetirementRequest(BaseModel):
 
 
 @app.get(
-    "/admin/api/events/legacy-retirement",
+    "/admin/api/event-maintenance/legacy-retirement",
     dependencies=[Depends(_require_admin_token)],
 )
 def api_legacy_event_retirement_runs() -> dict[str, object]:

@@ -8,7 +8,7 @@ from typing import Any
 from .utils import json_dumps, utc_now_iso
 
 
-POLICY_VERSION = "legacy-draft-candidates-v1"
+POLICY_VERSION = "legacy-unpublished-drafts-v2"
 _STATE_FIELDS = (
     "visibility",
     "lifecycle",
@@ -43,7 +43,7 @@ def _row_state(row: tuple[object, ...]) -> dict[str, object]:
 def _eligible(state: dict[str, object]) -> bool:
     return (
         str(state.get("visibility") or "active") == "active"
-        and str(state.get("lifecycle") or "candidate") == "candidate"
+        and str(state.get("lifecycle") or "candidate") in {"candidate", "archived"}
         and str(state.get("publish_state") or "draft") == "draft"
         and bool(state.get("candidate"))
         and not state.get("published_at")
@@ -54,7 +54,7 @@ def _eligible(state: dict[str, object]) -> bool:
 def create_preview(conn: Any, *, requested_by: str = "admin") -> dict[str, object]:
     exclusions = [
         "COALESCE(e.visibility, 'active') = 'active'",
-        "COALESCE(e.lifecycle, 'candidate') = 'candidate'",
+        "COALESCE(e.lifecycle, 'candidate') IN ('candidate', 'archived')",
         "COALESCE(e.publish_state, 'draft') = 'draft'",
         "COALESCE(e.candidate, false) = true",
         "COALESCE(e.manual, 0) = 0",
