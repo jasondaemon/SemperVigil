@@ -21,7 +21,8 @@ def _source(conn, candidate_id: str) -> dict:
     row = conn.execute(
         """
         SELECT c.candidate_id, c.article_id, c.status, c.kind, c.title,
-               c.signals_json, r.revision_id, r.status, r.evidence_json
+               c.signals_json, r.revision_id, r.status, r.evidence_json,
+               c.selected_fact_ids_json
         FROM incident_candidates c
         JOIN article_evidence_revisions r ON r.revision_id=c.evidence_revision_id
         WHERE c.candidate_id=%s
@@ -40,6 +41,11 @@ def _source(conn, candidate_id: str) -> dict:
     facts = evidence.get("facts")
     if not isinstance(facts, list) or not facts:
         raise ValueError("event_ledger_evidence_shape_invalid")
+    if row[9]:
+        selected = set(json.loads(row[9]))
+        facts = [fact for fact in facts if fact.get("id") in selected]
+        if not facts or {fact.get("id") for fact in facts} != selected:
+            raise ValueError("event_ledger_fact_selection_invalid")
     return {
         "candidate_id": row[0], "article_id": row[1], "kind": row[3], "title": row[4],
         "signals": _decode(row[5]), "evidence_revision_id": row[6], "facts": facts,

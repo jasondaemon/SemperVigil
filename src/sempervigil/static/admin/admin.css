@@ -1184,3 +1184,28 @@ th, td {
   border-radius: 6px;
   background: #ffffff;
 }
+
+.review-facts {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid #dbe2ea;
+  border-radius: 8px;
+}
+
+.review-facts summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.review-fact {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: start;
+  padding: 8px 0;
+  border-top: 1px solid #edf0f4;
+}
+
+.review-fact input {
+  margin-top: 4px;
+}

@@ -508,6 +508,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_event_reassessment_046")
             applied.add("pg_event_reassessment_046")
+        if "pg_incident_candidate_fact_selection_047" not in applied:
+            _migrate_incident_candidate_fact_selection(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_incident_candidate_fact_selection_047", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_incident_candidate_fact_selection_047")
+            applied.add("pg_incident_candidate_fact_selection_047")
         else:
             conn.commit()
         return
@@ -789,6 +798,15 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_event_reassessment_046")
+
+    conn.execute("BEGIN")
+    _migrate_incident_candidate_fact_selection(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_incident_candidate_fact_selection_047", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_incident_candidate_fact_selection_047")
 
 def _bootstrap_schema(conn) -> None:
     conn.execute(
@@ -1634,6 +1652,13 @@ def _migrate_event_reassessment(conn) -> None:
         ON event_reassessment_cases(status, priority, created_at, event_id)
         """
     )
+
+
+def _migrate_incident_candidate_fact_selection(conn) -> None:
+    if not _has_column(conn, "incident_candidates", "selected_fact_ids_json"):
+        conn.execute(
+            "ALTER TABLE incident_candidates ADD COLUMN selected_fact_ids_json TEXT NULL"
+        )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS event_ledger_targets (

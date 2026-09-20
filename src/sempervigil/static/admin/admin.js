@@ -6946,6 +6946,14 @@ async function wireIncidentCandidates() {
         ["Supporting facts", (signals.supporting_fact_ids || []).length],
         ["Evidence status", item.evidence_status],
       ].map(([label, value]) => `<li><strong>${esc(label)}:</strong> ${esc(value)}</li>`).join("");
+      const selected = new Set(item.selected_fact_ids || []);
+      const facts = (item.facts || []).map((fact) => {
+        const checked = selected.has(fact.id) ? " checked" : "";
+        const disabled = item.status === "enrolled" ? " disabled" : "";
+        const date = fact.date_text ? ` · ${esc(fact.date_text)}` : "";
+        return `<label class="review-fact"><input type="checkbox" data-candidate-fact="${esc(fact.id)}"${checked}${disabled}> <span>${esc(fact.statement)} <span class="muted">${esc(fact.kind)}${date}</span></span></label>`;
+      }).join("");
+      const factSelection = facts ? `<details class="review-facts"><summary>Event facts (${esc((item.facts || []).length)})</summary><p class="muted">Select only facts about this incident. Background incidents and generic actor history must remain unchecked.</p>${facts}</details>` : "";
       const actions = item.eligible_for_curation && ["suggested", "held"].includes(item.status) ? `
         <div class="actions">
           <button class="btn" type="button" data-candidate-decision="enroll">Enroll privately</button>
@@ -6959,7 +6967,7 @@ async function wireIncidentCandidates() {
       return `<article class="panel" data-incident-candidate="${esc(item.candidate_id)}">
         <h3>${esc(item.title)}</h3>
         <p class="muted">Article ${esc(item.article_id)} · ${esc(item.status)} · ${esc(item.candidate_id)} · ${esc(formatAbsolute(item.created_at))}</p>
-        <ul>${rows}</ul>${actions}</article>`;
+        <ul>${rows}</ul>${factSelection}${actions}</article>`;
     }).join("");
   };
 
@@ -7003,16 +7011,23 @@ async function wireIncidentCandidates() {
     const card = button.closest("[data-incident-candidate]");
     const decision = button.dataset.candidateDecision;
     let reason = "";
+    let selectedFactIds = null;
     if (decision !== "enroll") {
       reason = window.prompt(`Reason to ${decision} this candidate:`) || "";
       if (!reason.trim()) return;
-    } else if (!window.confirm("Enroll this candidate for private Event curation? This does not create or publish an Event.")) {
-      return;
+    } else {
+      selectedFactIds = [...card.querySelectorAll("[data-candidate-fact]:checked")]
+        .map((item) => item.dataset.candidateFact);
+      if (!selectedFactIds.length) {
+        message.textContent = "Select at least one incident-relevant fact before enrollment.";
+        return;
+      }
+      if (!window.confirm(`Enroll this candidate with ${selectedFactIds.length} selected facts? This does not create or publish an Event.`)) return;
     }
     card.querySelectorAll("button").forEach((item) => { item.disabled = true; });
     try {
       await apiFetch(`/admin/api/incident-candidates/${encodeURIComponent(card.dataset.incidentCandidate)}/review`, {
-        method: "POST", body: JSON.stringify({decision, reason})
+        method: "POST", body: JSON.stringify({decision, reason, selected_fact_ids: selectedFactIds})
       });
       showToast(`Candidate ${decision}ed`);
       await load();

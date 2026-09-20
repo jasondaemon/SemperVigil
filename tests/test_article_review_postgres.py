@@ -61,6 +61,7 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
         migrations_pg._migrate_article_evidence_revisions(conn)
         created.append('article_evidence_revisions')
         migrations_pg._migrate_incident_candidates(conn)
+        migrations_pg._migrate_incident_candidate_fact_selection(conn)
         created.append('incident_candidates')
         migrations_pg._migrate_event_ledger_revisions(conn)
         created.extend(['event_ledger_revisions', 'event_ledger_revision_sources'])
@@ -110,10 +111,15 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
         assert candidate['candidate_id'] != old_id
         assert candidate['signals']['projection_version'] == incident_candidates.PROJECTION_VERSION
         assert incident_candidates.project(conn, revision_id)['candidate_id'] == candidate['candidate_id']
+        selected_fact_id = incident_candidates.list_candidates(
+            conn, status='suggested')[0]['facts'][0]['id']
         enrolled = incident_candidates.review(
-            conn, candidate['candidate_id'], 'enroll', reason='', reviewer='test')
+            conn, candidate['candidate_id'], 'enroll', reason='', reviewer='test',
+            selected_fact_ids=[selected_fact_id])
         assert enrolled['status'] == 'enrolled'
-        assert incident_candidates.list_candidates(conn, status='enrolled')[0]['candidate_id'] == candidate['candidate_id']
+        enrolled_row = incident_candidates.list_candidates(conn, status='enrolled')[0]
+        assert enrolled_row['candidate_id'] == candidate['candidate_id']
+        assert enrolled_row['selected_fact_ids'] == [selected_fact_id]
         ledger = event_ledger.propose(conn, candidate['candidate_id'])
         assert ledger['status'] == 'proposed' and ledger['public_eligible'] is False
         assert event_ledger.propose(conn, candidate['candidate_id']) == {**ledger, 'reused': True}

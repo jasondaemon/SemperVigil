@@ -3363,6 +3363,7 @@ class IncidentCandidateDecisionRequest(BaseModel):
     model_config = {"extra": "forbid", "strict": True}
     decision: str
     reason: str = Field(default="", max_length=1000)
+    selected_fact_ids: list[str] | None = Field(default=None, max_length=100)
 
 
 class EventLedgerProposalRequest(BaseModel):
@@ -3580,7 +3581,7 @@ def api_incident_candidate_review(candidate_id: str,
     try:
         conn = _get_conn()
         return review(conn, candidate_id, payload.decision, reason=payload.reason,
-                      reviewer="admin-token")
+                      reviewer="admin-token", selected_fact_ids=payload.selected_fact_ids)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     finally:

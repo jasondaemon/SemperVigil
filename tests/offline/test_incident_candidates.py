@@ -44,3 +44,29 @@ def test_projection_retains_explicit_campaign_date_and_supporting_facts():
 def test_projection_rejects_non_private_or_malformed_evidence():
     with pytest.raises(ValueError, match="shape_invalid"):
         candidates.projection({"status": "accepted", "public_eligible": False, "facts": []}, "x")
+
+
+def test_fact_selection_must_be_unique_bounded_and_only_used_for_enrollment():
+    class Result:
+        rowcount = 1
+
+        def fetchone(self):
+            return ("suggested", "accepted", '{"facts":[{"id":"f1"},{"id":"f2"}]}')
+
+    class Conn:
+        def execute(self, *_args, **_kwargs):
+            return Result()
+
+        def commit(self):
+            pass
+
+    conn = Conn()
+    result = candidates.review(conn, "ic_" + "1" * 64, "enroll", reason="",
+                               reviewer="test", selected_fact_ids=["f2"])
+    assert result["selected_fact_ids"] == ["f2"]
+    with pytest.raises(ValueError, match="fact_selection_invalid"):
+        candidates.review(conn, "ic_" + "1" * 64, "enroll", reason="",
+                          reviewer="test", selected_fact_ids=["missing"])
+    with pytest.raises(ValueError, match="fact_selection_invalid"):
+        candidates.review(conn, "ic_" + "1" * 64, "hold", reason="hold",
+                          reviewer="test", selected_fact_ids=["f1"])
