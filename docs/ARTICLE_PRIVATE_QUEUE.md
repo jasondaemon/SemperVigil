@@ -19,6 +19,13 @@ September 19 daily JSON still serves its existing 17 articles and 31 CVEs. This
 establishes the durable review boundary and two accepted canary inputs, not
 automatic semantic acceptance. S2 observation remains open.
 
+Private candidate projection is deployed in image `bda8784`. SolarWinds was
+correctly skipped as vulnerability-only. WaterPlum produced campaign candidate
+`ic_1a49fb4416c171aabb5bcb444ca16e02c423eb46a886b3f56d0abb57603344b4`
+for `Contagious Interview`, with the incident period December 2025 through July
+2026 and five supporting fact IDs. It is privately `enrolled`. Projection and
+enrollment made no Event, Event-link, LLM-job, build, feed or public-site change.
+
 Deployed September 19, 2026: admin/LLM worker `e2c7abf`, platform `c0d9ec8`.
 `article-evidence-v4` segments
 stored text deterministically into bounded, numbered passages. The private model
@@ -164,8 +171,8 @@ A disposable PostgreSQL lifecycle test passed extraction, deduplication, hold,
 accept, supersession, rejection and list reads while confirming article/Event/LLM
 content counts were unchanged. JavaScript syntax and targeted offline tests pass.
 The production migration and frozen V8 cohort now pass as described above.
-Explicit review and the seven-day observation remain pending; no automatic
-historical admission or incident derivation is enabled.
+The seven-day observation remains pending; no automatic historical admission or
+public Event derivation is enabled.
 
 ## Operation
 

@@ -6,8 +6,9 @@ Status: authoritative implementation sequence for article enrichment, event
 identification, curation and narrative publication. S1 passage-bound extraction
 and the S2 reviewed sidecar are deployed. Two frozen revisions are accepted and
 one is held; automatic evidence admission remains blocked. The private S3
-candidate sidecar is implemented and tested locally. Current article summaries,
-daily downloads and public Events remain served.
+candidate sidecar is deployed, and one WaterPlum campaign candidate is enrolled
+without creating an Event. Current article summaries, daily downloads and public
+Events remain served.
 
 ## Outcome
 
@@ -207,11 +208,11 @@ deleted as part of stabilization.
    in the private article queue.
 3. Completed: deploy immutable reviewed evidence. Two frozen revisions were
    accepted; the allegation-typing failure was held rather than normalized away.
-4. Implemented locally: deterministic, non-publishing incident candidates from
+4. Completed for the canary: deterministic, non-publishing incident candidates from
    accepted revisions only, with explicit enrollment/hold/reject states and
    stale-evidence ineligibility.
-5. Next: deploy the private candidate sidecar, project the two accepted revisions,
-   and evaluate the result before adding any Event ledger or narrative call.
+5. Next: build the private versioned Event ledger from the enrolled WaterPlum
+   candidate before adding any narrative call or publication authority.
 
 This order deliberately postpones prompt changes to the live summary publisher.
 Better evidence may later feed a revised per-article summary, but that becomes a
