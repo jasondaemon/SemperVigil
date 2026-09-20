@@ -51,6 +51,10 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
     payload = json.loads(req["input"])
     assert [fact["ref"] for fact in payload["facts"]] == ["F01", "F02"]
     assert payload["facts"][0]["allowed_sections"] == ["overview", "attack_vector", "attack_path", "timeline"]
+    properties = req["schema"]["properties"]
+    assert properties["attack_path"]["items"]["properties"]["fact_refs"]["items"]["enum"] == ["F01"]
+    assert properties["open_questions"]["items"]["properties"]["fact_refs"]["items"]["enum"] == ["F02"]
+    assert properties["response_recovery"]["maxItems"] == 0
     record = composition.validate(json.dumps(valid_output()).encode(), ledger_revision(), GENERATION)
     assert record["public_eligible"] is False and record["status"] == "unreviewed"
     assert record["change"] == ledger_revision()["change"]
@@ -72,11 +76,11 @@ def test_validation_rejects_unknown_or_unsupported_evidence():
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
     output = valid_output()
     output["timeline"][0]["fact_refs"] = ["F02"]
-    with pytest.raises(ValueError, match="section_not_supported"):
+    with pytest.raises(ValueError, match="invalid_shape"):
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
     output = valid_output()
     output["open_questions"][0]["fact_refs"] = ["F01"]
-    with pytest.raises(ValueError, match="section_not_supported"):
+    with pytest.raises(ValueError, match="invalid_shape"):
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
 
 

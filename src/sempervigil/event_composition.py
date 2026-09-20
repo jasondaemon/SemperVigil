@@ -49,16 +49,20 @@ def _allowed_sections(fact: dict) -> list[str]:
     return [section for section in SECTIONS if section in result]
 
 
-def schema(fact_refs: list[str] | None = None) -> dict:
-    ref = ({"type": "string", "enum": fact_refs} if fact_refs
-           else {"type": "string", "pattern": "^F[0-9]{2}$"})
-    item = {"type": "object", "additionalProperties": False,
-            "required": ["text", "fact_refs"], "properties": {
-                "text": {"type": "string", "minLength": 1, "maxLength": 1600},
-                "fact_refs": {"type": "array", "minItems": 1, "maxItems": 8,
-                              "items": ref}}}
-    properties = {section: {"type": "array", "maxItems": 8, "items": item}
-                  for section in SECTIONS}
+def schema(fact_refs: dict[str, list[str]] | None = None) -> dict:
+    properties = {}
+    all_refs = sorted({ref for refs in (fact_refs or {}).values() for ref in refs})
+    for section in SECTIONS:
+        allowed = fact_refs.get(section, []) if fact_refs else []
+        ref = ({"type": "string", "enum": allowed or all_refs} if fact_refs
+               else {"type": "string", "pattern": "^F[0-9]{2}$"})
+        item = {"type": "object", "additionalProperties": False,
+                "required": ["text", "fact_refs"], "properties": {
+                    "text": {"type": "string", "minLength": 1, "maxLength": 1600},
+                    "fact_refs": {"type": "array", "minItems": 1, "maxItems": 8,
+                                  "items": ref}}}
+        properties[section] = {"type": "array", "maxItems": 8 if allowed or not fact_refs else 0,
+                               "items": item}
     properties["overview"]["minItems"] = 1
     return {"type": "object", "additionalProperties": False,
             "required": list(SECTIONS), "properties": properties}
@@ -81,7 +85,10 @@ def request(ledger_revision: dict, generation: str) -> dict:
                           "date_role": fact["date_role"],
                           "allowed_sections": _allowed_sections(fact)}
                          for ref, fact in aliases.items()]}
-    response_schema = schema(list(aliases))
+    allowed_refs = {section: [ref for ref, fact in aliases.items()
+                              if section in _allowed_sections(fact)]
+                    for section in SECTIONS}
+    response_schema = schema(allowed_refs)
     encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     if len((SYSTEM_PROMPT + encoded + json.dumps(response_schema)).encode()) > MAX_INPUT_BYTES:
         raise ValueError("event_composition_input_over_budget")
