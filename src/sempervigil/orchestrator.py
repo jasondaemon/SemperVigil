@@ -425,6 +425,9 @@ def run_once(orchestrator_id: str) -> int:
         from .event_automation import tick as event_automation_tick
         for result in event_automation_tick(conn):
             log_event(logger, logging.INFO, "event_automation_tick", **result)
+        from .event_living_research import tick as event_living_research_tick
+        for result in event_living_research_tick(conn):
+            log_event(logger, logging.INFO, "event_living_research_tick", **result)
         builds = _tick_build_admission(conn, config, logger)
         launches = _tick_runner_launches(conn, logger)
         _log_queue_stats(conn, logger)

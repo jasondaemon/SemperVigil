@@ -76,3 +76,35 @@ def test_automatic_enrollment_changes_only_orchestrator_credentials_and_image(tm
 def test_auto_enrollment_without_publication_fails_render():
     result = render('orchestrator.eventAutoScopes=invalid-but-nonempty')
     assert result.returncode != 0 and 'automatic enrollment requires' in result.stderr
+
+
+def test_living_research_enrollment_is_orchestrator_only(tmp_path):
+    baseline = render()
+    assert baseline.returncode == 0, baseline.stderr
+    values = tmp_path / "values.yaml"
+    values.write_text(yaml.safe_dump({"orchestrator": {
+        "eventResearchEvents": '["evt_waterplum"]',
+        "eventResearchIntervalSeconds": 43200,
+        "eventResearchMaxResults": 8,
+    }}))
+    enrolled = subprocess.run(
+        ["helm", "template", "test", str(CHART), "-f", str(values)],
+        capture_output=True, text=True,
+    )
+    assert enrolled.returncode == 0, enrolled.stderr
+    before = {doc["metadata"]["name"]: doc for doc in yaml.safe_load_all(baseline.stdout)
+              if doc and doc.get("kind") == "Deployment"}
+    after = {doc["metadata"]["name"]: doc for doc in yaml.safe_load_all(enrolled.stdout)
+             if doc and doc.get("kind") == "Deployment"}
+    assert set(before) == set(after)
+    changed = []
+    for name in before:
+        if before[name] != after[name]:
+            changed.append(name)
+    assert changed == ["sempervigil-orchestrator"]
+    container = after[changed[0]]["spec"]["template"]["spec"]["containers"][0]
+    env = {item["name"]: item for item in container["env"]}
+    assert env["SV_EVENT_RESEARCH_EVENTS"]["value"] == '["evt_waterplum"]'
+    assert env["SV_EVENT_RESEARCH_INTERVAL_SECONDS"]["value"] == "43200"
+    assert env["SV_EVENT_RESEARCH_MAX_RESULTS"]["value"] == "8"
+    assert "SV_EVENT_APPROVAL_DB_URL" not in env

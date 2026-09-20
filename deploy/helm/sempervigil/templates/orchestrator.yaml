@@ -71,6 +71,12 @@ spec:
           env:
             - name: SV_EVENT_AUTO_SCOPES
               value: {{ .Values.orchestrator.eventAutoScopes | default "{}" | quote }}
+            - name: SV_EVENT_RESEARCH_EVENTS
+              value: {{ .Values.orchestrator.eventResearchEvents | default "[]" | quote }}
+            - name: SV_EVENT_RESEARCH_INTERVAL_SECONDS
+              value: {{ .Values.orchestrator.eventResearchIntervalSeconds | default 86400 | quote }}
+            - name: SV_EVENT_RESEARCH_MAX_RESULTS
+              value: {{ .Values.orchestrator.eventResearchMaxResults | default 12 | quote }}
             {{- if ne (.Values.orchestrator.eventAutoScopes | default "{}") "{}" }}
             - name: SV_EVENT_APPROVAL_DB_URL
               valueFrom:

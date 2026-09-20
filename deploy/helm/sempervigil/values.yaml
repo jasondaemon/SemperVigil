@@ -176,6 +176,10 @@ orchestrator:
   imageTag: ""
   # Explicit event-id -> previously reviewed revision; empty disables automation.
   eventAutoScopes: "{}"
+  # Explicit published Event IDs eligible for bounded recurring web research.
+  eventResearchEvents: "[]"
+  eventResearchIntervalSeconds: 86400
+  eventResearchMaxResults: 12
   replicaCount: 1
   tickSeconds: 30
   leaseSeconds: 120
