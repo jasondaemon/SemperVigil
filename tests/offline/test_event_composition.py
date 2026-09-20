@@ -82,6 +82,12 @@ def test_allowed_sections_can_remove_stale_unsafe_permissions():
     assert "impact" in composition._allowed_sections(stolen)
     assert "attack_path" in composition._allowed_sections(
         stolen, composition.LEGACY_SECTION_POLICY)
+    legacy_theft = {"statement": "The attackers stole customer information.",
+                    "kind": "reported_fact", "date_text": None, "date_role": "none",
+                    "sections": ["impact"]}
+    assert "attack_vector" in composition._allowed_sections(
+        legacy_theft, composition.LEGACY_SECTION_POLICY)
+    assert "attack_vector" not in composition._allowed_sections(legacy_theft)
 
 
 def test_timeline_normalization_ignores_publication_and_collapses_equivalent_dates():

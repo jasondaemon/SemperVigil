@@ -61,6 +61,8 @@ def _allowed_sections(fact: dict, policy: str = SECTION_POLICY) -> list[str]:
         sections = set(_section_tags(fact))
     elif policy == LEGACY_SECTION_POLICY:
         sections = set(fact.get("sections", [])) | set(_section_tags(fact))
+        if any(cue in fact["statement"].lower() for cue in ("downloaded", "stole", "stolen")):
+            sections.add("attack_path")
     else:
         raise ValueError("event_composition_section_policy_invalid")
     for section in sections:
