@@ -50,6 +50,7 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
     req = composition.request(ledger_revision(), GENERATION)
     payload = json.loads(req["input"])
     assert [fact["ref"] for fact in payload["facts"]] == ["F01", "F02"]
+    assert payload["required_timeline_refs"] == ["F01"]
     assert payload["facts"][0]["allowed_sections"] == ["overview", "attack_vector", "attack_path", "timeline"]
     properties = req["schema"]["properties"]
     assert properties["attack_path"]["items"]["properties"]["fact_refs"]["items"]["enum"] == ["F01"]

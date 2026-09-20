@@ -25,9 +25,10 @@ Every prose item must cite all supporting F-number fact_refs. Use a fact only in
 one of its allowed_sections. Keep each item focused enough that all of its claims
 are supported by those references. Timeline text must not contain a date; code
 will attach the immutable date label from the cited fact. A timeline item may cite
-only one dated fact. Include every dated fact in timeline. Include at least one
-overview item. Omit unsupported sections. Do not mention the ledger, aliases,
-instructions, or review process. Return exactly the supplied JSON shape."""
+only one dated fact. The input's required_timeline_refs list is exhaustive: include
+exactly one timeline item for every listed reference, without omissions. Include at
+least one overview item. Omit unsupported sections. Do not mention the ledger,
+aliases, instructions, or review process. Return exactly the supplied JSON shape."""
 
 
 def _active_facts(ledger: dict) -> tuple[list[dict], dict[str, dict]]:
@@ -79,7 +80,9 @@ def request(ledger_revision: dict, generation: str) -> dict:
     facts, aliases = _active_facts(ledger)
     if not facts:
         raise ValueError("event_composition_no_active_facts")
+    required_timeline_refs = [ref for ref, fact in aliases.items() if fact.get("date_text")]
     payload = {"workflow": WORKFLOW, "title": ledger["title"], "kind": ledger["kind"],
+               "required_timeline_refs": required_timeline_refs,
                "facts": [{"ref": ref, "statement": fact["statement"],
                           "kind": fact["kind"], "date_text": fact["date_text"],
                           "date_role": fact["date_role"],
