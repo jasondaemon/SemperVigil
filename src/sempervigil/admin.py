@@ -3349,6 +3349,20 @@ class IncidentCandidateDecisionRequest(BaseModel):
     reason: str = Field(default="", max_length=1000)
 
 
+class EventLedgerProposalRequest(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    ledger_id: str | None = None
+    change_kind: str = "initial"
+    supersedes_fact_ids: list[str] = Field(default_factory=list, max_length=32)
+    conflict_fact_ids: list[str] = Field(default_factory=list, max_length=32)
+
+
+class EventLedgerDecisionRequest(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    decision: str
+    reason: str = Field(default="", max_length=1000)
+
+
 @app.post("/admin/api/articles/private-review", dependencies=[Depends(_require_admin_token)])
 def api_article_private_review(payload: ArticlePrivateReviewRequest) -> dict:
     if not os.environ.get("SV_ADMIN_TOKEN"):
@@ -3438,6 +3452,55 @@ def api_incident_candidate_review(candidate_id: str,
     try:
         conn = _get_conn()
         return review(conn, candidate_id, payload.decision, reason=payload.reason,
+                      reviewer="admin-token")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.post("/admin/api/incident-candidates/{candidate_id}/event-ledger",
+          dependencies=[Depends(_require_admin_token)])
+def api_event_ledger_propose(candidate_id: str, payload: EventLedgerProposalRequest) -> dict:
+    from .event_ledger import propose
+    conn = None
+    try:
+        conn = _get_conn()
+        return propose(conn, candidate_id, ledger_id=payload.ledger_id,
+                       change_kind=payload.change_kind,
+                       supersedes_fact_ids=payload.supersedes_fact_ids,
+                       conflict_fact_ids=payload.conflict_fact_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.get("/admin/api/event-ledgers", dependencies=[Depends(_require_admin_token)])
+def api_event_ledgers(status: str = "proposed", limit: int = 50) -> dict:
+    from .event_ledger import list_revisions
+    conn = None
+    try:
+        conn = _get_conn()
+        items = list_revisions(conn, status=status, limit=limit)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="event_ledger_list_invalid") from None
+    finally:
+        if conn is not None:
+            conn.close()
+    return {"items": items, "status": status, "public_eligible": False}
+
+
+@app.post("/admin/api/event-ledgers/{revision_id}/review",
+          dependencies=[Depends(_require_admin_token)])
+def api_event_ledger_review(revision_id: str, payload: EventLedgerDecisionRequest) -> dict:
+    from .event_ledger import review
+    conn = None
+    try:
+        conn = _get_conn()
+        return review(conn, revision_id, payload.decision, reason=payload.reason,
                       reviewer="admin-token")
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None

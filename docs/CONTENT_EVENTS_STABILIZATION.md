@@ -211,8 +211,13 @@ deleted as part of stabilization.
 4. Completed for the canary: deterministic, non-publishing incident candidates from
    accepted revisions only, with explicit enrollment/hold/reject states and
    stale-evidence ineligibility.
-5. Next: build the private versioned Event ledger from the enrolled WaterPlum
-   candidate before adding any narrative call or publication authority.
+5. Completed in code and disposable PostgreSQL: private immutable Event-ledger
+   revisions preserve accepted facts, exact passages and source lineage. Initial,
+   additive, correction, conflict, replay, stale-source and withdrawal paths pass.
+   Production canary verification remains before this stage is considered complete.
+6. Next: run the WaterPlum ledger canary, then design one evidence-bound narrative
+   composition call per accepted material revision. Publication authority remains
+   out of scope until that output passes whole-report review.
 
 This order deliberately postpones prompt changes to the live summary publisher.
 Better evidence may later feed a revised per-article summary, but that becomes a

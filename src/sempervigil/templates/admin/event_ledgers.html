@@ -1,0 +1,26 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "content" %}
+{% set nav_subactive = "event_ledgers" %}
+{% block content %}
+<section class="panel" id="event-ledger-review">
+  <div class="panel-header">
+    <div>
+      <h2>Private Event Ledgers</h2>
+      <p>Review immutable fact-ledger revisions assembled from enrolled candidates and accepted article evidence. These records cannot publish Events.</p>
+    </div>
+    <label>Status
+      <select id="event-ledger-status">
+        <option value="proposed">Proposed</option>
+        <option value="held">Held</option>
+        <option value="accepted">Accepted</option>
+        <option value="superseded">Superseded</option>
+        <option value="withdrawn">Withdrawn</option>
+        <option value="rejected">Rejected</option>
+        <option value="all">All</option>
+      </select>
+    </label>
+  </div>
+  <p id="event-ledger-message" role="status" aria-live="polite">Loading ledgers...</p>
+  <div id="event-ledger-list"></div>
+</section>
+{% endblock %}

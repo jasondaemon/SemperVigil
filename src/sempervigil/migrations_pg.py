@@ -454,6 +454,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_incident_candidates_040")
             applied.add("pg_incident_candidates_040")
+        if "pg_event_ledger_revisions_041" not in applied:
+            _migrate_event_ledger_revisions(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_event_ledger_revisions_041", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_event_ledger_revisions_041")
+            applied.add("pg_event_ledger_revisions_041")
         else:
             conn.commit()
         return
@@ -681,6 +690,15 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_incident_candidates_040")
+
+    conn.execute("BEGIN")
+    _migrate_event_ledger_revisions(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_event_ledger_revisions_041", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_event_ledger_revisions_041")
 
 def _bootstrap_schema(conn) -> None:
     conn.execute(
@@ -5391,5 +5409,65 @@ def _migrate_incident_candidates(conn) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_incident_candidates_review_queue
         ON incident_candidates(status, created_at, article_id)
+        """
+    )
+
+
+def _migrate_event_ledger_revisions(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS event_ledger_revisions (
+            revision_id TEXT PRIMARY KEY,
+            ledger_id TEXT NOT NULL,
+            predecessor_revision_id TEXT NULL
+                REFERENCES event_ledger_revisions(revision_id) ON DELETE RESTRICT,
+            status TEXT NOT NULL CHECK (status IN
+                ('proposed', 'accepted', 'held', 'rejected', 'superseded', 'withdrawn')),
+            change_kind TEXT NOT NULL CHECK (change_kind IN
+                ('initial', 'additive', 'correction', 'conflict')),
+            ledger_json TEXT NOT NULL,
+            change_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            reviewed_at TEXT NULL,
+            reviewed_by TEXT NULL,
+            review_reason TEXT NULL,
+            superseded_by_revision_id TEXT NULL
+                REFERENCES event_ledger_revisions(revision_id) ON DELETE RESTRICT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_event_ledger_one_open_revision
+        ON event_ledger_revisions(ledger_id)
+        WHERE status IN ('proposed', 'held')
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_event_ledger_one_accepted_revision
+        ON event_ledger_revisions(ledger_id)
+        WHERE status = 'accepted'
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_event_ledger_review_queue
+        ON event_ledger_revisions(status, created_at, ledger_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS event_ledger_revision_sources (
+            revision_id TEXT NOT NULL
+                REFERENCES event_ledger_revisions(revision_id) ON DELETE CASCADE,
+            candidate_id TEXT NOT NULL
+                REFERENCES incident_candidates(candidate_id) ON DELETE RESTRICT,
+            evidence_revision_id TEXT NOT NULL
+                REFERENCES article_evidence_revisions(revision_id) ON DELETE RESTRICT,
+            article_id BIGINT NOT NULL REFERENCES articles(id) ON DELETE RESTRICT,
+            PRIMARY KEY (revision_id, candidate_id),
+            UNIQUE (revision_id, evidence_revision_id)
+        )
         """
     )

@@ -4,7 +4,7 @@ import os
 import psycopg
 
 from sempervigil import (article_review_jobs as review, article_evidence as evidence,
-                         article_evidence_store as evidence_store, incident_candidates,
+                         article_evidence_store as evidence_store, event_ledger, incident_candidates,
                          migrations_pg, storage)
 
 
@@ -27,7 +27,15 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
             heartbeat_at TEXT, lease_expires_at TEXT, parent_job_id TEXT, dedupe_key TEXT)''')
         created.append('jobs')
         conn.execute('CREATE TABLE articles (id BIGINT PRIMARY KEY, title TEXT NOT NULL)')
-        conn.execute('INSERT INTO articles (id, title) VALUES (7, %s)', (article['title'],))
+        fixture_articles = {
+            7: article,
+            8: {'id': 8, 'title': 'Beta follow-up', 'content_text': 'Beta reported that the actors exfiltrated account records.'},
+            9: {'id': 9, 'title': 'Beta correction', 'content_text': 'Beta corrected the count of accounts compromised after its investigation.'},
+            10: {'id': 10, 'title': 'Independent conflict', 'content_text': 'A researcher disputed the reported count of compromised accounts.'},
+        }
+        with conn.cursor() as cursor:
+            cursor.executemany('INSERT INTO articles (id, title) VALUES (%s, %s)',
+                               [(item['id'], item['title']) for item in fixture_articles.values()])
         created.append('articles')
         for table in ('events', 'llm_runs'):
             conn.execute('CREATE TABLE '+table+' (id INTEGER)')
@@ -36,6 +44,8 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
         created.append('article_evidence_revisions')
         migrations_pg._migrate_incident_candidates(conn)
         created.append('incident_candidates')
+        migrations_pg._migrate_event_ledger_revisions(conn)
+        created.extend(['event_ledger_revisions', 'event_ledger_revision_sources'])
         conn.commit()
         watched = ('articles', 'events', 'llm_runs')
         before = {table: conn.execute('SELECT count(*) FROM '+table).fetchone()[0] for table in watched}
@@ -58,7 +68,8 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
         revision_id = saved['articles'][0]['phases'][0]['revision_id']
         assert conn.execute("SELECT status FROM article_evidence_revisions WHERE revision_id=%s",
                             (revision_id,)).fetchone()[0] == 'unreviewed'
-        monkeypatch.setattr(evidence_store, 'get_article_by_id', lambda conn, article_id: dict(article))
+        monkeypatch.setattr(evidence_store, 'get_article_by_id',
+                            lambda conn, article_id: dict(fixture_articles[article_id]))
         accepted = evidence_store.review(conn, revision_id, 'accept', reason='', reviewer='test')
         assert accepted['status'] == 'accepted'
         assert evidence_store.list_revisions(conn, status='accepted')[0]['revision_id'] == revision_id
@@ -77,6 +88,55 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
             conn, candidate['candidate_id'], 'enroll', reason='', reviewer='test')
         assert enrolled['status'] == 'enrolled'
         assert incident_candidates.list_candidates(conn, status='enrolled')[0]['candidate_id'] == candidate['candidate_id']
+        ledger = event_ledger.propose(conn, candidate['candidate_id'])
+        assert ledger['status'] == 'proposed' and ledger['public_eligible'] is False
+        assert event_ledger.propose(conn, candidate['candidate_id']) == {**ledger, 'reused': True}
+        accepted_ledger = event_ledger.review(
+            conn, ledger['revision_id'], 'accept', reason='', reviewer='test')
+        assert accepted_ledger['status'] == 'accepted'
+        replay = event_ledger.propose(conn, candidate['candidate_id'], ledger_id=ledger['ledger_id'])
+        assert replay['revision_id'] == ledger['revision_id'] and replay['reused'] is True
+        listed = event_ledger.list_revisions(conn, status='accepted')[0]
+        assert listed['lineage_current'] is True
+        assert listed['ledger']['facts'][0]['exact_passages'][0]['text'] == article['content_text']
+        assert listed['ledger']['public_eligible'] is False
+
+        def enrolled_candidate(article_id, generation):
+            item = fixture_articles[article_id]
+            generated = json.dumps({'facts': [{'passage_ids': ['p001'],
+                'statement': item['content_text'], 'kind': 'reported_fact',
+                'date_text': None, 'date_role': 'none'}]})
+            record = evidence.validate_context(generated.encode(), item, generation * 64)
+            evidence_id = evidence_store.store_unreviewed(conn, item, record)
+            evidence_store.review(conn, evidence_id, 'accept', reason='', reviewer='test')
+            projected = incident_candidates.project(conn, evidence_id)
+            incident_candidates.review(conn, projected['candidate_id'], 'enroll', reason='', reviewer='test')
+            return projected['candidate_id']
+
+        additive_candidate = enrolled_candidate(8, 'd')
+        additive = event_ledger.propose(
+            conn, additive_candidate, ledger_id=ledger['ledger_id'], change_kind='additive')
+        assert len(event_ledger.list_revisions(conn, status='proposed')[0]['change']['added_fact_ids']) == 1
+        event_ledger.review(conn, additive['revision_id'], 'accept', reason='', reviewer='test')
+
+        current = event_ledger.list_revisions(conn, status='accepted')[0]
+        correction_target = current['ledger']['facts'][0]['fact_id']
+        correction_candidate = enrolled_candidate(9, 'e')
+        correction = event_ledger.propose(
+            conn, correction_candidate, ledger_id=ledger['ledger_id'], change_kind='correction',
+            supersedes_fact_ids=[correction_target])
+        event_ledger.review(conn, correction['revision_id'], 'accept', reason='', reviewer='test')
+        corrected = event_ledger.list_revisions(conn, status='accepted')[0]
+        assert correction_target in corrected['ledger']['superseded_fact_ids']
+
+        conflict_candidate = enrolled_candidate(10, 'f')
+        conflict = event_ledger.propose(
+            conn, conflict_candidate, ledger_id=ledger['ledger_id'], change_kind='conflict',
+            conflict_fact_ids=[correction_target])
+        event_ledger.review(conn, conflict['revision_id'], 'hold', reason='requires adjudication', reviewer='test')
+        event_ledger.review(conn, conflict['revision_id'], 'accept', reason='adjudicated', reviewer='test')
+        conflicted = event_ledger.list_revisions(conn, status='accepted')[0]
+        assert correction_target in conflicted['ledger']['conflict_fact_ids']
         raw = generate({'phase': 'context'})
         replacement = evidence.validate_context(raw.encode(), article, 'b'*64)
         replacement_id = evidence_store.store_unreviewed(conn, article, replacement)
@@ -86,9 +146,15 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
             'SELECT revision_id, status FROM article_evidence_revisions').fetchall())
         assert statuses[revision_id] == 'superseded'
         assert statuses[replacement_id] == 'accepted'
-        stale_candidate = incident_candidates.list_candidates(conn, status='enrolled')[0]
+        stale_candidate = next(item for item in incident_candidates.list_candidates(
+            conn, status='enrolled') if item['candidate_id'] == candidate['candidate_id'])
         assert stale_candidate['evidence_status'] == 'superseded'
         assert stale_candidate['eligible_for_curation'] is False
+        stale_ledger = event_ledger.list_revisions(conn, status='accepted')[0]
+        assert stale_ledger['lineage_current'] is False
+        event_ledger.review(conn, conflict['revision_id'], 'withdraw',
+                            reason='test withdrawal', reviewer='test')
+        assert event_ledger.list_revisions(conn, status='withdrawn')[0]['revision_id'] == conflict['revision_id']
         rejected = evidence.validate_context(raw.encode(), article, 'c'*64)
         rejected_id = evidence_store.store_unreviewed(conn, article, rejected)
         evidence_store.review(conn, rejected_id, 'reject', reason='omits impact', reviewer='test')

@@ -6759,7 +6759,11 @@ async function wireIncidentCandidates() {
           <button class="btn" type="button" data-candidate-decision="enroll">Enroll privately</button>
           <button class="btn" type="button" data-candidate-decision="hold">Hold</button>
           <button class="btn danger" type="button" data-candidate-decision="reject">Reject</button>
-        </div>` : "";
+        </div>` : (item.eligible_for_curation && item.status === "enrolled" ? `
+        <div class="actions">
+          <button class="btn" type="button" data-candidate-ledger="initial">Create private ledger</button>
+          <button class="btn" type="button" data-candidate-ledger="additive">Add to existing ledger</button>
+        </div>` : "");
       return `<article class="panel" data-incident-candidate="${esc(item.candidate_id)}">
         <h3>${esc(item.title)}</h3>
         <p class="muted">Article ${esc(item.article_id)} · ${esc(item.status)} · ${esc(item.candidate_id)} · ${esc(formatAbsolute(item.created_at))}</p>
@@ -6780,6 +6784,28 @@ async function wireIncidentCandidates() {
 
   statusSelect.addEventListener("change", load);
   list.addEventListener("click", async (event) => {
+    const ledgerButton = event.target.closest("[data-candidate-ledger]");
+    if (ledgerButton) {
+      const card = ledgerButton.closest("[data-incident-candidate]");
+      const changeKind = ledgerButton.dataset.candidateLedger;
+      let ledgerId = null;
+      if (changeKind !== "initial") {
+        ledgerId = (window.prompt("Existing private ledger ID:") || "").trim();
+        if (!ledgerId) return;
+      }
+      card.querySelectorAll("button").forEach((item) => { item.disabled = true; });
+      try {
+        const result = await apiFetch(`/admin/api/incident-candidates/${encodeURIComponent(card.dataset.incidentCandidate)}/event-ledger`, {
+          method: "POST", body: JSON.stringify({ledger_id: ledgerId, change_kind: changeKind})
+        });
+        showToast(`Private ledger ${result.reused ? "already current" : "proposed"}`);
+      } catch (error) {
+        message.textContent = `Ledger proposal failed: ${error.message}`;
+      } finally {
+        card.querySelectorAll("button").forEach((item) => { item.disabled = false; });
+      }
+      return;
+    }
     const button = event.target.closest("[data-candidate-decision]");
     if (!button) return;
     const card = button.closest("[data-incident-candidate]");
@@ -6800,6 +6826,88 @@ async function wireIncidentCandidates() {
       await load();
     } catch (error) {
       message.textContent = `Candidate review failed: ${error.message}`;
+      card.querySelectorAll("button").forEach((item) => { item.disabled = false; });
+    }
+  });
+  await load();
+}
+
+async function wireEventLedgers() {
+  const root = document.getElementById("event-ledger-review");
+  if (!root) return;
+  const statusSelect = document.getElementById("event-ledger-status");
+  const message = document.getElementById("event-ledger-message");
+  const list = document.getElementById("event-ledger-list");
+
+  const render = (items) => {
+    if (!items.length) {
+      list.innerHTML = '<p class="muted">No private ledger revisions match this status.</p>';
+      return;
+    }
+    list.innerHTML = items.map((item) => {
+      const ledger = item.ledger || {};
+      const change = item.change || {};
+      const facts = ledger.facts || [];
+      const factRows = facts.map((fact) => `<li>
+        <strong>${esc((fact.sections || []).join(", ") || "context")}</strong>: ${esc(fact.statement)}
+        <span class="muted"> (${esc(fact.kind)} · article ${esc(fact.article_id)} · ${esc(fact.fact_id)})</span>
+      </li>`).join("");
+      let actions = "";
+      if (["proposed", "held"].includes(item.status)) {
+        actions = `<div class="actions">
+          <button class="btn" type="button" data-ledger-decision="accept">Accept privately</button>
+          <button class="btn" type="button" data-ledger-decision="hold">Hold</button>
+          <button class="btn danger" type="button" data-ledger-decision="reject">Reject</button>
+        </div>`;
+      } else if (item.status === "accepted") {
+        actions = `<div class="actions"><button class="btn danger" type="button" data-ledger-decision="withdraw">Withdraw</button></div>`;
+      }
+      return `<article class="panel" data-ledger-revision="${esc(item.revision_id)}">
+        <h3>${esc(ledger.title || item.ledger_id)}</h3>
+        <p class="muted">${esc(item.change_kind)} · ${esc(item.status)} · ${esc(item.ledger_id)} · ${esc(item.revision_id)}</p>
+        <p><strong>Lineage:</strong> ${item.lineage_current ? "Current" : "Stale"} ·
+           <strong>Sources:</strong> ${esc((ledger.sources || []).length)} ·
+           <strong>Facts:</strong> ${esc(facts.length)} ·
+           <strong>Added:</strong> ${esc((change.added_fact_ids || []).length)} ·
+           <strong>Corrected:</strong> ${esc((change.supersedes_fact_ids || []).length)} ·
+           <strong>Conflicts:</strong> ${esc((change.conflict_fact_ids || []).length)}</p>
+        <details><summary>Exact fact ledger</summary><ul>${factRows}</ul></details>${actions}
+      </article>`;
+    }).join("");
+  };
+
+  const load = async () => {
+    message.textContent = "Loading ledgers...";
+    try {
+      const data = await apiFetch(`/admin/api/event-ledgers?status=${encodeURIComponent(statusSelect.value)}&limit=50`);
+      render(data.items || []);
+      message.textContent = `${(data.items || []).length} private ledger revisions. Nothing on this page is public.`;
+    } catch (error) {
+      message.textContent = `Ledgers unavailable: ${error.message}`;
+    }
+  };
+  statusSelect.addEventListener("change", load);
+  list.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-ledger-decision]");
+    if (!button) return;
+    const card = button.closest("[data-ledger-revision]");
+    const decision = button.dataset.ledgerDecision;
+    let reason = "";
+    if (decision !== "accept") {
+      reason = (window.prompt(`Reason to ${decision} this private ledger revision:`) || "").trim();
+      if (!reason) return;
+    } else if (!window.confirm("Accept this fact ledger privately? This does not create or publish an Event.")) {
+      return;
+    }
+    card.querySelectorAll("button").forEach((item) => { item.disabled = true; });
+    try {
+      await apiFetch(`/admin/api/event-ledgers/${encodeURIComponent(card.dataset.ledgerRevision)}/review`, {
+        method: "POST", body: JSON.stringify({decision, reason})
+      });
+      showToast(`Private ledger ${decision}ed`);
+      await load();
+    } catch (error) {
+      message.textContent = `Ledger review failed: ${error.message}`;
       card.querySelectorAll("button").forEach((item) => { item.disabled = false; });
     }
   });
@@ -6842,6 +6950,7 @@ document.addEventListener("DOMContentLoaded", () => {
   wireEventApproval();
   wireArticleEvidence();
   wireIncidentCandidates();
+  wireEventLedgers();
   wireProducts();
   wireProductDetail();
   wireDangerZone();
