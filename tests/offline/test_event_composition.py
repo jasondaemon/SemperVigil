@@ -37,12 +37,9 @@ def ledger_revision():
 
 def valid_output():
     return {"items": [
-        {"section": "overview", "text": "Acme reported unauthorized access.",
-         "fact_refs": ["F01"], "date_text": ""},
-        {"section": "timeline", "text": "Acme reported unauthorized access.",
-         "fact_refs": ["F01"], "date_text": "July 4"},
-        {"section": "open_questions", "text": "Recovery is not yet confirmed.",
-         "fact_refs": ["F02"], "date_text": ""},
+        {"section": "overview", "fact_ref": "F01"},
+        {"section": "timeline", "fact_ref": "F01"},
+        {"section": "open_questions", "fact_ref": "F02"},
     ]}
 
 
@@ -57,25 +54,33 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
     assert record["change"] == ledger_revision()["change"]
 
 
-def test_validation_rejects_unknown_or_inferred_evidence():
+def test_validation_rejects_unknown_or_unsupported_evidence():
     output = valid_output()
-    output["items"][0]["fact_refs"] = ["unknown"]
+    output["items"][0]["fact_ref"] = "unknown"
     with pytest.raises(ValueError, match="invalid_shape"):
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
     output = valid_output()
-    output["items"][1]["date_text"] = "July 5"
-    with pytest.raises(ValueError, match="inferred_date"):
+    output["items"][1]["fact_ref"] = "F02"
+    with pytest.raises(ValueError, match="section_not_supported"):
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
     output = valid_output()
-    output["items"][2]["fact_refs"] = ["F01"]
+    output["items"][2]["fact_ref"] = "F01"
     with pytest.raises(ValueError, match="section_not_supported"):
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
 
 
-def test_dated_fact_requires_explicit_timeline_item():
+def test_dated_fact_is_deterministically_added_to_timeline():
     output = valid_output()
     output["items"] = [item for item in output["items"] if item["section"] != "timeline"]
-    with pytest.raises(ValueError, match="timeline_incomplete"):
+    record = composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
+    assert record["sections"]["timeline"] == [{"text": ledger_revision()["ledger"]["facts"][0]["statement"],
+        "fact_ids": ["f1"], "date_text": "July 4"}]
+
+
+def test_model_text_cannot_enter_stored_narrative():
+    output = valid_output()
+    output["items"][0]["text"] = "Invented prose"
+    with pytest.raises(ValueError, match="invalid_shape"):
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
 
 
@@ -119,7 +124,7 @@ def test_job_is_one_attempt_private_and_review_gated(harness):
     assert len(calls) == 1 and result["status"] == "review_required"
     assert result["public_eligible"] is False and result["attempts"] == 1
     assert result["composition_id"].startswith("elc_")
-    assert json.loads(result["raw"])["items"][0]["fact_refs"] == ["F01"]
+    assert json.loads(result["raw"])["items"][0]["fact_ref"] == "F01"
 
 
 @pytest.mark.parametrize("change", [{"attempt_count": 1}, {"max_attempts": 2},

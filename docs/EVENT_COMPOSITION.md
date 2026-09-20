@@ -27,7 +27,9 @@ request-local aliases (`F01`, `F02`, and so on); code maps those aliases back to
 immutable fact IDs before storage. The response is one flat list of atomic items,
 which code groups into sections only after validation. Every narrative item must
 cite one or more active aliases. Each fact also carries deterministic allowed
-sections from the accepted ledger. The validator rejects:
+sections from the accepted ledger. The local model selects and orders aliases
+only; it cannot author stored prose. Code materializes each immutable accepted
+statement, fact ID, and explicit date after validation. The validator rejects:
 
 - unknown, superseded, or conflicting fact references;
 - sections not allowed by every cited fact;
