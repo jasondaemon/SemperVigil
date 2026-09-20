@@ -186,6 +186,8 @@ orchestrator:
   resources: {}
 
 workerFetch:
+  # Optional independent release; empty values inherit the shared image.
+  image: {}
   enabled: true
   replicaCount: 2
   nodeSelector: {}

@@ -1,4 +1,7 @@
 {{- if .Values.workerFetch.enabled }}
+{{- $workerFetchImageRepository := default .Values.image.repository .Values.workerFetch.image.repository }}
+{{- $workerFetchImageTag := default .Values.image.tag .Values.workerFetch.image.tag }}
+{{- $workerFetchImagePullPolicy := default .Values.image.pullPolicy .Values.workerFetch.image.pullPolicy }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -25,8 +28,8 @@ spec:
       {{- end }}
       initContainers:
         - name: sempervigil-fix-perms
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: "{{ $workerFetchImageRepository }}:{{ $workerFetchImageTag }}"
+          imagePullPolicy: {{ $workerFetchImagePullPolicy }}
           securityContext:
             runAsUser: 0
             runAsGroup: 0
@@ -97,8 +100,8 @@ spec:
               mountPath: /gluetun
               subPath: gluetun
         - name: sempervigil-worker-fetch
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: "{{ $workerFetchImageRepository }}:{{ $workerFetchImageTag }}"
+          imagePullPolicy: {{ $workerFetchImagePullPolicy }}
           securityContext:
             runAsUser: {{ .Values.env.SV_UID | int }}
             runAsGroup: {{ .Values.env.SV_GID | int }}
