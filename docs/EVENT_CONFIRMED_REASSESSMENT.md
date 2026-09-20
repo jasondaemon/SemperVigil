@@ -36,6 +36,21 @@ their legacy summary into evidence or composition prompts.
    Narrative screens.
 7. Publish through the existing qualified promotion and API-driven atomic build.
 
-The 82 confirmed drafts are not automatically published. Cases that do not meet
-the source or accuracy gates remain held and can be explicitly withdrawn later.
+The 81 confirmed drafts in the cohort are not automatically published. Cases
+that do not meet the source or accuracy gates remain held and can be explicitly
+withdrawn later.
 
+## Production status
+
+Migration 046 and the admin/fetch image `10de83b` are live. The first cohort
+contains 93 legacy cases: 12 public-priority records and 81 confirmed drafts.
+WaterPlum was already managed by the strict ledger pipeline and was therefore
+excluded. Starting the cohort did not alter public content.
+
+The first bounded review demonstrates the fail-closed behavior. For Advantest,
+one retained source produced accurate, incident-specific evidence and was
+accepted. A second revision was held for unattributed publisher speculation and
+a third was held because it included unrelated Asahi incident facts. The clean
+source was projected and privately enrolled, but no ledger or replacement was
+created because fewer than two independent sources passed review. The existing
+published Event remains unchanged.
