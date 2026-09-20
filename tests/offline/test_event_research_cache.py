@@ -77,3 +77,7 @@ def test_retirement_fingerprint_detects_later_changes():
         "updated_at": "2026-09-20T00:00:00+00:00",
     }
     assert _fingerprint(state) != _fingerprint({**state, "status": "closed"})
+
+
+def test_registered_worker_jobs_have_handlers():
+    assert set(worker.WORKER_JOB_TYPES) == set(worker.HANDLED_JOB_TYPES)

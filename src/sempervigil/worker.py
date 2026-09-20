@@ -319,6 +319,8 @@ HANDLED_JOB_TYPES = {
     "article_review_private",
     "event_ledger_compose",
     "event_promote_reviewed",
+    "legacy_event_retire",
+    "legacy_event_restore",
     "source_acquire",
     "rebuild_vendor_products",
     "smoke_test",
