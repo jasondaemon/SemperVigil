@@ -32,6 +32,10 @@ Open questions may cite only supplied allegation or uncertainty facts. Do not
 mention excluded superseded or conflicting facts. Do not write a change summary;
 code attaches the deterministic ledger change.
 
+Each fact supplies allowed_sections. An item section must be allowed by every fact
+it cites. Every fact with a non-empty date_text must appear in a timeline item.
+Never put a reported_fact or recommendation in open_questions.
+
 Return exactly one JSON object matching the supplied schema and nothing else."""
 
 
@@ -63,6 +67,19 @@ def _active_facts(ledger: dict) -> tuple[list[dict], dict[str, dict]]:
     return active, aliases
 
 
+def _allowed_sections(fact: dict) -> list[str]:
+    result = {"overview"}
+    mapping = {"timeline": "timeline", "attack_path": "attack_path",
+               "impact": "impact", "mitigation": "mitigations",
+               "attribution": "attribution", "open_question": "open_questions"}
+    for section in fact.get("sections", []):
+        if section in mapping:
+            result.add(mapping[section])
+        if section == "attack_path":
+            result.add("attack_vector")
+    return [section for section in SECTIONS if section in result]
+
+
 def request(ledger_revision: dict, generation: str) -> dict:
     if (not isinstance(generation, str) or len(generation) != 64
             or any(char not in "0123456789abcdef" for char in generation)):
@@ -73,7 +90,8 @@ def request(ledger_revision: dict, generation: str) -> dict:
         raise ValueError("event_composition_ledger_not_current")
     excluded = set(ledger.get("superseded_fact_ids", [])) | set(ledger.get("conflict_fact_ids", []))
     _, aliases = _active_facts(ledger)
-    facts = [{"ref": ref, **{key: fact[key] for key in (
+    facts = [{"ref": ref, "allowed_sections": _allowed_sections(fact),
+              **{key: fact[key] for key in (
         "statement", "kind", "date_text", "date_role", "exact_passages")}}
         for ref, fact in aliases.items()]
     if not facts:
@@ -108,6 +126,8 @@ def validate(raw: bytes, ledger_revision: dict, generation: str) -> dict:
     for item in value["items"]:
         facts = [aliases[ref] for ref in item["fact_refs"]]
         section, date_text = item["section"], item["date_text"]
+        if any(section not in _allowed_sections(fact) for fact in facts):
+            raise ValueError("event_composition_section_not_supported")
         if section == "timeline":
             if not date_text or not any(fact.get("date_text") == date_text for fact in facts):
                 raise ValueError("event_composition_inferred_date")
@@ -127,6 +147,10 @@ def validate(raw: bytes, ledger_revision: dict, generation: str) -> dict:
         sections[section].append(output)
     if not sections["overview"]:
         raise ValueError("event_composition_overview_required")
+    dated_ids = {fact["fact_id"] for fact in aliases.values() if fact.get("date_text")}
+    timeline_ids = {fact_id for item in sections["timeline"] for fact_id in item["fact_ids"]}
+    if not dated_ids <= timeline_ids:
+        raise ValueError("event_composition_timeline_incomplete")
     return {
         "workflow": WORKFLOW, "ledger_id": ledger_revision["ledger_id"],
         "ledger_revision_id": ledger_revision["revision_id"],

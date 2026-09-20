@@ -26,10 +26,13 @@ To keep the local model's structured task small, each request assigns stable
 request-local aliases (`F01`, `F02`, and so on); code maps those aliases back to
 immutable fact IDs before storage. The response is one flat list of atomic items,
 which code groups into sections only after validation. Every narrative item must
-cite one or more active aliases. The validator rejects:
+cite one or more active aliases. Each fact also carries deterministic allowed
+sections from the accepted ledger. The validator rejects:
 
 - unknown, superseded, or conflicting fact references;
+- sections not allowed by every cited fact;
 - timeline dates not explicitly present on a cited fact;
+- omission of any explicitly dated fact from the timeline;
 - unresolved questions not grounded in an allegation or uncertainty fact;
 - additional fields or an incomplete structured response.
 
