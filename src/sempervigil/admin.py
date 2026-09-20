@@ -19,6 +19,7 @@ except Exception:  # noqa: BLE001
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pydantic import BaseModel, Field
+import psycopg
 
 from .config import (
     ConfigError,
@@ -3370,6 +3371,11 @@ class EventCompositionDecisionRequest(BaseModel):
     reason: str = Field(default="", max_length=1000)
 
 
+class EventCompositionPublishRequest(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    confirmation: str
+
+
 @app.post("/admin/api/articles/private-review", dependencies=[Depends(_require_admin_token)])
 def api_article_private_review(payload: ArticlePrivateReviewRequest) -> dict:
     if not os.environ.get("SV_ADMIN_TOKEN"):
@@ -3559,6 +3565,25 @@ def api_event_composition_review(composition_id: str,
                       reviewer="admin-token")
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.post("/admin/api/event-compositions/{composition_id}/publish",
+          dependencies=[Depends(_require_admin_token)])
+def api_event_composition_publish(composition_id: str,
+                                  payload: EventCompositionPublishRequest) -> dict:
+    from .event_composition_publication import submit
+    conn = None
+    try:
+        conn = _get_conn()
+        return submit(conn, composition_id, confirmation=payload.confirmation)
+    except (PermissionError, ValueError, psycopg.Error) as exc:
+        if conn is not None:
+            conn.rollback()
+        detail = str(exc) if isinstance(exc, (PermissionError, ValueError)) else "event_publication_database_error"
+        raise HTTPException(status_code=409, detail=detail) from None
     finally:
         if conn is not None:
             conn.close()

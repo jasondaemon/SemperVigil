@@ -6969,6 +6969,10 @@ async function wireEventCompositions() {
           <button class="btn" type="button" data-composition-decision="hold">Hold</button>
           <button class="btn danger" type="button" data-composition-decision="reject">Reject</button>
         </div>`;
+      } else if (item.status === "accepted" && item.ledger_current) {
+        actions = `<div class="actions">
+          <button class="btn primary" type="button" data-composition-publish>Publish reviewed Event</button>
+        </div>`;
       }
       return `<article class="panel" data-event-composition="${esc(item.composition_id)}">
         <h3>${esc(item.ledger_id)}</h3>
@@ -6987,16 +6991,31 @@ async function wireEventCompositions() {
     try {
       const data = await apiFetch(`/admin/api/event-compositions?status=${encodeURIComponent(statusSelect.value)}&limit=50`);
       render(data.items || []);
-      message.textContent = `${(data.items || []).length} private narratives. Accepted narratives remain private and cannot publish Events.`;
+      message.textContent = `${(data.items || []).length} narratives. Only accepted, current narratives can enter qualified publication.`;
     } catch (error) {
       message.textContent = `Private narratives unavailable: ${error.message}`;
     }
   };
   statusSelect.addEventListener("change", load);
   list.addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-composition-decision]");
+    const button = event.target.closest("[data-composition-decision], [data-composition-publish]");
     if (!button) return;
     const card = button.closest("[data-event-composition]");
+    if (button.hasAttribute("data-composition-publish")) {
+      if (!window.confirm("Publish this reviewed narrative as a source-backed Event? The qualified builder and activation checks will run before it can go live.")) return;
+      card.querySelectorAll("button").forEach((item) => { item.disabled = true; });
+      try {
+        const result = await apiFetch(`/admin/api/event-compositions/${encodeURIComponent(card.dataset.eventComposition)}/publish`, {
+          method: "POST", body: JSON.stringify({confirmation: "PUBLISH_ACCEPTED_EVENT"})
+        });
+        showToast(`Event publication queued: ${result.job_id}`);
+        message.textContent = "Publication is queued. The Event will appear after qualified promotion and the next atomic site build.";
+      } catch (error) {
+        message.textContent = `Event publication failed: ${error.message}`;
+        card.querySelectorAll("button").forEach((item) => { item.disabled = false; });
+      }
+      return;
+    }
     const decision = button.dataset.compositionDecision;
     let reason = "";
     if (decision !== "accept") {

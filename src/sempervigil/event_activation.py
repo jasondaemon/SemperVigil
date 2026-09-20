@@ -144,7 +144,7 @@ The caller must supply a dedicated connection and a bounded local switch only.
             bundles[event_id] = bundle
             if release is not None:
                 from .event_release import check_current
-                check_current(conn, bundle["packet"])
+                check_current(conn, bundle)
         if release is not None:
             from .event_release import verify_release
             verify_release(release, manifest, bundles)

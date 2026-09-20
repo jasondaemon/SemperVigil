@@ -175,6 +175,22 @@ This snapshot is not a lease: build activation still needs revocation coordinati
             if _version(qualification) != qid or bundle.get("qualification") != qualification:
                 raise ValueError("qualification_integrity_failure")
             _, projection = resolve(bundle, event_id=event_id, expected_revision=revision)
+            if bundle.get("workflow") == "event-composition-public-revision-v1":
+                from .event_composition_publication import current_material
+                try:
+                    current = current_material(conn, bundle["composition_id"], event_id=event_id)
+                except ValueError:
+                    result["withdrawn"][event_id] = "evidence_unavailable"
+                    continue
+                if (current["ledger_revision_id"] != bundle["ledger_revision_id"]
+                        or current["ledger_record"] != bundle["ledger_record"]
+                        or current["composition"] != bundle["composition"]
+                        or current["sources"] != bundle["sources"]):
+                    result["withheld"][event_id] = "evidence_changed"
+                else:
+                    result["qualified_revisions"][event_id] = bundle
+                    result["promoted_revision_ids"][event_id] = revision
+                continue
             try:
                 current = snapshot(session, event_id=event_id, aliases=bundle["packet"]["aliases"],
                                    scopes=frozenset({READ_SCOPE, EVIDENCE_SCOPE}))

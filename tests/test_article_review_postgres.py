@@ -5,7 +5,10 @@ import psycopg
 
 from sempervigil import (article_review_jobs as review, article_evidence as evidence,
                          article_evidence_store as evidence_store, event_composition,
-                         event_ledger, incident_candidates, migrations_pg, storage)
+                         event_ledger, incident_candidates, migrations_pg, storage,
+                         event_composition_publication as composition_publication,
+                         event_publication_store, event_approval)
+from sempervigil.investigation import _version
 
 
 def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
@@ -26,7 +29,8 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
             attempt_count INTEGER, max_attempts INTEGER, available_at TEXT,
             heartbeat_at TEXT, lease_expires_at TEXT, parent_job_id TEXT, dedupe_key TEXT)''')
         created.append('jobs')
-        conn.execute('CREATE TABLE articles (id BIGINT PRIMARY KEY, title TEXT NOT NULL)')
+        conn.execute('''CREATE TABLE articles (id BIGINT PRIMARY KEY, title TEXT NOT NULL,
+            original_url TEXT, brief_day TEXT, meta_json TEXT)''')
         fixture_articles = {
             7: article,
             8: {'id': 8, 'title': 'Beta follow-up', 'content_text': 'Beta reported that the actors exfiltrated account records.'},
@@ -34,12 +38,26 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
             10: {'id': 10, 'title': 'Independent conflict', 'content_text': 'A researcher disputed the reported count of compromised accounts.'},
         }
         with conn.cursor() as cursor:
-            cursor.executemany('INSERT INTO articles (id, title) VALUES (%s, %s)',
-                               [(item['id'], item['title']) for item in fixture_articles.values()])
+            cursor.executemany('''INSERT INTO articles
+                (id,title,original_url,brief_day,meta_json) VALUES (%s,%s,%s,%s,NULL)''',
+                [(item['id'], item['title'], f"https://example.test/{item['id']}", '2026-09-18')
+                 for item in fixture_articles.values()])
         created.append('articles')
-        for table in ('events', 'llm_runs'):
-            conn.execute('CREATE TABLE '+table+' (id INTEGER)')
-            created.append(table)
+        conn.execute('''CREATE TABLE events (
+            id TEXT PRIMARY KEY, kind TEXT, title TEXT, summary TEXT, severity TEXT,
+            created_at TEXT, updated_at TEXT, first_seen_at TEXT, last_seen_at TEXT,
+            status TEXT, meta_json TEXT, event_key TEXT UNIQUE, occurred_at TEXT,
+            summary_updated_at TEXT, confidence DOUBLE PRECISION, manual INTEGER,
+            is_manual INTEGER, visibility TEXT, confidence_tier TEXT, reasons TEXT,
+            candidate BOOLEAN, lifecycle TEXT, entity TEXT, incident_date TEXT,
+            evidence TEXT, publish_state TEXT, published_at TEXT, site_slug TEXT)''')
+        created.append('events')
+        conn.execute('CREATE TABLE llm_runs (id INTEGER)')
+        created.append('llm_runs')
+        conn.execute('''CREATE TABLE event_articles (
+            event_id TEXT REFERENCES events(id), article_id BIGINT REFERENCES articles(id),
+            added_by TEXT, created_at TEXT, PRIMARY KEY(event_id,article_id))''')
+        created.append('event_articles')
         migrations_pg._migrate_article_evidence_revisions(conn)
         created.append('article_evidence_revisions')
         migrations_pg._migrate_incident_candidates(conn)
@@ -48,6 +66,12 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
         created.extend(['event_ledger_revisions', 'event_ledger_revision_sources'])
         migrations_pg._migrate_event_ledger_compositions(conn)
         created.append('event_ledger_compositions')
+        conn.execute('DROP FUNCTION IF EXISTS guard_event_qualification() CASCADE')
+        conn.execute('DROP FUNCTION IF EXISTS guard_event_review_approval() CASCADE')
+        conn.execute(event_publication_store.SCHEMA)
+        created.extend(['event_quote_qualifications', 'event_public_revisions', 'event_public_pointers'])
+        conn.execute(event_approval.SCHEMA)
+        created.append('event_review_approvals')
         conn.commit()
         watched = ('articles', 'events', 'llm_runs')
         before = {table: conn.execute('SELECT count(*) FROM '+table).fetchone()[0] for table in watched}
@@ -102,8 +126,8 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
         assert listed['lineage_current'] is True
         assert listed['ledger']['facts'][0]['exact_passages'][0]['text'] == article['content_text']
         assert listed['ledger']['public_eligible'] is False
-        active_fact = listed['ledger']['facts'][0]
-        output = {'items': [{'section': 'overview', 'fact_ref': 'F01'}]}
+        output = {section: [] for section in event_composition.SECTIONS}
+        output['overview'] = [{'text': article['content_text'], 'fact_refs': ['F01']}]
         record = event_composition.validate(
             json.dumps(output).encode(), listed, '9' * 64)
         composition_id = event_composition.store_unreviewed(conn, record)
@@ -112,6 +136,25 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
         assert accepted_composition['status'] == 'accepted'
         assert event_composition.list_compositions(
             conn, status='accepted')[0]['ledger_current'] is True
+        assert before == {table: conn.execute('SELECT count(*) FROM '+table).fetchone()[0]
+                          for table in watched}
+        material = composition_publication.materialize_event(conn, composition_id)
+        qualification = {
+            'workflow': composition_publication.QUALIFICATION_WORKFLOW,
+            'event_id': material['event_id'], 'ledger_revision_id': material['ledger_revision_id'],
+            'composition_id': composition_id,
+            'reviewer': {'kind': 'human', 'id': 'test', 'version': 'a' * 64},
+            'reviewed_at': material['reviewed_at'],
+        }
+        bundle = {'workflow': composition_publication.PUBLIC_WORKFLOW,
+                  'event_id': material['event_id'],
+                  'ledger_revision_id': material['ledger_revision_id'],
+                  'composition_id': composition_id, 'ledger_record': material['ledger_record'],
+                  'composition': material['composition'], 'sources': material['sources'],
+                  'qualification': qualification, 'predecessor': None}
+        revision = _version({'workflow': composition_publication.PUBLIC_WORKFLOW, 'bundle': bundle})
+        assert composition_publication.validate_bundle(
+            bundle, event_id=material['event_id'], expected_revision=revision)['revision_id'] == revision
 
         def enrolled_candidate(article_id, generation):
             item = fixture_articles[article_id]
@@ -175,10 +218,11 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
         assert conn.execute('SELECT status FROM article_evidence_revisions WHERE revision_id=%s',
                             (rejected_id,)).fetchone()[0] == 'rejected'
         assert review.submit(conn, [7]) == first
-        assert before == {table: conn.execute('SELECT count(*) FROM '+table).fetchone()[0] for table in watched}
     finally:
         conn.rollback()
         for table in reversed(created):
             conn.execute('DROP TABLE IF EXISTS '+table)
+        conn.execute('DROP FUNCTION IF EXISTS guard_event_qualification() CASCADE')
+        conn.execute('DROP FUNCTION IF EXISTS guard_event_review_approval() CASCADE')
         conn.commit()
         conn.close()

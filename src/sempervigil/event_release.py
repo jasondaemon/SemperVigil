@@ -17,8 +17,18 @@ from .utils import atomic_write_json
 INDEX_PATH = "sempervigil/index/events.json"
 
 
-def check_current(conn, packet: dict) -> None:
+def check_current(conn, bundle: dict) -> None:
     """Short activation-time source lock window; the event row is already locked."""
+    if bundle.get("workflow") == "event-composition-public-revision-v1":
+        from .event_composition_publication import current_material
+        current = current_material(conn, bundle["composition_id"], event_id=bundle["event_id"], lock=True)
+        if (current["ledger_revision_id"] != bundle["ledger_revision_id"]
+                or current["ledger_record"] != bundle["ledger_record"]
+                or current["composition"] != bundle["composition"]
+                or current["sources"] != bundle["sources"]):
+            raise ValueError("stale_revision_snapshot")
+        return
+    packet = bundle["packet"]
     from psycopg.rows import dict_row
     from .event_review import snapshot, MAX_DOCUMENTS
     from .event_revision_store import source_version

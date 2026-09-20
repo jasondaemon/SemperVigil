@@ -59,7 +59,12 @@ The operator surfaces are:
 - `Content > Event Narratives`: inspect citations and accept, hold, or reject the
   result.
 
-No action in either surface publishes an Event.
+Accepted, current narratives expose a separate explicit publication action. It
+records a composition-specific qualification through the restricted admission
+role and queues the existing one-attempt promotion worker. The builder then
+exports the immutable composition revision and the activation guard rechecks the
+accepted ledger, composition, evidence revisions, article availability, and Event
+membership before the atomic switch. Review alone never publishes an Event.
 
 ## Verification boundary
 

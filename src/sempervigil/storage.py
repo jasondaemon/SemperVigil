@@ -5755,8 +5755,9 @@ def create_event(
     publish_state: str | None = None,
     published_at: str | None = None,
     site_slug: str | None = None,
+    event_id: str | None = None,
 ) -> str:
-    event_id = f"evt_{uuid.uuid4().hex[:12]}"
+    event_id = event_id or f"evt_{uuid.uuid4().hex[:12]}"
     now = utc_now_iso()
     event_columns = _table_columns(conn, "events")
     cols = [

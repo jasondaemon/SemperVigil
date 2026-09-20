@@ -16,8 +16,10 @@ STABILIZATION_VERIFICATION.md for the HTTP evidence and NFS visibility caveat.
   existing Hugo invocation. No feed JSON schema, archive regeneration policy,
   inference concurrency, Hugo arguments or resource limits change.
 - The existing Events JSON URL remains `/sempervigil/index/events.json`.
-- Managed reports use exact attributed quotations only. Old narrative sections
-  are never blended into them. Unmanaged legacy events retain their existing path.
+- Managed reports are either exact attributed-quotation revisions or explicitly
+  accepted, fact-cited composition revisions. The two bundle types are validated
+  independently and are never blended. Unmanaged legacy events retain their
+  existing path.
 - Unchanged Events source bytes are reused. Changed evidence, revoked approvals,
   hidden events or suppressed sources remove the affected managed report until a
   fresh qualified revision is promoted. Unrelated daily news can still publish.
