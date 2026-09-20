@@ -6849,7 +6849,9 @@ async function wireEventReassessments() {
         <div class="actions">
           ${canQueue ? '<button class="btn" type="button" data-reassessment-evidence>Queue missing evidence</button>' : ""}
           ${item.evidence_accepted > candidateTotal ? '<button class="btn" type="button" data-reassessment-project>Project accepted evidence</button>' : ""}
-          ${!item.ledger_id && Number((item.candidates || {}).enrolled || 0) >= 2 ? '<button class="btn" type="button" data-reassessment-ledger>Create strict ledger</button>' : ""}
+          ${Number((item.candidates || {}).enrolled || 0) >= 2 && (item.ledger_title_options || []).length ? `<label>Evidence-backed title
+            <select data-reassessment-ledger-title>${(item.ledger_title_options || []).map((title) => `<option value="${esc(title)}">${esc(title)}</option>`).join("")}</select>
+          </label><button class="btn" type="button" data-reassessment-ledger>${item.ledger_id ? "Replace private ledger title" : "Create strict ledger"}</button>` : ""}
           <a class="btn" href="/ui/article-evidence">Review evidence</a>
           <a class="btn" href="/ui/incident-candidates">Review candidates</a>
         </div>
@@ -6892,6 +6894,7 @@ async function wireEventReassessments() {
     const card = button.closest("[data-event-reassessment]");
     let suffix = "evidence";
     let confirmation = "QUEUE_EVENT_EVIDENCE";
+    let body = {confirmation};
     let prompt = "Queue evidence extraction from this Event's frozen retained sources? Results remain private and require review.";
     if (button.hasAttribute("data-reassessment-project")) {
       suffix = "candidates";
@@ -6900,13 +6903,16 @@ async function wireEventReassessments() {
     } else if (button.hasAttribute("data-reassessment-ledger")) {
       suffix = "ledger";
       confirmation = "CREATE_REASSESSED_EVENT_LEDGER";
-      prompt = "Create one private ledger revision from the enrolled independent sources? The ledger and narrative still require review.";
+      const title = card.querySelector("[data-reassessment-ledger-title]")?.value || "";
+      body = {confirmation, title};
+      prompt = `Create one private ledger revision titled "${title}" from the enrolled independent sources? The ledger and narrative still require review.`;
     }
+    if (suffix !== "ledger") body = {confirmation};
     if (!window.confirm(prompt)) return;
     button.disabled = true;
     try {
       const result = await apiFetch(`/admin/api/event-reassessments/${encodeURIComponent(card.dataset.eventReassessment)}/${suffix}`, {
-        method: "POST", body: JSON.stringify({confirmation})
+        method: "POST", body: JSON.stringify(body)
       });
       showToast(suffix === "evidence" ? `${(result.job_ids || []).length} evidence jobs queued` : `${suffix} ${result.status}`);
       await load();

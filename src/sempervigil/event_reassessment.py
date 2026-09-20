@@ -28,6 +28,15 @@ def _decode(value: object) -> dict:
     return value
 
 
+def _evidence_title(value: object, candidate_rows: list[tuple]) -> str:
+    title = str(value or "").strip()
+    allowed = {str(row[3]).strip() for row in candidate_rows
+               if len(row) > 3 and str(row[3] or "").strip()}
+    if title not in allowed:
+        raise ValueError("event_reassessment_evidence_title_required")
+    return title
+
+
 def _article_snapshot(row: tuple) -> dict:
     article = {"id": int(row[0]), "title": str(row[1] or ""),
                "content_text": row[3]}
@@ -150,6 +159,12 @@ def _case_metrics(conn: Any, record: dict, pending: set[int]) -> dict:
             WHERE article_id=ANY(%s) GROUP BY status""", (article_ids,)
     ).fetchall()
     candidate_counts = {str(status): int(count) for status, count in candidates}
+    title_rows = conn.execute(
+        """SELECT DISTINCT title FROM incident_candidates
+            WHERE article_id=ANY(%s) AND status='enrolled'
+              AND title IS NOT NULL AND btrim(title)<>''
+            ORDER BY title""", (article_ids,)
+    ).fetchall()
     if missing_source:
         stage = "source_hold"
     elif missing:
@@ -168,6 +183,7 @@ def _case_metrics(conn: Any, record: dict, pending: set[int]) -> dict:
             "evidence_missing": missing, "evidence_running": running,
             "evidence_review": review, "evidence_accepted": accepted,
             "evidence_decided": decided, "candidates": candidate_counts,
+            "ledger_title_options": [str(row[0]) for row in title_rows],
             "stage": stage}
 
 
@@ -284,7 +300,8 @@ def project_accepted(conn: Any, event_id: str, *, confirmation: str) -> dict:
             "public_content_changed": False}
 
 
-def propose_ledger(conn: Any, event_id: str, *, confirmation: str) -> dict:
+def propose_ledger(conn: Any, event_id: str, *, confirmation: str,
+                   title: str) -> dict:
     if confirmation != LEDGER_CONFIRMATION:
         raise ValueError("event_reassessment_ledger_confirmation_required")
     case = conn.execute(
@@ -294,22 +311,13 @@ def propose_ledger(conn: Any, event_id: str, *, confirmation: str) -> dict:
     ).fetchone()
     if not case or case[2] != "active":
         raise ValueError("event_reassessment_case_unavailable")
-    if case[3]:
-        row = conn.execute(
-            """SELECT revision_id,status FROM event_ledger_revisions
-                WHERE ledger_id=%s ORDER BY created_at DESC LIMIT 1""", (case[3],)
-        ).fetchone()
-        return {"event_id": event_id, "ledger_id": case[3],
-                "revision_id": row[0] if row else None,
-                "status": row[1] if row else "bound", "reused": True,
-                "public_content_changed": False}
     current = snapshot(conn, event_id)
     if current["snapshot_version"] != case[0]:
         raise ValueError("event_reassessment_snapshot_stale")
     record = _decode(case[1])
     article_ids = [int(item["article_id"]) for item in record["articles"]]
     rows = conn.execute(
-        """SELECT c.candidate_id,c.article_id,a.original_url
+        """SELECT c.candidate_id,c.article_id,a.original_url,c.title
              FROM incident_candidates c JOIN articles a ON a.id=c.article_id
             WHERE c.article_id=ANY(%s) AND c.status='enrolled'
             ORDER BY c.candidate_id""", (article_ids,)
@@ -321,18 +329,36 @@ def propose_ledger(conn: Any, event_id: str, *, confirmation: str) -> dict:
     domains.discard("")
     if len(candidate_ids) < 2 or len(domains) < 2:
         raise ValueError("event_reassessment_independent_sources_required")
-    ledger_id = "eld_" + _version({"workflow": WORKFLOW, "event_id": event_id,
-                                    "snapshot_version": case[0]})
+    title = _evidence_title(title, rows)
+    ledger_id = case[3] or ("eld_" + _version(
+        {"workflow": WORKFLOW, "event_id": event_id, "snapshot_version": case[0]}))
+    if case[3]:
+        existing = conn.execute(
+            """SELECT revision_id,status,ledger_json FROM event_ledger_revisions
+                WHERE ledger_id=%s ORDER BY created_at DESC,revision_id DESC LIMIT 1""",
+            (ledger_id,),
+        ).fetchone()
+        if existing:
+            prior = _decode(existing[2])
+            prior_candidates = sorted(
+                str(item.get("candidate_id")) for item in prior.get("sources", [])
+            )
+            if prior.get("title") == title and prior_candidates == sorted(candidate_ids):
+                return {"event_id": event_id, "ledger_id": ledger_id,
+                        "revision_id": existing[0], "status": existing[1],
+                        "reused": True, "public_content_changed": False}
     from .event_ledger import propose_initial_sources
     result = propose_initial_sources(conn, candidate_ids, ledger_id=ledger_id,
-                                     title=str(record["event"]["title"]), commit=False)
+                                     title=title, commit=False,
+                                     replace_open=bool(case[3]))
     now = utc_now_iso()
-    conn.execute(
-        """INSERT INTO event_ledger_targets
-           (ledger_id,event_id,snapshot_version,created_at,created_by)
-           VALUES (%s,%s,%s,%s,%s)""",
-        (ledger_id, event_id, case[0], now, "admin-token"),
-    )
+    if not case[3]:
+        conn.execute(
+            """INSERT INTO event_ledger_targets
+               (ledger_id,event_id,snapshot_version,created_at,created_by)
+               VALUES (%s,%s,%s,%s,%s)""",
+            (ledger_id, event_id, case[0], now, "admin-token"),
+        )
     conn.execute(
         "UPDATE event_reassessment_cases SET ledger_id=%s,updated_at=%s WHERE event_id=%s",
         (ledger_id, now, event_id),

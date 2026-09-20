@@ -38,6 +38,19 @@ def test_snapshot_uses_retained_sources_but_never_legacy_narrative():
     assert "summary" not in result["event"]
 
 
+def test_reassessment_title_must_come_from_enrolled_evidence_candidate():
+    rows = [
+        ("ic_one", 7, "https://one.test/report", "Source-backed incident title"),
+        ("ic_two", 8, "https://two.test/report", "Independent report title"),
+    ]
+
+    assert event_reassessment._evidence_title(
+        " Source-backed incident title ", rows
+    ) == "Source-backed incident title"
+    with pytest.raises(ValueError, match="event_reassessment_evidence_title_required"):
+        event_reassessment._evidence_title("Legacy unsupported title", rows)
+
+
 def test_snapshot_rejects_managed_event():
     conn = _SnapshotConn()
     original = conn.execute
@@ -64,3 +77,7 @@ def test_mutating_operations_require_exact_confirmation_before_database_access()
         event_reassessment.start_cohort(NoDatabase(), confirmation="wrong", created_by="test")
     with pytest.raises(ValueError, match="event_reassessment_evidence_confirmation_required"):
         event_reassessment.queue_evidence(NoDatabase(), "evt_old", confirmation="wrong")
+    with pytest.raises(ValueError, match="event_reassessment_ledger_confirmation_required"):
+        event_reassessment.propose_ledger(
+            NoDatabase(), "evt_old", confirmation="wrong", title="Source title"
+        )

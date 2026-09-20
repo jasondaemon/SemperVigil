@@ -3400,6 +3400,12 @@ class EventReassessmentEvidenceRequest(BaseModel):
     confirmation: str
 
 
+class EventReassessmentLedgerRequest(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    confirmation: str
+    title: str = Field(min_length=1, max_length=512)
+
+
 @app.get("/admin/api/event-reassessments", dependencies=[Depends(_require_admin_token)])
 def api_event_reassessments(status: str = "active", limit: int = 200) -> dict:
     from .event_reassessment import list_cases
@@ -3469,12 +3475,13 @@ def api_event_reassessment_candidates(event_id: str,
 @app.post("/admin/api/event-reassessments/{event_id}/ledger",
           dependencies=[Depends(_require_admin_token)])
 def api_event_reassessment_ledger(event_id: str,
-                                  payload: EventReassessmentEvidenceRequest) -> dict:
+                                  payload: EventReassessmentLedgerRequest) -> dict:
     from .event_reassessment import propose_ledger
     conn = None
     try:
         conn = _get_conn()
-        return propose_ledger(conn, event_id, confirmation=payload.confirmation)
+        return propose_ledger(conn, event_id, confirmation=payload.confirmation,
+                              title=payload.title)
     except ValueError as exc:
         if conn is not None:
             conn.rollback()

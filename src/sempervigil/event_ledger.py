@@ -181,16 +181,22 @@ def propose(conn, candidate_id: str, *, ledger_id: str | None = None,
 
 
 def propose_initial_sources(conn, candidate_ids: list[str], *, ledger_id: str,
-                            title: str, commit: bool = True) -> dict:
+                            title: str, commit: bool = True,
+                            replace_open: bool = False) -> dict:
     """Create one reviewable initial revision from a validated source cohort."""
     if (not ledger_id.startswith("eld_") or not title.strip() or len(title) > 512
             or not 2 <= len(candidate_ids) <= 50
             or len(set(candidate_ids)) != len(candidate_ids)):
         raise ValueError("event_ledger_initial_cohort_invalid")
-    if conn.execute(
-        "SELECT 1 FROM event_ledger_revisions WHERE ledger_id=%s LIMIT 1", (ledger_id,)
-    ).fetchone():
+    prior = conn.execute(
+        """SELECT revision_id,status,ledger_json FROM event_ledger_revisions
+            WHERE ledger_id=%s ORDER BY created_at DESC,revision_id DESC LIMIT 1
+            FOR UPDATE""", (ledger_id,)
+    ).fetchone()
+    if prior and not replace_open:
         raise ValueError("event_ledger_initial_cohort_exists")
+    if prior and prior[1] not in {"proposed", "held", "rejected"}:
+        raise ValueError("event_ledger_initial_cohort_not_replaceable")
     source_rows = sorted((_source(conn, candidate_id) for candidate_id in candidate_ids),
                          key=lambda row: row["candidate_id"])
     sources = [{key: source[key] for key in
@@ -214,18 +220,37 @@ def propose_initial_sources(conn, candidate_ids: list[str], *, ledger_id: str,
               "public_eligible": False}
     change = {"kind": "initial", "added_fact_ids": sorted(known),
               "supersedes_fact_ids": [], "conflict_fact_ids": []}
-    identity = {"ledger": ledger, "change": change, "predecessor_revision_id": None}
+    predecessor = prior[0] if prior else None
+    identity = {"ledger": ledger, "change": change,
+                "predecessor_revision_id": predecessor}
     revision_id = "elr_" + _version(identity)
+    if prior and prior[0] == revision_id:
+        return {"ledger_id": ledger_id, "revision_id": revision_id,
+                "status": prior[1], "reused": True, "public_eligible": False}
+    if prior and prior[1] in {"proposed", "held"}:
+        now = utc_now_iso()
+        conn.execute(
+            """UPDATE event_ledger_revisions SET status='rejected',reviewed_at=%s,
+               reviewed_by='system:title-provenance',
+               review_reason='replaced by evidence-source title'
+               WHERE revision_id=%s""",
+            (now, prior[0]),
+        )
     conn.execute(
         """INSERT INTO event_ledger_revisions
            (revision_id,ledger_id,predecessor_revision_id,status,change_kind,
             ledger_json,change_json,created_at)
-           VALUES (%s,%s,NULL,'proposed','initial',%s,%s,%s)""",
-        (revision_id, ledger_id,
+           VALUES (%s,%s,%s,'proposed','initial',%s,%s,%s)""",
+        (revision_id, ledger_id, predecessor,
          json.dumps(ledger, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
          json.dumps(change, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
          utc_now_iso()),
     )
+    if prior:
+        conn.execute(
+            """UPDATE event_ledger_revisions SET superseded_by_revision_id=%s
+               WHERE revision_id=%s""", (revision_id, prior[0])
+        )
     for source in sources:
         conn.execute(
             """INSERT INTO event_ledger_revision_sources
