@@ -3852,6 +3852,71 @@ class EventsPurgeRequest(BaseModel):
     only_empty_cve_clusters: bool = False
 
 
+class LegacyEventRetirementRequest(BaseModel):
+    run_id: str
+    confirmation: str
+
+
+@app.get(
+    "/admin/api/events/legacy-retirement",
+    dependencies=[Depends(_require_admin_token)],
+)
+def api_legacy_event_retirement_runs() -> dict[str, object]:
+    from .legacy_event_retirement import list_runs
+
+    return {"items": list_runs(_get_conn())}
+
+
+@app.post(
+    "/admin/api/events/legacy-retirement/preview",
+    dependencies=[Depends(_require_admin_token)],
+)
+def api_legacy_event_retirement_preview() -> dict[str, object]:
+    from .legacy_event_retirement import create_preview
+
+    return create_preview(_get_conn())
+
+
+@app.post(
+    "/admin/api/events/legacy-retirement/apply",
+    dependencies=[Depends(_require_admin_token)],
+)
+def api_legacy_event_retirement_apply(
+    payload: LegacyEventRetirementRequest,
+) -> dict[str, object]:
+    if payload.confirmation != "SUPPRESS_LEGACY_EVENTS":
+        raise HTTPException(status_code=400, detail="confirmation_required")
+    conn = _get_conn()
+    job_id = enqueue_job(
+        conn,
+        "legacy_event_retire",
+        {"run_id": payload.run_id},
+        debounce=False,
+        dedupe=True,
+    )
+    return {"status": "queued", "run_id": payload.run_id, "job_id": job_id}
+
+
+@app.post(
+    "/admin/api/events/legacy-retirement/restore",
+    dependencies=[Depends(_require_admin_token)],
+)
+def api_legacy_event_retirement_restore(
+    payload: LegacyEventRetirementRequest,
+) -> dict[str, object]:
+    if payload.confirmation != "RESTORE_LEGACY_EVENTS":
+        raise HTTPException(status_code=400, detail="confirmation_required")
+    conn = _get_conn()
+    job_id = enqueue_job(
+        conn,
+        "legacy_event_restore",
+        {"run_id": payload.run_id},
+        debounce=False,
+        dedupe=True,
+    )
+    return {"status": "queued", "run_id": payload.run_id, "job_id": job_id}
+
+
 @app.post("/admin/api/events/purge", dependencies=[Depends(_require_admin_token)])
 def api_events_purge(payload: EventsPurgeRequest | None = None) -> dict[str, object]:
     conn = _get_conn()

@@ -1,6 +1,7 @@
 # Legacy event backlog: inspection and retirement boundary
 
-September 19, 2026. Read-only production inspection; no rows changed or deleted.
+September 20, 2026. Production inventory was read-only; no legacy rows have yet
+been suppressed or deleted.
 
 The user permits retiring nonapplicable old event content, but `candidate=true`
 is not a safe deletion criterion. Current inventory:
@@ -44,10 +45,14 @@ would erase useful linkage and might cause rediscovery rather than migration.
    merged summary. Published contaminated reports require individually validated
    replacements or explicit withdrawal, not a blanket candidate purge.
 
-Existing `upsert_event` preserves `suppressed` visibility when derivation requests
-`active`, but it can overwrite lifecycle/status. Therefore setting only lifecycle
-to `archived` is not a durable retirement mechanism. Admin/API changes and a
-version-checked maintenance operation remain to be implemented before bulk cleanup.
+The version-checked maintenance operation is now implemented and validated but
+not yet applied in production. The admin creates an immutable preview manifest;
+published, managed, manual, revision-bearing, approved and in-flight Events are
+excluded. Apply and restore run as bounded fetch-worker jobs. Each row is locked
+and fingerprinted before mutation, and restore refuses to overwrite later edits.
+Suppression sets both durable visibility and lifecycle while retaining every
+article, CVE, source link and Event row.
 
-No new cleanup schedule or destructive maintenance task was started. This audit
-is not a claim that all legacy candidates have been reviewed for factual quality.
+No cleanup schedule or destructive maintenance task was added. A production
+preview must be inspected before its exact manifest is queued. This workflow is
+not a claim that all legacy candidates have been reviewed for factual quality.

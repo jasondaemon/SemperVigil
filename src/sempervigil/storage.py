@@ -56,6 +56,8 @@ _QUEUE_NAME_BY_JOB_TYPE: dict[str, str] = {
     "article_review_private": "llm_local",
     "event_ledger_compose": "openai",
     "event_promote_reviewed": "fetch",
+    "legacy_event_retire": "fetch",
+    "legacy_event_restore": "fetch",
     "build_daily_brief": "openai",
     "write_article_markdown": "publish",
     "build_site": "build",
@@ -7518,6 +7520,137 @@ def get_event_web_source(conn: Any, source_id: str) -> dict[str, object] | None:
         "promoted_article_id": row[13],
         "metadata": metadata,
     }
+
+
+def get_recent_event_source_version(
+    conn: Any,
+    normalized_url: str,
+    *,
+    max_age_seconds: int,
+) -> dict[str, object] | None:
+    if not _table_exists(conn, "event_source_versions"):
+        return None
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=max(0, max_age_seconds))).isoformat()
+    row = conn.execute(
+        """
+        SELECT source_version, normalized_url, content_hash, content_text,
+               published_at, fetched_at, article_id
+        FROM event_source_versions
+        WHERE url_hash = %s AND fetched_at >= %s
+        ORDER BY fetched_at DESC
+        LIMIT 1
+        """,
+        (url_hash(normalized_url), cutoff),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "source_version": row[0],
+        "normalized_url": row[1],
+        "content_hash": row[2],
+        "content_text": row[3],
+        "published_at": row[4],
+        "fetched_at": row[5],
+        "article_id": row[6],
+    }
+
+
+def upsert_event_source_version(
+    conn: Any,
+    normalized_url: str,
+    content_text: str,
+    *,
+    published_at: str | None = None,
+) -> dict[str, object]:
+    normalized = normalize_url(normalized_url)
+    url_hash_value = url_hash(normalized)
+    content_hash = hashlib.sha256(content_text.encode("utf-8")).hexdigest()
+    source_version = hashlib.sha256(
+        f"{url_hash_value}:{content_hash}".encode("utf-8")
+    ).hexdigest()
+    fetched_at = utc_now_iso()
+    conn.execute(
+        """
+        INSERT INTO event_source_versions
+            (source_version, url_hash, normalized_url, content_hash, content_text,
+             published_at, fetched_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT(url_hash, content_hash) DO UPDATE SET
+            published_at = COALESCE(excluded.published_at, event_source_versions.published_at),
+            fetched_at = excluded.fetched_at
+        """,
+        (
+            source_version,
+            url_hash_value,
+            normalized,
+            content_hash,
+            content_text,
+            published_at,
+            fetched_at,
+        ),
+    )
+    conn.commit()
+    return {
+        "source_version": source_version,
+        "normalized_url": normalized,
+        "content_hash": content_hash,
+        "content_text": content_text,
+        "published_at": published_at,
+        "fetched_at": fetched_at,
+    }
+
+
+def get_event_relevance_receipt(
+    conn: Any,
+    event_id: str,
+    source_version: str,
+    validator_version: str,
+) -> dict[str, object] | None:
+    if not _table_exists(conn, "event_relevance_receipts"):
+        return None
+    row = conn.execute(
+        """
+        SELECT decision_json
+        FROM event_relevance_receipts
+        WHERE event_id = %s AND source_version = %s AND validator_version = %s
+        """,
+        (event_id, source_version, validator_version),
+    ).fetchone()
+    if not row:
+        return None
+    decision = row[0]
+    if isinstance(decision, str):
+        decision = json.loads(decision) if decision else {}
+    return dict(decision or {})
+
+
+def store_event_relevance_receipt(
+    conn: Any,
+    event_id: str,
+    source_version: str,
+    validator_version: str,
+    decision: dict[str, object],
+) -> None:
+    receipt_id = hashlib.sha256(
+        f"{event_id}:{source_version}:{validator_version}".encode("utf-8")
+    ).hexdigest()
+    conn.execute(
+        """
+        INSERT INTO event_relevance_receipts
+            (receipt_id, event_id, source_version, validator_version, decision_json, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT(event_id, source_version, validator_version) DO NOTHING
+        """,
+        (
+            receipt_id,
+            event_id,
+            source_version,
+            validator_version,
+            json_dumps(decision),
+            utc_now_iso(),
+        ),
+    )
+    conn.commit()
 
 
 def clear_event_web_sources(

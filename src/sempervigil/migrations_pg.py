@@ -481,6 +481,24 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_event_composition_openai_043")
             applied.add("pg_event_composition_openai_043")
+        if "pg_event_research_cache_044" not in applied:
+            _migrate_event_research_cache(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_event_research_cache_044", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_event_research_cache_044")
+            applied.add("pg_event_research_cache_044")
+        if "pg_legacy_event_retirement_045" not in applied:
+            _migrate_legacy_event_retirement(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_legacy_event_retirement_045", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_legacy_event_retirement_045")
+            applied.add("pg_legacy_event_retirement_045")
         else:
             conn.commit()
         return
@@ -735,6 +753,24 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_event_composition_openai_043")
+
+    conn.execute("BEGIN")
+    _migrate_event_research_cache(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_event_research_cache_044", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_event_research_cache_044")
+
+    conn.execute("BEGIN")
+    _migrate_legacy_event_retirement(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_legacy_event_retirement_045", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_legacy_event_retirement_045")
 
 def _bootstrap_schema(conn) -> None:
     conn.execute(
@@ -1458,7 +1494,6 @@ def _migrate_event_web_sources(conn) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_event_web_sources_event ON event_web_sources(event_id, discovered_at DESC)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_event_web_sources_status ON event_web_sources(event_id, status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_event_web_sources_domain ON event_web_sources(domain)")
-
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS article_candidates (
@@ -1477,6 +1512,79 @@ def _migrate_event_web_sources(conn) -> None:
         """
     )
 
+
+def _migrate_event_research_cache(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS event_source_versions (
+            source_version TEXT PRIMARY KEY,
+            url_hash TEXT NOT NULL,
+            normalized_url TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            content_text TEXT NOT NULL,
+            published_at TEXT NULL,
+            fetched_at TEXT NOT NULL,
+            article_id BIGINT NULL REFERENCES articles(id) ON DELETE SET NULL,
+            UNIQUE(url_hash, content_hash)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_event_source_versions_url_fetched "
+        "ON event_source_versions(url_hash, fetched_at DESC)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS event_relevance_receipts (
+            receipt_id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+            source_version TEXT NOT NULL REFERENCES event_source_versions(source_version) ON DELETE CASCADE,
+            validator_version TEXT NOT NULL,
+            decision_json JSONB NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(event_id, source_version, validator_version)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_event_relevance_receipts_event "
+        "ON event_relevance_receipts(event_id, created_at DESC)"
+    )
+
+
+def _migrate_legacy_event_retirement(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS legacy_event_retirement_runs (
+            run_id TEXT PRIMARY KEY,
+            policy_version TEXT NOT NULL,
+            status TEXT NOT NULL,
+            counts_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TEXT NOT NULL,
+            applied_at TEXT NULL,
+            restored_at TEXT NULL,
+            requested_by TEXT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS legacy_event_retirement_items (
+            run_id TEXT NOT NULL REFERENCES legacy_event_retirement_runs(run_id) ON DELETE CASCADE,
+            event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+            before_json JSONB NOT NULL,
+            preview_fingerprint TEXT NOT NULL,
+            applied_fingerprint TEXT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            reason TEXT NULL,
+            PRIMARY KEY(run_id, event_id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_legacy_event_retirement_items_status "
+        "ON legacy_event_retirement_items(run_id, status, event_id)"
+    )
 
 def _migrate_article_products(conn) -> None:
     _create_article_product_tables(conn)

@@ -4933,6 +4933,12 @@ function wireEvents() {
   const rebuildBtn = document.getElementById("events-rebuild");
   const purgeBtn = document.getElementById("events-purge");
   const purgePreviewBtn = document.getElementById("events-purge-preview");
+  const retirementPreviewBtn = document.getElementById("legacy-retirement-preview");
+  const retirementApplyBtn = document.getElementById("legacy-retirement-apply");
+  const retirementRestoreBtn = document.getElementById("legacy-retirement-restore");
+  const retirementConfirmation = document.getElementById("legacy-retirement-confirmation");
+  const retirementStatus = document.getElementById("legacy-retirement-status");
+  let retirementRun = null;
   let pageSize = 50;
   let eventsById = {};
   function setError(message) {
@@ -4947,6 +4953,83 @@ function wireEvents() {
       error.style.display = "none";
     }
   }
+  function renderRetirementRun(run) {
+    retirementRun = run || null;
+    if (!retirementStatus) return;
+    if (!run) {
+      retirementStatus.textContent = "No retirement preview has been created.";
+      if (retirementApplyBtn) retirementApplyBtn.disabled = true;
+      if (retirementRestoreBtn) retirementRestoreBtn.disabled = true;
+      return;
+    }
+    const counts = run.counts || {};
+    retirementStatus.textContent = `${run.status}: ${counts.eligible || 0} eligible, ${counts.applied || 0} suppressed, ${counts.skipped || 0} skipped, ${counts.restored || 0} restored. Run ${run.run_id}.`;
+    if (retirementApplyBtn) retirementApplyBtn.disabled = run.status !== "previewed";
+    if (retirementRestoreBtn) retirementRestoreBtn.disabled = run.status !== "applied";
+  }
+  async function loadRetirementRuns() {
+    if (!retirementStatus) return;
+    try {
+      const data = await apiFetch("/admin/api/events/legacy-retirement");
+      renderRetirementRun((data.items || [])[0] || null);
+    } catch (err) {
+      retirementStatus.textContent = err.message || String(err);
+    }
+  }
+  if (retirementPreviewBtn) {
+    retirementPreviewBtn.addEventListener("click", async () => {
+      try {
+        const run = await apiFetch("/admin/api/events/legacy-retirement/preview", {
+          method: "POST",
+          body: JSON.stringify({}),
+        });
+        renderRetirementRun(run);
+        showToast(`Preview created: ${(run.counts || {}).eligible || 0} eligible`);
+      } catch (err) {
+        setError(err.message || String(err));
+      }
+    });
+  }
+  if (retirementApplyBtn) {
+    retirementApplyBtn.addEventListener("click", async () => {
+      if (!retirementRun || retirementRun.status !== "previewed") return;
+      const confirmation = retirementConfirmation ? retirementConfirmation.value.trim() : "";
+      if (confirmation !== "SUPPRESS_LEGACY_EVENTS") {
+        showToast("Type SUPPRESS_LEGACY_EVENTS to queue this preview");
+        return;
+      }
+      try {
+        const result = await apiFetch("/admin/api/events/legacy-retirement/apply", {
+          method: "POST",
+          body: JSON.stringify({ run_id: retirementRun.run_id, confirmation }),
+        });
+        showToast(`Legacy suppression queued (${result.job_id})`);
+        loadRetirementRuns();
+      } catch (err) {
+        setError(err.message || String(err));
+      }
+    });
+  }
+  if (retirementRestoreBtn) {
+    retirementRestoreBtn.addEventListener("click", async () => {
+      if (!retirementRun || retirementRun.status !== "applied") return;
+      if (!confirm("Restore this retirement run? Later Event changes will not be overwritten.")) return;
+      try {
+        const result = await apiFetch("/admin/api/events/legacy-retirement/restore", {
+          method: "POST",
+          body: JSON.stringify({
+            run_id: retirementRun.run_id,
+            confirmation: "RESTORE_LEGACY_EVENTS",
+          }),
+        });
+        showToast(`Legacy restore queued (${result.job_id})`);
+        loadRetirementRuns();
+      } catch (err) {
+        setError(err.message || String(err));
+      }
+    });
+  }
+  loadRetirementRuns();
   async function load(page) {
     setError("");
     const params = new URLSearchParams();

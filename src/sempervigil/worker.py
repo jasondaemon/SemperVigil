@@ -57,6 +57,7 @@ from .normalize import normalize_name
 from .searxng import searxng_search
 from .enrichment.query import build_event_enrich_query
 from .enrichment.scoring import score_web_result
+from .enrichment.url import normalize_url
 from .storage import (
     list_articles_for_day,
     list_articles_per_day,
@@ -150,6 +151,10 @@ from .storage import (
     upsert_event_web_source,
     update_event_web_source_status,
     update_event_web_source_published_at,
+    get_recent_event_source_version,
+    upsert_event_source_version,
+    get_event_relevance_receipt,
+    store_event_relevance_receipt,
     mark_event_web_source_status,
     promote_event_web_source_to_article,
     link_cve_products_from_items,
@@ -225,6 +230,8 @@ WORKER_JOB_TYPES = [
     "article_review_private",
     "event_ledger_compose",
     "event_promote_reviewed",
+    "legacy_event_retire",
+    "legacy_event_restore",
     "source_acquire",
     "rebuild_vendor_products",
     "smoke_test",
@@ -238,6 +245,8 @@ QUEUE_WORKER_TYPES = {
         "cve_enrich_kev",
         "events_rebuild",
         "event_promote_reviewed",
+        "legacy_event_retire",
+        "legacy_event_restore",
         "enrich_event_from_web",
         "validate_event_web_source",
         "promote_event_web_source_to_article",
@@ -6940,18 +6949,39 @@ def _handle_validate_event_web_source(
         )
         raise ValueError("missing_url")
 
+    normalized_url = normalize_url(url)
+    cache_ttl_seconds = max(
+        0,
+        int(os.getenv("SV_EVENT_SOURCE_CACHE_TTL_SECONDS", "86400") or "86400"),
+    )
+    source_version_row = get_recent_event_source_version(
+        conn,
+        normalized_url,
+        max_age_seconds=cache_ttl_seconds,
+    )
+    source_cache_hit = source_version_row is not None
     try:
-        fetch_result = fetch_article_content(
-            url,
-            timeout_seconds=config.ingest.http.timeout_seconds,
-            user_agent=config.ingest.http.user_agent,
-            logger=logger,
-            source_id="event_web_enrich",
-            source_name="Event Web Enrich",
-            overrides=None,
-        )
-        content_text = str(fetch_result.get("content_text") or "")
-        fetched_published_at = str(fetch_result.get("published_at") or "").strip()
+        if source_version_row:
+            content_text = str(source_version_row.get("content_text") or "")
+            fetched_published_at = str(source_version_row.get("published_at") or "").strip()
+        else:
+            fetch_result = fetch_article_content(
+                url,
+                timeout_seconds=config.ingest.http.timeout_seconds,
+                user_agent=config.ingest.http.user_agent,
+                logger=logger,
+                source_id="event_web_enrich",
+                source_name="Event Web Enrich",
+                overrides=None,
+            )
+            content_text = str(fetch_result.get("content_text") or "")
+            fetched_published_at = str(fetch_result.get("published_at") or "").strip()
+            source_version_row = upsert_event_source_version(
+                conn,
+                normalized_url,
+                content_text,
+                published_at=fetched_published_at or None,
+            )
         if fetched_published_at:
             update_event_web_source_published_at(conn, source_id, fetched_published_at)
     except Exception as exc:
@@ -6976,17 +7006,41 @@ def _handle_validate_event_web_source(
         }
 
     update_event_web_source_status(conn, source_id, "validating")
-    try:
-        validation, fallback_reason = _validate_event_source_with_llm(
-            conn,
-            logger,
-            event=event,
-            source=source,
-            content=content_text,
-        )
-    except Exception as exc:
-        validation = _validate_event_source_fallback(event, source, content_text)
-        fallback_reason = f"fallback_llm_error:{exc}"
+    source_version = str((source_version_row or {}).get("source_version") or "")
+    validator_version = _event_source_validator_version(conn, event)
+    cached_decision = get_event_relevance_receipt(
+        conn,
+        event_id,
+        source_version,
+        validator_version,
+    )
+    relevance_cache_hit = cached_decision is not None
+    if cached_decision:
+        validation = dict(cached_decision.get("validation") or {})
+        fallback_reason = str(cached_decision.get("fallback_reason") or "")
+    else:
+        try:
+            validation, fallback_reason = _validate_event_source_with_llm(
+                conn,
+                logger,
+                event=event,
+                source=source,
+                content=content_text,
+            )
+        except Exception as exc:
+            validation = _validate_event_source_fallback(event, source, content_text)
+            fallback_reason = f"fallback_llm_error:{exc}"
+        if str(validation.get("validator") or "") == "llm":
+            store_event_relevance_receipt(
+                conn,
+                event_id,
+                source_version,
+                validator_version,
+                {
+                    "validation": validation,
+                    "fallback_reason": fallback_reason,
+                },
+            )
     min_confidence = float(os.getenv("SV_EVENT_ENRICH_VALIDATE_MIN_CONFIDENCE", "0.70"))
     require_llm = os.getenv("SV_EVENT_ENRICH_VALIDATE_REQUIRE_LLM", "0").strip().lower() in {"1", "true", "yes"}
     validator = str(validation.get("validator") or "")
@@ -7002,6 +7056,10 @@ def _handle_validate_event_web_source(
             "contradictions": validation.get("contradictions") or [],
             "rationale": validation.get("rationale") or "",
             "fallback_reason": fallback_reason,
+            "source_version": source_version,
+            "validator_version": validator_version,
+            "source_cache_hit": source_cache_hit,
+            "relevance_cache_hit": relevance_cache_hit,
             "min_confidence": min_confidence,
             "require_llm": require_llm,
         }
@@ -8568,6 +8626,44 @@ def _validate_event_source_fallback(
     }
 
 
+def _event_source_validation_profile(conn) -> dict[str, object] | None:
+    profile_id = str(os.getenv("SV_EVENT_ENRICH_VALIDATION_PROFILE_ID", "")).strip()
+    if profile_id:
+        profile = get_profile(conn, profile_id)
+        if profile:
+            return profile
+    profile, _reason = get_active_profile_for_stage(conn, "event_web_validate")
+    if profile:
+        return profile
+    profile, _reason = get_active_profile_for_stage(conn, "summarize_article")
+    return profile
+
+
+def _event_source_validator_version(conn, event: dict[str, object]) -> str:
+    profile = _event_source_validation_profile(conn)
+    material = {
+        "contract": "event_web_validate_v1",
+        "event": {
+            "title": event.get("title"),
+            "entity": event.get("entity"),
+            "kind": event.get("kind"),
+            "incident_date": event.get("incident_date"),
+            "summary": event.get("summary"),
+        },
+        "profile": {
+            "id": (profile or {}).get("id"),
+            "provider": (profile or {}).get("primary_provider_id"),
+            "model": (profile or {}).get("primary_model_id"),
+            "prompt": (profile or {}).get("prompt_id"),
+            "schema": (profile or {}).get("schema_id"),
+            "params": (profile or {}).get("params"),
+            "updated_at": (profile or {}).get("updated_at"),
+        },
+    }
+    encoded = json.dumps(material, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 def _validate_event_source_with_llm(
     conn,
     logger: logging.Logger,
@@ -8576,14 +8672,7 @@ def _validate_event_source_with_llm(
     source: dict[str, object],
     content: str,
 ) -> tuple[dict[str, object], str]:
-    profile = None
-    profile_id = str(os.getenv("SV_EVENT_ENRICH_VALIDATION_PROFILE_ID", "")).strip()
-    if profile_id:
-        profile = get_profile(conn, profile_id)
-    if not profile:
-        profile, _reason = get_active_profile_for_stage(conn, "event_web_validate")
-    if not profile:
-        profile, _reason = get_active_profile_for_stage(conn, "summarize_article")
+    profile = _event_source_validation_profile(conn)
     if not profile:
         return _validate_event_source_fallback(event, source, content), "fallback_no_profile"
 
@@ -9749,6 +9838,14 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         if enabled() and result.get("status") in {"promoted", "reused"}:
             mark_build_dirty(conn, reason="qualified_event_promoted")
         return result
+    if job.job_type == "legacy_event_retire":
+        from .legacy_event_retirement import apply_run
+
+        return apply_run(conn, str((job.payload or {}).get("run_id") or ""))
+    if job.job_type == "legacy_event_restore":
+        from .legacy_event_retirement import restore_run
+
+        return restore_run(conn, str((job.payload or {}).get("run_id") or ""))
     if job.job_type == "rebuild_vendor_products":
         return _handle_rebuild_vendor_products(conn, config, logger)
     if job.job_type == "smoke_test":

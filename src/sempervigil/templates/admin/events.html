@@ -54,6 +54,17 @@
     <input type="date" id="events-before">
     <button class="btn" type="submit">Apply</button>
   </form>
+  <div class="panel" id="legacy-retirement-panel">
+    <h2>Legacy Event Retirement</h2>
+    <p class="muted">Reversibly suppresses unpublished legacy candidates. Published, managed, manual, and in-flight Events are excluded.</p>
+    <div class="filters inline">
+      <button class="btn secondary" type="button" id="legacy-retirement-preview">Create Preview</button>
+      <input type="text" id="legacy-retirement-confirmation" placeholder="SUPPRESS_LEGACY_EVENTS">
+      <button class="btn danger" type="button" id="legacy-retirement-apply" disabled>Queue Suppression</button>
+      <button class="btn secondary" type="button" id="legacy-retirement-restore" disabled>Restore Latest Run</button>
+    </div>
+    <p id="legacy-retirement-status" class="muted">Loading retirement status...</p>
+  </div>
   <div class="panel inline">
     <div class="filters inline">
       <label class="checkbox"><input type="checkbox" id="events-purge-dry" checked> Dry run</label>
