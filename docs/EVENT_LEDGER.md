@@ -57,3 +57,10 @@ superseded-source detection and withdrawal while asserting no writes to legacy
 Events or LLM-run records.
 
 Narrative composition and public publication are separate future gates.
+
+## Production canary
+
+The accepted WaterPlum ledger revision contains 20 accepted facts and 20 exact
+passages from the enrolled source revision. Its lineage is current. Replaying the
+same candidate reused the accepted revision and left job count, LLM-run count,
+legacy Event rows, Event-article links and public output unchanged.
