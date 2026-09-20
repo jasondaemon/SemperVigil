@@ -298,8 +298,24 @@ Scope: validated pilot events, then gradual expansion.
   Do not label refresh timestamps as new incident developments.
 - Use one canonical event URL and indexable HTML. Update structured metadata and
   sitemap modification dates only when relevant content changes.
-- Publish event references in daily JSON and cards; keep feed compatibility and
-  existing CVE links. Add Events to search without restoring entity-page exports.
+- Publish Event references in reader cards through a versioned companion artifact;
+  keep existing daily JSON and CVE links compatible. Add Events to search without
+  restoring entity-page exports.
+- Lead each selected day with a bounded Event Updates section when a qualified
+  public Event revision was promoted that day. Use a separate, immutable
+  `/feed/event-updates/days/YYYY-MM-DD.json` companion archive so existing daily
+  downloads and downstream consumers do not change. Administrative timestamps,
+  rebuilds and unchanged revision replays must not create reader updates.
+- Redesign the Events index around recently updated Events followed by a compact
+  archive. Cards should show a two-line overview, meaningful update state, a
+  concise revision delta, source count and validated entities; do not infer an
+  entity chip from the title. Default to meaningful publication update while
+  retaining event-date sorting and bounded search/filter controls.
+- Give Event detail pages a strong reading hierarchy: Overview first, an
+  at-a-glance fact panel, What Changed for later revisions, a visual attack path,
+  dated timeline, impact/response panels, explicit known/claimed/unknown states,
+  compact citation markers and a complete source list. Long evidence remains
+  accessible without dominating the default reading view.
 - Generate only changed event inputs. Keep historical feed JSON out of Hugo's
   loaded data path. Retain API-driven builds and atomic release activation.
 - Validate output before activation. An invalid event export must retain its last
@@ -380,6 +396,35 @@ References:
 
 Exit: evaluate return visits, event-update usage, useful referrals, and operational
 cost, without substituting page count or text length for quality.
+
+## Frontend and static-publishing evolution
+
+Hugo remains the preferred public presentation layer while the site is mostly
+read-only, cacheable and published as an atomic static release. Do not replace it
+with a database-backed application merely to obtain richer Event components.
+
+Prepare for a future renderer change without committing to one now:
+
+- Treat qualified Event revisions, daily feeds, Event-update archives, search
+  shards and metrics as versioned renderer-neutral public contracts.
+- Keep validation, publication authority and immutable revision history outside
+  Hugo. A renderer may consume authorized artifacts but cannot approve them.
+- Progressively remove historical data from Hugo's loaded data graph. Routine
+  article ingestion should eventually update retained JSON artifacts without a
+  full site build; Event publication can continue producing indexable static HTML.
+- Preserve canonical URLs, structured metadata, correction history and atomic
+  activation independently of the selected renderer.
+- Reconcile the live Events list layout into the `sempervigil-hugo` repository
+  before redesign work; production-only layout files are not an acceptable source
+  of truth.
+
+Reassess Hugo only when measured operation shows a sustained constraint, such as
+p95 builds above two minutes, valid builds approaching the worker memory safety
+limit, required publication latency measured in minutes, a very large generated
+page corpus, or reader features that genuinely require server-side state. If a
+replacement is warranted, evaluate a static-first component renderer such as
+Astro against the same contracts and atomic release process. A framework change
+alone does not solve unnecessary full-history rebuilds.
 
 ## Stage 6: Monetization readiness
 
