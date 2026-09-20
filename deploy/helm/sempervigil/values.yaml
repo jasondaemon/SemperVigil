@@ -214,6 +214,8 @@ workerLlm:
   resources: {}
 
 workerOpenai:
+  # Optional independent release; empty values inherit the shared image.
+  image: {}
   enabled: true
   replicaCount: 1
   resources: {}
