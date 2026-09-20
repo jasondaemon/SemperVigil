@@ -1,0 +1,20 @@
+{{- if .Values.searxng.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sempervigil.componentFullname" (list . "searxng-config") }}
+  labels:
+    {{- include "sempervigil.labels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+data:
+  settings.yml: |
+    use_default_settings: true
+
+    search:
+      formats:
+        {{- toYaml .Values.searxng.formats | nindent 8 }}
+
+    server:
+      secret_key: "ultrasecretkey"
+      image_proxy: true
+{{- end }}

@@ -244,6 +244,9 @@ web:
 searxng:
   enabled: false
   replicaCount: 1
+  formats:
+    - html
+    - json
   resources: {}
 
 networkPolicy:
