@@ -5785,6 +5785,33 @@ def _article_enrichment_error(conn, article_id, *, kind, error):
                                      prefix + "_generated_at": utc_now_iso(), prefix + "_error": error})
 
 
+def _maybe_enqueue_event_article_review(conn, article_id: int, logger: logging.Logger) -> str | None:
+    """Start evidence extraction once a researched article's normal enrichment is stable."""
+    article = get_article_by_id(conn, article_id)
+    if (not article or article.get("source_id") != "web_enrich"
+            or not article.get("summary_generated_at")
+            or not article.get("context_generated_at")
+            or article.get("summary_error") or article.get("context_error")):
+        return None
+    linked = conn.execute(
+        """SELECT 1 FROM event_articles ea JOIN events e ON e.id=ea.event_id
+             WHERE ea.article_id=%s AND e.event_key LIKE 'event-ledger:%%' LIMIT 1""",
+        (article_id,),
+    ).fetchone()
+    if not linked:
+        return None
+    from .article_review_jobs import submit
+    try:
+        job_id = submit(conn, [article_id])
+    except (PermissionError, ValueError) as exc:
+        log_event(logger, logging.WARNING, "event_research_evidence_not_queued",
+                  article_id=article_id, reason=str(exc))
+        return None
+    log_event(logger, logging.INFO, "event_research_evidence_queued",
+              article_id=article_id, job_id=job_id)
+    return job_id
+
+
 def _handle_summarize_article_llm(
     conn, config, job: Job, logger: logging.Logger
 ) -> dict[str, object]:
@@ -5917,6 +5944,7 @@ def _handle_summarize_article_llm(
             event_id_text = str(event_id)
             update_event_summary_from_articles(conn, event_id_text)
             enqueue_job(conn, "event_report_llm", {"event_id": event_id_text}, dedupe=True)
+        _maybe_enqueue_event_article_review(conn, int(article_id), logger)
         _maybe_enqueue_article_product_enrich(conn, int(article_id), article["source_id"], logger)
         _maybe_enqueue_context_pack(conn, int(article_id), article["source_id"], logger)
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
@@ -6053,6 +6081,7 @@ def _handle_summarize_article_context_llm(
             event_id_text = str(event_id)
             update_event_summary_from_articles(conn, event_id_text)
             enqueue_job(conn, "event_report_llm", {"event_id": event_id_text}, dedupe=True)
+        _maybe_enqueue_event_article_review(conn, int(article_id), logger)
         # Event derivation now runs after context pack completion so classification can use
         # article context rather than markdown write timing.
         if not list_event_ids_for_article(conn, int(article_id)) and not has_pending_article_job(
@@ -8502,7 +8531,8 @@ def _validate_event_source_fallback(
     ).lower()
     entity = str(event.get("entity") or "").strip()
     title = str(event.get("title") or "").strip()
-    entity_token = (entity or title).split()[0].strip().lower() if (entity or title) else ""
+    from .enrichment.query import _extract_primary_entity
+    entity_token = (_extract_primary_entity(entity or title) or "").lower()
     kind = str(event.get("kind") or "").strip().lower()
     keyword_sets = {
         "breach": {"breach", "compromised", "intrusion", "incident", "stolen"},

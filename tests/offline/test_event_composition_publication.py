@@ -68,12 +68,18 @@ def _bundle():
 
 def test_composition_bundle_renders_reproducible_page_and_index():
     event_id, bundle = _bundle()
+    bundle["composition"]["sections"] = dict(
+        sorted(bundle["composition"]["sections"].items())
+    )
+    bundle["composition_id"] = "elc_" + _version(bundle["composition"])
+    bundle["qualification"]["composition_id"] = bundle["composition_id"]
     revision = _version({"workflow": PUBLIC_WORKFLOW, "bundle": bundle})
     projection = validate_bundle(bundle, event_id=event_id, expected_revision=revision)
     assert projection["revision_id"] == revision
     metadata, page = render(bundle, event_id=event_id, expected_revision=revision)
     assert metadata["title"].startswith("WaterPlum")
     assert "Attack vector" in page and "2026-09-18" in page
+    assert page.index("<h2>Overview</h2>") < page.index("<h2>Attack vector</h2>")
     assert "<script>" not in page and "&lt;script&gt;" in page
     assert "https://example.test/report" in page
     entry = index_entry(bundle, event_id=event_id, expected_revision=revision)

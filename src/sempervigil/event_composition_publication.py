@@ -181,6 +181,9 @@ def validate_bundle(bundle: dict, *, event_id: str, expected_revision: str | Non
 def materialize_event(conn, composition_id: str) -> dict:
     material = current_material(conn, composition_id)
     event_id = material["event_id"]
+    overview = " ".join(
+        item["text"] for item in material["composition"]["sections"]["overview"]
+    )
     existing = conn.execute("SELECT id,event_key FROM events WHERE id=%s OR event_key=%s FOR UPDATE",
                             (event_id, "event-ledger:" + material["ledger_id"])).fetchall()
     expected_key = "event-ledger:" + material["ledger_id"]
@@ -190,10 +193,15 @@ def materialize_event(conn, composition_id: str) -> dict:
         dates = sorted(source["brief_day"] for source in material["sources"] if source["brief_day"])
         stamp = (dates[0] if dates else utc_now_iso())
         create_event(conn, material["ledger_record"]["ledger"]["kind"],
-                     material["ledger_record"]["ledger"]["title"], None, stamp,
+                     material["ledger_record"]["ledger"]["title"], overview, stamp,
                      dates[-1] if dates else stamp, event_key=expected_key,
                      status="open", visibility="active", lifecycle="candidate",
                      publish_state="draft", site_slug=event_id, event_id=event_id)
+    else:
+        conn.execute(
+            "UPDATE events SET summary=%s,updated_at=%s WHERE id=%s",
+            (overview, utc_now_iso(), event_id),
+        )
     for source in material["sources"]:
         conn.execute("""INSERT INTO event_articles(event_id,article_id,added_by,created_at)
             VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
@@ -202,11 +210,38 @@ def materialize_event(conn, composition_id: str) -> dict:
     return current_material(conn, composition_id, event_id=event_id)
 
 
+def queue_research_if_needed(conn, material: dict) -> tuple[str, int] | None:
+    """Hold one-source narratives at draft while corroborating coverage is sought."""
+    from .config import get_events_settings
+
+    settings = get_events_settings(conn)
+    minimum = max(2, int(settings.get("publish_min_articles", 2) or 2))
+    if len(material["sources"]) >= minimum:
+        return None
+    maximum = max(minimum, int(settings.get("enrich_min_articles_max_results", 12) or 12))
+    job_id = enqueue_job(
+        conn,
+        "enrich_event_from_web",
+        {"event_id": material["event_id"], "max_results": maximum,
+         "replace_existing": False},
+        debounce=True,
+        dedupe=True,
+    )
+    return job_id, minimum
+
+
 def submit(conn, composition_id: str, *, confirmation: str) -> dict:
     if confirmation != CONFIRMATION:
         raise ValueError("event_composition_publication_confirmation_required")
     material = materialize_event(conn, composition_id)
     event_id = material["event_id"]
+    research = queue_research_if_needed(conn, material)
+    if research:
+        research_job_id, minimum_sources = research
+        return {"event_id": event_id, "job_id": research_job_id,
+                "status": "research_queued", "source_count": len(material["sources"]),
+                "minimum_sources": minimum_sources,
+                "public_eligible": False}
     with connection_factory("SV_EVENT_APPROVAL_DB_URL")() as authority:
         authority.execute("SET LOCAL statement_timeout='3s'")
         current = current_material(authority, composition_id, event_id=event_id, lock=True)

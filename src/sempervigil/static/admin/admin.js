@@ -7008,8 +7008,14 @@ async function wireEventCompositions() {
         const result = await apiFetch(`/admin/api/event-compositions/${encodeURIComponent(card.dataset.eventComposition)}/publish`, {
           method: "POST", body: JSON.stringify({confirmation: "PUBLISH_ACCEPTED_EVENT"})
         });
-        showToast(`Event publication queued: ${result.job_id}`);
-        message.textContent = "Publication is queued. The Event will appear after qualified promotion and the next atomic site build.";
+        if (result.status === "research_queued") {
+          showToast(`Additional-source research queued: ${result.job_id}`);
+          message.textContent = `This remains a draft with ${result.source_count} reviewed source. Research is queued; publication requires at least ${result.minimum_sources} reviewed sources.`;
+          card.querySelectorAll("button").forEach((item) => { item.disabled = false; });
+        } else {
+          showToast(`Event publication queued: ${result.job_id}`);
+          message.textContent = "Publication is queued. The Event will appear after qualified promotion and the next atomic site build.";
+        }
       } catch (error) {
         message.textContent = `Event publication failed: ${error.message}`;
         card.querySelectorAll("button").forEach((item) => { item.disabled = false; });

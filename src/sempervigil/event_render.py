@@ -72,6 +72,7 @@ def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict
     metadata, projection = resolve(bundle, event_id=event_id, expected_revision=expected_revision)
     from html import escape
     if bundle.get("workflow") == "event-composition-public-revision-v1":
+        from .event_composition import SECTIONS
         headings = {"overview": "Overview", "attack_vector": "Attack vector",
                     "attack_path": "Attack path", "timeline": "Timeline", "impact": "Impact",
                     "response_recovery": "Response and recovery", "mitigations": "Mitigations",
@@ -82,7 +83,10 @@ def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict
                  f'data-event-revision="{expected_revision}">',
                  '<p class="event-evidence-note">This deconstruction is maintained from attributed reporting. '
                  'Claims link to the source material used to support them.</p>']
-        for section, items in projection["sections"].items():
+        # Stored composition JSON is canonicalized with sorted keys. Presentation
+        # order is editorial, not an implementation detail of JSON serialization.
+        for section in SECTIONS:
+            items = projection["sections"][section]
             if not items:
                 continue
             lines.append(f"<h2>{headings[section]}</h2>")

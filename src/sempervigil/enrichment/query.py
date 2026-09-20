@@ -8,7 +8,7 @@ from ..normalize import normalize_name
 def build_event_enrich_query(event: dict[str, object]) -> str:
     title = str(event.get("title") or "").strip()
     kind = str(event.get("kind") or "").strip().lower()
-    entity = _extract_primary_entity(title) or title
+    entity = str(event.get("entity") or "").strip() or _extract_primary_entity(title) or title
     keyword_bundle = {
         "breach": "(breach OR compromised OR intrusion OR incident)",
         "ransomware": "(ransomware OR extortion OR leak)",
@@ -34,13 +34,23 @@ def build_event_enrich_query(event: dict[str, object]) -> str:
 
 
 def _extract_primary_entity(title: str) -> str | None:
-    tokens = [t for t in title.replace("—", " ").replace("-", " ").split() if len(t) > 2]
+    tokens = [t.strip(".,:;!?()[]{}\"'") for t in title.replace("—", " ").split()]
+    tokens = [token for token in tokens if len(token) > 2]
     if not tokens:
         return None
-    token = tokens[0]
-    if normalize_name(token) in {"the", "and", "for", "with"}:
-        return tokens[1] if len(tokens) > 1 else None
-    return token
+    ignored = {
+        "the", "and", "for", "with", "from", "north", "south", "korean", "russian",
+        "chinese", "iranian", "hackers", "hacker", "group", "attackers", "infected",
+        "compromised", "breached", "worldwide", "devices", "campaign",
+    }
+    candidates = [token for token in tokens if normalize_name(token) not in ignored]
+    if not candidates:
+        return None
+    mixed_case = [token for token in candidates if any(char.isupper() for char in token[1:])]
+    if mixed_case:
+        return mixed_case[0]
+    acronyms = [token for token in candidates if token.isupper() and len(token) >= 3]
+    return (acronyms or candidates)[0]
 
 
 def _extract_cves(event: dict[str, object]) -> set[str]:

@@ -31,7 +31,11 @@ def _extract_entities(title: str) -> list[str]:
         if len(token) < 3:
             continue
         norm = normalize_name(token)
-        if not norm or norm in {"the", "and", "for", "with", "from"}:
+        if not norm or norm in {
+            "the", "and", "for", "with", "from", "north", "south", "korean", "russian",
+            "chinese", "iranian", "hackers", "hacker", "group", "attackers", "infected",
+            "compromised", "breached", "worldwide", "devices", "campaign",
+        }:
             continue
         entities.append(token)
     return entities[:5]
