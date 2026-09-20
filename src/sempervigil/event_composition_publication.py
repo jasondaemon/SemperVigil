@@ -5,6 +5,7 @@ activation roles independently recheck the accepted ledger, composition, source
 evidence, article availability, and Event membership before a revision can go live.
 """
 import json
+from urllib.parse import urlparse
 
 from . import event_composition
 from .event_approval import JOB_TYPE, MAX_APPROVAL_BYTES, connection_factory
@@ -18,6 +19,15 @@ PUBLIC_WORKFLOW = "event-composition-public-revision-v1"
 CONFIRMATION = "PUBLISH_ACCEPTED_EVENT"
 POLICY = {"workflow": QUALIFICATION_WORKFLOW, "review": "accepted-composition",
           "source_freshness": "activation-rechecked", "generated_prose": True}
+
+
+def _publisher_key(source: dict) -> str:
+    host = (urlparse(str(source.get("url") or "")).hostname or "").lower()
+    return host.removeprefix("www.")
+
+
+def _independent_source_count(sources: list[dict]) -> int:
+    return len({key for source in sources if (key := _publisher_key(source))})
 
 
 def event_identity(ledger_id: str) -> str:
@@ -216,7 +226,8 @@ def queue_research_if_needed(conn, material: dict) -> tuple[str, int] | None:
 
     settings = get_events_settings(conn)
     minimum = max(2, int(settings.get("publish_min_articles", 2) or 2))
-    if len(material["sources"]) >= minimum:
+    source_count = _independent_source_count(material["sources"])
+    if source_count >= minimum:
         return None
     maximum = max(minimum, int(settings.get("enrich_min_articles_max_results", 12) or 12))
     job_id = enqueue_job(
@@ -239,7 +250,8 @@ def submit(conn, composition_id: str, *, confirmation: str) -> dict:
     if research:
         research_job_id, minimum_sources = research
         return {"event_id": event_id, "job_id": research_job_id,
-                "status": "research_queued", "source_count": len(material["sources"]),
+                "status": "research_queued", "source_count":
+                _independent_source_count(material["sources"]),
                 "minimum_sources": minimum_sources,
                 "public_eligible": False}
     with connection_factory("SV_EVENT_APPROVAL_DB_URL")() as authority:

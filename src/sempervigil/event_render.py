@@ -4,10 +4,30 @@ The expected revision must come from the trusted publication pointer, not from
 an event's legacy metadata or a model response. No pointer store exists here.
 """
 import string
-from urllib.parse import quote as url_quote
+from urllib.parse import quote as url_quote, urlparse
 
 from .event_projection import prepare
+from .enrichment.url import normalize_url
 from .investigation import _version
+
+
+def _canonical_sources(sources: list[dict]) -> tuple[list[dict], dict[int, int]]:
+    unique = []
+    number_by_url: dict[str, int] = {}
+    number_by_article: dict[int, int] = {}
+    for source in sources:
+        key = normalize_url(str(source["url"]))
+        number = number_by_url.get(key)
+        if number is None:
+            unique.append(source)
+            number = len(unique)
+            number_by_url[key] = number
+        number_by_article[int(source["article_id"])] = number
+    return unique, number_by_article
+
+
+def _source_site(url: str) -> str:
+    return (urlparse(url).hostname or url).lower().removeprefix("www.")
 
 
 def literal(value: str) -> str:
@@ -45,8 +65,9 @@ def resolve(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dic
 def index_entry(bundle: dict, *, event_id: str, expected_revision: str) -> dict:
     metadata, projection = resolve(bundle, event_id=event_id, expected_revision=expected_revision)
     if bundle.get("workflow") == "event-composition-public-revision-v1":
+        unique_sources, _ = _canonical_sources(projection["sources"])
         articles = [{"article_id": source["article_id"], "title": source["title"],
-                     "url": source["url"]} for source in projection["sources"]]
+                     "url": source["url"]} for source in unique_sources]
         overview = " ".join(item["text"] for item in projection["sections"]["overview"])
         return {"event_id": event_id, "title": metadata["title"], "summary": overview,
                 "severity": None, "kind": metadata["event_kind"], "status": "source_backed_event",
@@ -79,6 +100,7 @@ def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict
                     "attribution": "Attribution", "open_questions": "Open questions"}
         facts = {fact["fact_id"]: fact for fact in projection["ledger"]["facts"]}
         sources = {source["article_id"]: source for source in projection["sources"]}
+        unique_sources, source_numbers = _canonical_sources(projection["sources"])
         lines = [f'<section id="sv-event-coverage" data-event-id="{escape(event_id, quote=True)}" '
                  f'data-event-revision="{expected_revision}">',
                  '<p class="event-evidence-note">This deconstruction is maintained from attributed reporting. '
@@ -96,12 +118,13 @@ def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict
                 linked = []
                 for fact_id in item["fact_ids"]:
                     source = sources[facts[fact_id]["article_id"]]
-                    if source["article_id"] not in [value[0] for value in linked]:
-                        linked.append((source["article_id"], source))
+                    number = source_numbers[source["article_id"]]
+                    if number not in [value[0] for value in linked]:
+                        linked.append((number, unique_sources[number - 1]))
                 citations = " ".join(
                     f'<a class="event-source" href="{escape(url_quote(source["url"], safe=":/?&=%#@+"), quote=True)}" '
                     f'title="{escape(source["title"], quote=True)}">Source {index}</a>'
-                    for index, (_, source) in enumerate(linked, 1))
+                    for index, source in linked)
                 text = escape(" ".join(item["text"].split()))
                 if section == "timeline":
                     lines.append(f'<li><time>{escape(item["date_text"])}</time> {text} {citations}</li>')
@@ -110,11 +133,12 @@ def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict
             if section == "timeline":
                 lines.append("</ol>")
         lines.extend(["<h2>Sources</h2>", '<ol class="event-sources">'])
-        for source in projection["sources"]:
+        for source in unique_sources:
             url = escape(url_quote(source["url"], safe=":/?&=%#@+"), quote=True)
-            lines.append(f'<li><a href="{url}">{escape(source["title"])}</a>'
-                         + (f' <span>{escape(source["brief_day"])}</span>' if source["brief_day"] else "")
-                         + "</li>")
+            date = escape(source["brief_day"] or "Date unknown")
+            title = escape(source["title"])
+            site = escape(_source_site(source["url"]))
+            lines.append(f'<li><a href="{url}">{date} - {title} - {site}</a></li>')
         lines.extend(["</ol>", f"<p>Revision: <code>{expected_revision}</code>.</p>", "</section>", ""])
         return metadata, "\n".join(lines)
     lines = [f'<section id="sv-event-coverage" data-event-id="{escape(event_id, quote=True)}" '

@@ -34,7 +34,9 @@ def test_one_source_composition_queues_research_instead_of_publication(monkeypat
     )
     enqueue = Mock(return_value="research-job")
     monkeypatch.setattr(publication, "enqueue_job", enqueue)
-    material = {"event_id": "evt_one", "sources": [{"article_id": 1}]}
+    material = {"event_id": "evt_one", "sources": [
+        {"article_id": 1, "url": "https://first.example/report"},
+    ]}
     assert publication.queue_research_if_needed(Mock(), material) == ("research-job", 2)
     assert enqueue.call_args.args[1:] == (
         "enrich_event_from_web",
@@ -50,12 +52,31 @@ def test_two_source_composition_can_advance_without_research(monkeypatch):
     )
     enqueue = Mock(side_effect=AssertionError("must not enqueue"))
     monkeypatch.setattr(publication, "enqueue_job", enqueue)
-    material = {"event_id": "evt_two", "sources": [{"article_id": 1}, {"article_id": 2}]}
+    material = {"event_id": "evt_two", "sources": [
+        {"article_id": 1, "url": "https://first.example/report"},
+        {"article_id": 2, "url": "https://second.example/report"},
+    ]}
     assert publication.queue_research_if_needed(Mock(), material) is None
 
 
+def test_duplicate_articles_from_one_publisher_do_not_satisfy_source_gate(monkeypatch):
+    monkeypatch.setattr(
+        "sempervigil.config.get_events_settings",
+        lambda conn: {"publish_min_articles": 2, "enrich_min_articles_max_results": 12},
+    )
+    enqueue = Mock(return_value="research-job")
+    monkeypatch.setattr(publication, "enqueue_job", enqueue)
+    material = {"event_id": "evt_duplicate", "sources": [
+        {"article_id": 1, "url": "https://www.example.com/report/"},
+        {"article_id": 2, "url": "https://example.com/follow-up"},
+    ]}
+    assert publication.queue_research_if_needed(Mock(), material) == ("research-job", 2)
+
+
 def test_one_source_submit_never_opens_publication_authority(monkeypatch):
-    material = {"event_id": "evt_one", "sources": [{"article_id": 1}]}
+    material = {"event_id": "evt_one", "sources": [
+        {"article_id": 1, "url": "https://first.example/report"},
+    ]}
     monkeypatch.setattr(publication, "materialize_event", lambda conn, composition_id: material)
     monkeypatch.setattr(publication, "queue_research_if_needed",
                         lambda conn, value: ("research-job", 2))

@@ -8,7 +8,7 @@ from sempervigil.event_composition_publication import (
     event_identity,
     validate_bundle,
 )
-from sempervigil.event_render import index_entry, render
+from sempervigil.event_render import _canonical_sources, index_entry, render
 from sempervigil.investigation import _version
 
 pytestmark = pytest.mark.offline
@@ -82,6 +82,7 @@ def test_composition_bundle_renders_reproducible_page_and_index():
     assert page.index("<h2>Overview</h2>") < page.index("<h2>Attack vector</h2>")
     assert "<script>" not in page and "&lt;script&gt;" in page
     assert "https://example.test/report" in page
+    assert "2026-09-18 - Primary report - example.test" in page
     entry = index_entry(bundle, event_id=event_id, expected_revision=revision)
     assert entry["status"] == "source_backed_event"
     assert entry["counts"]["articles"] == 1
@@ -100,3 +101,14 @@ def test_composition_bundle_rejects_section_and_revision_tampering():
         validate_bundle(bad, event_id=event_id)
     with pytest.raises(ValueError, match="pointer_mismatch"):
         validate_bundle(bundle, event_id=event_id, expected_revision="0" * 64)
+
+
+def test_canonical_sources_collapse_legacy_trailing_slash_duplicates():
+    sources = [
+        {"article_id": 7, "url": "https://example.test/report/", "title": "Original"},
+        {"article_id": 8, "url": "https://example.test/report", "title": "Search duplicate"},
+        {"article_id": 9, "url": "https://independent.test/report", "title": "Independent"},
+    ]
+    unique, numbers = _canonical_sources(sources)
+    assert [source["article_id"] for source in unique] == [7, 9]
+    assert numbers == {7: 1, 8: 1, 9: 2}
