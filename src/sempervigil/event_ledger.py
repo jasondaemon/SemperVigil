@@ -78,7 +78,6 @@ def _section_tags(fact: dict) -> list[str]:
         "intercept", "redirect", "malicious manifest", "malicious installer",
         "malware", "package", "payload", "phishing email", "phishing message",
         "phishing campaign", "via phishing", "pivot", "execute", "infect",
-        "downloaded", "stole", "stolen",
     )):
         tags.append("attack_path")
     if fact["kind"] != "recommendation" and any(cue in text for cue in (
@@ -104,7 +103,8 @@ def _section_tags(fact: dict) -> list[str]:
         tags.append("attribution")
     if fact["kind"] in {"allegation", "uncertainty"} or any(cue in text for cue in (
         "no evidence", "not aware", "cannot rule out", "has not shared",
-        "no known", "unknown", "unclear",
+        "no known", "unknown", "unclear", "did not respond", "did not answer",
+        "whether",
     )):
         tags.append("open_question")
     return list(dict.fromkeys(tags)) or ["context"]

@@ -1,5 +1,7 @@
 """Evidence-bound private Event narrative contract and review storage."""
+import calendar
 import json
+import re
 
 import jsonschema
 
@@ -50,13 +52,82 @@ def _allowed_sections(fact: dict) -> list[str]:
                "response_recovery": "response_recovery",
                "attribution": "attribution", "open_question": "open_questions"}
     from .event_ledger import _section_tags
-    sections = set(fact.get("sections", [])) | set(_section_tags(fact))
+    # Persisted tags explain the historical extraction decision. Future
+    # compositions use the current classifier so a corrected rule can narrow an
+    # unsafe permission without mutating immutable evidence or published prose.
+    sections = set(_section_tags(fact))
     for section in sections:
         if section in mapping:
             result.add(mapping[section])
         if section == "attack_path":
             result.add("attack_vector")
     return [section for section in SECTIONS if section in result]
+
+
+_MONTHS = {name.lower(): number for number, name in enumerate(calendar.month_name) if name}
+_MONTHS.update({name.lower(): number for number, name in enumerate(calendar.month_abbr) if name})
+
+
+def _date_parts(value: str) -> tuple[int | None, int | None, int | None, str]:
+    """Parse common source date labels only far enough to group equivalent labels."""
+    text = re.sub(r"\s+", " ", value.strip().lower())
+    text = re.sub(r"\b(\d{1,2})(?:st|nd|rd|th)\b", r"\1", text)
+    year_match = re.search(r"\b(20\d{2})\b", text)
+    year = int(year_match.group(1)) if year_match else None
+    month = next((number for name, number in _MONTHS.items()
+                  if re.search(rf"\b{re.escape(name)}\b", text)), None)
+    day = None
+    if month:
+        without_year = re.sub(r"\b20\d{2}\b", "", text)
+        numbers = [int(item) for item in re.findall(r"\b\d{1,2}\b", without_year)]
+        day = next((item for item in numbers if 1 <= item <= 31), None)
+    qualifier = next((item for item in ("early", "mid", "late")
+                      if re.search(rf"\b{item}\b", text)), "")
+    return year, month, day, qualifier
+
+
+def _timeline_refs(aliases: dict[str, dict]) -> list[str]:
+    """Choose one auditable milestone per equivalent non-publication date label."""
+    candidates = [(ref, fact, _date_parts(str(fact.get("date_text") or "")))
+                  for ref, fact in aliases.items()
+                  if fact.get("date_text") and fact.get("date_role") != "publication"]
+    explicit_years: dict[tuple[int | None, int | None, str], set[int]] = {}
+    for _, _, (year, month, day, qualifier) in candidates:
+        if year:
+            explicit_years.setdefault((month, day, qualifier), set()).add(year)
+
+    groups: dict[tuple, list[tuple[str, dict]]] = {}
+    for ref, fact, (year, month, day, qualifier) in candidates:
+        known = explicit_years.get((month, day, qualifier), set())
+        if year is None and len(known) == 1:
+            year = next(iter(known))
+        if month:
+            key = (year, month, day, qualifier)
+        else:
+            key = (re.sub(r"\W+", " ", str(fact["date_text"]).lower()).strip(),)
+        groups.setdefault(key, []).append((ref, fact))
+
+    if len(groups) > 8:
+        raise ValueError("event_composition_timeline_over_budget")
+
+    milestone_cues = (
+        "began", "occurred", "detected", "discovered", "disclosed", "reported",
+        "ended", "terminated", "completed", "contained", "blocked", "rotated",
+        "lost access", "no longer observed",
+    )
+
+    def rank(item: tuple[str, dict]) -> tuple[int, int, int, str]:
+        ref, fact = item
+        text = fact["statement"].lower()
+        role = {"incident": 3, "discovery": 2, "disclosure": 1}.get(
+            str(fact.get("date_role") or ""), 0)
+        cues = sum(cue in text for cue in milestone_cues)
+        # Prefer an atomic milestone over a compound source sentence.
+        return role, cues, -len(text.split()), ref
+
+    selected = [max(items, key=rank)[0]
+                for _, items in sorted(groups.items(), key=lambda row: str(row[0]))]
+    return [ref for ref in aliases if ref in set(selected)]
 
 
 def schema(fact_refs: dict[str, list[str]] | None = None) -> dict:
@@ -89,16 +160,22 @@ def request(ledger_revision: dict, generation: str) -> dict:
     facts, aliases = _active_facts(ledger)
     if not facts:
         raise ValueError("event_composition_no_active_facts")
-    required_timeline_refs = [ref for ref, fact in aliases.items() if fact.get("date_text")]
+    required_timeline_refs = _timeline_refs(aliases)
+    timeline_refs = set(required_timeline_refs)
+    allowed_by_ref = {
+        ref: [section for section in _allowed_sections(fact)
+              if section != "timeline" or ref in timeline_refs]
+        for ref, fact in aliases.items()
+    }
     payload = {"workflow": WORKFLOW, "title": ledger["title"], "kind": ledger["kind"],
                "required_timeline_refs": required_timeline_refs,
                "facts": [{"ref": ref, "statement": fact["statement"],
                           "kind": fact["kind"], "date_text": fact["date_text"],
                           "date_role": fact["date_role"],
-                          "allowed_sections": _allowed_sections(fact)}
+                          "allowed_sections": allowed_by_ref[ref]}
                          for ref, fact in aliases.items()]}
-    allowed_refs = {section: [ref for ref, fact in aliases.items()
-                              if section in _allowed_sections(fact)]
+    allowed_refs = {section: [ref for ref in aliases
+                              if section in allowed_by_ref[ref]]
                     for section in SECTIONS}
     response_schema = schema(allowed_refs)
     encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
@@ -136,7 +213,7 @@ def validate(raw: bytes, ledger_revision: dict, generation: str) -> dict:
                 output["date_text"] = dated[0]["date_text"]
                 timeline_facts.add(dated[0]["fact_id"])
             sections[section].append(output)
-    required_timeline = {fact["fact_id"] for fact in aliases.values() if fact.get("date_text")}
+    required_timeline = {aliases[ref]["fact_id"] for ref in _timeline_refs(aliases)}
     if timeline_facts != required_timeline:
         raise ValueError("event_composition_timeline_incomplete")
     return {

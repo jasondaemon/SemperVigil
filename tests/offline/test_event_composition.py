@@ -72,6 +72,53 @@ def test_allowed_sections_reclassify_existing_ledger_facts_without_mutation():
     assert "attack_path" in composition._allowed_sections(access)
 
 
+def test_allowed_sections_can_remove_stale_unsafe_permissions():
+    stolen = {"statement": "The exposed information included email addresses and phone numbers.",
+              "kind": "reported_fact", "date_text": None, "date_role": "none",
+              "sections": ["attack_path"]}
+    assert "attack_path" not in composition._allowed_sections(stolen)
+    assert "impact" in composition._allowed_sections(stolen)
+
+
+def test_timeline_normalization_ignores_publication_and_collapses_equivalent_dates():
+    aliases = {
+        "F01": {"fact_id": "one", "statement": "The incident began in June 2025.",
+                 "kind": "reported_fact", "date_text": "June 2025", "date_role": "incident"},
+        "F02": {"fact_id": "two", "statement": "The compromise is believed to have begun in June 2025.",
+                 "kind": "reported_fact", "date_text": "June 2025", "date_role": "incident"},
+        "F03": {"fact_id": "three", "statement": "All malicious activity was terminated.",
+                 "kind": "reported_fact", "date_text": "December 2, 2025", "date_role": "incident"},
+        "F04": {"fact_id": "four", "statement": "The findings were no longer observed.",
+                 "kind": "reported_fact", "date_text": "2nd of December, 2025", "date_role": "incident"},
+        "F05": {"fact_id": "five", "statement": "The article was published.",
+                 "kind": "reported_fact", "date_text": "2 February 2026", "date_role": "publication"},
+    }
+    refs = composition._timeline_refs(aliases)
+    assert len(refs) == 2
+    assert set(refs) <= {"F01", "F02", "F03", "F04"}
+
+
+def test_timeline_normalization_matches_missing_year_to_one_explicit_year():
+    aliases = {
+        "F01": {"fact_id": "one", "statement": "Credentials remained exposed until the cutoff.",
+                 "kind": "reported_fact", "date_text": "2nd of December", "date_role": "incident"},
+        "F02": {"fact_id": "two", "statement": "Activity was terminated at the cutoff.",
+                 "kind": "reported_fact", "date_text": "December 2, 2025", "date_role": "incident"},
+    }
+    assert len(composition._timeline_refs(aliases)) == 1
+
+
+def test_timeline_normalization_fails_closed_over_eight_distinct_milestones():
+    aliases = {
+        f"F{index:02d}": {"fact_id": str(index), "statement": f"Milestone {index} occurred.",
+                          "kind": "reported_fact", "date_text": f"January {index}, 2026",
+                          "date_role": "incident"}
+        for index in range(1, 10)
+    }
+    with pytest.raises(ValueError, match="timeline_over_budget"):
+        composition._timeline_refs(aliases)
+
+
 def test_response_schema_uses_openai_supported_subset_and_duplicates_fail_closed():
     req = composition.request(ledger_revision(), GENERATION)
     assert "uniqueItems" not in json.dumps(req["schema"])

@@ -8,7 +8,7 @@ pytestmark = pytest.mark.offline
 def test_section_tags_are_transparent_and_preserve_fact_roles():
     impact = {"statement": "The actors stole credentials from 30,000 devices.",
               "kind": "reported_fact", "date_role": "incident", "date_text": "July 2026"}
-    assert event_ledger._section_tags(impact) == ["timeline", "attack_path", "impact"]
+    assert event_ledger._section_tags(impact) == ["timeline", "impact"]
     recommendation = {"statement": "CISA recommends resetting exposed credentials.",
                       "kind": "recommendation", "date_role": "none", "date_text": None}
     assert event_ledger._section_tags(recommendation) == ["mitigation", "attribution"]
@@ -30,6 +30,9 @@ def test_section_tags_distinguish_access_response_and_uncertainty():
     unknown = {"statement": "No known group claimed responsibility and the company has not shared the threat actor.",
                "kind": "reported_fact", "date_role": "none", "date_text": None}
     assert event_ledger._section_tags(unknown) == ["attribution", "open_question"]
+    unanswered = {"statement": "The company did not answer whether the exposed data was misused.",
+                  "kind": "reported_fact", "date_role": "none", "date_text": None}
+    assert event_ledger._section_tags(unanswered) == ["impact", "open_question"]
 
 
 @pytest.mark.parametrize("kind", ["daily-summary", "rewrite", "publish"])
