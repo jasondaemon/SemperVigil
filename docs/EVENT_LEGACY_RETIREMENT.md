@@ -59,3 +59,9 @@ active Events remained 13 and managed public pointers remained 2; articles and
 Event-article links were untouched. No cleanup schedule or destructive task was
 added. Future runs still require a newly inspected preview. This workflow is not
 a claim that all retired candidates were reviewed for factual quality.
+
+A second v2 preview, `lerr_20845a003b294e2ab389c4f5f8877fc0`, covered the
+two remaining active archived drafts. Job
+`job_b05350d0c04b4031b06ec5148b7c8ad2` suppressed both with zero skips. It also
+has an independent restore manifest. Published and confirmed drafts remained
+excluded.

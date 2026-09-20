@@ -2228,3 +2228,12 @@ preview, suppression and exact restore. Homepage, Events index and the WaterPlum
 Event returned HTTP 200. Kubernetes readiness passed, all nodes reported no
 memory pressure, and no jobs remained running. No Hugo command or site build was
 invoked for this database/UI-only release.
+
+Follow-up `d112f9d` moved the retirement-status GET away from the pre-existing
+dynamic Event-detail route and extended eligibility to visible unpublished
+archived drafts. The admin and fetch worker rolled to that image; platform
+`9ec9ff2` differs from live by zero rendered lines. Status readback succeeded.
+Preview `lerr_20845a003b294e2ab389c4f5f8877fc0` contained the exact two
+remaining active archived drafts; job `job_b05350d0c04b4031b06ec5148b7c8ad2`
+suppressed both with zero skips. Confirmed drafts and every published Event remain
+excluded, and both retirement runs retain independent restore manifests.
