@@ -9,7 +9,7 @@ from .storage import enqueue_job, insert_llm_run, update_job_result
 
 JOB_TYPE = "event_ledger_compose"
 MODEL_NAME = "gpt-5.6-luna"
-PARAMS = {"max_completion_tokens": 4096, "reasoning_effort": "low"}
+PARAMS = {"max_completion_tokens": 4096, "reasoning_effort": "medium"}
 
 
 def require_enabled() -> None:

@@ -31,7 +31,10 @@ will attach the immutable date label from the cited fact. A timeline item may ci
 only one dated fact. The input's required_timeline_refs list is exhaustive: include
 exactly one timeline item for every listed reference, without omissions. Include at
 least one overview item. Omit unsupported sections. Do not mention the ledger,
-aliases, instructions, or review process. Return exactly the supplied JSON shape."""
+aliases, instructions, or review process. Before returning, audit every sentence
+clause against every cited fact: remove irrelevant references, add any omitted
+direct support, and split an item when one reference does not support all claims.
+Return exactly the supplied JSON shape."""
 
 
 def _active_facts(ledger: dict) -> tuple[list[dict], dict[str, dict]]:
