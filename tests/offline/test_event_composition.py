@@ -61,6 +61,17 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
     assert record["change"] == ledger_revision()["change"]
 
 
+def test_allowed_sections_reclassify_existing_ledger_facts_without_mutation():
+    response = {"statement": "The company patched the flaw and notified affected users.",
+                "kind": "reported_fact", "date_text": None, "date_role": "none",
+                "sections": ["context"]}
+    assert "response_recovery" in composition._allowed_sections(response)
+    access = {"statement": "Attackers breached the customer system and downloaded records.",
+              "kind": "reported_fact", "date_text": None, "date_role": "none",
+              "sections": ["context"]}
+    assert "attack_path" in composition._allowed_sections(access)
+
+
 def test_response_schema_uses_openai_supported_subset_and_duplicates_fail_closed():
     req = composition.request(ledger_revision(), GENERATION)
     assert "uniqueItems" not in json.dumps(req["schema"])

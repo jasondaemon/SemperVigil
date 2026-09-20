@@ -73,19 +73,41 @@ def _section_tags(fact: dict) -> list[str]:
     tags = []
     if fact["date_role"] == "incident" or fact["date_text"]:
         tags.append("timeline")
-    if any(cue in text for cue in ("initial access", "impersonat", "malware", "package", "payload",
-                                    "phishing", "pivot", "route", "execute", "infect", "compromis")):
+    if any(cue in text for cue in (
+        "initial access", "unauthorized access", "gained access", "breached",
+        "intercept", "redirect", "malicious manifest", "malicious installer",
+        "malware", "package", "payload", "phishing email", "phishing message",
+        "phishing campaign", "via phishing", "pivot", "execute", "infect",
+        "downloaded", "stole", "stolen",
+    )):
         tags.append("attack_path")
-    if any(cue in text for cue in ("impact", "exfiltrat", "stole", "stolen", "devices", "records",
-                                    "accounts", "wallet", "million", "billion", "disrupt")):
+    if fact["kind"] != "recommendation" and any(cue in text for cue in (
+        "impact", "exfiltrat", "stole", "stolen", "exposed", "affected",
+        "personal data", "devices", "records", "accounts", "wallet", "million",
+        "billion", "disrupt",
+    )):
         tags.append("impact")
+    if any(cue in text for cue in (
+        "closed the attacker", "closed attackers", "implemented additional security",
+        "notified", "reported the breach", "reported the incident", "patched",
+        "remediation", "rotated", "restored", "containment", "contained",
+        "investigation", "monitoring", "continues to monitor", "moved update",
+        "signature verification", "certificate verification",
+    )):
+        tags.append("response_recovery")
     if fact["kind"] == "recommendation":
         tags.append("mitigation")
-    if any(cue in text for cue in ("attributed", "assessed", "agency", "researcher", "fbi", "cisa")):
+    if any(cue in text for cue in (
+        "attributed", "assessed", "agency", "researcher", "fbi", "cisa",
+        "threat actor", "behind the attack", "claimed responsibility", "state-sponsored",
+    )):
         tags.append("attribution")
-    if fact["kind"] in {"allegation", "uncertainty"}:
+    if fact["kind"] in {"allegation", "uncertainty"} or any(cue in text for cue in (
+        "no evidence", "not aware", "cannot rule out", "has not shared",
+        "no known", "unknown", "unclear",
+    )):
         tags.append("open_question")
-    return tags or ["context"]
+    return list(dict.fromkeys(tags)) or ["context"]
 
 
 def _accepted(conn, ledger_id: str) -> tuple | None:

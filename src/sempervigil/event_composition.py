@@ -21,9 +21,12 @@ attack worked, its chronology and impact, and the response where evidence exists
 Do not add facts, dates, causal claims, attribution, recovery, or advice that the
 packet does not support. Preserve uncertainty and disagreement.
 
-Every prose item must cite all supporting F-number fact_refs. Use a fact only in
-one of its allowed_sections. Keep each item focused enough that all of its claims
-are supported by those references. Timeline text must not contain a date; code
+Every prose item must cite all supporting F-number fact_refs. Fact references are
+not a bibliography: every cited fact must directly support a claim in that item,
+and no fact may be cited merely because it concerns the same incident. Prefer one
+or two precise references when sufficient. Use a fact only in one of its
+allowed_sections. Keep each item focused enough that all of its claims are
+supported by those references. Timeline text must not contain a date; code
 will attach the immutable date label from the cited fact. A timeline item may cite
 only one dated fact. The input's required_timeline_refs list is exhaustive: include
 exactly one timeline item for every listed reference, without omissions. Include at
@@ -41,8 +44,11 @@ def _allowed_sections(fact: dict) -> list[str]:
     result = {"overview"}
     mapping = {"timeline": "timeline", "attack_path": "attack_path",
                "impact": "impact", "mitigation": "mitigations",
+               "response_recovery": "response_recovery",
                "attribution": "attribution", "open_question": "open_questions"}
-    for section in fact.get("sections", []):
+    from .event_ledger import _section_tags
+    sections = set(fact.get("sections", [])) | set(_section_tags(fact))
+    for section in sections:
         if section in mapping:
             result.add(mapping[section])
         if section == "attack_path":
