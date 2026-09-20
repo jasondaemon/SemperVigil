@@ -112,3 +112,23 @@ def test_canonical_sources_collapse_legacy_trailing_slash_duplicates():
     unique, numbers = _canonical_sources(sources)
     assert [source["article_id"] for source in unique] == [7, 9]
     assert numbers == {7: 1, 8: 1, 9: 2}
+
+
+def test_reassessment_bundle_can_preserve_validated_legacy_event_id():
+    _, bundle = _bundle()
+    legacy_id = "evt_legacy123"
+    bundle["event_id"] = legacy_id
+    bundle["event_target"] = {
+        "kind": "confirmed-event-reassessment-v1",
+        "event_id": legacy_id,
+        "snapshot_version": "e" * 64,
+    }
+    bundle["qualification"]["event_id"] = legacy_id
+
+    result = validate_bundle(bundle, event_id=legacy_id)
+
+    assert result["revision_id"]
+    bad = copy.deepcopy(bundle)
+    bad["event_target"]["snapshot_version"] = "not-a-version"
+    with pytest.raises(ValueError, match="integrity_failure"):
+        validate_bundle(bad, event_id=legacy_id)

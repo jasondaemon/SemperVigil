@@ -499,6 +499,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_legacy_event_retirement_045")
             applied.add("pg_legacy_event_retirement_045")
+        if "pg_event_reassessment_046" not in applied:
+            _migrate_event_reassessment(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_event_reassessment_046", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_event_reassessment_046")
+            applied.add("pg_event_reassessment_046")
         else:
             conn.commit()
         return
@@ -771,6 +780,15 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_legacy_event_retirement_045")
+
+    conn.execute("BEGIN")
+    _migrate_event_reassessment(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_event_reassessment_046", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_event_reassessment_046")
 
 def _bootstrap_schema(conn) -> None:
     conn.execute(
@@ -1567,6 +1585,10 @@ def _migrate_legacy_event_retirement(conn) -> None:
         )
         """
     )
+    _migrate_legacy_event_retirement_items(conn)
+
+
+def _migrate_legacy_event_retirement_items(conn) -> None:
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS legacy_event_retirement_items (
@@ -1584,6 +1606,45 @@ def _migrate_legacy_event_retirement(conn) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_legacy_event_retirement_items_status "
         "ON legacy_event_retirement_items(run_id, status, event_id)"
+    )
+
+
+def _migrate_event_reassessment(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS event_reassessment_cases (
+            event_id TEXT PRIMARY KEY REFERENCES events(id) ON DELETE RESTRICT,
+            snapshot_version TEXT NOT NULL UNIQUE,
+            snapshot_json TEXT NOT NULL,
+            priority INTEGER NOT NULL,
+            status TEXT NOT NULL CHECK (status IN
+                ('active', 'completed', 'held', 'withdrawn')),
+            ledger_id TEXT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            created_by TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT NULL,
+            decision_reason TEXT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_event_reassessment_queue
+        ON event_reassessment_cases(status, priority, created_at, event_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS event_ledger_targets (
+            ledger_id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL UNIQUE
+                REFERENCES event_reassessment_cases(event_id) ON DELETE RESTRICT,
+            snapshot_version TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            created_by TEXT NOT NULL
+        )
+        """
     )
 
 def _migrate_article_products(conn) -> None:

@@ -6815,6 +6815,109 @@ async function wireArticleEvidence() {
   await load();
 }
 
+async function wireEventReassessments() {
+  const root = document.getElementById("event-reassessment-review");
+  if (!root) return;
+  const statusSelect = document.getElementById("event-reassessment-status");
+  const message = document.getElementById("event-reassessment-message");
+  const list = document.getElementById("event-reassessment-list");
+  const start = document.getElementById("event-reassessment-start");
+  const refresh = document.getElementById("event-reassessment-refresh");
+
+  const render = (items) => {
+    if (!items.length) {
+      list.innerHTML = '<p class="muted">No reassessment cases match this status.</p>';
+      return;
+    }
+    list.innerHTML = items.map((item) => {
+      const isPublic = item.event.publish_state === "published" || item.event.has_public_pointer;
+      const candidateTotal = Object.values(item.candidates || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+      const sourceRows = (item.articles || []).map((article) =>
+        `<li>Article ${esc(article.article_id)}: ${esc(article.title)}${article.source_error ? ` <strong>Held: ${esc(article.source_error)}</strong>` : ""}</li>`
+      ).join("");
+      const canQueue = item.status === "active" && !item.snapshot_stale && item.evidence_missing > 0;
+      return `<article class="panel" data-event-reassessment="${esc(item.event_id)}">
+        <h3>${esc(item.event.title)}</h3>
+        <p class="muted">${isPublic ? "Public priority" : "Confirmed draft"} · ${esc(item.event_id)} · stage: ${esc(item.stage)}${item.snapshot_stale ? " · snapshot changed" : ""}</p>
+        <p><strong>Sources:</strong> ${esc(item.article_count)} ·
+          <strong>Accepted evidence:</strong> ${esc(item.evidence_accepted)} ·
+          <strong>Awaiting review:</strong> ${esc(item.evidence_review)} ·
+          <strong>Queued/running:</strong> ${esc(item.evidence_running)} ·
+          <strong>Missing:</strong> ${esc(item.evidence_missing)} ·
+          <strong>Enrolled candidates:</strong> ${esc((item.candidates || {}).enrolled || 0)}</p>
+        <details><summary>Frozen source set</summary><ol>${sourceRows}</ol></details>
+        <div class="actions">
+          ${canQueue ? '<button class="btn" type="button" data-reassessment-evidence>Queue missing evidence</button>' : ""}
+          ${item.evidence_accepted > candidateTotal ? '<button class="btn" type="button" data-reassessment-project>Project accepted evidence</button>' : ""}
+          ${!item.ledger_id && Number((item.candidates || {}).enrolled || 0) >= 2 ? '<button class="btn" type="button" data-reassessment-ledger>Create strict ledger</button>' : ""}
+          <a class="btn" href="/ui/article-evidence">Review evidence</a>
+          <a class="btn" href="/ui/incident-candidates">Review candidates</a>
+        </div>
+      </article>`;
+    }).join("");
+  };
+
+  const load = async () => {
+    message.textContent = "Loading reassessment queue...";
+    try {
+      const data = await apiFetch(`/admin/api/event-reassessments?status=${encodeURIComponent(statusSelect.value)}&limit=200`);
+      render(data.items || []);
+      const publicCount = (data.items || []).filter((item) => item.event.publish_state === "published" || item.event.has_public_pointer).length;
+      message.textContent = `${(data.items || []).length} cases; ${publicCount} public-priority. Starting or extracting evidence does not change the website.`;
+    } catch (error) {
+      message.textContent = `Reassessment queue unavailable: ${error.message}`;
+    }
+  };
+
+  start.addEventListener("click", async () => {
+    if (!window.confirm("Freeze all eligible confirmed legacy Events for published-first reassessment? This does not alter public content.")) return;
+    start.disabled = true;
+    try {
+      const result = await apiFetch("/admin/api/event-reassessments/start", {
+        method: "POST", body: JSON.stringify({confirmation: "START_CONFIRMED_REASSESSMENT"})
+      });
+      showToast(`${result.created} reassessment cases created; ${result.reused} already existed`);
+      await load();
+    } catch (error) {
+      message.textContent = `Unable to start reassessment: ${error.message}`;
+    } finally {
+      start.disabled = false;
+    }
+  });
+  refresh.addEventListener("click", load);
+  statusSelect.addEventListener("change", load);
+  list.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-reassessment-evidence], [data-reassessment-project], [data-reassessment-ledger]");
+    if (!button) return;
+    const card = button.closest("[data-event-reassessment]");
+    let suffix = "evidence";
+    let confirmation = "QUEUE_EVENT_EVIDENCE";
+    let prompt = "Queue evidence extraction from this Event's frozen retained sources? Results remain private and require review.";
+    if (button.hasAttribute("data-reassessment-project")) {
+      suffix = "candidates";
+      confirmation = "PROJECT_ACCEPTED_EVENT_EVIDENCE";
+      prompt = "Project private incident candidates from the accepted evidence? Candidates still require review.";
+    } else if (button.hasAttribute("data-reassessment-ledger")) {
+      suffix = "ledger";
+      confirmation = "CREATE_REASSESSED_EVENT_LEDGER";
+      prompt = "Create one private ledger revision from the enrolled independent sources? The ledger and narrative still require review.";
+    }
+    if (!window.confirm(prompt)) return;
+    button.disabled = true;
+    try {
+      const result = await apiFetch(`/admin/api/event-reassessments/${encodeURIComponent(card.dataset.eventReassessment)}/${suffix}`, {
+        method: "POST", body: JSON.stringify({confirmation})
+      });
+      showToast(suffix === "evidence" ? `${(result.job_ids || []).length} evidence jobs queued` : `${suffix} ${result.status}`);
+      await load();
+    } catch (error) {
+      message.textContent = `Evidence queue failed: ${error.message}`;
+      button.disabled = false;
+    }
+  });
+  await load();
+}
+
 async function wireIncidentCandidates() {
   const root = document.getElementById("incident-candidate-review");
   if (!root) return;
@@ -7163,6 +7266,7 @@ document.addEventListener("DOMContentLoaded", () => {
   wirePrivateEventReview();
   wireEventApproval();
   wireArticleEvidence();
+  wireEventReassessments();
   wireIncidentCandidates();
   wireEventLedgers();
   wireEventCompositions();

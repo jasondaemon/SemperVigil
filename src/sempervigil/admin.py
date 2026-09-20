@@ -3390,6 +3390,100 @@ class EventCompositionPublishRequest(BaseModel):
     confirmation: str
 
 
+class EventReassessmentStartRequest(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    confirmation: str
+
+
+class EventReassessmentEvidenceRequest(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    confirmation: str
+
+
+@app.get("/admin/api/event-reassessments", dependencies=[Depends(_require_admin_token)])
+def api_event_reassessments(status: str = "active", limit: int = 200) -> dict:
+    from .event_reassessment import list_cases
+    conn = None
+    try:
+        conn = _get_conn()
+        return {"items": list_cases(conn, status=status, limit=limit), "status": status}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.post("/admin/api/event-reassessments/start",
+          dependencies=[Depends(_require_admin_token)])
+def api_event_reassessments_start(payload: EventReassessmentStartRequest) -> dict:
+    from .event_reassessment import start_cohort
+    conn = None
+    try:
+        conn = _get_conn()
+        return start_cohort(conn, confirmation=payload.confirmation,
+                            created_by="admin-token")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.post("/admin/api/event-reassessments/{event_id}/evidence",
+          dependencies=[Depends(_require_admin_token)])
+def api_event_reassessment_evidence(event_id: str,
+                                    payload: EventReassessmentEvidenceRequest) -> dict:
+    from .event_reassessment import queue_evidence
+    conn = None
+    try:
+        conn = _get_conn()
+        return queue_evidence(conn, event_id, confirmation=payload.confirmation)
+    except (PermissionError, ValueError) as exc:
+        if conn is not None:
+            conn.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.post("/admin/api/event-reassessments/{event_id}/candidates",
+          dependencies=[Depends(_require_admin_token)])
+def api_event_reassessment_candidates(event_id: str,
+                                      payload: EventReassessmentEvidenceRequest) -> dict:
+    from .event_reassessment import project_accepted
+    conn = None
+    try:
+        conn = _get_conn()
+        return project_accepted(conn, event_id, confirmation=payload.confirmation)
+    except ValueError as exc:
+        if conn is not None:
+            conn.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.post("/admin/api/event-reassessments/{event_id}/ledger",
+          dependencies=[Depends(_require_admin_token)])
+def api_event_reassessment_ledger(event_id: str,
+                                  payload: EventReassessmentEvidenceRequest) -> dict:
+    from .event_reassessment import propose_ledger
+    conn = None
+    try:
+        conn = _get_conn()
+        return propose_ledger(conn, event_id, confirmation=payload.confirmation)
+    except ValueError as exc:
+        if conn is not None:
+            conn.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 @app.post("/admin/api/articles/private-review", dependencies=[Depends(_require_admin_token)])
 def api_article_private_review(payload: ArticlePrivateReviewRequest) -> dict:
     if not os.environ.get("SV_ADMIN_TOKEN"):

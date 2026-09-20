@@ -222,6 +222,17 @@ def ui_router(token_guard) -> APIRouter:
             },
         )
 
+    @router.get("/event-reassessments", response_class=HTMLResponse)
+    def event_reassessments(request: Request):
+        return _render(
+            "admin/event_reassessments.html",
+            {
+                **_base_context(request),
+                "nav_active": "content",
+                "nav_subactive": "event_reassessments",
+            },
+        )
+
     @router.get("/incident-candidates", response_class=HTMLResponse)
     def incident_candidates(request: Request):
         return _render(

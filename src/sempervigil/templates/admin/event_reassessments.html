@@ -1,0 +1,29 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "content" %}
+{% set nav_subactive = "event_reassessments" %}
+{% block content %}
+<section class="panel" id="event-reassessment-review">
+  <div class="panel-header">
+    <div>
+      <h2>Confirmed Event Reassessment</h2>
+      <p>Rebuild confirmed legacy Events from retained article text through the strict evidence, incident, ledger, narrative, and publication gates. Existing public pages remain unchanged until a replacement passes every gate.</p>
+    </div>
+    <label>Status
+      <select id="event-reassessment-status">
+        <option value="active">Active</option>
+        <option value="held">Held</option>
+        <option value="completed">Completed</option>
+        <option value="withdrawn">Withdrawn</option>
+        <option value="all">All</option>
+      </select>
+    </label>
+  </div>
+  <div class="actions">
+    <button class="btn" id="event-reassessment-start" type="button">Freeze confirmed Event cohort</button>
+    <button class="btn" id="event-reassessment-refresh" type="button">Refresh</button>
+  </div>
+  <p class="muted">Public Events are prioritized. Legacy titles and summaries are scope hints only and are never admitted as evidence.</p>
+  <p id="event-reassessment-message" role="status" aria-live="polite">Loading reassessment queue...</p>
+  <div id="event-reassessment-list"></div>
+</section>
+{% endblock %}

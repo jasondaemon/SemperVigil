@@ -180,6 +180,66 @@ def propose(conn, candidate_id: str, *, ledger_id: str | None = None,
             "reused": False, "public_eligible": False}
 
 
+def propose_initial_sources(conn, candidate_ids: list[str], *, ledger_id: str,
+                            title: str, commit: bool = True) -> dict:
+    """Create one reviewable initial revision from a validated source cohort."""
+    if (not ledger_id.startswith("eld_") or not title.strip() or len(title) > 512
+            or not 2 <= len(candidate_ids) <= 50
+            or len(set(candidate_ids)) != len(candidate_ids)):
+        raise ValueError("event_ledger_initial_cohort_invalid")
+    if conn.execute(
+        "SELECT 1 FROM event_ledger_revisions WHERE ledger_id=%s LIMIT 1", (ledger_id,)
+    ).fetchone():
+        raise ValueError("event_ledger_initial_cohort_exists")
+    source_rows = sorted((_source(conn, candidate_id) for candidate_id in candidate_ids),
+                         key=lambda row: row["candidate_id"])
+    sources = [{key: source[key] for key in
+                ("candidate_id", "evidence_revision_id", "article_id", "title", "kind")}
+               for source in source_rows]
+    facts, known = [], set()
+    for source in source_rows:
+        for raw in source["facts"]:
+            item = _fact(source, raw)
+            if item["fact_id"] in known:
+                continue
+            known.add(item["fact_id"])
+            item["sections"] = _section_tags(item)
+            facts.append(item)
+    if not facts:
+        raise ValueError("event_ledger_initial_cohort_empty")
+    ledger = {"workflow": WORKFLOW, "ledger_id": ledger_id, "title": title.strip(),
+              "kind": source_rows[0]["kind"], "sources": sources,
+              "facts": sorted(facts, key=lambda row: row["fact_id"]),
+              "superseded_fact_ids": [], "conflict_fact_ids": [],
+              "public_eligible": False}
+    change = {"kind": "initial", "added_fact_ids": sorted(known),
+              "supersedes_fact_ids": [], "conflict_fact_ids": []}
+    identity = {"ledger": ledger, "change": change, "predecessor_revision_id": None}
+    revision_id = "elr_" + _version(identity)
+    conn.execute(
+        """INSERT INTO event_ledger_revisions
+           (revision_id,ledger_id,predecessor_revision_id,status,change_kind,
+            ledger_json,change_json,created_at)
+           VALUES (%s,%s,NULL,'proposed','initial',%s,%s,%s)""",
+        (revision_id, ledger_id,
+         json.dumps(ledger, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+         json.dumps(change, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+         utc_now_iso()),
+    )
+    for source in sources:
+        conn.execute(
+            """INSERT INTO event_ledger_revision_sources
+               (revision_id,candidate_id,evidence_revision_id,article_id)
+               VALUES (%s,%s,%s,%s)""",
+            (revision_id, source["candidate_id"], source["evidence_revision_id"],
+             source["article_id"]),
+        )
+    if commit:
+        conn.commit()
+    return {"ledger_id": ledger_id, "revision_id": revision_id,
+            "status": "proposed", "reused": False, "public_eligible": False}
+
+
 def _lineage_current(conn, revision_id: str) -> bool:
     stale = conn.execute(
         """SELECT 1 FROM event_ledger_revision_sources s
