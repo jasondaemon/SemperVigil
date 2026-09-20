@@ -24,7 +24,7 @@ def test_projection_requires_incident_signal_not_shared_cve_or_vendor():
 
 def test_projection_retains_explicit_campaign_date_and_supporting_facts():
     evidence = record(
-        fact("f1", "WaterPlum compromised 30,000 devices in the campaign known as \"Contagious Interview\".",
+        fact("f1", "WaterPlum compromised 30,000 devices in the campaign known as \"Contagious Interview,\" which targets job seekers.",
              date_role="incident", date_text="December 2025 through July 2026"),
         fact("f2", "The actors exfiltrated credentials from cryptocurrency wallets."),
         fact("f3", "The advisory recommends verifying applicant identities."),

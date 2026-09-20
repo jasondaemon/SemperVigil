@@ -65,6 +65,13 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
         candidate = incident_candidates.project(conn, revision_id)
         assert candidate['status'] == 'suggested'
         assert candidate['signals']['kind'] == 'ransomware'
+        old_id = 'ic_' + ('0' * 64)
+        conn.execute('UPDATE incident_candidates SET candidate_id=%s, signals_json=%s WHERE evidence_revision_id=%s',
+                     (old_id, '{"projection_version":"old"}', revision_id))
+        conn.commit()
+        candidate = incident_candidates.project(conn, revision_id)
+        assert candidate['candidate_id'] != old_id
+        assert candidate['signals']['projection_version'] == incident_candidates.PROJECTION_VERSION
         assert incident_candidates.project(conn, revision_id)['candidate_id'] == candidate['candidate_id']
         enrolled = incident_candidates.review(
             conn, candidate['candidate_id'], 'enroll', reason='', reviewer='test')

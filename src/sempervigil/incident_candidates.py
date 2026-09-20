@@ -5,7 +5,7 @@ import re
 from .investigation import _version
 from .utils import utc_now_iso
 
-PROJECTION_VERSION = "accepted-evidence-candidate-v1"
+PROJECTION_VERSION = "accepted-evidence-candidate-v2"
 DECISIONS = {"enroll", "hold", "reject"}
 _CVE = re.compile(r"\bCVE-\d{4}-\d{4,}\b", re.IGNORECASE)
 _CAMPAIGN = re.compile(r"\bcampaign (?:known as|called) [\"']([^\"']+)[\"']", re.IGNORECASE)
@@ -54,7 +54,8 @@ def projection(record: dict, title: str) -> dict | None:
         if fact.get("date_role") == "incident" and fact.get("date_text")
     ))
     cves = sorted({match.group(0).upper() for statement in statements for match in _CVE.finditer(statement)})
-    campaigns = sorted({match.group(1).strip() for statement in statements for match in _CAMPAIGN.finditer(statement)})
+    campaigns = sorted({match.group(1).strip().rstrip(" ,;:.")
+                        for statement in statements for match in _CAMPAIGN.finditer(statement)})
     return {
         "projection_version": PROJECTION_VERSION,
         "title": title.strip(),
@@ -87,6 +88,25 @@ def project(conn, revision_id: str) -> dict:
                 "revision_id": revision_id, "article_id": article_id}
     candidate_id = "ic_" + _version({"revision_id": revision_id, **signals})
     encoded = json.dumps(signals, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    existing = conn.execute(
+        """
+        SELECT candidate_id, status, signals_json
+        FROM incident_candidates WHERE evidence_revision_id=%s
+        FOR UPDATE
+        """,
+        (revision_id,),
+    ).fetchone()
+    if existing and existing[2] != encoded:
+        if existing[1] != "suggested":
+            raise ValueError("incident_candidate_projection_conflict")
+        conn.execute(
+            """
+            UPDATE incident_candidates
+            SET candidate_id=%s, kind=%s, title=%s, signals_json=%s, created_at=%s
+            WHERE evidence_revision_id=%s AND status='suggested'
+            """,
+            (candidate_id, signals["kind"], signals["title"], encoded, utc_now_iso(), revision_id),
+        )
     conn.execute(
         """
         INSERT INTO incident_candidates
