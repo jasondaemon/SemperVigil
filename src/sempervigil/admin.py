@@ -3012,6 +3012,20 @@ def api_event_detail(event_id: str) -> dict[str, object]:
     return event
 
 
+@app.get("/admin/api/events/{event_id}/curation", dependencies=[Depends(_require_admin_token)])
+def api_event_curation(event_id: str) -> dict[str, object]:
+    from .event_curation_status import read
+    conn = _get_conn()
+    try:
+        return read(conn, event_id)
+    except ValueError as exc:
+        if str(exc) == "event_not_found":
+            raise HTTPException(status_code=404, detail="event_not_found") from None
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    finally:
+        conn.close()
+
+
 class EventsRebuildRequest(BaseModel):
     limit: int | None = None
 

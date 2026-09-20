@@ -5110,6 +5110,40 @@ function wireEventDetail() {
   const webPromote = document.getElementById("event-web-promote");
   const webShowDiscarded = document.getElementById("event-web-show-discarded");
   const webShowLow = document.getElementById("event-web-show-low");
+  const curationPanel = document.getElementById("event-curation-panel");
+  const curationSummary = document.getElementById("event-curation-summary");
+  const curationTable = document.getElementById("event-curation-table");
+  async function loadCurationStatus() {
+    if (!curationPanel || !curationSummary || !curationTable) return;
+    const data = await apiFetch(`/admin/api/events/${eventId}/curation`);
+    if (!data.managed) {
+      curationSummary.textContent = "Legacy Event; the evidence-ledger workflow does not manage it.";
+      curationTable.style.display = "none";
+      return;
+    }
+    const research = data.latest_research || {};
+    const ledger = data.latest_ledger || {};
+    const composition = data.latest_composition || {};
+    curationSummary.innerHTML = `
+      <strong>Public:</strong> ${esc(shortId(data.public_revision_id || "draft"))}
+      · <strong>Research:</strong> ${esc(research.status || "not run")}
+      · <strong>Ledger:</strong> ${esc(ledger.status || "none")}
+      · <strong>Narrative:</strong> ${esc(composition.status || "none")}
+    `;
+    const body = curationTable.querySelector("tbody");
+    body.innerHTML = "";
+    (data.sources || []).forEach((source) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td><a href="/ui/content/articles/${source.article_id}">${esc(source.title || `Article ${source.article_id}`)}</a></td>
+        <td>${statusBadge(source.evidence_status || "missing")}</td>
+        <td>${statusBadge(source.candidate_status || "missing")}</td>
+        <td>${statusBadge(source.ledger_status || "missing")}</td>
+        <td><span class="mono">${esc(String(source.next_step || ""))}</span></td>
+      `;
+      body.appendChild(row);
+    });
+  }
   function setWebError(message) {
     if (!webError) {
       return;
@@ -5549,6 +5583,9 @@ function wireEventDetail() {
         });
       }
       loadWebSources().catch((err) => setWebError(err.message || String(err)));
+      loadCurationStatus().catch((err) => {
+        if (curationSummary) curationSummary.textContent = err.message || String(err);
+      });
     })
     .catch((err) => {
       container.innerHTML = `<div class="error-banner">${err.message || String(err)}</div>`;

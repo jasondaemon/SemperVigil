@@ -10,6 +10,24 @@
   <div id="event-detail" data-event-id="{{ event_id }}">
     <div class="loading">Loading event...</div>
   </div>
+  <div class="panel" id="event-curation-panel">
+    <div class="panel-header">
+      <h2>Managed Event Maintenance</h2>
+    </div>
+    <p id="event-curation-summary" class="muted">Loading curation status...</p>
+    <table class="table-compact" id="event-curation-table">
+      <thead>
+        <tr><th>Source</th><th>Evidence</th><th>Candidate</th><th>Ledger</th><th>Next</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div class="actions">
+      <a class="btn secondary" href="/ui/article-evidence">Review Evidence</a>
+      <a class="btn secondary" href="/ui/incident-candidates">Review Candidates</a>
+      <a class="btn secondary" href="/ui/event-ledgers">Review Ledgers</a>
+      <a class="btn secondary" href="/ui/event-compositions">Review Narratives</a>
+    </div>
+  </div>
   <div class="panel">
     <div class="panel-header">
       <h2>Actions</h2>

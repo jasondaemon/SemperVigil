@@ -87,6 +87,15 @@ def test_events_api_list_get_rebuild(tmp_path, monkeypatch):
     assert detail.status_code == 200
     assert detail.json()["id"] == event_id
 
+    curation = client.get(f"/admin/api/events/{event_id}/curation")
+    assert curation.status_code == 200
+    assert curation.json() == {
+        "event_id": event_id,
+        "managed": False,
+        "sources": [],
+        "next_step": "legacy_event",
+    }
+
     rebuild = client.post("/admin/api/events/rebuild", json={})
     assert rebuild.status_code == 200
     payload = rebuild.json()
