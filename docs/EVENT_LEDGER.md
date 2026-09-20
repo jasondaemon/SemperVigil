@@ -56,7 +56,10 @@ unchanged replay, additive update, correction, conflict/hold/adjudication,
 superseded-source detection and withdrawal while asserting no writes to legacy
 Events or LLM-run records.
 
-Narrative composition and public publication are separate future gates.
+Narrative composition is now implemented as a separate default-disabled,
+single-attempt private review gate. It is documented in
+[`EVENT_COMPOSITION.md`](EVENT_COMPOSITION.md). Public publication remains a
+separate future gate.
 
 ## Production canary
 

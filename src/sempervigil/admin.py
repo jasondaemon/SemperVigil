@@ -248,6 +248,7 @@ _DASHBOARD_LLM_JOB_TYPES = [
     "event_report_llm",
     "event_review_private",
     "article_review_private",
+    "event_ledger_compose",
 ]
 _DASHBOARD_FETCH_JOB_TYPES = [
     "event_promote_reviewed",
@@ -3363,6 +3364,12 @@ class EventLedgerDecisionRequest(BaseModel):
     reason: str = Field(default="", max_length=1000)
 
 
+class EventCompositionDecisionRequest(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    decision: str
+    reason: str = Field(default="", max_length=1000)
+
+
 @app.post("/admin/api/articles/private-review", dependencies=[Depends(_require_admin_token)])
 def api_article_private_review(payload: ArticlePrivateReviewRequest) -> dict:
     if not os.environ.get("SV_ADMIN_TOKEN"):
@@ -3501,6 +3508,54 @@ def api_event_ledger_review(revision_id: str, payload: EventLedgerDecisionReques
     try:
         conn = _get_conn()
         return review(conn, revision_id, payload.decision, reason=payload.reason,
+                      reviewer="admin-token")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.post("/admin/api/event-ledgers/{revision_id}/compose",
+          dependencies=[Depends(_require_admin_token)])
+def api_event_ledger_compose(revision_id: str) -> dict:
+    from .event_composition_jobs import submit
+    conn = None
+    try:
+        conn = _get_conn()
+        return {"job_id": submit(conn, revision_id), "ledger_revision_id": revision_id,
+                "public_eligible": False}
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.get("/admin/api/event-compositions", dependencies=[Depends(_require_admin_token)])
+def api_event_compositions(status: str = "unreviewed", limit: int = 50) -> dict:
+    from .event_composition import list_compositions
+    conn = None
+    try:
+        conn = _get_conn()
+        items = list_compositions(conn, status=status, limit=limit)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="event_composition_list_invalid") from None
+    finally:
+        if conn is not None:
+            conn.close()
+    return {"items": items, "status": status, "public_eligible": False}
+
+
+@app.post("/admin/api/event-compositions/{composition_id}/review",
+          dependencies=[Depends(_require_admin_token)])
+def api_event_composition_review(composition_id: str,
+                                 payload: EventCompositionDecisionRequest) -> dict:
+    from .event_composition import review
+    conn = None
+    try:
+        conn = _get_conn()
+        return review(conn, composition_id, payload.decision, reason=payload.reason,
                       reviewer="admin-token")
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None

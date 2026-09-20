@@ -261,3 +261,23 @@ def list_revisions(conn, *, status: str = "proposed", limit: int = 50) -> list[d
                        "review_reason": row[10], "lineage_current": _lineage_current(conn, row[0]),
                        "public_eligible": False})
     return result
+
+
+def get_revision(conn, revision_id: str, *, require_status: str | None = None) -> dict:
+    if not isinstance(revision_id, str) or not revision_id.startswith("elr_"):
+        raise ValueError("event_ledger_revision_invalid")
+    row = conn.execute(
+        """SELECT revision_id, ledger_id, predecessor_revision_id, status,
+                  change_kind, ledger_json, change_json, created_at,
+                  reviewed_at, reviewed_by, review_reason
+           FROM event_ledger_revisions WHERE revision_id=%s""",
+        (revision_id,),
+    ).fetchone()
+    if not row or (require_status is not None and row[3] != require_status):
+        raise ValueError("event_ledger_revision_missing")
+    return {"revision_id": row[0], "ledger_id": row[1],
+            "predecessor_revision_id": row[2], "status": row[3],
+            "change_kind": row[4], "ledger": _decode(row[5]), "change": _decode(row[6]),
+            "created_at": row[7], "reviewed_at": row[8], "reviewed_by": row[9],
+            "review_reason": row[10], "lineage_current": _lineage_current(conn, row[0]),
+            "public_eligible": False}

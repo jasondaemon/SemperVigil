@@ -6860,7 +6860,10 @@ async function wireEventLedgers() {
           <button class="btn danger" type="button" data-ledger-decision="reject">Reject</button>
         </div>`;
       } else if (item.status === "accepted") {
-        actions = `<div class="actions"><button class="btn danger" type="button" data-ledger-decision="withdraw">Withdraw</button></div>`;
+        actions = `<div class="actions">
+          <button class="btn" type="button" data-ledger-compose>Compose private narrative</button>
+          <button class="btn danger" type="button" data-ledger-decision="withdraw">Withdraw</button>
+        </div>`;
       }
       return `<article class="panel" data-ledger-revision="${esc(item.revision_id)}">
         <h3>${esc(ledger.title || item.ledger_id)}</h3>
@@ -6888,6 +6891,23 @@ async function wireEventLedgers() {
   };
   statusSelect.addEventListener("change", load);
   list.addEventListener("click", async (event) => {
+    const composeButton = event.target.closest("[data-ledger-compose]");
+    if (composeButton) {
+      const card = composeButton.closest("[data-ledger-revision]");
+      if (!window.confirm("Queue one private evidence-bound narrative? This cannot publish an Event.")) return;
+      card.querySelectorAll("button").forEach((item) => { item.disabled = true; });
+      try {
+        const result = await apiFetch(`/admin/api/event-ledgers/${encodeURIComponent(card.dataset.ledgerRevision)}/compose`, {
+          method: "POST"
+        });
+        showToast(`Private narrative queued as ${result.job_id}`);
+      } catch (error) {
+        message.textContent = `Narrative composition failed: ${error.message}`;
+      } finally {
+        card.querySelectorAll("button").forEach((item) => { item.disabled = false; });
+      }
+      return;
+    }
     const button = event.target.closest("[data-ledger-decision]");
     if (!button) return;
     const card = button.closest("[data-ledger-revision]");
@@ -6908,6 +6928,92 @@ async function wireEventLedgers() {
       await load();
     } catch (error) {
       message.textContent = `Ledger review failed: ${error.message}`;
+      card.querySelectorAll("button").forEach((item) => { item.disabled = false; });
+    }
+  });
+  await load();
+}
+
+async function wireEventCompositions() {
+  const root = document.getElementById("event-composition-review");
+  if (!root) return;
+  const statusSelect = document.getElementById("event-composition-status");
+  const message = document.getElementById("event-composition-message");
+  const list = document.getElementById("event-composition-list");
+  const sectionLabels = {
+    overview: "Overview", attack_vector: "Attack vector", attack_path: "Attack path",
+    timeline: "Timeline", impact: "Impact", response_recovery: "Response and recovery",
+    mitigations: "Mitigations", attribution: "Attribution", open_questions: "Open questions"
+  };
+
+  const render = (items) => {
+    if (!items.length) {
+      list.innerHTML = '<p class="muted">No private narratives match this status.</p>';
+      return;
+    }
+    list.innerHTML = items.map((item) => {
+      const record = item.composition || {};
+      const sections = record.sections || {};
+      const sectionHtml = Object.entries(sectionLabels).map(([key, label]) => {
+        const rows = sections[key] || [];
+        if (!rows.length) return "";
+        const entries = rows.map((row) => `<li>${key === "timeline" ? `<strong>${esc(row.date_text)}:</strong> ` : ""}${esc(row.text)}
+          <span class="muted">[${esc((row.fact_ids || []).join(", "))}]</span></li>`).join("");
+        return `<section><h4>${label}</h4><ul>${entries}</ul></section>`;
+      }).join("");
+      const change = record.change || {};
+      let actions = "";
+      if (["unreviewed", "held"].includes(item.status)) {
+        actions = `<div class="actions">
+          <button class="btn" type="button" data-composition-decision="accept">Accept privately</button>
+          <button class="btn" type="button" data-composition-decision="hold">Hold</button>
+          <button class="btn danger" type="button" data-composition-decision="reject">Reject</button>
+        </div>`;
+      }
+      return `<article class="panel" data-event-composition="${esc(item.composition_id)}">
+        <h3>${esc(item.ledger_id)}</h3>
+        <p class="muted">${esc(item.status)} · ${esc(item.composition_id)} · ledger revision ${esc(item.ledger_revision_id)}</p>
+        <p><strong>Ledger lineage:</strong> ${item.ledger_current ? "Current" : "Stale"} ·
+          <strong>Added facts:</strong> ${esc((change.added_fact_ids || []).length)} ·
+          <strong>Corrected facts:</strong> ${esc((change.supersedes_fact_ids || []).length)} ·
+          <strong>Conflicts:</strong> ${esc((change.conflict_fact_ids || []).length)}</p>
+        ${sectionHtml}${actions}
+      </article>`;
+    }).join("");
+  };
+
+  const load = async () => {
+    message.textContent = "Loading private narratives...";
+    try {
+      const data = await apiFetch(`/admin/api/event-compositions?status=${encodeURIComponent(statusSelect.value)}&limit=50`);
+      render(data.items || []);
+      message.textContent = `${(data.items || []).length} private narratives. Accepted narratives remain private and cannot publish Events.`;
+    } catch (error) {
+      message.textContent = `Private narratives unavailable: ${error.message}`;
+    }
+  };
+  statusSelect.addEventListener("change", load);
+  list.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-composition-decision]");
+    if (!button) return;
+    const card = button.closest("[data-event-composition]");
+    const decision = button.dataset.compositionDecision;
+    let reason = "";
+    if (decision !== "accept") {
+      reason = (window.prompt(`Reason to ${decision} this private narrative:`) || "").trim();
+      if (!reason) return;
+    } else if (!window.confirm("Accept this evidence-bound narrative privately? This does not publish an Event.")) {
+      return;
+    }
+    card.querySelectorAll("button").forEach((item) => { item.disabled = true; });
+    try {
+      await apiFetch(`/admin/api/event-compositions/${encodeURIComponent(card.dataset.eventComposition)}/review`, {
+        method: "POST", body: JSON.stringify({decision, reason})
+      });
+      showToast(`Private narrative ${decision}ed`);
+      await load();
+    } catch (error) {
+      message.textContent = `Narrative review failed: ${error.message}`;
       card.querySelectorAll("button").forEach((item) => { item.disabled = false; });
     }
   });
@@ -6951,6 +7057,7 @@ document.addEventListener("DOMContentLoaded", () => {
   wireArticleEvidence();
   wireIncidentCandidates();
   wireEventLedgers();
+  wireEventCompositions();
   wireProducts();
   wireProductDetail();
   wireDangerZone();

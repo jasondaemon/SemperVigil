@@ -1,0 +1,25 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "content" %}
+{% set nav_subactive = "event_compositions" %}
+{% block content %}
+<section class="panel" id="event-composition-review">
+  <div class="panel-header">
+    <div>
+      <h2>Private Event Narratives</h2>
+      <p>Review evidence-bound narratives composed from accepted Event ledgers. These drafts cannot publish Events.</p>
+    </div>
+    <label>Status
+      <select id="event-composition-status">
+        <option value="unreviewed">Unreviewed</option>
+        <option value="held">Held</option>
+        <option value="accepted">Accepted</option>
+        <option value="superseded">Superseded</option>
+        <option value="rejected">Rejected</option>
+        <option value="all">All</option>
+      </select>
+    </label>
+  </div>
+  <p id="event-composition-message" role="status" aria-live="polite">Loading narratives...</p>
+  <div id="event-composition-list"></div>
+</section>
+{% endblock %}

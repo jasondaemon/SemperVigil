@@ -463,6 +463,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_event_ledger_revisions_041")
             applied.add("pg_event_ledger_revisions_041")
+        if "pg_event_ledger_compositions_042" not in applied:
+            _migrate_event_ledger_compositions(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_event_ledger_compositions_042", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_event_ledger_compositions_042")
+            applied.add("pg_event_ledger_compositions_042")
         else:
             conn.commit()
         return
@@ -699,6 +708,15 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_event_ledger_revisions_041")
+
+    conn.execute("BEGIN")
+    _migrate_event_ledger_compositions(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_event_ledger_compositions_042", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_event_ledger_compositions_042")
 
 def _bootstrap_schema(conn) -> None:
     conn.execute(
@@ -5469,5 +5487,43 @@ def _migrate_event_ledger_revisions(conn) -> None:
             PRIMARY KEY (revision_id, candidate_id),
             UNIQUE (revision_id, evidence_revision_id)
         )
+        """
+    )
+
+
+def _migrate_event_ledger_compositions(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS event_ledger_compositions (
+            composition_id TEXT PRIMARY KEY,
+            ledger_id TEXT NOT NULL,
+            ledger_revision_id TEXT NOT NULL
+                REFERENCES event_ledger_revisions(revision_id) ON DELETE RESTRICT,
+            generation_version TEXT NOT NULL,
+            request_version TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN
+                ('unreviewed', 'accepted', 'held', 'rejected', 'superseded')),
+            composition_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            reviewed_at TEXT NULL,
+            reviewed_by TEXT NULL,
+            review_reason TEXT NULL,
+            superseded_by_composition_id TEXT NULL
+                REFERENCES event_ledger_compositions(composition_id) ON DELETE RESTRICT,
+            UNIQUE (ledger_revision_id, generation_version, request_version)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_event_composition_one_accepted
+        ON event_ledger_compositions(ledger_id)
+        WHERE status='accepted'
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_event_composition_review_queue
+        ON event_ledger_compositions(status, created_at, ledger_id)
         """
     )

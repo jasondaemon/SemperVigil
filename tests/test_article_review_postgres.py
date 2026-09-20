@@ -4,8 +4,8 @@ import os
 import psycopg
 
 from sempervigil import (article_review_jobs as review, article_evidence as evidence,
-                         article_evidence_store as evidence_store, event_ledger, incident_candidates,
-                         migrations_pg, storage)
+                         article_evidence_store as evidence_store, event_composition,
+                         event_ledger, incident_candidates, migrations_pg, storage)
 
 
 def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
@@ -46,6 +46,8 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
         created.append('incident_candidates')
         migrations_pg._migrate_event_ledger_revisions(conn)
         created.extend(['event_ledger_revisions', 'event_ledger_revision_sources'])
+        migrations_pg._migrate_event_ledger_compositions(conn)
+        created.append('event_ledger_compositions')
         conn.commit()
         watched = ('articles', 'events', 'llm_runs')
         before = {table: conn.execute('SELECT count(*) FROM '+table).fetchone()[0] for table in watched}
@@ -100,6 +102,18 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
         assert listed['lineage_current'] is True
         assert listed['ledger']['facts'][0]['exact_passages'][0]['text'] == article['content_text']
         assert listed['ledger']['public_eligible'] is False
+        active_fact = listed['ledger']['facts'][0]
+        output = {section: [] for section in event_composition.SECTIONS}
+        output['overview'] = [{'text': active_fact['statement'],
+                               'fact_ids': [active_fact['fact_id']]}]
+        record = event_composition.validate(
+            json.dumps(output).encode(), listed, '9' * 64)
+        composition_id = event_composition.store_unreviewed(conn, record)
+        accepted_composition = event_composition.review(
+            conn, composition_id, 'accept', reason='', reviewer='test')
+        assert accepted_composition['status'] == 'accepted'
+        assert event_composition.list_compositions(
+            conn, status='accepted')[0]['ledger_current'] is True
 
         def enrolled_candidate(article_id, generation):
             item = fixture_articles[article_id]
@@ -118,6 +132,8 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
             conn, additive_candidate, ledger_id=ledger['ledger_id'], change_kind='additive')
         assert len(event_ledger.list_revisions(conn, status='proposed')[0]['change']['added_fact_ids']) == 1
         event_ledger.review(conn, additive['revision_id'], 'accept', reason='', reviewer='test')
+        assert event_composition.list_compositions(
+            conn, status='accepted')[0]['ledger_current'] is False
 
         current = event_ledger.list_revisions(conn, status='accepted')[0]
         correction_target = current['ledger']['facts'][0]['fact_id']

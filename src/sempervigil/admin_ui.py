@@ -244,6 +244,17 @@ def ui_router(token_guard) -> APIRouter:
             },
         )
 
+    @router.get("/event-compositions", response_class=HTMLResponse)
+    def event_compositions(request: Request):
+        return _render(
+            "admin/event_compositions.html",
+            {
+                **_base_context(request),
+                "nav_active": "content",
+                "nav_subactive": "event_compositions",
+            },
+        )
+
     @router.get("/briefs/{day}", response_class=HTMLResponse)
     def brief_detail(request: Request, day: str):
         return _render(
