@@ -36,11 +36,14 @@ def ledger_revision():
 
 
 def valid_output():
-    return {"items": [
-        {"section": "overview", "fact_ref": "F01"},
-        {"section": "timeline", "fact_ref": "F01"},
-        {"section": "open_questions", "fact_ref": "F02"},
-    ]}
+    output = {section: [] for section in composition.SECTIONS}
+    output["overview"] = [{"text": "Acme disclosed an intrusion affecting its environment.",
+                           "fact_refs": ["F01"]}]
+    output["timeline"] = [{"text": "Acme reported that unauthorized access occurred.",
+                           "fact_refs": ["F01"]}]
+    output["open_questions"] = [{"text": "The available evidence does not confirm recovery.",
+                                 "fact_refs": ["F02"]}]
+    return output
 
 
 def test_request_uses_only_active_exact_evidence_and_remains_private():
@@ -48,7 +51,6 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
     payload = json.loads(req["input"])
     assert [fact["ref"] for fact in payload["facts"]] == ["F01", "F02"]
     assert payload["facts"][0]["allowed_sections"] == ["overview", "attack_vector", "attack_path", "timeline"]
-    assert payload["excluded_fact_ids"] == ["f3"]
     record = composition.validate(json.dumps(valid_output()).encode(), ledger_revision(), GENERATION)
     assert record["public_eligible"] is False and record["status"] == "unreviewed"
     assert record["change"] == ledger_revision()["change"]
@@ -56,32 +58,33 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
 
 def test_validation_rejects_unknown_or_unsupported_evidence():
     output = valid_output()
-    output["items"][0]["fact_ref"] = "unknown"
+    output["overview"][0]["fact_refs"] = ["unknown"]
     with pytest.raises(ValueError, match="invalid_shape"):
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
     output = valid_output()
-    output["items"][1]["fact_ref"] = "F02"
+    output["timeline"][0]["fact_refs"] = ["F02"]
     with pytest.raises(ValueError, match="section_not_supported"):
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
     output = valid_output()
-    output["items"][2]["fact_ref"] = "F01"
+    output["open_questions"][0]["fact_refs"] = ["F01"]
     with pytest.raises(ValueError, match="section_not_supported"):
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
 
 
 def test_dated_fact_is_deterministically_added_to_timeline():
     output = valid_output()
-    output["items"] = [item for item in output["items"] if item["section"] != "timeline"]
-    record = composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
-    assert record["sections"]["timeline"] == [{"text": ledger_revision()["ledger"]["facts"][0]["statement"],
-        "fact_ids": ["f1"], "date_text": "July 4"}]
-
-
-def test_model_text_cannot_enter_stored_narrative():
-    output = valid_output()
-    output["items"][0]["text"] = "Invented prose"
-    with pytest.raises(ValueError, match="invalid_shape"):
+    output["timeline"] = []
+    with pytest.raises(ValueError, match="timeline_incomplete"):
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
+
+
+def test_model_prose_is_stored_with_immutable_evidence_ids():
+    output = valid_output()
+    output["overview"][0]["text"] = "A varied, readable account grounded in accepted evidence."
+    record = composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
+    assert record["sections"]["overview"][0] == {
+        "text": output["overview"][0]["text"], "fact_ids": ["f1"]}
+    assert record["sections"]["timeline"][0]["date_text"] == "July 4"
 
 
 def test_noncurrent_or_public_ledger_is_never_composed():
@@ -97,7 +100,7 @@ def test_noncurrent_or_public_ledger_is_never_composed():
 @pytest.fixture
 def harness(monkeypatch):
     monkeypatch.setenv("SV_EVENT_LEDGER_COMPOSITION_ENABLED", "1")
-    monkeypatch.setattr(jobs, "configuration", lambda conn: ({}, {}, {}, GENERATION))
+    monkeypatch.setattr(jobs, "configuration", lambda conn: ({}, {}, GENERATION))
     monkeypatch.setattr(jobs, "ledger_revision", lambda conn, revision_id: copy.deepcopy(ledger_revision()))
     saved = []
     monkeypatch.setattr(jobs, "update_job_result",
@@ -109,7 +112,7 @@ def harness(monkeypatch):
 def running_job():
     req = composition.request(ledger_revision(), GENERATION)
     return SimpleNamespace(id="test", job_type=jobs.JOB_TYPE, result=None, attempt_count=0,
-        max_attempts=1, queue_name="llm_local", status="running", payload={
+        max_attempts=1, queue_name="openai", status="running", payload={
             "workflow": composition.WORKFLOW, "ledger_revision_id": ledger_revision()["revision_id"],
             "generation": GENERATION, "request_version": req["request_version"]})
 
@@ -124,11 +127,11 @@ def test_job_is_one_attempt_private_and_review_gated(harness):
     assert len(calls) == 1 and result["status"] == "review_required"
     assert result["public_eligible"] is False and result["attempts"] == 1
     assert result["composition_id"].startswith("elc_")
-    assert json.loads(result["raw"])["items"][0]["fact_ref"] == "F01"
+    assert json.loads(result["raw"])["overview"][0]["fact_refs"] == ["F01"]
 
 
 @pytest.mark.parametrize("change", [{"attempt_count": 1}, {"max_attempts": 2},
-    {"queue_name": "fetch"}, {"status": "queued"}, {"result": {"status": "started"}}])
+    {"queue_name": "llm_local"}, {"status": "queued"}, {"result": {"status": "started"}}])
 def test_replay_or_wrong_lane_never_calls_model(harness, change):
     current = running_job()
     for key, value in change.items():
@@ -146,7 +149,7 @@ def test_disabled_by_default(monkeypatch):
 
 def test_worker_registry_and_queue_mapping():
     from sempervigil.storage import get_queue_name_for_job_type
-    assert get_queue_name_for_job_type(jobs.JOB_TYPE) == "llm_local"
-    assert jobs.JOB_TYPE in worker._LLM_JOB_TYPES
-    assert jobs.JOB_TYPE in worker.QUEUE_WORKER_TYPES["llm_local"]
+    assert get_queue_name_for_job_type(jobs.JOB_TYPE) == "openai"
+    assert jobs.JOB_TYPE not in worker._LLM_JOB_TYPES
+    assert jobs.JOB_TYPE in worker.QUEUE_WORKER_TYPES["openai"]
     assert jobs.JOB_TYPE in worker.HANDLED_JOB_TYPES

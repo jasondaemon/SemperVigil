@@ -12,8 +12,9 @@ dirty, invoke Hugo, or authorize publication.
 - The feature is default-disabled and requires
   `SV_EVENT_LEDGER_COMPOSITION_ENABLED=1`.
 - One deduplicated `event_ledger_compose` job runs on the existing serial
-  `llm_local` worker with one provider attempt and no repair, retry, or fallback.
-- The request identity binds the accepted revision, active local model/profile,
+  `openai` worker using `gpt-5.6-luna`, with one provider attempt and no repair,
+  retry, or fallback.
+- The request identity binds the accepted revision, hosted model/provider,
   prompt, schema, and generation settings. A changed ledger or configuration
   invalidates the work rather than replaying it.
 - Superseded and conflicting facts are excluded before inference. Input is capped
@@ -21,21 +22,18 @@ dirty, invoke Hugo, or authorize publication.
 
 ## Evidence contract
 
-The model receives only active ledger facts and their retained exact passages.
-To keep the local model's structured task small, each request assigns stable
+The model receives only active ledger facts, not raw articles or excluded facts.
+To keep the editorial task small, each request assigns stable
 request-local aliases (`F01`, `F02`, and so on); code maps those aliases back to
-immutable fact IDs before storage. The response is one flat list of atomic items,
-which code groups into sections only after validation. Every narrative item must
-cite one or more active aliases. Each fact also carries deterministic allowed
-sections from the accepted ledger. The local model selects and orders aliases
-only; it cannot author stored prose. Code materializes each immutable accepted
-statement, fact ID, and explicit date after validation. The validator rejects:
+immutable fact IDs before storage. The model writes natural prose inside the
+fixed Event sections, and every item must cite one or more active aliases. Each
+fact carries deterministic allowed sections from the accepted ledger. Code, not
+the model, restores fact IDs and explicit timeline labels. The validator rejects:
 
 - unknown, superseded, or conflicting fact references;
 - sections not allowed by every cited fact;
 - timeline dates not explicitly present on a cited fact;
 - omission of any explicitly dated fact from the timeline;
-- unresolved questions not grounded in an allegation or uncertainty fact;
 - additional fields or an incomplete structured response.
 
 The sections are overview, attack vector, attack path, timeline, impact,
@@ -71,6 +69,9 @@ rejection, worker registration, and queue routing. The disposable PostgreSQL
 lifecycle covers migration, private storage and review, plus stale lineage after
 an additive ledger revision.
 
-The first production canary must consume exactly one local model call, create no
+The first production canary must consume exactly one OpenAI call, create no
 public Event/build/feed change, and remain unreviewed until its evidence quality
-is inspected. Publication remains a separate future gate.
+is inspected. At published September 2026 rates, a representative 5,000-token
+input and 1,500-token output is approximately $0.003. Permanent revision-based
+deduplication prevents scheduler polling from repeating that charge. Publication
+remains a separate future gate.

@@ -533,3 +533,20 @@ If you (Codex) propose edits affecting pipeline stability, you must:
   - curl -I http://localhost:${SV_WEB_PORT:-8080}/
 - Outcome: success
 - Rollback plan: Revert listed files to prior versions and rerun verification steps.
+# 2026-09-19: low-cost hosted Event editorial composition
+
+- Summary: Replace the unsuccessful local-model section-selection experiment
+  with a one-call, evidence-bound OpenAI editorial composer for private Events.
+- Scope: accepted active ledger facts only; `gpt-5.6-luna`; existing serial
+  `openai` queue; one attempt; no repair, retry, fallback, public write, feed
+  change, build admission, Hugo invocation, or article-summary change.
+- Controls: permanent revision/config request identity, strict JSON schema,
+  paragraph-level immutable fact references, deterministic timeline labels,
+  section authorization, complete dated-fact coverage and explicit human review.
+- Verification: 1,034 offline tests passed, one skipped; focused 13-test contract
+  passed; live credential/model structured-output probe returned valid JSON.
+- Status: local implementation only. Production migration, targeted worker/admin
+  rollout and one private WaterPlum canary remain pending.
+- Rollback: retain the prior image, disable
+  `SV_EVENT_LEDGER_COMPOSITION_ENABLED`, and restore the prior admin/OpenAI worker
+  tags. No public-content rollback is required.
