@@ -1,4 +1,4 @@
-{{- range $key := list "SV_EVENT_HUMAN_APPROVAL_ENABLED" "SV_EVENT_PUBLICATION_ENABLED" "SV_EVENT_ACTIVATION_CHECK" }}
+{{- range $key := list "SV_EVENT_HUMAN_APPROVAL_ENABLED" "SV_EVENT_PUBLICATION_ENABLED" "SV_EVENT_ACTIVATION_CHECK" "SV_EVENT_LEDGER_COMPOSITION_ENABLED" }}
 {{- if not (has (index $.Values.env $key) (list "0" "1")) }}
 {{- fail (printf "%s must be the string 0 or 1" $key) }}
 {{- end }}
@@ -29,6 +29,7 @@ data:
   SV_LOG_DIR: /log
   SV_EVENT_REVIEW_ENABLED: {{ .Values.env.SV_EVENT_REVIEW_ENABLED | quote }}
   SV_ARTICLE_REVIEW_ENABLED: {{ .Values.env.SV_ARTICLE_REVIEW_ENABLED | default "0" | quote }}
+  SV_EVENT_LEDGER_COMPOSITION_ENABLED: {{ .Values.env.SV_EVENT_LEDGER_COMPOSITION_ENABLED | default "0" | quote }}
   SV_EVENT_HUMAN_APPROVAL_ENABLED: {{ .Values.env.SV_EVENT_HUMAN_APPROVAL_ENABLED | quote }}
   SV_EVENT_PUBLICATION_ENABLED: {{ .Values.env.SV_EVENT_PUBLICATION_ENABLED | quote }}
   SV_EVENT_ACTIVATION_CHECK: {{ .Values.env.SV_EVENT_ACTIVATION_CHECK | quote }}
