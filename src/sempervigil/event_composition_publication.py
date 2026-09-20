@@ -195,6 +195,7 @@ def validate_bundle(bundle: dict, *, event_id: str, expected_revision: str | Non
               if fact["fact_id"] not in set(ledger_record["ledger"].get("superseded_fact_ids", []))
               | set(ledger_record["ledger"].get("conflict_fact_ids", []))}
     sections = composition.get("sections")
+    section_policy = composition.get("section_policy", event_composition.LEGACY_SECTION_POLICY)
     if not isinstance(sections, dict) or set(sections) != set(event_composition.SECTIONS):
         raise ValueError("event_composition_publication_sections_invalid")
     for section, items in sections.items():
@@ -205,7 +206,8 @@ def validate_bundle(bundle: dict, *, event_id: str, expected_revision: str | Non
             if (not isinstance(item.get("text"), str) or not item["text"].strip()
                     or not isinstance(refs, list) or not refs or len(refs) != len(set(refs))
                     or any(ref not in active for ref in refs)
-                    or any(section not in event_composition._allowed_sections(active[ref]) for ref in refs)):
+                    or any(section not in event_composition._allowed_sections(
+                        active[ref], section_policy) for ref in refs)):
                 raise ValueError("event_composition_publication_citation_invalid")
             if section == "timeline":
                 dated = [active[ref].get("date_text") for ref in refs if active[ref].get("date_text")]

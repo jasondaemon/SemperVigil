@@ -49,6 +49,7 @@ def valid_output():
 def test_request_uses_only_active_exact_evidence_and_remains_private():
     req = composition.request(ledger_revision(), GENERATION)
     payload = json.loads(req["input"])
+    assert payload["section_policy"] == composition.SECTION_POLICY
     assert [fact["ref"] for fact in payload["facts"]] == ["F01", "F02"]
     assert payload["required_timeline_refs"] == ["F01"]
     assert payload["facts"][0]["allowed_sections"] == ["overview", "attack_vector", "attack_path", "timeline"]
@@ -58,6 +59,7 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
     assert properties["response_recovery"]["maxItems"] == 0
     record = composition.validate(json.dumps(valid_output()).encode(), ledger_revision(), GENERATION)
     assert record["public_eligible"] is False and record["status"] == "unreviewed"
+    assert record["section_policy"] == composition.SECTION_POLICY
     assert record["change"] == ledger_revision()["change"]
 
 
@@ -78,6 +80,8 @@ def test_allowed_sections_can_remove_stale_unsafe_permissions():
               "sections": ["attack_path"]}
     assert "attack_path" not in composition._allowed_sections(stolen)
     assert "impact" in composition._allowed_sections(stolen)
+    assert "attack_path" in composition._allowed_sections(
+        stolen, composition.LEGACY_SECTION_POLICY)
 
 
 def test_timeline_normalization_ignores_publication_and_collapses_equivalent_dates():

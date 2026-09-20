@@ -10,6 +10,8 @@ from .investigation import _version
 from .utils import utc_now_iso
 
 WORKFLOW = "event-ledger-composition-v4"
+SECTION_POLICY = "deterministic-sections-v2"
+LEGACY_SECTION_POLICY = "stored-union-v1"
 MAX_INPUT_BYTES = 48000
 MAX_OUTPUT_BYTES = 24000
 SECTIONS = (
@@ -45,17 +47,22 @@ def _active_facts(ledger: dict) -> tuple[list[dict], dict[str, dict]]:
     return active, {f"F{index:02d}": fact for index, fact in enumerate(active, 1)}
 
 
-def _allowed_sections(fact: dict) -> list[str]:
+def _allowed_sections(fact: dict, policy: str = SECTION_POLICY) -> list[str]:
     result = {"overview"}
     mapping = {"timeline": "timeline", "attack_path": "attack_path",
                "impact": "impact", "mitigation": "mitigations",
                "response_recovery": "response_recovery",
                "attribution": "attribution", "open_question": "open_questions"}
     from .event_ledger import _section_tags
-    # Persisted tags explain the historical extraction decision. Future
-    # compositions use the current classifier so a corrected rule can narrow an
-    # unsafe permission without mutating immutable evidence or published prose.
-    sections = set(_section_tags(fact))
+    if policy == SECTION_POLICY:
+        # Persisted tags explain the historical extraction decision. Future
+        # compositions use the current classifier so a corrected rule can narrow
+        # an unsafe permission without mutating immutable evidence.
+        sections = set(_section_tags(fact))
+    elif policy == LEGACY_SECTION_POLICY:
+        sections = set(fact.get("sections", [])) | set(_section_tags(fact))
+    else:
+        raise ValueError("event_composition_section_policy_invalid")
     for section in sections:
         if section in mapping:
             result.add(mapping[section])
@@ -167,7 +174,8 @@ def request(ledger_revision: dict, generation: str) -> dict:
               if section != "timeline" or ref in timeline_refs]
         for ref, fact in aliases.items()
     }
-    payload = {"workflow": WORKFLOW, "title": ledger["title"], "kind": ledger["kind"],
+    payload = {"workflow": WORKFLOW, "section_policy": SECTION_POLICY,
+               "title": ledger["title"], "kind": ledger["kind"],
                "required_timeline_refs": required_timeline_refs,
                "facts": [{"ref": ref, "statement": fact["statement"],
                           "kind": fact["kind"], "date_text": fact["date_text"],
@@ -220,6 +228,7 @@ def validate(raw: bytes, ledger_revision: dict, generation: str) -> dict:
         "workflow": WORKFLOW, "ledger_id": ledger_revision["ledger_id"],
         "ledger_revision_id": ledger_revision["revision_id"],
         "generation_version": generation, "request_version": req["request_version"],
+        "section_policy": SECTION_POLICY,
         "sections": sections, "change": ledger_revision["change"],
         "status": "unreviewed", "public_eligible": False,
     }
