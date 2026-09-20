@@ -82,8 +82,7 @@ def _section_tags(fact: dict) -> list[str]:
         tags.append("attack_path")
     if fact["kind"] != "recommendation" and any(cue in text for cue in (
         "impact", "exfiltrat", "stole", "stolen", "exposed", "affected",
-        "personal data", "devices", "records", "accounts", "wallet", "million",
-        "billion", "disrupt",
+        "personal data", "devices", "records", "accounts", "wallet", "disrupt",
     )):
         tags.append("impact")
     if any(cue in text for cue in (

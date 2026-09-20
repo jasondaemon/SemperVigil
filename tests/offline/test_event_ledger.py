@@ -33,6 +33,9 @@ def test_section_tags_distinguish_access_response_and_uncertainty():
     unanswered = {"statement": "The company did not answer whether the exposed data was misused.",
                   "kind": "reported_fact", "date_role": "none", "date_text": None}
     assert event_ledger._section_tags(unanswered) == ["impact", "open_question"]
+    audience = {"statement": "The platform has approximately 35 million subscribers.",
+                "kind": "reported_fact", "date_role": "none", "date_text": None}
+    assert event_ledger._section_tags(audience) == ["context"]
 
 
 @pytest.mark.parametrize("kind", ["daily-summary", "rewrite", "publish"])
