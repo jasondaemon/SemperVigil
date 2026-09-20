@@ -1,7 +1,7 @@
 # Legacy event backlog: inspection and retirement boundary
 
-September 20, 2026. Production inventory was read-only; no legacy rows have yet
-been suppressed or deleted.
+September 20, 2026. The bounded production retirement completed. No rows were
+deleted.
 
 The user permits retiring nonapplicable old event content, but `candidate=true`
 is not a safe deletion criterion. Current inventory:
@@ -45,14 +45,17 @@ would erase useful linkage and might cause rediscovery rather than migration.
    merged summary. Published contaminated reports require individually validated
    replacements or explicit withdrawal, not a blanket candidate purge.
 
-The version-checked maintenance operation is now implemented and validated but
-not yet applied in production. The admin creates an immutable preview manifest;
+The version-checked maintenance operation is implemented and applied. The admin
+created immutable preview manifest `lerr_06b4d0e03e4744e58f01b396d84bf79a`;
 published, managed, manual, revision-bearing, approved and in-flight Events are
 excluded. Apply and restore run as bounded fetch-worker jobs. Each row is locked
 and fingerprinted before mutation, and restore refuses to overwrite later edits.
 Suppression sets both durable visibility and lifecycle while retaining every
 article, CVE, source link and Event row.
 
-No cleanup schedule or destructive maintenance task was added. A production
-preview must be inspected before its exact manifest is queued. This workflow is
-not a claim that all legacy candidates have been reviewed for factual quality.
+Fetch job `job_2b5cb566f762489e828c4f3c97b4ed28` suppressed all 1,426
+eligible rows with zero skips. The restore manifest remains available. Published
+active Events remained 13 and managed public pointers remained 2; articles and
+Event-article links were untouched. No cleanup schedule or destructive task was
+added. Future runs still require a newly inspected preview. This workflow is not
+a claim that all retired candidates were reviewed for factual quality.

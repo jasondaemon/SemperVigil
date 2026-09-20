@@ -2204,3 +2204,27 @@ Builder, web, model/context/resources, single-LLM concurrency and feeds unchange
   slice. Source extraction is not qualified narrative or a publication approval.
 - Next gate: bounded real-model pilot; then evidence reuse, multi-source synthesis
   and correction handling. See EVENT_DECONSTRUCTION.md.
+## Event research reuse and legacy retirement (2026-09-20)
+
+Application `45ced44` added content-addressed Event source versions,
+Event/profile-specific relevance receipts, additive migrations 044/045 and the
+admin retirement preview/restore workflow. Application `43ad9af` added the two
+retirement handlers to the worker safety allowlist after the first queued job was
+correctly refused; no Event row changed before that correction. Platform
+`b161e58` targets admin `45ced44` and fetch worker `43ad9af` independently.
+
+The rendered diff contained only those main/init image changes. Both deployments
+rolled out Ready with zero restarts; rendered/live diff is empty. Migrations 044
+and 045 completed. Preview `lerr_06b4d0e03e4744e58f01b396d84bf79a`
+contained exactly 1,426 unpublished, non-manual legacy draft candidates and
+excluded managed/public/revision/in-flight Events. Job
+`job_2b5cb566f762489e828c4f3c97b4ed28` applied all 1,426 with zero
+skips in about two seconds. No article, CVE, source link or Event row was deleted;
+the fingerprinted restore manifest remains available.
+
+The complete offline suite passed 1,052 tests with two skips; an isolated
+PostgreSQL lifecycle passed source-version reuse, relevance receipt reuse,
+preview, suppression and exact restore. Homepage, Events index and the WaterPlum
+Event returned HTTP 200. Kubernetes readiness passed, all nodes reported no
+memory pressure, and no jobs remained running. No Hugo command or site build was
+invoked for this database/UI-only release.
