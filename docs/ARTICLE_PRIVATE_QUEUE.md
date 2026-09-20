@@ -2,6 +2,22 @@
 
 ## Status
 
+Production evidence-only canary deployed September 19, 2026: admin/LLM image
+`86635cf`. Migration `pg_article_evidence_revisions_039` is applied and the
+authenticated Article Evidence review page is live. Job
+`job_cf28c64c205d4e96bffa1e7d4a62322e` completed three serial calls with no
+retry: 13, 20 and 24 passage-bound facts in 20.175s, 28.714s and 35.505s. The
+three immutable revisions remain `unreviewed`; none is eligible for incident
+derivation or publication.
+
+Pre/post hashes prove the retained raw article, production summary and context
+fields are unchanged. Event and event-article counts remained 1,521 and 2,094;
+the normal LLM queue drained to zero; no site build was requested. The live
+September 19 daily JSON still serves its existing 17 articles and 31 CVEs. This
+establishes the durable review boundary, not semantic acceptance. Review the
+three records before S2 can complete and before any incident-candidate consumer
+is enabled.
+
 Deployed September 19, 2026: admin/LLM worker `e2c7abf`, platform `c0d9ec8`.
 `article-evidence-v4` segments
 stored text deterministically into bounded, numbered passages. The private model
@@ -127,7 +143,7 @@ stale evidence if source text or existing comparison fields changed during the
 call. Existing production summary jobs, article fields, daily JSON and Events are
 unchanged. Durable reviewed sidecar storage remains the next gate.
 
-## Durable reviewed sidecar: local verification
+## Durable reviewed sidecar: production canary
 
 Migration `pg_article_evidence_revisions_039` adds immutable evidence payloads
 separate from article fields. Each revision is bound to article, source, workflow,
@@ -146,8 +162,9 @@ hold and reject controls. The API never accepts a reviewer identity from the cli
 A disposable PostgreSQL lifecycle test passed extraction, deduplication, hold,
 accept, supersession, rejection and list reads while confirming article/Event/LLM
 content counts were unchanged. JavaScript syntax and targeted offline tests pass.
-This schema-backed slice is local only; production migration, V8 cohort admission
-and seven-day observation remain pending.
+The production migration and frozen V8 cohort now pass as described above.
+Explicit review and the seven-day observation remain pending; no automatic
+historical admission or incident derivation is enabled.
 
 ## Operation
 
