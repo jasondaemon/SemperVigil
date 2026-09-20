@@ -3,7 +3,8 @@ import json
 import os
 import psycopg
 
-from sempervigil import article_review_jobs as review, storage
+from sempervigil import (article_review_jobs as review, article_evidence as evidence,
+                         article_evidence_store as evidence_store, migrations_pg, storage)
 
 
 def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
@@ -24,9 +25,14 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
             attempt_count INTEGER, max_attempts INTEGER, available_at TEXT,
             heartbeat_at TEXT, lease_expires_at TEXT, parent_job_id TEXT, dedupe_key TEXT)''')
         created.append('jobs')
-        for table in ('articles', 'events', 'llm_runs'):
+        conn.execute('CREATE TABLE articles (id BIGINT PRIMARY KEY, title TEXT NOT NULL)')
+        conn.execute('INSERT INTO articles (id, title) VALUES (7, %s)', (article['title'],))
+        created.append('articles')
+        for table in ('events', 'llm_runs'):
             conn.execute('CREATE TABLE '+table+' (id INTEGER)')
             created.append(table)
+        migrations_pg._migrate_article_evidence_revisions(conn)
+        created.append('article_evidence_revisions')
         conn.commit()
         watched = ('articles', 'events', 'llm_runs')
         before = {table: conn.execute('SELECT count(*) FROM '+table).fetchone()[0] for table in watched}
@@ -39,14 +45,34 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
         def generate(request):
             persisted = storage.get_job(conn, first)
             assert persisted.result['attempts'] > 0
-            if request['phase'] == 'context':
-                return json.dumps({'facts':[{'passage_ids':['p001'],
-                    'statement':article['content_text'], 'kind':'reported_fact',
-                    'date_text':None, 'date_role':'none'}]})
-            return json.dumps({'summary_sentences':[{'text':article['content_text'], 'fact_ids':['f1']}], 'bullets':[]})
+            return json.dumps({'facts':[{'passage_ids':['p001'],
+                'statement':article['content_text'], 'kind':'reported_fact',
+                'date_text':None, 'date_role':'none'}]})
         result = review.run(conn, claimed, generate=generate)
         storage.complete_job(conn, first, result=result)
-        assert storage.get_job(conn, first).result['attempts'] == 2
+        saved = storage.get_job(conn, first).result
+        assert saved['attempts'] == 1
+        revision_id = saved['articles'][0]['phases'][0]['revision_id']
+        assert conn.execute("SELECT status FROM article_evidence_revisions WHERE revision_id=%s",
+                            (revision_id,)).fetchone()[0] == 'unreviewed'
+        monkeypatch.setattr(evidence_store, 'get_article_by_id', lambda conn, article_id: dict(article))
+        accepted = evidence_store.review(conn, revision_id, 'accept', reason='', reviewer='test')
+        assert accepted['status'] == 'accepted'
+        assert evidence_store.list_revisions(conn, status='accepted')[0]['revision_id'] == revision_id
+        raw = generate({'phase': 'context'})
+        replacement = evidence.validate_context(raw.encode(), article, 'b'*64)
+        replacement_id = evidence_store.store_unreviewed(conn, article, replacement)
+        evidence_store.review(conn, replacement_id, 'hold', reason='needs comparison', reviewer='test')
+        evidence_store.review(conn, replacement_id, 'accept', reason='compared', reviewer='test')
+        statuses = dict(conn.execute(
+            'SELECT revision_id, status FROM article_evidence_revisions').fetchall())
+        assert statuses[revision_id] == 'superseded'
+        assert statuses[replacement_id] == 'accepted'
+        rejected = evidence.validate_context(raw.encode(), article, 'c'*64)
+        rejected_id = evidence_store.store_unreviewed(conn, article, rejected)
+        evidence_store.review(conn, rejected_id, 'reject', reason='omits impact', reviewer='test')
+        assert conn.execute('SELECT status FROM article_evidence_revisions WHERE revision_id=%s',
+                            (rejected_id,)).fetchone()[0] == 'rejected'
         assert review.submit(conn, [7]) == first
         assert before == {table: conn.execute('SELECT count(*) FROM '+table).fetchone()[0] for table in watched}
     finally:

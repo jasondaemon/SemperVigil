@@ -3337,6 +3337,12 @@ class ArticlePrivateReviewRequest(BaseModel):
     article_ids: list[int] = Field(min_length=1, max_length=3)
 
 
+class ArticleEvidenceDecisionRequest(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    decision: str
+    reason: str = Field(default="", max_length=1000)
+
+
 @app.post("/admin/api/articles/private-review", dependencies=[Depends(_require_admin_token)])
 def api_article_private_review(payload: ArticlePrivateReviewRequest) -> dict:
     if not os.environ.get("SV_ADMIN_TOKEN"):
@@ -3354,6 +3360,37 @@ def api_article_private_review(payload: ArticlePrivateReviewRequest) -> dict:
         if conn is not None:
             conn.close()
     return {"job_id": job_id, "public_eligible": False}
+
+
+@app.get("/admin/api/articles/evidence", dependencies=[Depends(_require_admin_token)])
+def api_article_evidence(status: str = "unreviewed", limit: int = 50) -> dict:
+    from .article_evidence_store import list_revisions
+    conn = None
+    try:
+        conn = _get_conn()
+        rows = list_revisions(conn, status=status, limit=limit)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="article_evidence_list_invalid") from None
+    finally:
+        if conn is not None:
+            conn.close()
+    return {"items": rows, "status": status, "public_eligible": False}
+
+
+@app.post("/admin/api/articles/evidence/{revision_id}/review",
+          dependencies=[Depends(_require_admin_token)])
+def api_article_evidence_review(revision_id: str, payload: ArticleEvidenceDecisionRequest) -> dict:
+    from .article_evidence_store import review
+    conn = None
+    try:
+        conn = _get_conn()
+        return review(conn, revision_id, payload.decision, reason=payload.reason,
+                      reviewer="admin-token")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 @app.post("/admin/api/events/{event_id}/private-review",

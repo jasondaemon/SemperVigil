@@ -127,6 +127,28 @@ stale evidence if source text or existing comparison fields changed during the
 call. Existing production summary jobs, article fields, daily JSON and Events are
 unchanged. Durable reviewed sidecar storage remains the next gate.
 
+## Durable reviewed sidecar: local verification
+
+Migration `pg_article_evidence_revisions_039` adds immutable evidence payloads
+separate from article fields. Each revision is bound to article, source, workflow,
+generation and request versions. Status is `unreviewed`, `held`, `accepted`,
+`rejected`, or `superseded`; a partial unique index permits only one accepted
+revision per article. Accepting a replacement supersedes the prior revision in the
+same transaction. Hold/reject require a reason. Acceptance revalidates the stored
+record against current raw article text, so stale or altered evidence fails closed.
+
+The evidence-only worker stores a structurally valid candidate as unreviewed after
+its post-inference source check. It still cannot write article summaries, Events,
+daily JSON, build state or public content. The admin Content menu now has an Article
+Evidence page showing statements and exact source passages, with explicit accept,
+hold and reject controls. The API never accepts a reviewer identity from the client.
+
+A disposable PostgreSQL lifecycle test passed extraction, deduplication, hold,
+accept, supersession, rejection and list reads while confirming article/Event/LLM
+content counts were unchanged. JavaScript syntax and targeted offline tests pass.
+This schema-backed slice is local only; production migration, V8 cohort admission
+and seven-day observation remain pending.
+
 ## Operation
 
 `article_review_private` is a distinct operator-triggered job on `llm_local`, with

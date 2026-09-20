@@ -169,6 +169,10 @@ def run(conn, job, *, generate=None) -> dict:
         except ValueError as exc:
             attempt.update(status="invalid", error=str(exc))
         persist()
+        if attempt["status"] == "structurally_valid_unreviewed":
+            from .article_evidence_store import store_unreviewed
+            attempt["revision_id"] = store_unreviewed(conn, article, attempt["candidate"])
+            persist()
     result["status"] = "comparison_ready"
     persist()
     return result

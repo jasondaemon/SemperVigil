@@ -6637,6 +6637,80 @@ async function wireEventApproval() {
   }
 }
 
+async function wireArticleEvidence() {
+  const root = document.getElementById("article-evidence-review");
+  if (!root) return;
+  const statusSelect = document.getElementById("article-evidence-status");
+  const message = document.getElementById("article-evidence-message");
+  const list = document.getElementById("article-evidence-list");
+
+  const render = (items) => {
+    if (!items.length) {
+      list.innerHTML = '<p class="muted">No evidence revisions match this status.</p>';
+      return;
+    }
+    list.innerHTML = items.map((item) => {
+      const facts = item.evidence?.facts || [];
+      const factRows = facts.map((fact, index) => {
+        const passages = (fact.evidence_passages || []).map((passage) =>
+          `<blockquote><strong>${esc(passage.id)}</strong> [${esc(passage.start)}-${esc(passage.end)}] ${esc(passage.text)}</blockquote>`
+        ).join("");
+        const date = fact.date_text ? ` · ${esc(fact.date_role)}: ${esc(fact.date_text)}` : "";
+        return `<li><p><strong>${index + 1}. ${esc(fact.kind)}</strong>${date}<br>${esc(fact.statement)}</p><details><summary>Source passages</summary>${passages}</details></li>`;
+      }).join("");
+      const actions = ["unreviewed", "held"].includes(item.status) ? `
+        <div class="actions" data-revision-actions="${esc(item.revision_id)}">
+          <button class="btn" type="button" data-evidence-decision="accept">Accept</button>
+          <button class="btn" type="button" data-evidence-decision="hold">Hold</button>
+          <button class="btn danger" type="button" data-evidence-decision="reject">Reject</button>
+        </div>` : "";
+      return `<article class="panel" data-evidence-revision="${esc(item.revision_id)}">
+        <h3>${esc(item.title)}</h3>
+        <p class="muted">Article ${esc(item.article_id)} · ${esc(item.status)} · ${esc(item.workflow)} · ${facts.length} facts · ${esc(formatAbsolute(item.created_at))}</p>
+        <ol>${factRows}</ol>${actions}</article>`;
+    }).join("");
+  };
+
+  const load = async () => {
+    message.textContent = "Loading evidence...";
+    try {
+      const data = await apiFetch(`/admin/api/articles/evidence?status=${encodeURIComponent(statusSelect.value)}&limit=50`);
+      render(data.items || []);
+      message.textContent = `${(data.items || []).length} evidence revisions. Nothing on this page is public.`;
+    } catch (error) {
+      message.textContent = `Evidence unavailable: ${error.message}`;
+    }
+  };
+
+  statusSelect.addEventListener("change", load);
+  list.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-evidence-decision]");
+    if (!button) return;
+    const card = button.closest("[data-evidence-revision]");
+    const decision = button.dataset.evidenceDecision;
+    const revisionId = card.dataset.evidenceRevision;
+    let reason = "";
+    if (decision !== "accept") {
+      reason = window.prompt(`Reason to ${decision} this evidence revision:`) || "";
+      if (!reason.trim()) return;
+    } else if (!window.confirm("Accept these facts for private Event correlation? This does not publish them.")) {
+      return;
+    }
+    card.querySelectorAll("button").forEach((item) => { item.disabled = true; });
+    try {
+      await apiFetch(`/admin/api/articles/evidence/${encodeURIComponent(revisionId)}/review`, {
+        method: "POST", body: JSON.stringify({decision, reason})
+      });
+      showToast(`Evidence ${decision}ed`);
+      await load();
+    } catch (error) {
+      message.textContent = `Review failed: ${error.message}`;
+      card.querySelectorAll("button").forEach((item) => { item.disabled = false; });
+    }
+  });
+  await load();
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   wireNavDropdowns();
   wireVpnHealthBanner();
@@ -6671,6 +6745,7 @@ document.addEventListener("DOMContentLoaded", () => {
   wireEventDetail();
   wirePrivateEventReview();
   wireEventApproval();
+  wireArticleEvidence();
   wireProducts();
   wireProductDetail();
   wireDangerZone();

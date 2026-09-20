@@ -436,6 +436,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_article_product_prompt_user_schema_038")
             applied.add("pg_article_product_prompt_user_schema_038")
+        if "pg_article_evidence_revisions_039" not in applied:
+            _migrate_article_evidence_revisions(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_article_evidence_revisions_039", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_article_evidence_revisions_039")
+            applied.add("pg_article_evidence_revisions_039")
         else:
             conn.commit()
         return
@@ -645,6 +654,15 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_daily_brief_nist_openai_022")
+
+    conn.execute("BEGIN")
+    _migrate_article_evidence_revisions(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_article_evidence_revisions_039", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_article_evidence_revisions_039")
 
 def _bootstrap_schema(conn) -> None:
     conn.execute(
@@ -5290,4 +5308,42 @@ def _migrate_article_product_user_prompt_schema_alignment(conn) -> None:
         )
         """,
         (user_template,),
+    )
+
+
+def _migrate_article_evidence_revisions(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS article_evidence_revisions (
+            revision_id TEXT PRIMARY KEY,
+            article_id BIGINT NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+            source_version TEXT NOT NULL,
+            workflow TEXT NOT NULL,
+            generation_version TEXT NOT NULL,
+            request_version TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN
+                ('unreviewed', 'accepted', 'held', 'rejected', 'superseded')),
+            evidence_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            reviewed_at TEXT NULL,
+            reviewed_by TEXT NULL,
+            review_reason TEXT NULL,
+            superseded_by_revision_id TEXT NULL
+                REFERENCES article_evidence_revisions(revision_id),
+            UNIQUE(article_id, source_version, generation_version, request_version)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_article_evidence_one_accepted
+        ON article_evidence_revisions(article_id)
+        WHERE status = 'accepted'
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_article_evidence_review_queue
+        ON article_evidence_revisions(status, created_at, article_id)
+        """
     )

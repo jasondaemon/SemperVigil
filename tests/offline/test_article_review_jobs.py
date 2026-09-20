@@ -5,7 +5,8 @@ from types import SimpleNamespace
 from urllib.error import HTTPError
 
 import pytest
-from sempervigil import article_review_jobs as review, article_evidence as evidence, worker
+from sempervigil import (article_review_jobs as review, article_evidence as evidence,
+                         article_evidence_store as evidence_store, worker)
 
 pytestmark = pytest.mark.offline
 GEN = 'a' * 64
@@ -18,6 +19,8 @@ def harness(monkeypatch):
     monkeypatch.setenv('SV_ARTICLE_REVIEW_ENABLED', '1')
     monkeypatch.setattr(review, 'configuration', lambda conn: ({}, {}, {}, GEN))
     monkeypatch.setattr(review, 'snapshot', lambda conn, n: copy.deepcopy({**ARTICLE, 'id': n}))
+    monkeypatch.setattr(evidence_store, 'store_unreviewed',
+                        lambda conn, article, candidate: f"aer_{article['id']}")
     saved = []
     monkeypatch.setattr(review, 'update_job_result', lambda conn, jid, result: saved.append(copy.deepcopy(result)) or True)
     return saved
@@ -50,6 +53,7 @@ def test_three_articles_use_three_serial_evidence_calls_and_only_private_results
     assert result['attempts'] == 3 and not result['public_eligible']
     assert current.payload == before
     assert all(r['phases'][0]['candidate']['facts'] for r in result['articles'])
+    assert [r['phases'][0]['revision_id'] for r in result['articles']] == ['aer_7', 'aer_8', 'aer_9']
     assert all('feed_preview' not in r for r in result['articles'])
 
 
@@ -167,6 +171,16 @@ def test_admin_request_rejects_payload_injection_and_inference(harness, monkeypa
     with pytest.raises(admin.HTTPException) as caught:
         admin.api_article_private_review(admin.ArticlePrivateReviewRequest(article_ids=[7]))
     assert caught.value.status_code == 503
+
+
+def test_article_evidence_decision_request_is_strict():
+    from pydantic import ValidationError
+    from sempervigil import admin
+    assert admin.ArticleEvidenceDecisionRequest(decision='accept').reason == ''
+    with pytest.raises(ValidationError):
+        admin.ArticleEvidenceDecisionRequest(decision='accept', reviewer='injected')
+    with pytest.raises(ValidationError):
+        admin.ArticleEvidenceDecisionRequest(decision=True)
 
 
 def test_source_change_during_inference_rejects_stale_evidence(harness, monkeypatch):

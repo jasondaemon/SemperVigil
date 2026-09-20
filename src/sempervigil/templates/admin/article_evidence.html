@@ -1,0 +1,25 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "content" %}
+{% set nav_subactive = "article_evidence" %}
+{% block content %}
+<section class="panel" id="article-evidence-review">
+  <div class="panel-header">
+    <div>
+      <h2>Article Evidence Review</h2>
+      <p>Review passage-bound facts before they can contribute to an Event. Decisions do not change articles, daily JSON, or the public site.</p>
+    </div>
+    <label>Status
+      <select id="article-evidence-status">
+        <option value="unreviewed">Unreviewed</option>
+        <option value="held">Held</option>
+        <option value="accepted">Accepted</option>
+        <option value="rejected">Rejected</option>
+        <option value="superseded">Superseded</option>
+        <option value="all">All</option>
+      </select>
+    </label>
+  </div>
+  <p id="article-evidence-message" role="status" aria-live="polite">Loading evidence...</p>
+  <div id="article-evidence-list"></div>
+</section>
+{% endblock %}
