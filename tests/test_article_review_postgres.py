@@ -4,13 +4,14 @@ import os
 import psycopg
 
 from sempervigil import (article_review_jobs as review, article_evidence as evidence,
-                         article_evidence_store as evidence_store, migrations_pg, storage)
+                         article_evidence_store as evidence_store, incident_candidates,
+                         migrations_pg, storage)
 
 
 def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
     monkeypatch.setenv('SV_ARTICLE_REVIEW_ENABLED', '1')
     monkeypatch.setattr(review, 'configuration', lambda conn: ({}, {}, {}, 'a'*64))
-    article = {'id': 7, 'title': 'Acme', 'content_text': 'Acme reported an outage.',
+    article = {'id': 7, 'title': 'Acme', 'content_text': 'Acme reported a ransomware attack.',
                'summary_llm': '{"summary":"baseline"}', 'context_llm': '{}'}
     monkeypatch.setattr(review, 'snapshot', lambda conn, n: dict(article))
     conn = psycopg.connect(os.environ['SV_TEST_DB_URL'])
@@ -33,6 +34,8 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
             created.append(table)
         migrations_pg._migrate_article_evidence_revisions(conn)
         created.append('article_evidence_revisions')
+        migrations_pg._migrate_incident_candidates(conn)
+        created.append('incident_candidates')
         conn.commit()
         watched = ('articles', 'events', 'llm_runs')
         before = {table: conn.execute('SELECT count(*) FROM '+table).fetchone()[0] for table in watched}
@@ -59,6 +62,14 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
         accepted = evidence_store.review(conn, revision_id, 'accept', reason='', reviewer='test')
         assert accepted['status'] == 'accepted'
         assert evidence_store.list_revisions(conn, status='accepted')[0]['revision_id'] == revision_id
+        candidate = incident_candidates.project(conn, revision_id)
+        assert candidate['status'] == 'suggested'
+        assert candidate['signals']['kind'] == 'ransomware'
+        assert incident_candidates.project(conn, revision_id)['candidate_id'] == candidate['candidate_id']
+        enrolled = incident_candidates.review(
+            conn, candidate['candidate_id'], 'enroll', reason='', reviewer='test')
+        assert enrolled['status'] == 'enrolled'
+        assert incident_candidates.list_candidates(conn, status='enrolled')[0]['candidate_id'] == candidate['candidate_id']
         raw = generate({'phase': 'context'})
         replacement = evidence.validate_context(raw.encode(), article, 'b'*64)
         replacement_id = evidence_store.store_unreviewed(conn, article, replacement)
@@ -68,6 +79,9 @@ def test_private_article_queue_lifecycle_and_no_content_writes(monkeypatch):
             'SELECT revision_id, status FROM article_evidence_revisions').fetchall())
         assert statuses[revision_id] == 'superseded'
         assert statuses[replacement_id] == 'accepted'
+        stale_candidate = incident_candidates.list_candidates(conn, status='enrolled')[0]
+        assert stale_candidate['evidence_status'] == 'superseded'
+        assert stale_candidate['eligible_for_curation'] is False
         rejected = evidence.validate_context(raw.encode(), article, 'c'*64)
         rejected_id = evidence_store.store_unreviewed(conn, article, rejected)
         evidence_store.review(conn, rejected_id, 'reject', reason='omits impact', reviewer='test')

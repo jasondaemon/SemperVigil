@@ -445,6 +445,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_article_evidence_revisions_039")
             applied.add("pg_article_evidence_revisions_039")
+        if "pg_incident_candidates_040" not in applied:
+            _migrate_incident_candidates(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_incident_candidates_040", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_incident_candidates_040")
+            applied.add("pg_incident_candidates_040")
         else:
             conn.commit()
         return
@@ -663,6 +672,15 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_article_evidence_revisions_039")
+
+    conn.execute("BEGIN")
+    _migrate_incident_candidates(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_incident_candidates_040", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_incident_candidates_040")
 
 def _bootstrap_schema(conn) -> None:
     conn.execute(
@@ -5345,5 +5363,33 @@ def _migrate_article_evidence_revisions(conn) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_article_evidence_review_queue
         ON article_evidence_revisions(status, created_at, article_id)
+        """
+    )
+
+
+def _migrate_incident_candidates(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS incident_candidates (
+            candidate_id TEXT PRIMARY KEY,
+            evidence_revision_id TEXT NOT NULL UNIQUE
+                REFERENCES article_evidence_revisions(revision_id) ON DELETE RESTRICT,
+            article_id BIGINT NOT NULL REFERENCES articles(id) ON DELETE RESTRICT,
+            status TEXT NOT NULL CHECK (status IN
+                ('suggested', 'held', 'rejected', 'enrolled')),
+            kind TEXT NOT NULL,
+            title TEXT NOT NULL,
+            signals_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            reviewed_at TEXT NULL,
+            reviewed_by TEXT NULL,
+            review_reason TEXT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_incident_candidates_review_queue
+        ON incident_candidates(status, created_at, article_id)
         """
     )

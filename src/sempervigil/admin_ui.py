@@ -222,6 +222,17 @@ def ui_router(token_guard) -> APIRouter:
             },
         )
 
+    @router.get("/incident-candidates", response_class=HTMLResponse)
+    def incident_candidates(request: Request):
+        return _render(
+            "admin/incident_candidates.html",
+            {
+                **_base_context(request),
+                "nav_active": "content",
+                "nav_subactive": "incident_candidates",
+            },
+        )
+
     @router.get("/briefs/{day}", response_class=HTMLResponse)
     def brief_detail(request: Request, day: str):
         return _render(

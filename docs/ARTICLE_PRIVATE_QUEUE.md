@@ -7,16 +7,17 @@ Production evidence-only canary deployed September 19, 2026: admin/LLM image
 authenticated Article Evidence review page is live. Job
 `job_cf28c64c205d4e96bffa1e7d4a62322e` completed three serial calls with no
 retry: 13, 20 and 24 passage-bound facts in 20.175s, 28.714s and 35.505s. The
-three immutable revisions remain `unreviewed`; none is eligible for incident
-derivation or publication.
+three immutable revisions were reviewed through the authenticated API. SolarWinds
+and WaterPlum are `accepted`; ShinyHunters is `held` because several attributed
+attacker claims were typed as `reported_fact` rather than `allegation`. None is
+eligible for publication.
 
 Pre/post hashes prove the retained raw article, production summary and context
 fields are unchanged. Event and event-article counts remained 1,521 and 2,094;
 the normal LLM queue drained to zero; no site build was requested. The live
 September 19 daily JSON still serves its existing 17 articles and 31 CVEs. This
-establishes the durable review boundary, not semantic acceptance. Review the
-three records before S2 can complete and before any incident-candidate consumer
-is enabled.
+establishes the durable review boundary and two accepted canary inputs, not
+automatic semantic acceptance. S2 observation remains open.
 
 Deployed September 19, 2026: admin/LLM worker `e2c7abf`, platform `c0d9ec8`.
 `article-evidence-v4` segments

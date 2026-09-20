@@ -1,0 +1,24 @@
+{% extends "admin/base.html" %}
+{% set nav_active = "content" %}
+{% set nav_subactive = "incident_candidates" %}
+{% block content %}
+<section class="panel" id="incident-candidate-review">
+  <div class="panel-header">
+    <div>
+      <h2>Incident Candidates</h2>
+      <p>Review incident suggestions derived only from accepted article evidence. Enrollment remains private and does not create or publish an Event.</p>
+    </div>
+    <label>Status
+      <select id="incident-candidate-status">
+        <option value="suggested">Suggested</option>
+        <option value="held">Held</option>
+        <option value="enrolled">Enrolled</option>
+        <option value="rejected">Rejected</option>
+        <option value="all">All</option>
+      </select>
+    </label>
+  </div>
+  <p id="incident-candidate-message" role="status" aria-live="polite">Loading candidates...</p>
+  <div id="incident-candidate-list"></div>
+</section>
+{% endblock %}

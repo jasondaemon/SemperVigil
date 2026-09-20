@@ -6663,6 +6663,9 @@ async function wireArticleEvidence() {
           <button class="btn" type="button" data-evidence-decision="accept">Accept</button>
           <button class="btn" type="button" data-evidence-decision="hold">Hold</button>
           <button class="btn danger" type="button" data-evidence-decision="reject">Reject</button>
+        </div>` : item.status === "accepted" ? `
+        <div class="actions" data-revision-actions="${esc(item.revision_id)}">
+          <button class="btn" type="button" data-incident-project="1">Suggest incident</button>
         </div>` : "";
       return `<article class="panel" data-evidence-revision="${esc(item.revision_id)}">
         <h3>${esc(item.title)}</h3>
@@ -6684,6 +6687,24 @@ async function wireArticleEvidence() {
 
   statusSelect.addEventListener("change", load);
   list.addEventListener("click", async (event) => {
+    const projectButton = event.target.closest("[data-incident-project]");
+    if (projectButton) {
+      const card = projectButton.closest("[data-evidence-revision]");
+      const revisionId = card.dataset.evidenceRevision;
+      projectButton.disabled = true;
+      try {
+        const result = await apiFetch(`/admin/api/articles/evidence/${encodeURIComponent(revisionId)}/incident-candidate`, {method: "POST"});
+        if (result.status === "skipped") {
+          showToast("No incident signal; no candidate created");
+        } else {
+          showToast(`Private incident candidate ${result.status}`);
+        }
+      } catch (error) {
+        message.textContent = `Candidate projection failed: ${error.message}`;
+        projectButton.disabled = false;
+      }
+      return;
+    }
     const button = event.target.closest("[data-evidence-decision]");
     if (!button) return;
     const card = button.closest("[data-evidence-revision]");
@@ -6705,6 +6726,80 @@ async function wireArticleEvidence() {
       await load();
     } catch (error) {
       message.textContent = `Review failed: ${error.message}`;
+      card.querySelectorAll("button").forEach((item) => { item.disabled = false; });
+    }
+  });
+  await load();
+}
+
+async function wireIncidentCandidates() {
+  const root = document.getElementById("incident-candidate-review");
+  if (!root) return;
+  const statusSelect = document.getElementById("incident-candidate-status");
+  const message = document.getElementById("incident-candidate-message");
+  const list = document.getElementById("incident-candidate-list");
+
+  const render = (items) => {
+    if (!items.length) {
+      list.innerHTML = '<p class="muted">No incident candidates match this status.</p>';
+      return;
+    }
+    list.innerHTML = items.map((item) => {
+      const signals = item.signals || {};
+      const rows = [
+        ["Kind", item.kind],
+        ["Incident dates", (signals.incident_dates || []).join(", ") || "Unknown"],
+        ["Campaigns", (signals.campaigns || []).join(", ") || "None"],
+        ["CVEs", (signals.cves || []).join(", ") || "None"],
+        ["Supporting facts", (signals.supporting_fact_ids || []).length],
+        ["Evidence status", item.evidence_status],
+      ].map(([label, value]) => `<li><strong>${esc(label)}:</strong> ${esc(value)}</li>`).join("");
+      const actions = item.eligible_for_curation && ["suggested", "held"].includes(item.status) ? `
+        <div class="actions">
+          <button class="btn" type="button" data-candidate-decision="enroll">Enroll privately</button>
+          <button class="btn" type="button" data-candidate-decision="hold">Hold</button>
+          <button class="btn danger" type="button" data-candidate-decision="reject">Reject</button>
+        </div>` : "";
+      return `<article class="panel" data-incident-candidate="${esc(item.candidate_id)}">
+        <h3>${esc(item.title)}</h3>
+        <p class="muted">Article ${esc(item.article_id)} · ${esc(item.status)} · ${esc(item.candidate_id)} · ${esc(formatAbsolute(item.created_at))}</p>
+        <ul>${rows}</ul>${actions}</article>`;
+    }).join("");
+  };
+
+  const load = async () => {
+    message.textContent = "Loading candidates...";
+    try {
+      const data = await apiFetch(`/admin/api/incident-candidates?status=${encodeURIComponent(statusSelect.value)}&limit=50`);
+      render(data.items || []);
+      message.textContent = `${(data.items || []).length} private incident candidates. Nothing on this page is public.`;
+    } catch (error) {
+      message.textContent = `Candidates unavailable: ${error.message}`;
+    }
+  };
+
+  statusSelect.addEventListener("change", load);
+  list.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-candidate-decision]");
+    if (!button) return;
+    const card = button.closest("[data-incident-candidate]");
+    const decision = button.dataset.candidateDecision;
+    let reason = "";
+    if (decision !== "enroll") {
+      reason = window.prompt(`Reason to ${decision} this candidate:`) || "";
+      if (!reason.trim()) return;
+    } else if (!window.confirm("Enroll this candidate for private Event curation? This does not create or publish an Event.")) {
+      return;
+    }
+    card.querySelectorAll("button").forEach((item) => { item.disabled = true; });
+    try {
+      await apiFetch(`/admin/api/incident-candidates/${encodeURIComponent(card.dataset.incidentCandidate)}/review`, {
+        method: "POST", body: JSON.stringify({decision, reason})
+      });
+      showToast(`Candidate ${decision}ed`);
+      await load();
+    } catch (error) {
+      message.textContent = `Candidate review failed: ${error.message}`;
       card.querySelectorAll("button").forEach((item) => { item.disabled = false; });
     }
   });
@@ -6746,6 +6841,7 @@ document.addEventListener("DOMContentLoaded", () => {
   wirePrivateEventReview();
   wireEventApproval();
   wireArticleEvidence();
+  wireIncidentCandidates();
   wireProducts();
   wireProductDetail();
   wireDangerZone();

@@ -3343,6 +3343,12 @@ class ArticleEvidenceDecisionRequest(BaseModel):
     reason: str = Field(default="", max_length=1000)
 
 
+class IncidentCandidateDecisionRequest(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    decision: str
+    reason: str = Field(default="", max_length=1000)
+
+
 @app.post("/admin/api/articles/private-review", dependencies=[Depends(_require_admin_token)])
 def api_article_private_review(payload: ArticlePrivateReviewRequest) -> dict:
     if not os.environ.get("SV_ADMIN_TOKEN"):
@@ -3385,6 +3391,53 @@ def api_article_evidence_review(revision_id: str, payload: ArticleEvidenceDecisi
     try:
         conn = _get_conn()
         return review(conn, revision_id, payload.decision, reason=payload.reason,
+                      reviewer="admin-token")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.post("/admin/api/articles/evidence/{revision_id}/incident-candidate",
+          dependencies=[Depends(_require_admin_token)])
+def api_incident_candidate_project(revision_id: str) -> dict:
+    from .incident_candidates import project
+    conn = None
+    try:
+        conn = _get_conn()
+        return project(conn, revision_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.get("/admin/api/incident-candidates", dependencies=[Depends(_require_admin_token)])
+def api_incident_candidates(status: str = "suggested", limit: int = 50) -> dict:
+    from .incident_candidates import list_candidates
+    conn = None
+    try:
+        conn = _get_conn()
+        items = list_candidates(conn, status=status, limit=limit)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="incident_candidate_list_invalid") from None
+    finally:
+        if conn is not None:
+            conn.close()
+    return {"items": items, "status": status, "public_eligible": False}
+
+
+@app.post("/admin/api/incident-candidates/{candidate_id}/review",
+          dependencies=[Depends(_require_admin_token)])
+def api_incident_candidate_review(candidate_id: str,
+                                  payload: IncidentCandidateDecisionRequest) -> dict:
+    from .incident_candidates import review
+    conn = None
+    try:
+        conn = _get_conn()
+        return review(conn, candidate_id, payload.decision, reason=payload.reason,
                       reviewer="admin-token")
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None

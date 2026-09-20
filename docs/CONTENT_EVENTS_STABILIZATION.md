@@ -4,9 +4,10 @@ Date: 2026-09-19
 
 Status: authoritative implementation sequence for article enrichment, event
 identification, curation and narrative publication. S1 passage-bound extraction
-is deployed and privately model-tested. Reference integrity passed, but semantic
-and coverage acceptance failed. Automatic evidence admission is blocked. The
-current article summaries, daily downloads and public Events remain served.
+and the S2 reviewed sidecar are deployed. Two frozen revisions are accepted and
+one is held; automatic evidence admission remains blocked. The private S3
+candidate sidecar is implemented and tested locally. Current article summaries,
+daily downloads and public Events remain served.
 
 ## Outcome
 
@@ -204,12 +205,13 @@ deleted as part of stabilization.
 1. Completed: freeze the S0 corpus and acceptance rubric from stored articles.
 2. Completed: deploy deterministic passage segmentation and passage-ID selection
    in the private article queue.
-3. Completed: run the bounded comparison. Reference integrity passed; semantic
-   acceptance failed, so automatic admission remains disabled.
-4. Next: retain v4 output as review assistance and implement deterministic,
-   non-publishing incident candidates with explicit enrollment/hold/reject states.
-5. Add durable accepted sidecar revisions only through the reviewed evidence
-   canary. Do not change public output before that gate passes.
+3. Completed: deploy immutable reviewed evidence. Two frozen revisions were
+   accepted; the allegation-typing failure was held rather than normalized away.
+4. Implemented locally: deterministic, non-publishing incident candidates from
+   accepted revisions only, with explicit enrollment/hold/reject states and
+   stale-evidence ineligibility.
+5. Next: deploy the private candidate sidecar, project the two accepted revisions,
+   and evaluate the result before adding any Event ledger or narrative call.
 
 This order deliberately postpones prompt changes to the live summary publisher.
 Better evidence may later feed a revised per-article summary, but that becomes a
