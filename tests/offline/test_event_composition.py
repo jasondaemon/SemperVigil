@@ -56,6 +56,15 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
     assert record["change"] == ledger_revision()["change"]
 
 
+def test_response_schema_uses_openai_supported_subset_and_duplicates_fail_closed():
+    req = composition.request(ledger_revision(), GENERATION)
+    assert "uniqueItems" not in json.dumps(req["schema"])
+    output = valid_output()
+    output["overview"][0]["fact_refs"] = ["F01", "F01"]
+    with pytest.raises(ValueError, match="duplicate_fact_ref"):
+        composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
+
+
 def test_validation_rejects_unknown_or_unsupported_evidence():
     output = valid_output()
     output["overview"][0]["fact_refs"] = ["unknown"]

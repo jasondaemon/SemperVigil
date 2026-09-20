@@ -56,7 +56,7 @@ def schema(fact_refs: list[str] | None = None) -> dict:
             "required": ["text", "fact_refs"], "properties": {
                 "text": {"type": "string", "minLength": 1, "maxLength": 1600},
                 "fact_refs": {"type": "array", "minItems": 1, "maxItems": 8,
-                              "uniqueItems": True, "items": ref}}}
+                              "items": ref}}}
     properties = {section: {"type": "array", "maxItems": 8, "items": item}
                   for section in SECTIONS}
     properties["overview"]["minItems"] = 1
@@ -103,6 +103,8 @@ def validate(raw: bytes, ledger_revision: dict, generation: str) -> dict:
     timeline_facts = set()
     for section in SECTIONS:
         for item in value[section]:
+            if len(item["fact_refs"]) != len(set(item["fact_refs"])):
+                raise ValueError("event_composition_duplicate_fact_ref")
             facts = [aliases[ref] for ref in item["fact_refs"]]
             if any(section not in _allowed_sections(fact) for fact in facts):
                 raise ValueError("event_composition_section_not_supported")
