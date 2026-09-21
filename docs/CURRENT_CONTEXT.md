@@ -34,11 +34,14 @@ article completed in 9.30 seconds with a 15,237-character request and HTTP 200.
 
 The resulting 42-item composition audit then exhausted its 1,800-token completion
 allowance entirely as hidden reasoning and returned no JSON. The audit request itself
-was only 25,795 characters, so this is not an input-size failure. The pending narrow
-correction raises only the audit completion allowance to 4,800 tokens and its response
+was only 25,795 characters, so this is not an input-size failure. Application `3e150bb`
+raises only the audit completion allowance to 4,800 tokens and its response
 parser cap from 12 KB to 20 KB, sufficient for the schema's legal response size.
 Migration 054 reactivates only cases held with the exact resulting reason. Full offline
-suite: 1,109 passed, one skipped.
+suite: 1,109 passed, one skipped. The original and one permitted repaired Vercel
+audits both completed with HTTP 200 and visible schema-valid JSON; substantive audit
+findings then held the repaired narrative as designed. Platform `06a2837` deploys
+the image to admin, orchestrator and the hosted-model worker.
 
 ## September 20: resilient fact curation deployed
 

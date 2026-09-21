@@ -599,7 +599,9 @@ If you (Codex) propose edits affecting pipeline stability, you must:
   054 reactivates only `composition audit failed: input_size` cases.
 - Verification: schema-maximum response regression test plus full offline suite:
   1,109 passed, one skipped, four existing warnings.
-- Status: local implementation; targeted admin, orchestrator and hosted-model
-  worker rollout plus Vercel recovery observation remain pending.
+- Status: deployed as application `3e150bb`, platform `06a2837`. Both original
+  and repaired Vercel audits returned complete JSON; the repaired narrative was
+  held on substantive support findings. Rendered/live diff is empty and public,
+  cluster and node health checks pass.
 - Rollback: restore the prior three image tags. Migration 054 is state-only; the
   prior worker will safely hold the case again if its response is empty.

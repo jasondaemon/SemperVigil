@@ -2323,7 +2323,7 @@ excluded, and both retirement runs retain independent restore manifests.
   model consumed the complete 1,800-token allowance as reasoning, returned zero
   visible characters, and stopped with `finish_reason=length`. The generic parser
   error `input_size` described the empty response, not an oversized request.
-- The pending correction changes only the composition-audit completion allowance
+- Application `3e150bb` changes only the composition-audit completion allowance
   from 1,800 to 4,800 tokens and the response parser cap from 12 KB to 20 KB. The
   latter covers the legal maximum of the existing strict 42-item response schema.
   Migration 054 reactivates only the exact `composition audit failed: input_size`
@@ -2331,3 +2331,12 @@ excluded, and both retirement runs retain independent restore manifests.
   feed JSON and public content remain unchanged.
 - Focused tests pass, and the complete documented offline gate passes: 1,109
   passed, one skipped, four existing warnings.
+- Platform `06a2837` deploys the image only to admin, orchestrator and the hosted-
+  model worker. Both Vercel audit jobs succeeded in 14.49 and 14.08 seconds with
+  HTTP 200, `finish_reason=stop`, 7,623 and 7,695 visible characters, and 2,081
+  and 2,101 completion tokens. The repaired composition remained unsupported and
+  was held by policy, proving the gate remained fail-closed.
+- Rendered/live comparison is empty. Updated pods are Ready with zero restarts;
+  all nodes are Ready with MemoryPressure false; Kubernetes readiness, homepage,
+  Events index, admin route and `/feed/index.json` pass. The feed index retains
+  5,062 days. No Hugo or public build was invoked.
