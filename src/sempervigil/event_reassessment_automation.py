@@ -59,6 +59,18 @@ def _repairable_composition(conn, ledger_revision_id: str, composition):
     ).fetchone()
 
 
+def _advance_proposed_ledger(conn, event_id: str, revision_id: str) -> dict:
+    from .event_ledger import review, _lineage_current
+    if not _lineage_current(conn, revision_id):
+        result = review(conn, revision_id, "reject",
+                        reason="superseded by Event-scoped fact selection",
+                        reviewer="policy:event-reassessment-automation-v1")
+        return {**result, "event_id": event_id, "action": "stale_ledger_rejected"}
+    result = review(conn, revision_id, "accept", reason="",
+                    reviewer="policy:event-reassessment-automation-v1")
+    return {**result, "event_id": event_id, "action": "ledger_accepted"}
+
+
 def _candidate_rows(conn, event_id: str) -> list[tuple]:
     return conn.execute(
         """SELECT c.candidate_id,c.status,c.selected_fact_ids_json,a.original_url
@@ -214,9 +226,7 @@ def advance(conn, event_id: str) -> dict:
                                 title=str(record["event"]["title"]))
         return {**result, "action": "ledger_proposed"}
     if latest[1] == "proposed":
-        result = review_ledger(conn, latest[0], "accept", reason="",
-                               reviewer="policy:event-reassessment-automation-v1")
-        return {**result, "event_id": event_id, "action": "ledger_accepted"}
+        return _advance_proposed_ledger(conn, event_id, latest[0])
     if latest[1] in {"held", "rejected"}:
         return _hold(conn, event_id, "ledger requires intervention")
     if latest[1] != "accepted":

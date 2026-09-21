@@ -1,6 +1,7 @@
 import pytest
 
 from sempervigil import event_composition_jobs
+from sempervigil import event_ledger
 from sempervigil import event_reassessment_automation as automation
 
 pytestmark = pytest.mark.offline
@@ -75,3 +76,23 @@ def test_tick_skips_waiting_case_but_stops_after_one_advancement(monkeypatch):
         {"status": "queued", "event_id": "evt_advanced"},
     ]
     assert calls == ["evt_waiting", "evt_advanced"]
+
+
+def test_stale_proposed_ledger_is_rejected_for_deterministic_rebuild(monkeypatch):
+    decisions = []
+    monkeypatch.setattr(event_ledger, "_lineage_current", lambda _conn, _revision: False)
+    monkeypatch.setattr(
+        event_ledger,
+        "review",
+        lambda _conn, revision, decision, **kwargs: decisions.append(
+            (revision, decision, kwargs)
+        ) or {"status": "rejected"},
+    )
+
+    result = automation._advance_proposed_ledger(object(), "evt_test", "elr_stale")
+
+    assert result["action"] == "stale_ledger_rejected"
+    assert decisions == [("elr_stale", "reject", {
+        "reason": "superseded by Event-scoped fact selection",
+        "reviewer": "policy:event-reassessment-automation-v1",
+    })]

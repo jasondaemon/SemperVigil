@@ -544,6 +544,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_event_composition_repair_requeue_050")
             applied.add("pg_event_composition_repair_requeue_050")
+        if "pg_event_stale_ledger_requeue_051" not in applied:
+            _migrate_event_stale_ledger_requeue(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_event_stale_ledger_requeue_051", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_event_stale_ledger_requeue_051")
+            applied.add("pg_event_stale_ledger_requeue_051")
         else:
             conn.commit()
         return
@@ -861,6 +870,15 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_event_composition_repair_requeue_050")
+
+    conn.execute("BEGIN")
+    _migrate_event_stale_ledger_requeue(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_event_stale_ledger_requeue_051", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_event_stale_ledger_requeue_051")
 
 def _bootstrap_schema(conn) -> None:
     conn.execute(
@@ -1800,6 +1818,18 @@ def _migrate_event_composition_repair_requeue(conn) -> None:
                 SELECT 1 FROM event_ledger_compositions x
                  WHERE x.ledger_id=c.ledger_id AND x.status='held'
                    AND x.reviewed_by='policy:event-composition-audit-v1')""",
+        (utc_now_iso(),),
+    )
+
+
+def _migrate_event_stale_ledger_requeue(conn) -> None:
+    conn.execute(
+        """UPDATE event_reassessment_cases c
+              SET status='active',decision_reason=NULL,updated_at=%s
+            WHERE c.status='held' AND c.decision_reason='event_ledger_lineage_stale'
+              AND EXISTS (
+                SELECT 1 FROM event_ledger_revisions r
+                 WHERE r.ledger_id=c.ledger_id AND r.status='proposed')""",
         (utc_now_iso(),),
     )
 
