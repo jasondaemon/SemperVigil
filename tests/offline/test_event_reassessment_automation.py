@@ -72,6 +72,21 @@ def test_repaired_composition_lineage_comes_from_successful_job_result():
     assert automation._is_repaired_composition(missing, "elc_original") is False
 
 
+def test_repaired_derivative_resolves_successful_repair_result():
+    repaired = ("elc_repaired", "unreviewed", None, "generation")
+
+    class RepairConn:
+        def execute(self, sql, params=()):
+            if "result_json FROM jobs" in sql:
+                assert params == ("elc_original",)
+                return _Result(({"repaired_composition_id": "elc_repaired"},))
+            assert "FROM event_ledger_compositions" in sql
+            assert params == ("elc_repaired",)
+            return _Result(repaired)
+
+    assert automation._repaired_derivative(RepairConn(), "elc_original") == repaired
+
+
 def test_tick_skips_waiting_case_but_stops_after_one_advancement(monkeypatch):
     class TickConn:
         def execute(self, sql, params=()):

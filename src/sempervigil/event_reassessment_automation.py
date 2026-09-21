@@ -99,6 +99,27 @@ def _is_repaired_composition(conn, composition_id: str) -> bool:
     ).fetchone())
 
 
+def _repaired_derivative(conn, composition_id: str):
+    """Return the composition created by a successful repair, if present."""
+    row = conn.execute(
+        """SELECT result_json FROM jobs
+            WHERE job_type='event_composition_repair' AND status='succeeded'
+              AND payload_json::jsonb->>'composition_id'=%s
+            ORDER BY finished_at DESC,id DESC LIMIT 1""", (composition_id,),
+    ).fetchone()
+    if not row or not row[0]:
+        return None
+    result = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+    repaired_id = result.get("repaired_composition_id")
+    if not repaired_id:
+        return None
+    return conn.execute(
+        """SELECT composition_id,status,reviewed_by,generation_version
+             FROM event_ledger_compositions WHERE composition_id=%s""",
+        (repaired_id,),
+    ).fetchone()
+
+
 def _advance_proposed_ledger(conn, event_id: str, revision_id: str) -> dict:
     from .event_ledger import review, _lineage_current
     if not _lineage_current(conn, revision_id):
@@ -290,6 +311,9 @@ def advance(conn, event_id: str) -> dict:
             return _hold(conn, event_id, "composition failed: " + error)
         return {"status": "queued", "event_id": event_id, "job_id": job_id,
                 "action": "composition_queued"}
+    repaired = _repaired_derivative(conn, composition[0])
+    if repaired:
+        composition = repaired
     if composition[1] == "unreviewed":
         from .event_composition_audit_jobs import submit
         job_id = submit(conn, composition[0])
