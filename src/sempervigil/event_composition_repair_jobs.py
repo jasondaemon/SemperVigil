@@ -10,7 +10,7 @@ from .storage import enqueue_job, insert_llm_run, update_job_result
 JOB_TYPE = "event_composition_repair"
 MODEL_NAME = "gpt-5.6-sol"
 PARAMS = {"max_completion_tokens": 1800, "reasoning_effort": "low"}
-CONTRACT_VERSION = "overview-audit-alignment-v2"
+CONTRACT_VERSION = "section-filter-v3"
 TRANSIENT_BASELINE_ERRORS = {
     "event_composition_repair_baseline_changed",
     "event_composition_repair_configuration_changed",
