@@ -589,6 +589,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_event_fact_semantic_sections_055")
             applied.add("pg_event_fact_semantic_sections_055")
+        if "pg_event_repair_openai_model_056" not in applied:
+            _migrate_event_repair_openai_model(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_event_repair_openai_model_056", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_event_repair_openai_model_056")
+            applied.add("pg_event_repair_openai_model_056")
         else:
             conn.commit()
         return
@@ -951,6 +960,15 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_event_fact_semantic_sections_055")
+
+    conn.execute("BEGIN")
+    _migrate_event_repair_openai_model(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_event_repair_openai_model_056", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_event_repair_openai_model_056")
 
 def _bootstrap_schema(conn) -> None:
     conn.execute(
@@ -6036,5 +6054,31 @@ def _migrate_event_composition_openai_model(conn) -> None:
            VALUES (%s,%s,%s,%s,%s,%s,1)""",
         ("model_openai_gpt_5_6_luna", provider[0], "gpt-5.6-luna", 1050000,
          json.dumps({"max_completion_tokens": 4096, "reasoning_effort": "low"}),
-         json.dumps(["event_composition", "hosted", "low_cost"])),
+        json.dumps(["event_composition", "hosted", "low_cost"])),
+    )
+
+
+def _migrate_event_repair_openai_model(conn) -> None:
+    if not _table_exists(conn, "llm_models") or not _table_exists(conn, "llm_providers"):
+        return
+    provider = conn.execute(
+        """SELECT id FROM llm_providers
+           WHERE lower(name)='openai' AND lower(type)='openai_compatible'
+           ORDER BY id LIMIT 1"""
+    ).fetchone()
+    if not provider:
+        return
+    existing = conn.execute(
+        "SELECT id FROM llm_models WHERE provider_id=%s AND model_name=%s LIMIT 1",
+        (provider[0], "gpt-5.6-sol"),
+    ).fetchone()
+    if existing:
+        return
+    conn.execute(
+        """INSERT INTO llm_models
+           (id, provider_id, model_name, max_context, default_params_json, tags_json, is_enabled)
+           VALUES (%s,%s,%s,%s,%s,%s,1)""",
+        ("model_openai_gpt_5_6_sol", provider[0], "gpt-5.6-sol", 1050000,
+         json.dumps({"max_completion_tokens": 2048, "reasoning_effort": "low"}),
+         json.dumps(["event_composition_repair", "hosted", "bounded"])),
     )

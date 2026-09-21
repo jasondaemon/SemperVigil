@@ -8,7 +8,7 @@ from .services.ai_service import get_model, get_provider, load_provider_secret
 from .storage import enqueue_job, insert_llm_run, update_job_result
 
 JOB_TYPE = "event_composition_repair"
-MODEL_NAME = "gpt-5.6-luna"
+MODEL_NAME = "gpt-5.6-sol"
 PARAMS = {"max_completion_tokens": 1800, "reasoning_effort": "low"}
 
 
