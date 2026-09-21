@@ -52,7 +52,7 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
         {"dimension": "event_scope", "fact_refs": ["F01"]},
         {"dimension": "attack_mechanics", "fact_refs": ["F01"]},
     ]
-    assert payload["facts"][0]["allowed_sections"] == ["overview", "attack_vector", "attack_path", "timeline"]
+    assert payload["facts"][0]["suggested_sections"] == ["overview", "attack_vector", "attack_path", "timeline"]
     properties = req["schema"]["properties"]
     assert properties["overview"]["minItems"] == 1
     assert properties["overview"]["maxItems"] == 4

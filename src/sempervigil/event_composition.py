@@ -189,10 +189,9 @@ def schema(fact_refs: dict[str, list[str]] | None = None) -> dict:
                               "items": ref}}}
     properties = {}
     for section in GENERATED_SECTIONS:
-        refs = (fact_refs or {}).get(section, [])
         properties[section] = {
             "type": "array", "minItems": 1 if section == "overview" else 0,
-            "maxItems": 4 if refs else 0, "items": item,
+            "maxItems": 4, "items": item,
         }
     return {"type": "object", "additionalProperties": False,
             "required": list(GENERATED_SECTIONS), "properties": properties}
@@ -237,12 +236,12 @@ def request(ledger_revision: dict, generation: str) -> dict:
                "facts": [{"ref": ref, "statement": fact["statement"],
                           "kind": fact["kind"], "date_text": fact["date_text"],
                           "date_role": fact["date_role"],
-                          "allowed_sections": allowed_by_ref[ref]}
+                          "suggested_sections": allowed_by_ref[ref]}
                          for ref, fact in aliases.items()]}
-    allowed_refs = {
-        section: [ref for ref, allowed in allowed_by_ref.items() if section in allowed]
-        for section in GENERATED_SECTIONS
-    }
+    # Prior curation is an editorial hint, not an authorization boundary. Every
+    # generated claim still requires accepted fact references and an independent
+    # support audit.
+    allowed_refs = {section: list(aliases) for section in GENERATED_SECTIONS}
     response_schema = schema(allowed_refs)
     encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     if len((SYSTEM_PROMPT + encoded + json.dumps(response_schema)).encode()) > MAX_INPUT_BYTES:
@@ -264,15 +263,12 @@ def validate(raw: bytes, ledger_revision: dict, generation: str) -> dict:
     sections = _deterministic_sections(aliases)
     normalized_text = set()
     for section in GENERATED_SECTIONS:
-        allowed = {ref for ref, fact in aliases.items() if section in _allowed_sections(fact)}
         for item in value[section]:
             text = item["text"].strip()
             if re.search(r"(?:\[F\d{2}\]|\bF\d{2}\b)", text, re.IGNORECASE):
                 raise ValueError("event_composition_fact_alias_in_prose")
             if len(item["fact_refs"]) != len(set(item["fact_refs"])):
                 raise ValueError("event_composition_duplicate_fact_ref")
-            if not set(item["fact_refs"]) <= allowed:
-                raise ValueError("event_composition_fact_section_invalid")
             normalized = re.sub(r"\W+", " ", text.lower()).strip()
             if normalized in normalized_text:
                 raise ValueError("event_composition_duplicate_narrative")
