@@ -7,6 +7,21 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
+## September 20: normalized Event fact-curation requests pending deployment
+
+`event-fact-curation-v3` transmits every exact evidence passage once and has each
+fact reference the shared passage table by immutable passage ID. Stored article
+evidence, fact IDs, source text, selection validation, hosted model, completion
+allowance, serial queue, publication gates and the 48,000-byte request guard are
+unchanged. Conflicting text for one passage ID fails before inference.
+
+Read-only production measurement of the held Vercel cohort found that its failing
+21-fact source shrinks from 48,792 bytes to 17,087 bytes. All eight current source
+requests fit between 8,870 and 17,624 bytes after normalization, so the safety
+limit does not need to increase. Migration 053 will reactivate only cases held by
+the exact `event_fact_curation_input_over_budget` reason. Local verification:
+1,107 offline tests passed, one skipped. Deployment and live canary remain pending.
+
 ## September 20: resilient fact curation deployed
 
 Application `f5cc352` and platform `726290f` deploy

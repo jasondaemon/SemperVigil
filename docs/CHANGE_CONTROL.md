@@ -550,3 +550,22 @@ If you (Codex) propose edits affecting pipeline stability, you must:
 - Rollback: retain the prior image, disable
   `SV_EVENT_LEDGER_COMPOSITION_ENABLED`, and restore the prior admin/OpenAI worker
   tags. No public-content rollback is required.
+
+# 2026-09-20: normalize Event fact-curation passage transport
+
+- Summary: Replace repeated per-fact passage bodies with one request-level exact
+  passage table and immutable per-fact passage IDs.
+- Scope: private `event_fact_curate` requests only; no stored evidence, article
+  summary, daily JSON, public Event, model, concurrency, build or Hugo change.
+- Controls: unchanged 48,000-byte guard; conflicting passage identities fail
+  before inference; workflow/request identities advance to v3; migration 053
+  reactivates only the exact packaging-related hold reason.
+- Verification: Vercel's blocked request measured 48,792 bytes before and 17,087
+  bytes after normalization; all eight source requests fit below 17,625 bytes.
+  Seven focused tests and the complete offline suite pass: 1,107 passed, one
+  skipped, four existing warnings.
+- Status: local implementation only; targeted admin, orchestrator and hosted-model
+  worker rollout plus a live recovery canary remain pending.
+- Rollback: restore the prior three image tags. Migration 053 is state-only and
+  need not be reversed; a reactivated case can safely be held again by the prior
+  request guard.

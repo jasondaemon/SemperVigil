@@ -2268,3 +2268,25 @@ excluded, and both retirement runs retain independent restore manifests.
   MemoryPressure false, and normal ingestion/CVE work continued. No Hugo command,
   build-worker, web Deployment, daily JSON contract, model or concurrency change
   occurred.
+
+## Event fact-curation passage normalization (2026-09-20, local)
+
+- The 48,000-byte curation ceiling is an application safety guard, not the hosted
+  model's context limit. The v2 request repeated full passage text under every
+  fact that cited it. The held Vercel article had 21 facts over eight unique
+  passages and measured 48,792 bytes before inference.
+- `event-fact-curation-v3` supplies one deterministic shared passage table and
+  per-fact `passage_ids`. Exact text, fact statements, incident-anchor flags and
+  schema-constrained selection remain present. Conflicting reuse of a passage ID
+  fails before inference. Stored evidence and public contracts do not change.
+- Read-only measurements across all eight current Vercel sources reduced requests
+  by 33.0% to 65.0%; the formerly blocked source is 17,087 bytes and the largest
+  normalized request is 17,624 bytes. The 48,000-byte ceiling therefore remains
+  unchanged.
+- Migration `pg_event_fact_curation_passage_requeue_053` targets only held cases
+  whose reason exactly equals `event_fact_curation_input_over_budget`. It does not
+  reactivate audit, evidence-quality, incident-identity or editorial holds.
+- Seven focused tests and the complete offline suite pass: 1,107 passed, one
+  skipped, four existing warnings. No model call, queue admission, migration,
+  build, Hugo invocation, public write or production rollout occurred in this
+  local slice.

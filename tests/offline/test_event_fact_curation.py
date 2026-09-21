@@ -29,6 +29,13 @@ def test_curation_selects_only_event_scoped_facts():
     req = curation.request(*material(), GENERATION, {"f1"})
     payload = json.loads(req["input"])
     assert [row["incident_anchor"] for row in payload["facts"]] == [True, False, False]
+    assert payload["passages"] == [
+        {"id": "p001", "text": "Acme reported a ransomware attack."},
+        {"id": "p002", "text": "The company restored affected systems."},
+        {"id": "p003", "text": "A different company was breached in 2024."},
+    ]
+    assert [row["passage_ids"] for row in payload["facts"]] == [["p001"], ["p002"], ["p003"]]
+    assert all("passages" not in row for row in payload["facts"])
     raw = {"evidence_verdict": "supported", "incident_verdict": "same_incident",
            "selected_fact_ids": ["f1", "f2"], "reason": "The first two facts concern Acme."}
     result = curation.validate(json.dumps(raw).encode(), req, {"f1"})
@@ -65,3 +72,41 @@ def test_curation_rejects_duplicate_fact_ids_without_unsupported_schema_keyword(
            "selected_fact_ids": ["f1", "f1"], "reason": "Duplicate selection."}
     with pytest.raises(ValueError, match="duplicate_selection"):
         curation.validate(json.dumps(raw).encode(), req, {"f1"})
+
+
+def test_curation_transmits_shared_passage_once():
+    event, article, evidence = material()
+    evidence["facts"][1]["evidence_passages"] = [
+        {"id": "p001", "text": "Acme reported a ransomware attack."},
+        {"id": "p002", "text": "The company restored affected systems."},
+    ]
+    payload = json.loads(curation.request(event, article, evidence, GENERATION)["input"])
+    assert [row["id"] for row in payload["passages"]] == ["p001", "p002", "p003"]
+    assert payload["facts"][1]["passage_ids"] == ["p001", "p002"]
+
+
+def test_curation_rejects_conflicting_shared_passage_text():
+    event, article, evidence = material()
+    evidence["facts"][1]["evidence_passages"] = [
+        {"id": "p001", "text": "Conflicting text."},
+    ]
+    with pytest.raises(ValueError, match="material_invalid"):
+        curation.request(event, article, evidence, GENERATION)
+
+
+def test_curation_shared_passages_keep_valid_fact_inventory_within_budget():
+    event, article, evidence = material()
+    passages = [{"id": f"p00{index}", "text": chr(64 + index) * 900}
+                for index in range(1, 4)]
+    evidence["facts"] = [
+        {"id": f"f{index}", "statement": f"Supported fact {index}.",
+         "kind": "reported_fact", "date_text": None, "date_role": "none",
+         "evidence_passages": passages}
+        for index in range(1, 33)
+    ]
+    req = curation.request(event, article, evidence, GENERATION)
+    payload = json.loads(req["input"])
+    assert len(payload["passages"]) == 3
+    assert len(payload["facts"]) == 32
+    assert len((req["system"] + req["input"] + json.dumps(req["schema"])).encode()) \
+        <= curation.MAX_INPUT_BYTES

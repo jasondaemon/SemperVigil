@@ -12,7 +12,7 @@ from .storage import enqueue_job, get_article_by_id, insert_llm_run, update_job_
 JOB_TYPE = "event_fact_curate"
 MODEL_NAME = "gpt-5.6-luna"
 PARAMS = {"max_completion_tokens": 2400, "reasoning_effort": "low"}
-REVIEWER = "policy:event-fact-curation-v2"
+REVIEWER = "policy:event-fact-curation-v3"
 
 
 def require_enabled() -> None:
