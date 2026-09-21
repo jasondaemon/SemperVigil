@@ -89,6 +89,7 @@ def test_tick_skips_waiting_case_but_stops_after_one_advancement(monkeypatch):
         return {"status": "queued", "event_id": event_id}
 
     monkeypatch.setattr(automation, "enabled", lambda: True)
+    monkeypatch.setattr(automation, "_resume_transient_composition_hold", lambda _conn: None)
     monkeypatch.setattr(automation, "advance", advance)
 
     assert automation.tick(TickConn()) == [
@@ -96,6 +97,18 @@ def test_tick_skips_waiting_case_but_stops_after_one_advancement(monkeypatch):
         {"status": "queued", "event_id": "evt_advanced"},
     ]
     assert calls == ["evt_waiting", "evt_advanced"]
+
+
+def test_tick_prioritizes_one_viable_transient_composition_recovery(monkeypatch):
+    recovery = {"status": "queued", "event_id": "evt_recover",
+                "job_id": "job_recover", "action": "composition_transient_recovery"}
+    monkeypatch.setattr(automation, "enabled", lambda: True)
+    monkeypatch.setattr(automation, "_resume_transient_composition_hold",
+                        lambda _conn: recovery)
+    monkeypatch.setattr(automation, "advance",
+                        lambda *_args: pytest.fail("active cases must wait"))
+
+    assert automation.tick(object()) == [recovery]
 
 
 def test_stale_proposed_ledger_is_rejected_for_deterministic_rebuild(monkeypatch):

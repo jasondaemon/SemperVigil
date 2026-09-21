@@ -34,6 +34,37 @@ def _touch(conn, event_id: str) -> None:
     conn.commit()
 
 
+def _resume_transient_composition_hold(conn) -> dict | None:
+    """Resume one rollout-raced composition once, retaining the failed job."""
+    from .event_composition_jobs import TRANSIENT_BASELINE_ERRORS, submit
+
+    reasons = tuple("composition failed: " + error
+                    for error in sorted(TRANSIENT_BASELINE_ERRORS))
+    row = conn.execute(
+        """SELECT c.event_id,r.revision_id
+             FROM event_reassessment_cases c
+             JOIN event_ledger_revisions r ON r.ledger_id=c.ledger_id
+            WHERE c.status='held' AND c.decision_reason=ANY(%s)
+              AND r.status='accepted'
+            ORDER BY c.priority,c.updated_at,c.event_id LIMIT 1""", (list(reasons),),
+    ).fetchone()
+    if not row:
+        return None
+    job_id = submit(conn, row[1])
+    status, error = _job_state(conn, job_id)
+    if status not in {"queued", "running", "succeeded"}:
+        return {"status": "held", "event_id": row[0], "job_id": job_id,
+                "reason": "transient composition recovery failed: " + error[:120]}
+    conn.execute(
+        """UPDATE event_reassessment_cases
+              SET status='active',decision_reason=NULL,updated_at=%s
+            WHERE event_id=%s AND status='held'""", (utc_now_iso(), row[0]),
+    )
+    conn.commit()
+    return {"status": status, "event_id": row[0], "job_id": job_id,
+            "action": "composition_transient_recovery"}
+
+
 def _job_state(conn, job_id: str) -> tuple[str, str]:
     row = conn.execute("SELECT status,COALESCE(error,'') FROM jobs WHERE id=%s", (job_id,)).fetchone()
     return (row[0], row[1]) if row else ("missing", "job unavailable")
@@ -300,6 +331,9 @@ def advance(conn, event_id: str) -> dict:
 def tick(conn) -> list[dict]:
     if not enabled():
         return []
+    recovery = _resume_transient_composition_hold(conn)
+    if recovery and recovery["status"] != "held":
+        return [recovery]
     rows = conn.execute(
         """SELECT c.event_id FROM event_reassessment_cases c WHERE c.status='active'
             ORDER BY CASE

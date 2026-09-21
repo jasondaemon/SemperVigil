@@ -10,6 +10,10 @@ from .storage import enqueue_job, insert_llm_run, update_job_result
 JOB_TYPE = "event_ledger_compose"
 MODEL_NAME = "gpt-5.6-luna"
 PARAMS = {"max_completion_tokens": 4096, "reasoning_effort": "medium"}
+TRANSIENT_BASELINE_ERRORS = {
+    "event_composition_baseline_changed",
+    "event_composition_configuration_changed",
+}
 
 
 def require_enabled() -> None:
@@ -53,10 +57,29 @@ def submit(conn, revision_id: str) -> str:
                                                "request": req["request_version"]})
     conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (key,))
     existing = conn.execute(
-        "SELECT id FROM jobs WHERE job_type=%s AND dedupe_key=%s ORDER BY requested_at LIMIT 1",
+        """SELECT id,status,COALESCE(error,'') FROM jobs
+            WHERE job_type=%s AND dedupe_key=%s ORDER BY requested_at LIMIT 1""",
         (JOB_TYPE, key),
     ).fetchone()
     if existing:
+        if existing[1] == "failed" and existing[2] in TRANSIENT_BASELINE_ERRORS:
+            recovery_key = key + ":transient-recovery"
+            recovery = conn.execute(
+                """SELECT id FROM jobs WHERE job_type=%s AND dedupe_key=%s
+                    ORDER BY requested_at LIMIT 1""", (JOB_TYPE, recovery_key),
+            ).fetchone()
+            if recovery:
+                conn.commit()
+                return recovery[0]
+            payload = {"workflow": composition.WORKFLOW,
+                       "ledger_revision_id": revision_id,
+                       "generation": generation,
+                       "request_version": req["request_version"]}
+            return enqueue_job(
+                conn, JOB_TYPE, payload, priority=-10, queue_name="openai",
+                max_attempts=1, parent_job_id=existing[0],
+                dedupe_key=recovery_key,
+            )
         conn.commit()
         return existing[0]
     payload = {"workflow": composition.WORKFLOW, "ledger_revision_id": revision_id,

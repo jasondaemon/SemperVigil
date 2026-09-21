@@ -256,6 +256,45 @@ def test_disabled_by_default(monkeypatch):
         jobs.run(object(), running_job())
 
 
+def test_submit_retries_transient_baseline_failure_once_and_keeps_parent(monkeypatch):
+    class Result:
+        def __init__(self, row):
+            self.row = row
+        def fetchone(self):
+            return self.row
+
+    class Conn:
+        def __init__(self):
+            self.commits = 0
+        def execute(self, sql, params=()):
+            if "pg_advisory_xact_lock" in sql:
+                return Result(None)
+            if "COALESCE(error" in sql:
+                return Result(("job_failed", "failed", "event_composition_baseline_changed"))
+            if ":transient-recovery" in str(params):
+                return Result(None)
+            raise AssertionError(sql)
+        def commit(self):
+            self.commits += 1
+
+    captured = {}
+    monkeypatch.setenv("SV_EVENT_LEDGER_COMPOSITION_ENABLED", "1")
+    monkeypatch.setattr(jobs, "configuration", lambda _conn: ({}, {}, GENERATION))
+    monkeypatch.setattr(jobs, "ledger_revision",
+                        lambda _conn, _revision: copy.deepcopy(ledger_revision()))
+    def enqueue(_conn, _kind, payload, **kwargs):
+        captured.update(payload=payload, kwargs=kwargs)
+        return "job_recovery"
+    monkeypatch.setattr(jobs, "enqueue_job", enqueue)
+
+    result = jobs.submit(Conn(), ledger_revision()["revision_id"])
+
+    assert result == "job_recovery"
+    assert captured["kwargs"]["parent_job_id"] == "job_failed"
+    assert captured["kwargs"]["dedupe_key"].endswith(":transient-recovery")
+    assert captured["kwargs"]["max_attempts"] == 1
+
+
 def test_worker_registry_and_queue_mapping():
     from sempervigil.storage import get_queue_name_for_job_type
     assert get_queue_name_for_job_type(jobs.JOB_TYPE) == "openai"
