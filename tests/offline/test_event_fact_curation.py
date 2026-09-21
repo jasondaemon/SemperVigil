@@ -26,7 +26,9 @@ def material():
 
 
 def test_curation_selects_only_event_scoped_facts():
-    req = curation.request(*material(), GENERATION)
+    req = curation.request(*material(), GENERATION, {"f1"})
+    payload = json.loads(req["input"])
+    assert [row["incident_anchor"] for row in payload["facts"]] == [True, False, False]
     raw = {"evidence_verdict": "supported", "incident_verdict": "same_incident",
            "selected_fact_ids": ["f1", "f2"], "reason": "The first two facts concern Acme."}
     result = curation.validate(json.dumps(raw).encode(), req, {"f1"})
@@ -34,15 +36,18 @@ def test_curation_selects_only_event_scoped_facts():
     assert result["public_eligible"] is False
 
 
-def test_curation_requires_incident_anchor_and_no_selection_on_hold():
-    req = curation.request(*material(), GENERATION)
+def test_curation_conservatively_discards_unsafe_selections():
+    req = curation.request(*material(), GENERATION, {"f1"})
     raw = {"evidence_verdict": "supported", "incident_verdict": "same_incident",
            "selected_fact_ids": ["f2"], "reason": "Recovery only."}
-    with pytest.raises(ValueError, match="incident_anchor_required"):
-        curation.validate(json.dumps(raw).encode(), req, {"f1"})
+    result = curation.validate(json.dumps(raw).encode(), req, {"f1"})
+    assert result["incident_verdict"] == "ambiguous"
+    assert result["selected_fact_ids"] == []
+    assert result["conservative_resolution"] == "incident_anchor_missing"
     raw.update(evidence_verdict="hold", incident_verdict="ambiguous")
-    with pytest.raises(ValueError, match="held_evidence_selected"):
-        curation.validate(json.dumps(raw).encode(), req, {"f1"})
+    result = curation.validate(json.dumps(raw).encode(), req, {"f1"})
+    assert result["selected_fact_ids"] == []
+    assert result["conservative_resolution"] == "evidence_hold_selection_discarded"
 
 
 def test_curation_rejects_unknown_fact_ids_in_schema():

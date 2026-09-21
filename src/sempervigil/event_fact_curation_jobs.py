@@ -11,8 +11,8 @@ from .storage import enqueue_job, get_article_by_id, insert_llm_run, update_job_
 
 JOB_TYPE = "event_fact_curate"
 MODEL_NAME = "gpt-5.6-luna"
-PARAMS = {"max_completion_tokens": 1200, "reasoning_effort": "low"}
-REVIEWER = "policy:event-fact-curation-v1"
+PARAMS = {"max_completion_tokens": 2400, "reasoning_effort": "low"}
+REVIEWER = "policy:event-fact-curation-v2"
 
 
 def require_enabled() -> None:
@@ -65,7 +65,9 @@ def submit(conn, event_id: str, revision_id: str) -> str:
     require_enabled()
     _, _, generation = configuration(conn)
     event, article, evidence, state = material(conn, event_id, revision_id)
-    req = curation.request(event, article, evidence, generation)
+    signals = projection(evidence, str(article.get("title") or ""))
+    anchors = set(signals["supporting_fact_ids"] if signals else [])
+    req = curation.request(event, article, evidence, generation, anchors)
     key = "event-fact-curate:" + _version({"request": req["request_version"],
                                              "snapshot": state["snapshot_version"]})
     conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (key,))
@@ -160,11 +162,11 @@ def run(conn, job, *, generate=None) -> dict:
     event, article, evidence, state = material(conn, payload["event_id"], payload["revision_id"])
     if state["snapshot_version"] != payload["snapshot_version"]:
         raise ValueError("event_fact_curation_baseline_changed")
-    req = curation.request(event, article, evidence, payload["generation"])
-    if req["request_version"] != payload["request_version"]:
-        raise ValueError("event_fact_curation_baseline_changed")
     signals = projection(evidence, str(article.get("title") or ""))
     anchors = set(signals["supporting_fact_ids"] if signals else [])
+    req = curation.request(event, article, evidence, payload["generation"], anchors)
+    if req["request_version"] != payload["request_version"]:
+        raise ValueError("event_fact_curation_baseline_changed")
     state_result = {"workflow": curation.WORKFLOW, "event_id": payload["event_id"],
                     "revision_id": payload["revision_id"], "status": "started",
                     "public_eligible": False}

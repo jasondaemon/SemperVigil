@@ -553,6 +553,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_event_stale_ledger_requeue_051")
             applied.add("pg_event_stale_ledger_requeue_051")
+        if "pg_event_fact_curation_requeue_052" not in applied:
+            _migrate_event_fact_curation_requeue(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_event_fact_curation_requeue_052", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_event_fact_curation_requeue_052")
+            applied.add("pg_event_fact_curation_requeue_052")
         else:
             conn.commit()
         return
@@ -879,6 +888,15 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_event_stale_ledger_requeue_051")
+
+    conn.execute("BEGIN")
+    _migrate_event_fact_curation_requeue(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_event_fact_curation_requeue_052", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_event_fact_curation_requeue_052")
 
 def _bootstrap_schema(conn) -> None:
     conn.execute(
@@ -1830,6 +1848,18 @@ def _migrate_event_stale_ledger_requeue(conn) -> None:
               AND EXISTS (
                 SELECT 1 FROM event_ledger_revisions r
                  WHERE r.ledger_id=c.ledger_id AND r.status='proposed')""",
+        (utc_now_iso(),),
+    )
+
+
+def _migrate_event_fact_curation_requeue(conn) -> None:
+    conn.execute(
+        """UPDATE event_reassessment_cases
+              SET status='active',decision_reason=NULL,updated_at=%s
+            WHERE status='held' AND decision_reason IN
+              ('fact curation failed: input_size',
+               'fact curation failed: event_fact_curation_held_evidence_selected',
+               'fact curation failed: event_fact_curation_incident_anchor_required')""",
         (utc_now_iso(),),
     )
 
