@@ -105,6 +105,49 @@ def _is_repaired_composition(conn, composition_id: str,
     ).fetchone())
 
 
+def _filter_repaired_detail_failures(conn, composition_id: str) -> dict | None:
+    """Accept a deletion-only derivative when a repaired overview passed audit."""
+    row = conn.execute(
+        """SELECT result_json FROM jobs
+            WHERE job_type='event_composition_audit' AND status='succeeded'
+              AND payload_json::jsonb->>'composition_id'=%s
+            ORDER BY finished_at DESC,id DESC LIMIT 1""",
+        (composition_id,),
+    ).fetchone()
+    decision = json.loads(row[0]).get("audit") if row and row[0] else None
+    if not decision:
+        return None
+
+    from . import event_composition, event_composition_audit as composition_audit
+    from .event_composition_repair_jobs import material as repair_material
+    composition, ledger_revision = repair_material(conn, composition_id)
+    audit_request = composition_audit.request(
+        composition_id, composition, ledger_revision["ledger"],
+        decision.get("generation_version", ""),
+    )
+    item_sections = {
+        item["id"]: item["section"]
+        for item in json.loads(audit_request["input"])["items"]
+    }
+    failures = [
+        item for item in decision.get("audits", [])
+        if item.get("verdict") != "supported"
+    ]
+    if (not failures or any(
+            item_sections.get(item.get("id")) == "overview"
+            for item in failures)):
+        return None
+    filtered = composition_audit.filtered_record(
+        composition_id, composition, ledger_revision["ledger"], decision
+    )
+    filtered_id = event_composition.store_unreviewed(conn, filtered)
+    application = event_composition.review(
+        conn, filtered_id, "accept", reason="",
+        reviewer="policy:event-composition-audit-v1",
+    )
+    return {"composition_id": filtered_id, "application": application}
+
+
 def _repaired_derivative(conn, composition_id: str):
     """Return the composition created by a successful repair, if present."""
     row = conn.execute(
@@ -329,7 +372,11 @@ def advance(conn, event_id: str) -> dict:
         return {"status": "queued", "event_id": event_id, "job_id": job_id,
                 "action": "composition_audit_queued"}
     if composition[1] == "held" and _is_repaired_composition(conn, composition[0]):
-        return _hold(conn, event_id, "composition support audit held the repaired narrative")
+        filtered = _filter_repaired_detail_failures(conn, composition[0])
+        if filtered:
+            return {"status": "accepted", "event_id": event_id, **filtered,
+                    "action": "composition_detail_filtered"}
+        return _hold(conn, event_id, "composition support audit held the repaired overview")
     repairable = _repairable_composition(conn, latest[0], composition)
     if repairable:
         audit_row = conn.execute(

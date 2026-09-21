@@ -152,10 +152,16 @@ def advance(conn, candidate: dict) -> dict:
     held = next((row for row in compositions if row[1] == "held"), None)
     if held:
         from .event_reassessment_automation import (
+            _filter_repaired_detail_failures,
             _is_repaired_composition,
             _repairable_composition,
         )
         if _is_repaired_composition(conn, held[0]):
+            filtered = _filter_repaired_detail_failures(conn, held[0])
+            if filtered:
+                return {"status": "accepted", "event_id": event_id, **filtered,
+                        "action": "published_composition_detail_filtered",
+                        "workflow": WORKFLOW}
             return {"status": "held", "event_id": event_id,
                     "reason": "replacement overview failed support audit"}
         repairable = _repairable_composition(

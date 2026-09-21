@@ -1,6 +1,9 @@
+import json
+
 import pytest
 
-from sempervigil import event_composition_jobs
+from sempervigil import event_composition, event_composition_audit
+from sempervigil import event_composition_jobs, event_composition_repair_jobs
 from sempervigil import event_ledger
 from sempervigil import event_reassessment_automation as automation
 
@@ -82,6 +85,35 @@ def test_repaired_composition_can_be_scoped_to_current_repair_generation():
     assert automation._is_repaired_composition(
         RepairConn(), "elc_repaired", generation="g" * 64
     ) is True
+
+
+def test_repaired_detail_failures_are_filtered_before_holding(monkeypatch):
+    class Conn:
+        def execute(self, sql, params=()):
+            assert "job_type='event_composition_audit'" in sql
+            return _Result((json.dumps({"audit": {
+                "generation_version": "a" * 64,
+                "audits": [{"id": "C01", "verdict": "unsupported"}],
+            }}),))
+
+    composition = {"sections": {"impact": [{"text": "bad", "fact_ids": ["f1"]}]}}
+    ledger_revision = {"ledger": {"facts": [{"fact_id": "f1"}]}}
+    monkeypatch.setattr(event_composition_repair_jobs, "material",
+                        lambda *_args: (composition, ledger_revision))
+    monkeypatch.setattr(event_composition_audit, "request", lambda *_args: {
+        "input": json.dumps({"items": [{"id": "C01", "section": "impact"}]})
+    })
+    monkeypatch.setattr(event_composition_audit, "filtered_record",
+                        lambda *_args: {"status": "unreviewed"})
+    monkeypatch.setattr(event_composition, "store_unreviewed",
+                        lambda *_args: "elc_filtered")
+    monkeypatch.setattr(event_composition, "review",
+                        lambda *_args, **_kwargs: {"status": "accepted"})
+
+    result = automation._filter_repaired_detail_failures(Conn(), "elc_repaired")
+    assert result == {
+        "composition_id": "elc_filtered", "application": {"status": "accepted"},
+    }
 
 
 def test_repaired_derivative_resolves_successful_repair_result():
