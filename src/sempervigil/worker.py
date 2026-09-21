@@ -270,13 +270,12 @@ QUEUE_WORKER_TYPES = {
         "event_report_llm",
         "event_review_private",
         "article_review_private",
-        "event_ledger_compose",
         "enrich_event_summary_llm",
         "article_products_backfill",
         "article_threat_actors_backfill",
         "cve_threat_actors_backfill",
     ],
-    "openai": ["build_daily_brief", "event_fact_curate",
+    "openai": ["build_daily_brief", "event_ledger_compose", "event_fact_curate",
                "event_composition_audit", "event_composition_repair"],
     "build": ["write_article_markdown"],
 }
@@ -453,7 +452,6 @@ def _looks_like_thn_teaser(source_id: str | None, content_text: str | None) -> b
 
 _LLM_JOB_TYPES = {
     "article_review_private",
-    "event_ledger_compose",
     "summarize_article_llm",
     "summarize_article_context_llm",
     "cve_enrich_llm",

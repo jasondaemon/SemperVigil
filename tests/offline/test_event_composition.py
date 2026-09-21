@@ -272,7 +272,7 @@ def harness(monkeypatch):
 def running_job():
     req = composition.request(ledger_revision(), GENERATION)
     return SimpleNamespace(id="test", job_type=jobs.JOB_TYPE, result=None, attempt_count=0,
-        max_attempts=1, queue_name="llm_local", status="running", payload={
+        max_attempts=1, queue_name="openai", status="running", payload={
             "workflow": composition.WORKFLOW, "ledger_revision_id": ledger_revision()["revision_id"],
             "generation": GENERATION, "request_version": req["request_version"]})
 
@@ -291,7 +291,7 @@ def test_job_is_one_attempt_private_and_review_gated(harness):
 
 
 @pytest.mark.parametrize("change", [{"attempt_count": 1}, {"max_attempts": 2},
-    {"queue_name": "openai"}, {"status": "queued"}, {"result": {"status": "started"}}])
+    {"queue_name": "llm_local"}, {"status": "queued"}, {"result": {"status": "started"}}])
 def test_replay_or_wrong_lane_never_calls_model(harness, change):
     current = running_job()
     for key, value in change.items():
@@ -348,7 +348,7 @@ def test_submit_retries_transient_baseline_failure_once_and_keeps_parent(monkeyp
 
 def test_worker_registry_and_queue_mapping():
     from sempervigil.storage import get_queue_name_for_job_type
-    assert get_queue_name_for_job_type(jobs.JOB_TYPE) == "llm_local"
-    assert jobs.JOB_TYPE in worker._LLM_JOB_TYPES
-    assert jobs.JOB_TYPE in worker.QUEUE_WORKER_TYPES["llm_local"]
+    assert get_queue_name_for_job_type(jobs.JOB_TYPE) == "openai"
+    assert jobs.JOB_TYPE not in worker._LLM_JOB_TYPES
+    assert jobs.JOB_TYPE in worker.QUEUE_WORKER_TYPES["openai"]
     assert jobs.JOB_TYPE in worker.HANDLED_JOB_TYPES

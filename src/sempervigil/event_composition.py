@@ -9,10 +9,11 @@ from .event_review import _json
 from .investigation import _version
 from .utils import utc_now_iso
 
-WORKFLOW = "event-ledger-composition-v7"
+WORKFLOW = "event-ledger-composition-v8"
 LEGACY_WORKFLOW = "event-ledger-composition-v4"
 LEGACY_WORKFLOWS = frozenset({
     LEGACY_WORKFLOW, "event-ledger-composition-v5", "event-ledger-composition-v6",
+    "event-ledger-composition-v7",
 })
 SECTION_POLICY = "curated-sections-v3"
 DETERMINISTIC_SECTION_POLICY = "deterministic-sections-v2"
@@ -35,6 +36,11 @@ worked, material impact, and the response or current state when the facts suppor
 them. Choose the clearest narrative structure and use as much detail as needed.
 Do not mechanically list facts, add unsupported claims or causal links, strengthen
 uncertain attribution, or omit material qualifications.
+
+Every material clause must be directly entailed by a cited fact. Do not invent
+who identified, concluded, confirmed, or recommended something. Do not turn an
+association into a cause, origin, or attribution. Preserve each fact's subject,
+object, uncertainty, and technical relationships.
 
 Return exactly one JSON object with one key named overview. overview must be an
 array of paragraph objects. Each paragraph object must contain only text and
