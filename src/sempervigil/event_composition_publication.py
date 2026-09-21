@@ -19,6 +19,7 @@ PUBLIC_WORKFLOW = "event-composition-public-revision-v1"
 CONFIRMATION = "PUBLISH_ACCEPTED_EVENT"
 POLICY = {"workflow": QUALIFICATION_WORKFLOW, "review": "accepted-composition",
           "source_freshness": "activation-rechecked", "generated_prose": True}
+COMPATIBILITY_FAILURES = {"event_composition_publication_integrity_failure"}
 
 
 def _publisher_key(source: dict) -> str:
@@ -281,6 +282,27 @@ def queue_research_if_needed(conn, material: dict) -> tuple[str, int] | None:
     return job_id, minimum
 
 
+def _compatibility_recovery(authority, approval_id: str, prior_job_id: str) -> str | None:
+    """Queue one replacement when an older worker rejected a current contract."""
+    prior = authority.execute(
+        "SELECT status,COALESCE(error,'') FROM jobs WHERE id=%s", (prior_job_id,),
+    ).fetchone()
+    if not prior or prior[0] != "failed" or prior[1] not in COMPATIBILITY_FAILURES:
+        return None
+    existing = authority.execute(
+        """SELECT id FROM jobs WHERE job_type=%s AND parent_job_id=%s
+            ORDER BY requested_at LIMIT 1""", (JOB_TYPE, prior_job_id),
+    ).fetchone()
+    if existing:
+        return existing[0]
+    return enqueue_job(
+        authority, JOB_TYPE, {"approval_id": approval_id}, priority=-10,
+        queue_name="fetch", max_attempts=1, parent_job_id=prior_job_id,
+        dedupe_key="event-publication-compatibility:" + approval_id,
+        commit=False,
+    )
+
+
 def _submit(conn, composition_id: str, *, reviewer_kind: str,
             required_reviewer: str | None = None) -> dict:
     if reviewer_kind not in {"human", "policy"}:
@@ -321,6 +343,13 @@ def _submit(conn, composition_id: str, *, reviewer_kind: str,
         if prior:
             if prior[0] != raw:
                 raise ValueError("event_approval_integrity_failure")
+            recovery_job_id = _compatibility_recovery(
+                authority, approval_id, prior[1]
+            )
+            if recovery_job_id:
+                return {"event_id": event_id, "approval_id": approval_id,
+                        "job_id": recovery_job_id, "status": "queued",
+                        "public_eligible": False}
             return {"event_id": event_id, "approval_id": approval_id, "job_id": prior[1],
                     "status": "reused", "public_eligible": False}
         writable = authority.execute("""SELECT

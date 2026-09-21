@@ -5,6 +5,7 @@ import pytest
 from sempervigil.event_composition_publication import (
     PUBLIC_WORKFLOW,
     QUALIFICATION_WORKFLOW,
+    _compatibility_recovery,
     event_identity,
     validate_bundle,
 )
@@ -138,3 +139,32 @@ def test_reassessment_bundle_can_preserve_validated_legacy_event_id():
     bad["event_target"]["snapshot_version"] = "not-a-version"
     with pytest.raises(ValueError, match="integrity_failure"):
         validate_bundle(bad, event_id=legacy_id)
+
+
+def test_compatibility_recovery_preserves_failed_parent_and_is_bounded(monkeypatch):
+    class Result:
+        def __init__(self, row):
+            self.row = row
+        def fetchone(self):
+            return self.row
+
+    class Conn:
+        def execute(self, sql, params=()):
+            if "COALESCE(error" in sql:
+                return Result(("failed", "event_composition_publication_integrity_failure"))
+            if "parent_job_id" in sql:
+                return Result(None)
+            raise AssertionError(sql)
+
+    captured = {}
+    def enqueue(_conn, kind, payload, **kwargs):
+        captured.update(kind=kind, payload=payload, kwargs=kwargs)
+        return "job_recovery"
+    monkeypatch.setattr("sempervigil.event_composition_publication.enqueue_job", enqueue)
+
+    result = _compatibility_recovery(Conn(), "a" * 64, "job_failed")
+
+    assert result == "job_recovery"
+    assert captured["payload"] == {"approval_id": "a" * 64}
+    assert captured["kwargs"]["parent_job_id"] == "job_failed"
+    assert captured["kwargs"]["max_attempts"] == 1
