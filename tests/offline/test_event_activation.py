@@ -56,13 +56,18 @@ class Connection:
 @pytest.mark.parametrize("value", [None, [], {}, {**manifest(), "extra": 1},
     manifest({"bad/id": "a"*64}), manifest({"event": True}),
     manifest({"event": "a"*64}, {"event": "a"*64}),
-    manifest({str(i): "a"*64 for i in range(21)})])
+    manifest({str(i): "a"*64 for i in range(activation.MAX_EVENTS + 1)})])
 def test_invalid_manifest_never_connects(value):
     factory, switch = Mock(), Mock()
     with pytest.raises(ValueError, match="invalid_event_activation_manifest"):
         activation.authorize_and_activate(factory, value, switch)
     factory.assert_not_called()
     switch.assert_not_called()
+
+
+def test_manifest_accepts_current_production_scale():
+    revisions = {f"event-{index}": "a" * 64 for index in range(29)}
+    assert activation.validate_manifest(manifest(revisions))["revisions"] == revisions
 
 
 def test_switch_is_inside_authorization_transaction(database):

@@ -2,6 +2,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from sempervigil.event_activation import MAX_EVENTS
 from sempervigil.event_publication_store import promote, load_export
 
 pytestmark = pytest.mark.offline
@@ -17,7 +18,7 @@ def test_bad_publication_ids_cannot_open_database(qualification, predecessor):
 
 
 @pytest.mark.parametrize("identities", [None, "one", [True], ["../one"], ["one", "one"],
-                                       [str(i) for i in range(21)]])
+                                       [str(i) for i in range(MAX_EVENTS + 1)]])
 def test_export_bounds_before_database(identities):
     factory = Mock(side_effect=AssertionError("must not connect"))
     with pytest.raises(ValueError, match="invalid_publication_export_ids"):

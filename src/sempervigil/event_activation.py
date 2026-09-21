@@ -18,8 +18,8 @@ from .event_render import resolve
 from .investigation import _version
 
 MANIFEST = "event-publication.json"
-MAX_BYTES = 16384
-MAX_EVENTS = 20
+MAX_BYTES = 65536
+MAX_EVENTS = 100
 
 
 def validate_manifest(value: dict) -> dict:

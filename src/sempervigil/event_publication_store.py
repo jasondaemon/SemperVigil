@@ -135,7 +135,8 @@ Withheld and withdrawn identities remain managed. A future coordinator must hand
 them explicitly, not drop these IDs from the maps and export legacy narratives.
 This snapshot is not a lease: build activation still needs revocation coordination.
 """
-    if (type(event_ids) is not list or len(event_ids) > 20
+    from .event_activation import MAX_EVENTS
+    if (type(event_ids) is not list or len(event_ids) > MAX_EVENTS
             or any(type(v) is not str or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", v) for v in event_ids)
             or len(set(event_ids)) != len(event_ids)):
         raise ValueError("invalid_publication_export_ids")
