@@ -10,6 +10,11 @@ from .storage import enqueue_job, insert_llm_run, update_job_result
 JOB_TYPE = "event_composition_repair"
 MODEL_NAME = "gpt-5.6-sol"
 PARAMS = {"max_completion_tokens": 1800, "reasoning_effort": "low"}
+CONTRACT_VERSION = "overview-audit-alignment-v2"
+TRANSIENT_BASELINE_ERRORS = {
+    "event_composition_repair_baseline_changed",
+    "event_composition_repair_configuration_changed",
+}
 
 
 def require_enabled() -> None:
@@ -31,7 +36,8 @@ def configuration(conn):
         raise ValueError("event_composition_repair_openai_model_invalid")
     generation = _version({"workflow": repair.WORKFLOW, "params": PARAMS,
         "model": model.get("id"), "provider": provider.get("id"),
-        "base_url": provider.get("base_url"), "system": repair.SYSTEM_PROMPT})
+        "base_url": provider.get("base_url"), "system": repair.SYSTEM_PROMPT,
+        "contract": CONTRACT_VERSION})
     return model, provider, generation
 
 
@@ -54,9 +60,28 @@ def submit(conn, composition_id: str, decision: dict) -> str:
     req = repair.request(composition_id, composition, ledger, decision, generation)
     key = "event-composition-repair:" + req["request_version"]
     conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (key,))
-    prior = conn.execute("SELECT id FROM jobs WHERE job_type=%s AND dedupe_key=%s",
-                         (JOB_TYPE, key)).fetchone()
+    prior = conn.execute(
+        "SELECT id,status,COALESCE(error,'') FROM jobs WHERE job_type=%s AND dedupe_key=%s",
+        (JOB_TYPE, key),
+    ).fetchone()
     if prior:
+        if prior[1] == "failed" and prior[2] in TRANSIENT_BASELINE_ERRORS:
+            recovery_key = key + ":transient-recovery"
+            recovery = conn.execute(
+                "SELECT id FROM jobs WHERE job_type=%s AND dedupe_key=%s",
+                (JOB_TYPE, recovery_key),
+            ).fetchone()
+            if recovery:
+                conn.commit()
+                return recovery[0]
+            payload = {"workflow": repair.WORKFLOW,
+                       "composition_id": composition_id,
+                       "audit": decision, "generation": generation,
+                       "request_version": req["request_version"]}
+            return enqueue_job(
+                conn, JOB_TYPE, payload, priority=-10, queue_name="openai",
+                max_attempts=1, parent_job_id=prior[0], dedupe_key=recovery_key,
+            )
         conn.commit()
         return prior[0]
     payload = {"workflow": repair.WORKFLOW, "composition_id": composition_id,

@@ -4,6 +4,7 @@ import pytest
 
 from sempervigil import event_composition_audit as audit
 from sempervigil import event_composition_repair as repair
+from sempervigil import event_composition_repair_jobs as repair_jobs
 
 pytestmark = pytest.mark.offline
 
@@ -57,3 +58,46 @@ def test_repair_requires_every_rejected_item_exactly_once():
     req = repair.request("elc_test", composition, revision, decision, "b" * 64)
     with pytest.raises(ValueError, match="invalid_shape|incomplete"):
         repair.validate(json.dumps({"repairs": []}).encode(), req, composition, revision)
+
+
+def test_submit_recovers_once_from_transient_baseline_failure(monkeypatch):
+    class Result:
+        def __init__(self, row=None):
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+    class Conn:
+        def __init__(self):
+            self.commits = 0
+
+        def execute(self, sql, params=()):
+            if "pg_advisory_xact_lock" in sql:
+                return Result()
+            if "SELECT id,status" in sql:
+                return Result(("job_failed", "failed",
+                               "event_composition_repair_baseline_changed"))
+            if "SELECT id FROM jobs" in sql:
+                return Result(None)
+            raise AssertionError(sql)
+
+        def commit(self):
+            self.commits += 1
+
+    composition, revision, decision = material()
+    monkeypatch.setattr(repair_jobs, "require_enabled", lambda: None)
+    monkeypatch.setattr(repair_jobs, "configuration",
+                        lambda _conn: ({}, {}, "b" * 64))
+    monkeypatch.setattr(repair_jobs, "material",
+                        lambda _conn, _composition_id: (composition, revision))
+    captured = {}
+
+    def enqueue(_conn, job_type, payload, **kwargs):
+        captured.update(job_type=job_type, payload=payload, kwargs=kwargs)
+        return "job_recovery"
+
+    monkeypatch.setattr(repair_jobs, "enqueue_job", enqueue)
+    assert repair_jobs.submit(Conn(), "elc_test", decision) == "job_recovery"
+    assert captured["kwargs"]["parent_job_id"] == "job_failed"
+    assert captured["kwargs"]["dedupe_key"].endswith(":transient-recovery")
