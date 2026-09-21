@@ -625,3 +625,26 @@ If you (Codex) propose edits affecting pipeline stability, you must:
 - Rollback: restore the prior application builder image and Hugo source commit,
   then invoke the normal build API. Retained database revisions are immutable and
   require no data rollback.
+
+# 2026-09-21: establish the CyberNews public identity
+
+- Summary: Replace the public SemperVigil product branding with CyberNews by
+  JasonDaemon.net and introduce a consistent editorial presentation across the
+  homepage, Event archive and Event reports.
+- Scope: Hugo templates, CSS, client-side presentation, favicon assets and public
+  explanatory copy only. Article publisher icons, direct publisher links, Event
+  citations and the SemperVigil open-source credit are retained explicitly.
+- Controls: no application code, database, prompt, model, queue, source content,
+  build command, cache, concurrency, publication policy, daily JSON schema or
+  daily JSON generation change. The existing download path remains
+  `/feed/days/<date>.json`.
+- Verification: JavaScript syntax and source diff checks passed. API build
+  `job_610957b961ac434cb9982d730dfda73f` completed in 21.51 seconds and atomically
+  activated release `20260921215111`. Homepage and Events return HTTP 200. The
+  September 21 daily JSON returns HTTP 200, is 1,054,341 bytes and contains 171
+  items. Live HTML contains 73 publisher icons and 75 explicit source labels;
+  browser console validation reported no warnings or errors.
+- Source of truth: Hugo commits `35158d20` and `afe75547` on
+  `codex/remove-cybernews-ads` are pushed to the configured remote.
+- Rollback: restore the prior Hugo commit in `/site-src` and invoke the supported
+  build API. No database, feed archive or application rollback is required.

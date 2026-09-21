@@ -2395,3 +2395,22 @@ excluded, and both retirement runs retain independent restore manifests.
 - Production verification showed two Event cards, independent paging from
   `1–2 of 29` to `3–4 of 29`, a hidden Event section on 2026-09-19, and the
   unchanged `/feed/days/2026-09-19.json` download target.
+
+## CyberNews presentation and feed-contract verification (2026-09-21)
+
+- The production homepage identifies the publication as CyberNews by
+  JasonDaemon.net and states that reporting is aggregated, summarized and linked
+  to the original publishers. Article cards retain publisher icons, explicit
+  source labels and direct external headline links.
+- The Event archive and individual reports share type-specific visual markers,
+  compact metadata, source-backed language and the existing canonical URLs.
+- The complete favicon family and web manifest use the CyberNews mark. SVG, PNG,
+  ICO, Apple touch and 192/512 pixel installed-app assets are present.
+- Supported API build `job_610957b961ac434cb9982d730dfda73f` succeeded in 21.51
+  seconds and atomically activated release `20260921215111`; Hugo rendered 124
+  pages in 1.53 seconds. The only build warning is the pre-existing Blowfish Hugo
+  compatibility declaration.
+- Homepage, Events, favicon assets and manifest return HTTP 200. The live browser
+  reports no console warnings or errors.
+- The daily feed contract is unchanged. `/feed/days/2026-09-21.json` returns HTTP
+  200, 1,054,341 bytes and 171 items, and remains the homepage download target.
