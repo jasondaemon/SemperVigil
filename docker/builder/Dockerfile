@@ -7,7 +7,8 @@ COPY . /app
 RUN apk add --no-cache python3 py3-pip py3-setuptools rsync \
  && python3 -m venv /venv \
  && /venv/bin/pip install --no-cache-dir --upgrade pip \
- && /venv/bin/pip install --no-cache-dir -e .
+ && /venv/bin/pip install --no-cache-dir -e . \
+ && chmod 0755 /app /app/tools /app/tools/ensure-dirs.sh
 
 ENV PYTHONUNBUFFERED=1 \
     VIRTUAL_ENV=/venv \
