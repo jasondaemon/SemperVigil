@@ -54,6 +54,10 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
     assert payload["required_timeline_refs"] == ["F01"]
     assert payload["facts"][0]["allowed_sections"] == ["overview", "attack_vector", "attack_path", "timeline"]
     properties = req["schema"]["properties"]
+    assert properties["overview"]["minItems"] == 1
+    assert properties["overview"]["maxItems"] == 4
+    assert properties["overview"]["items"]["properties"]["text"]["maxLength"] == 3200
+    assert properties["overview"]["items"]["properties"]["fact_refs"]["maxItems"] == 16
     assert properties["attack_path"]["items"]["properties"]["fact_refs"]["items"]["enum"] == ["F01"]
     assert properties["open_questions"]["items"]["properties"]["fact_refs"]["items"]["enum"] == ["F02"]
     assert properties["response_recovery"]["maxItems"] == 0
@@ -148,6 +152,16 @@ def test_response_schema_uses_openai_supported_subset_and_duplicates_fail_closed
     output = valid_output()
     output["overview"][0]["fact_refs"] = ["F01", "F01"]
     with pytest.raises(ValueError, match="duplicate_fact_ref"):
+        composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
+
+
+def test_validation_allows_narrative_overview_paragraphs_but_keeps_them_bounded():
+    output = valid_output()
+    output["overview"].extend(
+        {"text": f"Narrative overview paragraph {index}.", "fact_refs": ["F01"]}
+        for index in range(4)
+    )
+    with pytest.raises(ValueError, match="invalid_shape"):
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
 
 

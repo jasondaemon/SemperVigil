@@ -242,11 +242,14 @@ def advance(conn, event_id: str) -> dict:
     if latest[1] != "accepted":
         return {"status": "deferred", "event_id": event_id, "reason": "ledger_not_ready"}
 
+    from .event_composition_jobs import configuration as composition_configuration
+    composition_generation = composition_configuration(conn)[2]
     composition = conn.execute(
         """SELECT composition_id,status,reviewed_by,generation_version
             FROM event_ledger_compositions
-            WHERE ledger_revision_id=%s ORDER BY created_at DESC,composition_id DESC LIMIT 1""",
-        (latest[0],),
+            WHERE ledger_revision_id=%s AND generation_version=%s
+            ORDER BY created_at DESC,composition_id DESC LIMIT 1""",
+        (latest[0], composition_generation),
     ).fetchone()
     if not composition:
         from .event_composition_jobs import submit

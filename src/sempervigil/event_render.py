@@ -125,6 +125,8 @@ def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict
             lines.append(f"<h2>{headings[section]}</h2>")
             if section == "timeline":
                 lines.append('<ol class="event-timeline">')
+            elif section == "overview":
+                lines.append('<div class="event-overview">')
             for item in items:
                 linked = []
                 for fact_id in item["fact_ids"]:
@@ -140,14 +142,19 @@ def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict
                 text = escape(" ".join(item["text"].split()))
                 kinds = {facts[fact_id]["kind"] for fact_id in item["fact_ids"]}
                 state = ("Unresolved" if kinds & {"uncertainty", "disputed"}
-                         else "Attributed" if "allegation" in kinds else "Reported")
-                badge = f'<span class="event-claim-state event-claim-state--{state.lower()}">{state}</span>'
+                         else "Attributed" if "allegation" in kinds else "")
+                badge = (f'<span class="event-claim-state event-claim-state--{state.lower()}">{state}</span>'
+                         if state and section != "overview" else "")
                 if section == "timeline":
                     lines.append(f'<li><time>{escape(item["date_text"])}</time><div>{badge}<p>{text} {citations}</p></div></li>')
+                elif section == "overview":
+                    lines.append(f'<p class="event-overview__paragraph">{text} {citations}</p>')
                 else:
                     lines.append(f'<div class="event-claim">{badge}<p>{text} {citations}</p></div>')
             if section == "timeline":
                 lines.append("</ol>")
+            elif section == "overview":
+                lines.append("</div>")
             lines.append("</section>")
         lines.extend(["</div>", '<section class="event-report-section event-report-section--sources" id="sources">',
                       "<h2>Sources</h2>", '<ol class="event-sources">'])

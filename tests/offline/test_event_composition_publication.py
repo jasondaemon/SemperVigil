@@ -86,7 +86,9 @@ def test_composition_bundle_renders_reproducible_page_and_index():
     assert "<span>Primary report</span>" in page
     assert "<small>example.test</small>" in page
     assert 'class="event-report-section event-report-section--overview"' in page
-    assert 'class="event-claim-state event-claim-state--reported"' in page
+    assert 'class="event-overview"' in page
+    assert 'class="event-overview__paragraph"' in page
+    assert 'event-claim-state--reported' not in page
     entry = index_entry(bundle, event_id=event_id, expected_revision=revision)
     assert entry["status"] == "source_backed_event"
     assert entry["counts"]["articles"] == 1

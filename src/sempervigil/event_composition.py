@@ -27,6 +27,16 @@ attack worked, its chronology and impact, and the response where evidence exists
 Do not add facts, dates, causal claims, attribution, recovery, or advice that the
 packet does not support. Preserve uncertainty and disagreement.
 
+The overview must be one coherent, self-contained account of the Event, not a
+list of facts or a fixed-length summary. Write one or more substantive narrative
+paragraphs as completeness requires. Do not turn individual facts into separate
+one-sentence paragraphs. Its length and detail must follow the available evidence.
+Orient the reader by explaining what happened, the affected organization or
+population, how the incident or campaign unfolded, material scope and impact,
+response or recovery, current state, and important remaining uncertainties when
+those details are supported. Connect related facts into readable prose, avoid
+repetition and padding, and preserve source caveats.
+
 Every prose item must cite all supporting F-number fact_refs. Fact references are
 not a bibliography: every cited fact must directly support a claim in that item,
 and no fact may be cited merely because it concerns the same incident. Prefer one
@@ -151,14 +161,17 @@ def schema(fact_refs: dict[str, list[str]] | None = None) -> dict:
         allowed = fact_refs.get(section, []) if fact_refs else []
         ref = ({"type": "string", "enum": allowed or all_refs} if fact_refs
                else {"type": "string", "pattern": "^F[0-9]{2}$"})
+        max_length = 3200 if section == "overview" else 1600
+        max_refs = 16 if section == "overview" else 8
         item = {"type": "object", "additionalProperties": False,
                 "required": ["text", "fact_refs"], "properties": {
-                    "text": {"type": "string", "minLength": 1, "maxLength": 1600},
-                    "fact_refs": {"type": "array", "minItems": 1, "maxItems": 8,
+                    "text": {"type": "string", "minLength": 1, "maxLength": max_length},
+                    "fact_refs": {"type": "array", "minItems": 1, "maxItems": max_refs,
                                   "items": ref}}}
         properties[section] = {"type": "array", "maxItems": 8 if allowed or not fact_refs else 0,
                                "items": item}
     properties["overview"]["minItems"] = 1
+    properties["overview"]["maxItems"] = 4
     return {"type": "object", "additionalProperties": False,
             "required": list(SECTIONS), "properties": properties}
 
