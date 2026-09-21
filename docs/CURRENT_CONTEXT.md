@@ -7,6 +7,27 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
+## September 20: resilient fact curation deployed
+
+Application `f5cc352` and platform `726290f` deploy
+`event-fact-curation-v2` to admin, orchestrator and the single hosted-model
+worker. The contract marks deterministic incident-anchor facts in each request,
+requires empty selections for held or nonmatching evidence, and conservatively
+discards contradictory selections rather than permitting them to reach an Event
+ledger. The completion allowance increased from 1,200 to 2,400 tokens after two
+production responses exhausted exactly 1,200 tokens and returned no usable JSON;
+input size, source content, model, concurrency and publication gates are unchanged.
+
+Migration 052 reactivated only cases held by the three corrected curation failure
+reasons. The first production pass classified an unrelated SolarWinds roundup as
+ambiguous with no incident signal and enrolled a genuine Notepad++ source with 13
+supported facts. Seven Notepad++ v2 curation jobs succeeded, its stale ledger was
+withdrawn, and normal reassessment is rebuilding it from current selections. The
+remaining reactivated cases continue through ordinary scheduler ordering; they
+have not been manually advanced or declared complete. Full offline suite: 1,078
+passed, two skipped. Rendered/live configuration is identical, all updated pods
+are ready, all nodes report no memory pressure, and public feed/Event checks pass.
+
 ## September 19: Qwen 3.5 production cutover
 
 Qwen 3.5 9B Q4_K_M is downloaded on the existing RTX 3060 host and fits entirely

@@ -2237,3 +2237,34 @@ Preview `lerr_20845a003b294e2ab389c4f5f8877fc0` contained the exact two
 remaining active archived drafts; job `job_b05350d0c04b4031b06ec5148b7c8ad2`
 suppressed both with zero skips. Confirmed drafts and every published Event remain
 excluded, and both retirement runs retain independent restore manifests.
+
+## Event fact-curation recovery (2026-09-20)
+
+- Production inspection separated four held cases into three concrete failure
+  modes. Target and Kairos received HTTP 200 responses that consumed the full
+  1,200-token completion limit and returned no usable JSON. Nike returned
+  `evidence_verdict=hold` while also selecting facts. A Notepad++ roundup returned
+  `same_incident` without an incident-establishing fact. Existing validators
+  correctly prevented every response from entering an Event ledger.
+- Application `f5cc352` adds explicit deterministic anchor flags, raises only this
+  curation stage's completion allowance to 2,400 tokens, and converts contradictory
+  selections to a conservative non-publishing result. It does not relax source
+  independence, evidence support, ledger lineage, narrative audit, promotion or
+  activation checks. Migration `pg_event_fact_curation_requeue_052` reactivated
+  only the exact corrected hold reasons.
+- 1,078 offline tests pass with two skips and five existing warnings. The immutable
+  source-only image was built from the deployed dependency image with network
+  disabled, imported on docker42/46/47/52, and deployed only to admin,
+  orchestrator and the OpenAI worker. Platform commit `726290f`; render/live diff
+  is empty. The old orchestrator was stopped before migration activation and the
+  hosted-model queue was empty before worker replacement.
+- Seven fresh Notepad++ v2 curation jobs succeeded. The unrelated SolarWinds
+  source was classified ambiguous with no incident signal; a genuine source was
+  enrolled with 13 selected facts. The prior ledger was then withdrawn as stale,
+  allowing deterministic reconstruction. Other reactivated cases remain active
+  in normal scheduler order and are not yet completion claims.
+- Homepage, Events index, WaterPlum detail, feed index and metrics returned HTTP
+  200. Updated pods are Ready with zero restarts, all nodes are Ready with
+  MemoryPressure false, and normal ingestion/CVE work continued. No Hugo command,
+  build-worker, web Deployment, daily JSON contract, model or concurrency change
+  occurred.
