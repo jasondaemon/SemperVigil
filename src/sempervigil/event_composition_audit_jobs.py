@@ -127,14 +127,28 @@ def run(conn, job, *, generate=None) -> dict:
         remediation = None
         from .event_composition_jobs import configuration as composition_configuration
         if composition.get("generation_version") == composition_configuration(conn)[2]:
-            try:
-                from .event_composition_repair_jobs import submit
-                remediation = {"status": "queued",
-                               "job_id": submit(conn, payload["composition_id"], decision),
-                               "workflow": "event-composition-repair-v1"}
-            except ValueError as exc:
-                remediation = {"status": "held", "reason": str(exc),
-                               "workflow": "event-composition-repair-v1"}
+            item_sections = {item["id"]: item["section"]
+                             for item in json.loads(req["input"])["items"]}
+            overview_failed = any(item_sections[row["id"]] == "overview"
+                                  for row in failures)
+            if not overview_failed:
+                from .event_composition import store_unreviewed
+                filtered = audit.filtered_record(
+                    payload["composition_id"], composition, ledger, decision)
+                filtered_id = store_unreviewed(conn, filtered)
+                accepted = review(conn, filtered_id, "accept", reason="", reviewer=REVIEWER)
+                remediation = {"status": "accepted", "composition_id": filtered_id,
+                               "application": accepted,
+                               "workflow": audit.FILTER_WORKFLOW}
+            else:
+                try:
+                    from .event_composition_repair_jobs import submit
+                    remediation = {"status": "queued",
+                                   "job_id": submit(conn, payload["composition_id"], decision),
+                                   "workflow": "event-composition-repair-v1"}
+                except ValueError as exc:
+                    remediation = {"status": "held", "reason": str(exc),
+                                   "workflow": "event-composition-repair-v1"}
     result.update(status="applied", application=applied, remediation=remediation)
     if not update_job_result(conn, job.id, result):
         raise ValueError("event_composition_audit_job_not_running")

@@ -55,6 +55,22 @@ def test_v9_repair_ids_match_generated_section_audit_ids():
     assert item["text"] == "Acme confirmed records were stolen."
 
 
+def test_v9_repair_drops_rejected_detail_instead_of_rewriting_it():
+    composition, revision, _ = material()
+    audit_req = audit.request("elc_test", composition, revision["ledger"], "a" * 64)
+    decision = audit.validate(json.dumps({"audits": [
+        {"id": "C01", "verdict": "unsupported", "reason": "Certainty drift."},
+        {"id": "C02", "verdict": "unsupported", "reason": "Redundant detail."},
+    ]}).encode(), audit_req)
+    req = repair.request("elc_test", composition, revision, decision, "b" * 64)
+    assert req["item_ids"] == ["C01"]
+    assert req["drop_item_ids"] == ["C02"]
+    record = repair.validate(json.dumps({"repairs": [{"id": "C01",
+        "text": "Acme said records may have been exposed."}]}).encode(),
+        req, composition, revision)
+    assert record["sections"]["impact"] == []
+
+
 def test_repair_requires_every_rejected_item_exactly_once():
     composition, revision, decision = material()
     req = repair.request("elc_test", composition, revision, decision, "b" * 64)

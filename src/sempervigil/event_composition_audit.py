@@ -101,12 +101,17 @@ def filtered_record(composition_id: str, composition: dict, ledger: dict,
     if set(verdicts) != set(req["item_ids"]):
         raise ValueError("event_composition_filter_audit_invalid")
     sections = {section: [] for section in composition.get("sections", {})}
+    current = composition.get("workflow") == event_composition.WORKFLOW
+    if current:
+        sections["timeline"] = [dict(item) for item in composition["sections"]["timeline"]]
     counter = 0
     for section, items in composition.get("sections", {}).items():
+        if current and section not in event_composition.GENERATED_SECTIONS:
+            continue
         for item in items:
             counter += 1
             verdict = verdicts.get(f"C{counter:02d}")
-            if verdict == "supported" or (verdict is None and section != "overview"):
+            if verdict == "supported":
                 sections[section].append(dict(item))
     if not sections.get("overview"):
         raise ValueError("event_composition_filter_overview_required")

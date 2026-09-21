@@ -95,3 +95,21 @@ def test_filter_holds_when_audit_removes_every_overview_item():
     ]}).encode(), req)
     with pytest.raises(ValueError, match="overview_required"):
         audit.filtered_record("elc_test", composition, ledger, decision)
+
+
+def test_v9_filter_removes_rejected_detail_and_preserves_supported_overview():
+    from sempervigil.event_composition import WORKFLOW
+    composition, ledger = material()
+    composition.update({"workflow": WORKFLOW, "ledger_id": "eld_test",
+                        "generation_version": "c" * 64,
+                        "request_version": "d" * 64, "status": "held",
+                        "public_eligible": False, "section_policy": "curated-sections-v3",
+                        "change": {}})
+    req = audit.request("elc_test", composition, ledger, GENERATION)
+    decision = audit.validate(json.dumps({"audits": [
+        {"id": "C01", "verdict": "supported", "reason": "Direct."},
+        {"id": "C02", "verdict": "unsupported", "reason": "Overstated."},
+    ]}).encode(), req)
+    result = audit.filtered_record("elc_test", composition, ledger, decision)
+    assert result["sections"]["overview"] == composition["sections"]["overview"]
+    assert result["sections"]["impact"] == []
