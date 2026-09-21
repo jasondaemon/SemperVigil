@@ -17,7 +17,8 @@ def material():
     ledger = {"public_eligible": False, "title": "Acme incident", "kind": "breach",
               "facts": [{"fact_id": "f1",
                          "statement": "Acme said records may have been exposed.",
-                         "kind": "allegation", "date_text": None, "date_role": "none"}],
+                         "kind": "allegation", "date_text": None, "date_role": "none",
+                         "sections": ["impact", "open_question"]}],
               "superseded_fact_ids": [], "conflict_fact_ids": []}
     revision = {"revision_id": "elr_test", "ledger_id": "eld_test", "status": "accepted",
                 "lineage_current": True, "ledger": ledger, "change": {}}

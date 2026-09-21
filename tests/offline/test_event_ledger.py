@@ -45,3 +45,15 @@ def test_unknown_change_kinds_are_not_admitted(kind):
 
 def test_publication_is_not_a_ledger_review_decision():
     assert "publish" not in event_ledger.DECISIONS
+
+
+def test_fact_preserves_curated_roles_without_reclassifying_words():
+    source = {"candidate_id": "ic_test", "evidence_revision_id": "aer_test",
+              "article_id": 7, "fact_sections": {"f1": ["response_recovery"]}}
+    raw = {"id": "f1", "statement": "The company reset all authentication factors.",
+           "kind": "reported_fact", "date_text": None, "date_role": "none",
+           "evidence_passages": [{"id": "p1", "start": 0, "end": 45,
+                                   "text": "The company reset all authentication factors."}]}
+    fact = event_ledger._fact(source, raw)
+    assert fact["sections"] == ["response_recovery"]
+    assert event_ledger._section_tags(fact) == ["context"]

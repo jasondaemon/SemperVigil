@@ -51,7 +51,8 @@ def test_fact_selection_must_be_unique_bounded_and_only_used_for_enrollment():
         rowcount = 1
 
         def fetchone(self):
-            return ("suggested", "accepted", '{"facts":[{"id":"f1"},{"id":"f2"}]}')
+            return ("suggested", "accepted", '{"facts":[{"id":"f1","kind":"reported_fact"},'
+                    '{"id":"f2","kind":"reported_fact"}]}')
 
     class Conn:
         def execute(self, *_args, **_kwargs):
@@ -62,11 +63,57 @@ def test_fact_selection_must_be_unique_bounded_and_only_used_for_enrollment():
 
     conn = Conn()
     result = candidates.review(conn, "ic_" + "1" * 64, "enroll", reason="",
-                               reviewer="test", selected_fact_ids=["f2"])
+                               reviewer="test", selected_fact_ids=["f2"],
+                               fact_sections={"f2": ["response_recovery"]})
     assert result["selected_fact_ids"] == ["f2"]
     with pytest.raises(ValueError, match="fact_selection_invalid"):
         candidates.review(conn, "ic_" + "1" * 64, "enroll", reason="",
-                          reviewer="test", selected_fact_ids=["missing"])
+                          reviewer="test", selected_fact_ids=["missing"],
+                          fact_sections={"missing": ["context"]})
     with pytest.raises(ValueError, match="fact_selection_invalid"):
         candidates.review(conn, "ic_" + "1" * 64, "hold", reason="hold",
-                          reviewer="test", selected_fact_ids=["f1"])
+                          reviewer="test", selected_fact_ids=["f1"],
+                          fact_sections={"f1": ["context"]})
+
+
+def test_newer_curation_can_replace_or_remove_an_enrolled_selection():
+    class Result:
+        rowcount = 1
+
+        def __init__(self, row=None):
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+    class Conn:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, sql, params):
+            self.calls.append((sql, params))
+            if "SELECT c.status" in sql:
+                return Result(("enrolled", '["f1"]', "accepted",
+                    '{"facts":[{"id":"f1","kind":"reported_fact"},'
+                    '{"id":"f2","kind":"reported_fact"}]}',
+                    '{"f1":["context"]}'))
+            return Result()
+
+        def commit(self):
+            pass
+
+    conn = Conn()
+    result = candidates.refine_selection(
+        conn, "ic_" + "1" * 64, ["f1", "f2"],
+        fact_sections={"f1": ["context"], "f2": ["response_recovery"]},
+        reason="New curation retained recovery detail.", reviewer="test")
+    assert result["reused"] is False
+    assert result["selected_fact_ids"] == ["f1", "f2"]
+    assert any("selected_fact_sections_json" in sql and "UPDATE" in sql
+               for sql, _ in conn.calls)
+
+    removed = candidates.revise_enrollment(
+        conn, "ic_" + "1" * 64, "reject",
+        reason="New curation found a different incident.", reviewer="test")
+    assert removed["status"] == "rejected"
+    assert removed["selected_fact_ids"] == []

@@ -7,6 +7,23 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
+## September 21: semantic Event fact roles in local qualification
+
+The next Event pipeline revision removes keyword-based section inference from new
+ledgers. `event-fact-curation-v4` retains an Event-aware semantic role for every
+selected passage-grounded fact. Python validates identifiers, role enums,
+recommendation boundaries and timeline dates, but no longer decides whether a
+fact is attack path, impact or recovery by searching its words. New immutable
+ledgers and compositions use `accepted-evidence-event-ledger-v2` and
+`curated-sections-v3`; existing publications retain their recorded policy.
+
+Read-only production measurements cover 323 successful curation calls: input
+length 2,779-40,534 characters (10,681 average) and output length 0-2,030
+characters (937 average). The compact role assignment fits the existing 48 KB
+input and 2,400-token output limits without changing model concurrency. The full
+offline gate passes 1,112 tests with one skip. Live hosted-model qualification and
+deployment remain pending. See `EVENT_SEMANTIC_FACT_ROLES.md`.
+
 ## September 20: normalized Event fact-curation requests deployed
 
 `event-fact-curation-v3` transmits every exact evidence passage once and has each

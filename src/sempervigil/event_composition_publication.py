@@ -170,9 +170,11 @@ def validate_bundle(bundle: dict, *, event_id: str, expected_revision: str | Non
             or bundle["ledger_revision_id"] != "elr_" + _version(ledger_record)
             or bundle["composition_id"] != "elc_" + _version(composition)
             or composition.get("ledger_revision_id") != bundle["ledger_revision_id"]
-            or composition.get("workflow") != event_composition.WORKFLOW
+            or composition.get("workflow") not in {
+                event_composition.WORKFLOW, event_composition.LEGACY_WORKFLOW}
             or composition.get("public_eligible") is not False
-            or ledger_record["ledger"].get("workflow") != "accepted-evidence-event-ledger-v1"
+            or ledger_record["ledger"].get("workflow") not in {
+                "accepted-evidence-event-ledger-v1", "accepted-evidence-event-ledger-v2"}
             or ledger_record["ledger"].get("public_eligible") is not False):
         raise ValueError("event_composition_publication_integrity_failure")
     if (not isinstance(bundle["sources"], list) or not bundle["sources"]

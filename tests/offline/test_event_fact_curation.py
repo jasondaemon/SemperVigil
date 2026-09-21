@@ -37,16 +37,23 @@ def test_curation_selects_only_event_scoped_facts():
     assert [row["passage_ids"] for row in payload["facts"]] == [["p001"], ["p002"], ["p003"]]
     assert all("passages" not in row for row in payload["facts"])
     raw = {"evidence_verdict": "supported", "incident_verdict": "same_incident",
-           "selected_fact_ids": ["f1", "f2"], "reason": "The first two facts concern Acme."}
+           "selected_fact_ids": ["f1", "f2"],
+           "fact_sections": [
+               {"fact_id": "f1", "sections": ["attack_vector", "context"]},
+               {"fact_id": "f2", "sections": ["response_recovery"]},
+           ], "reason": "The first two facts concern Acme."}
     result = curation.validate(json.dumps(raw).encode(), req, {"f1"})
     assert result["selected_fact_ids"] == ["f1", "f2"]
+    assert result["fact_sections"]["f2"] == ["response_recovery"]
     assert result["public_eligible"] is False
 
 
 def test_curation_conservatively_discards_unsafe_selections():
     req = curation.request(*material(), GENERATION, {"f1"})
     raw = {"evidence_verdict": "supported", "incident_verdict": "same_incident",
-           "selected_fact_ids": ["f2"], "reason": "Recovery only."}
+           "selected_fact_ids": ["f2"],
+           "fact_sections": [{"fact_id": "f2", "sections": ["response_recovery"]}],
+           "reason": "Recovery only."}
     result = curation.validate(json.dumps(raw).encode(), req, {"f1"})
     assert result["incident_verdict"] == "ambiguous"
     assert result["selected_fact_ids"] == []
@@ -60,7 +67,7 @@ def test_curation_conservatively_discards_unsafe_selections():
 def test_curation_rejects_unknown_fact_ids_in_schema():
     req = curation.request(*material(), GENERATION)
     raw = {"evidence_verdict": "supported", "incident_verdict": "same_incident",
-           "selected_fact_ids": ["missing"], "reason": "Unknown."}
+           "selected_fact_ids": ["missing"], "fact_sections": [], "reason": "Unknown."}
     with pytest.raises(ValueError, match="invalid_shape"):
         curation.validate(json.dumps(raw).encode(), req, {"f1"})
 
@@ -69,7 +76,9 @@ def test_curation_rejects_duplicate_fact_ids_without_unsupported_schema_keyword(
     req = curation.request(*material(), GENERATION)
     assert "uniqueItems" not in req["schema"]["properties"]["selected_fact_ids"]
     raw = {"evidence_verdict": "supported", "incident_verdict": "same_incident",
-           "selected_fact_ids": ["f1", "f1"], "reason": "Duplicate selection."}
+           "selected_fact_ids": ["f1", "f1"],
+           "fact_sections": [{"fact_id": "f1", "sections": ["context"]}],
+           "reason": "Duplicate selection."}
     with pytest.raises(ValueError, match="duplicate_selection"):
         curation.validate(json.dumps(raw).encode(), req, {"f1"})
 
@@ -110,3 +119,16 @@ def test_curation_shared_passages_keep_valid_fact_inventory_within_budget():
     assert len(payload["facts"]) == 32
     assert len((req["system"] + req["input"] + json.dumps(req["schema"])).encode()) \
         <= curation.MAX_INPUT_BYTES
+
+
+def test_curation_rejects_semantically_unsafe_role_combinations():
+    event, article, evidence = material()
+    evidence["facts"][1]["kind"] = "recommendation"
+    req = curation.request(event, article, evidence, GENERATION, {"f1"})
+    raw = {"evidence_verdict": "supported", "incident_verdict": "same_incident",
+           "selected_fact_ids": ["f1", "f2"],
+           "fact_sections": [{"fact_id": "f1", "sections": ["context"]},
+                             {"fact_id": "f2", "sections": ["attack_path"]}],
+           "reason": "Unsafe recommendation role."}
+    with pytest.raises(ValueError, match="sections_unsafe"):
+        curation.validate(json.dumps(raw).encode(), req, {"f1"})

@@ -16,7 +16,7 @@ def ledger_revision():
     facts = [
         {"fact_id": "f1", "statement": "Acme reported unauthorized access on July 4.",
          "kind": "reported_fact", "date_text": "July 4", "date_role": "incident",
-         "sections": ["timeline", "attack_path"],
+         "sections": ["timeline", "attack_vector", "attack_path"],
          "exact_passages": [{"passage_id": "p1", "text": "Acme reported unauthorized access on July 4."}]},
         {"fact_id": "f2", "statement": "Recovery remains unconfirmed.",
          "kind": "uncertainty", "date_text": None, "date_role": "none",
@@ -63,23 +63,29 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
     assert record["change"] == ledger_revision()["change"]
 
 
-def test_allowed_sections_reclassify_existing_ledger_facts_without_mutation():
+def test_allowed_sections_use_curated_semantics_without_keyword_reclassification():
     response = {"statement": "The company patched the flaw and notified affected users.",
                 "kind": "reported_fact", "date_text": None, "date_role": "none",
                 "sections": ["context"]}
+    assert "response_recovery" not in composition._allowed_sections(response)
+    response["sections"] = ["response_recovery"]
     assert "response_recovery" in composition._allowed_sections(response)
     access = {"statement": "Attackers breached the customer system and downloaded records.",
               "kind": "reported_fact", "date_text": None, "date_role": "none",
               "sections": ["context"]}
-    assert "attack_path" in composition._allowed_sections(access)
+    assert "attack_path" not in composition._allowed_sections(access)
 
 
-def test_allowed_sections_can_remove_stale_unsafe_permissions():
+def test_prior_policies_remain_reproducible_for_existing_publications():
     stolen = {"statement": "The exposed information included email addresses and phone numbers.",
               "kind": "reported_fact", "date_text": None, "date_role": "none",
               "sections": ["attack_path"]}
-    assert "attack_path" not in composition._allowed_sections(stolen)
-    assert "impact" in composition._allowed_sections(stolen)
+    assert "attack_path" in composition._allowed_sections(stolen)
+    assert "impact" not in composition._allowed_sections(stolen)
+    assert "attack_path" not in composition._allowed_sections(
+        stolen, composition.DETERMINISTIC_SECTION_POLICY)
+    assert "impact" in composition._allowed_sections(
+        stolen, composition.DETERMINISTIC_SECTION_POLICY)
     assert "attack_path" in composition._allowed_sections(
         stolen, composition.LEGACY_SECTION_POLICY)
     legacy_theft = {"statement": "The attackers stole customer information.",
@@ -93,15 +99,20 @@ def test_allowed_sections_can_remove_stale_unsafe_permissions():
 def test_timeline_normalization_ignores_publication_and_collapses_equivalent_dates():
     aliases = {
         "F01": {"fact_id": "one", "statement": "The incident began in June 2025.",
-                 "kind": "reported_fact", "date_text": "June 2025", "date_role": "incident"},
+                 "kind": "reported_fact", "date_text": "June 2025", "date_role": "incident",
+                 "sections": ["timeline"]},
         "F02": {"fact_id": "two", "statement": "The compromise is believed to have begun in June 2025.",
-                 "kind": "reported_fact", "date_text": "June 2025", "date_role": "incident"},
+                 "kind": "reported_fact", "date_text": "June 2025", "date_role": "incident",
+                 "sections": ["timeline"]},
         "F03": {"fact_id": "three", "statement": "All malicious activity was terminated.",
-                 "kind": "reported_fact", "date_text": "December 2, 2025", "date_role": "incident"},
+                 "kind": "reported_fact", "date_text": "December 2, 2025", "date_role": "incident",
+                 "sections": ["timeline"]},
         "F04": {"fact_id": "four", "statement": "The findings were no longer observed.",
-                 "kind": "reported_fact", "date_text": "2nd of December, 2025", "date_role": "incident"},
+                 "kind": "reported_fact", "date_text": "2nd of December, 2025", "date_role": "incident",
+                 "sections": ["timeline"]},
         "F05": {"fact_id": "five", "statement": "The article was published.",
-                 "kind": "reported_fact", "date_text": "2 February 2026", "date_role": "publication"},
+                 "kind": "reported_fact", "date_text": "2 February 2026", "date_role": "publication",
+                 "sections": ["context"]},
     }
     refs = composition._timeline_refs(aliases)
     assert len(refs) == 2
@@ -111,9 +122,11 @@ def test_timeline_normalization_ignores_publication_and_collapses_equivalent_dat
 def test_timeline_normalization_matches_missing_year_to_one_explicit_year():
     aliases = {
         "F01": {"fact_id": "one", "statement": "Credentials remained exposed until the cutoff.",
-                 "kind": "reported_fact", "date_text": "2nd of December", "date_role": "incident"},
+                 "kind": "reported_fact", "date_text": "2nd of December", "date_role": "incident",
+                 "sections": ["timeline"]},
         "F02": {"fact_id": "two", "statement": "Activity was terminated at the cutoff.",
-                 "kind": "reported_fact", "date_text": "December 2, 2025", "date_role": "incident"},
+                 "kind": "reported_fact", "date_text": "December 2, 2025", "date_role": "incident",
+                 "sections": ["timeline"]},
     }
     assert len(composition._timeline_refs(aliases)) == 1
 
@@ -122,7 +135,7 @@ def test_timeline_normalization_fails_closed_over_eight_distinct_milestones():
     aliases = {
         f"F{index:02d}": {"fact_id": str(index), "statement": f"Milestone {index} occurred.",
                           "kind": "reported_fact", "date_text": f"January {index}, 2026",
-                          "date_role": "incident"}
+                          "date_role": "incident", "sections": ["timeline"]}
         for index in range(1, 10)
     }
     with pytest.raises(ValueError, match="timeline_over_budget"):

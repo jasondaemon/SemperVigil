@@ -1,10 +1,12 @@
 """Private, versioned Event fact ledger derived from accepted article evidence."""
 import json
 
+from .event_fact_roles import validate as validate_sections
 from .investigation import _version
 from .utils import utc_now_iso
 
-WORKFLOW = "accepted-evidence-event-ledger-v1"
+WORKFLOW = "accepted-evidence-event-ledger-v2"
+LEGACY_WORKFLOW = "accepted-evidence-event-ledger-v1"
 CHANGE_KINDS = {"initial", "additive", "correction", "conflict"}
 DECISIONS = {"accept", "hold", "reject", "withdraw"}
 
@@ -22,7 +24,7 @@ def _source(conn, candidate_id: str) -> dict:
         """
         SELECT c.candidate_id, c.article_id, c.status, c.kind, c.title,
                c.signals_json, r.revision_id, r.status, r.evidence_json,
-               c.selected_fact_ids_json
+               c.selected_fact_ids_json, c.selected_fact_sections_json
         FROM incident_candidates c
         JOIN article_evidence_revisions r ON r.revision_id=c.evidence_revision_id
         WHERE c.candidate_id=%s
@@ -46,9 +48,19 @@ def _source(conn, candidate_id: str) -> dict:
         facts = [fact for fact in facts if fact.get("id") in selected]
         if not facts or {fact.get("id") for fact in facts} != selected:
             raise ValueError("event_ledger_fact_selection_invalid")
+        if not row[10]:
+            raise ValueError("event_ledger_fact_sections_missing")
+        stored_sections = _decode(row[10])
+        assignments = [{"fact_id": fact_id, "sections": sections}
+                       for fact_id, sections in stored_sections.items()]
+        fact_sections = validate_sections(
+            {str(fact.get("id") or ""): fact for fact in facts}, selected, assignments)
+    else:
+        raise ValueError("event_ledger_fact_selection_missing")
     return {
         "candidate_id": row[0], "article_id": row[1], "kind": row[3], "title": row[4],
         "signals": _decode(row[5]), "evidence_revision_id": row[6], "facts": facts,
+        "fact_sections": fact_sections,
     }
 
 
@@ -70,6 +82,7 @@ def _fact(source: dict, fact: dict) -> dict:
         "evidence_revision_id": source["evidence_revision_id"], "article_id": source["article_id"],
         "statement": fact["statement"], "kind": fact["kind"],
         "date_text": fact["date_text"], "date_role": fact["date_role"],
+        "sections": source["fact_sections"][fact["id"]],
         "exact_passages": exact,
     }
 
@@ -148,7 +161,6 @@ def propose(conn, candidate_id: str, *, ledger_id: str | None = None,
     for raw in source["facts"]:
         item = _fact(source, raw)
         if item["fact_id"] not in known:
-            item["sections"] = _section_tags(item)
             facts.append(item)
             known.add(item["fact_id"])
             added.append(item["fact_id"])
@@ -236,7 +248,6 @@ def propose_initial_sources(conn, candidate_ids: list[str], *, ledger_id: str,
             if item["fact_id"] in known:
                 continue
             known.add(item["fact_id"])
-            item["sections"] = _section_tags(item)
             facts.append(item)
     if not facts:
         raise ValueError("event_ledger_initial_cohort_empty")
@@ -316,14 +327,21 @@ def _lineage_current(conn, revision_id: str) -> bool:
             str(fact.get("fact_id") or "")
         )
     rows = conn.execute(
-        """SELECT s.candidate_id,c.selected_fact_ids_json
+        """SELECT s.candidate_id,c.selected_fact_ids_json,c.selected_fact_sections_json
              FROM event_ledger_revision_sources s JOIN incident_candidates c
                ON c.candidate_id=s.candidate_id
             WHERE s.revision_id=%s""", (revision_id,),
     ).fetchall()
-    for candidate_id, selected_raw in rows:
+    for candidate_id, selected_raw, sections_raw in rows:
         if selected_raw and actual.get(candidate_id, set()) != set(json.loads(selected_raw)):
             return False
+        if sections_raw:
+            expected = _decode(sections_raw)
+            actual_sections = {fact["fact_id"]: fact.get("sections", [])
+                               for fact in ledger.get("facts", [])
+                               if fact.get("candidate_id") == candidate_id}
+            if actual_sections != expected:
+                return False
     return True
 
 

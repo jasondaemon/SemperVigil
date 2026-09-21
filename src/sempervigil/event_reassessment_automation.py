@@ -82,7 +82,8 @@ def _advance_proposed_ledger(conn, event_id: str, revision_id: str) -> dict:
 
 def _candidate_rows(conn, event_id: str) -> list[tuple]:
     return conn.execute(
-        """SELECT c.candidate_id,c.status,c.selected_fact_ids_json,a.original_url
+        """SELECT c.candidate_id,c.status,c.selected_fact_ids_json,a.original_url,
+                  c.selected_fact_sections_json
              FROM incident_candidates c JOIN articles a ON a.id=c.article_id
             WHERE c.event_id=%s ORDER BY c.created_at,c.candidate_id""", (event_id,),
     ).fetchall()
@@ -179,7 +180,7 @@ def advance(conn, event_id: str) -> dict:
                 continue
             return _hold(conn, event_id, "current evidence revision unavailable")
         candidate = conn.execute(
-            """SELECT status,selected_fact_ids_json FROM incident_candidates
+            """SELECT status,selected_fact_ids_json,selected_fact_sections_json FROM incident_candidates
                 WHERE event_id=%s AND evidence_revision_id=%s""", (event_id, revision[0]),
         ).fetchone()
         if revision[1] == "rejected":
@@ -187,7 +188,7 @@ def advance(conn, event_id: str) -> dict:
         if revision[1] == "superseded":
             return _hold(conn, event_id, "current evidence revision unexpectedly superseded")
         if candidate and (candidate[0] in {"rejected", "held"}
-                          or (candidate[0] == "enrolled" and candidate[1])):
+                          or (candidate[0] == "enrolled" and candidate[1] and candidate[2])):
             continue
         from .event_fact_curation_jobs import submit
         try:
@@ -203,7 +204,7 @@ def advance(conn, event_id: str) -> dict:
                 "action": "fact_curation_queued"}
 
     candidates = _candidate_rows(conn, event_id)
-    enrolled = [row for row in candidates if row[1] == "enrolled" and row[2]]
+    enrolled = [row for row in candidates if row[1] == "enrolled" and row[2] and row[4]]
     domains = {(urlparse(str(row[3] or "")).hostname or "").lower().removeprefix("www.")
                for row in enrolled}
     domains.discard("")

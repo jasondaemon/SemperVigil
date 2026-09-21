@@ -12,7 +12,7 @@ from .storage import enqueue_job, get_article_by_id, insert_llm_run, update_job_
 JOB_TYPE = "event_fact_curate"
 MODEL_NAME = "gpt-5.6-luna"
 PARAMS = {"max_completion_tokens": 2400, "reasoning_effort": "low"}
-REVIEWER = "policy:event-fact-curation-v3"
+REVIEWER = "policy:event-fact-curation-v4"
 
 
 def require_enabled() -> None:
@@ -114,10 +114,17 @@ def complete(conn, job_id: str, req: dict) -> str:
 
 def _apply(conn, event_id: str, revision_id: str, result: dict) -> dict:
     from .article_evidence_store import review as review_evidence
-    from .incident_candidates import project, review as review_candidate, refine_selection
+    from .incident_candidates import (project, review as review_candidate, refine_selection,
+                                      revise_enrollment)
 
     _, _, _, state = material(conn, event_id, revision_id)
     if result["evidence_verdict"] == "hold":
+        candidate = conn.execute(
+            "SELECT candidate_id,status FROM incident_candidates WHERE event_id=%s AND evidence_revision_id=%s",
+            (event_id, revision_id),
+        ).fetchone()
+        if candidate and candidate[1] == "enrolled":
+            revise_enrollment(conn, candidate[0], "hold", reason=result["reason"], reviewer=REVIEWER)
         if state["status"] in {"unreviewed", "held"}:
             review_evidence(conn, revision_id, "hold", reason=result["reason"], reviewer=REVIEWER)
         return {"status": "held", "reason": result["reason"]}
@@ -134,8 +141,13 @@ def _apply(conn, event_id: str, revision_id: str, result: dict) -> dict:
     decision = result["incident_verdict"]
     if row[0] == "enrolled":
         if decision != "same_incident":
-            raise ValueError("event_fact_curation_enrollment_conflict")
+            revised = revise_enrollment(
+                conn, candidate_id, "reject" if decision == "unrelated" else "hold",
+                reason=result["reason"], reviewer=REVIEWER)
+            return {"status": revised["status"], "candidate_id": candidate_id,
+                    "selected_fact_ids": []}
         refined = refine_selection(conn, candidate_id, result["selected_fact_ids"],
+                                   fact_sections=result["fact_sections"],
                                    reason=result["reason"], reviewer=REVIEWER)
         return {"status": "enrolled", "candidate_id": candidate_id,
                 "selected_fact_ids": refined["selected_fact_ids"]}
@@ -145,7 +157,8 @@ def _apply(conn, event_id: str, revision_id: str, result: dict) -> dict:
     if row[0] in {"suggested", "held"}:
         mapped = {"same_incident": "enroll", "unrelated": "reject", "ambiguous": "hold"}[decision]
         reviewed = review_candidate(conn, candidate_id, mapped, reason=result["reason"], reviewer=REVIEWER,
-                                    selected_fact_ids=result["selected_fact_ids"] if mapped == "enroll" else None)
+                                    selected_fact_ids=result["selected_fact_ids"] if mapped == "enroll" else None,
+                                    fact_sections=result["fact_sections"] if mapped == "enroll" else None)
         return {"status": reviewed["status"], "candidate_id": candidate_id,
                 "selected_fact_ids": reviewed["selected_fact_ids"]}
     return {"status": row[0], "candidate_id": candidate_id}

@@ -3,6 +3,7 @@ import json
 import re
 
 from .investigation import _version
+from .event_fact_roles import validate as validate_sections
 from .utils import utc_now_iso
 
 PROJECTION_VERSION = "accepted-evidence-candidate-v2"
@@ -144,7 +145,8 @@ def project(conn, revision_id: str, *, event_id: str | None = None) -> dict:
 
 
 def review(conn, candidate_id: str, decision: str, *, reason: str, reviewer: str,
-           selected_fact_ids: list[str] | None = None) -> dict:
+           selected_fact_ids: list[str] | None = None,
+           fact_sections: dict[str, list[str]] | None = None) -> dict:
     if decision not in DECISIONS:
         raise ValueError("incident_candidate_decision_invalid")
     if not candidate_id.startswith("ic_") or not reviewer.strip() or len(reviewer) > 80:
@@ -154,7 +156,9 @@ def review(conn, candidate_id: str, decision: str, *, reason: str, reviewer: str
         raise ValueError("incident_candidate_reason_required")
     if len(reason) > 1000:
         raise ValueError("incident_candidate_reason_too_long")
-    if selected_fact_ids is not None and decision != "enroll":
+    if (selected_fact_ids is None) != (fact_sections is None):
+        raise ValueError("incident_candidate_fact_selection_invalid")
+    if (selected_fact_ids is not None or fact_sections is not None) and decision != "enroll":
         raise ValueError("incident_candidate_fact_selection_invalid")
     current = conn.execute(
         """
@@ -170,7 +174,7 @@ def review(conn, candidate_id: str, decision: str, *, reason: str, reviewer: str
         raise ValueError("incident_candidate_missing_or_decided")
     if current[1] != "accepted":
         raise ValueError("incident_candidate_evidence_not_accepted")
-    selected_json = None
+    selected_json = sections_json = None
     if decision == "enroll" and selected_fact_ids is not None:
         if not selected_fact_ids:
             raise ValueError("incident_candidate_fact_selection_required")
@@ -178,38 +182,47 @@ def review(conn, candidate_id: str, decision: str, *, reason: str, reviewer: str
                 or any(not isinstance(item, str) or not item for item in selected_fact_ids)):
             raise ValueError("incident_candidate_fact_selection_invalid")
         evidence = _decode(current[2])
-        known = {str(item.get("id") or "") for item in evidence.get("facts", [])}
+        facts = {str(item.get("id") or ""): item for item in evidence.get("facts", [])}
+        known = set(facts)
         if not set(selected_fact_ids) <= known:
             raise ValueError("incident_candidate_fact_selection_invalid")
+        assignments = [{"fact_id": fact_id, "sections": sections}
+                       for fact_id, sections in (fact_sections or {}).items()]
+        normalized = validate_sections(facts, set(selected_fact_ids), assignments)
         selected_json = json.dumps(sorted(selected_fact_ids), separators=(",", ":"))
+        sections_json = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
     next_status = "enrolled" if decision == "enroll" else ("held" if decision == "hold" else "rejected")
     changed = conn.execute(
         """
         UPDATE incident_candidates
         SET status=%s, reviewed_at=%s, reviewed_by=%s, review_reason=%s,
-            selected_fact_ids_json=%s
+            selected_fact_ids_json=%s, selected_fact_sections_json=%s
         WHERE candidate_id=%s AND status IN ('suggested', 'held')
         """,
-        (next_status, utc_now_iso(), reviewer, reason or None, selected_json, candidate_id),
+        (next_status, utc_now_iso(), reviewer, reason or None, selected_json, sections_json, candidate_id),
     )
     if changed.rowcount != 1:
         raise ValueError("incident_candidate_missing_or_decided")
     conn.commit()
     return {"candidate_id": candidate_id, "status": next_status,
-            "selected_fact_ids": sorted(selected_fact_ids or []), "public_eligible": False}
+            "selected_fact_ids": sorted(selected_fact_ids or []),
+            "fact_sections": json.loads(sections_json) if sections_json else {},
+            "public_eligible": False}
 
 
 def refine_selection(conn, candidate_id: str, selected_fact_ids: list[str], *,
-                     reason: str, reviewer: str) -> dict:
-    """Add the first scoped fact selection to a legacy enrolled candidate."""
+                     fact_sections: dict[str, list[str]], reason: str, reviewer: str) -> dict:
+    """Replace an enrolled candidate's selection with a newer curated decision."""
     if (not candidate_id.startswith("ic_") or not reviewer.strip() or len(reviewer) > 80
             or not reason.strip() or len(reason.strip()) > 1000
             or not selected_fact_ids or len(selected_fact_ids) > 100
             or len(set(selected_fact_ids)) != len(selected_fact_ids)
+            or not isinstance(fact_sections, dict)
             or any(not isinstance(item, str) or not item for item in selected_fact_ids)):
         raise ValueError("incident_candidate_fact_selection_invalid")
     row = conn.execute(
-        """SELECT c.status,c.selected_fact_ids_json,r.status,r.evidence_json
+        """SELECT c.status,c.selected_fact_ids_json,r.status,r.evidence_json,
+                  c.selected_fact_sections_json
              FROM incident_candidates c JOIN article_evidence_revisions r
                ON r.revision_id=c.evidence_revision_id
             WHERE c.candidate_id=%s FOR UPDATE""",
@@ -218,24 +231,51 @@ def refine_selection(conn, candidate_id: str, selected_fact_ids: list[str], *,
     if not row or row[0] != "enrolled" or row[2] != "accepted":
         raise ValueError("incident_candidate_missing_or_decided")
     selected = sorted(selected_fact_ids)
-    if row[1]:
-        if json.loads(row[1]) != selected:
-            raise ValueError("incident_candidate_fact_selection_conflict")
+    facts = {str(item.get("id") or ""): item for item in _decode(row[3]).get("facts", [])}
+    assignments = [{"fact_id": fact_id, "sections": sections}
+                   for fact_id, sections in fact_sections.items()]
+    normalized = validate_sections(facts, set(selected), assignments)
+    encoded_sections = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+    if row[1] and json.loads(row[1]) == selected and row[4] == encoded_sections:
         return {"candidate_id": candidate_id, "status": "enrolled",
-                "selected_fact_ids": selected, "reused": True, "public_eligible": False}
-    known = {str(item.get("id") or "") for item in _decode(row[3]).get("facts", [])}
+                "selected_fact_ids": selected, "fact_sections": normalized,
+                "reused": True, "public_eligible": False}
+    known = set(facts)
     if not set(selected) <= known:
         raise ValueError("incident_candidate_fact_selection_invalid")
     conn.execute(
-        """UPDATE incident_candidates SET selected_fact_ids_json=%s,reviewed_at=%s,
+        """UPDATE incident_candidates SET selected_fact_ids_json=%s,
+                  selected_fact_sections_json=%s,reviewed_at=%s,
                   reviewed_by=%s,review_reason=%s
-            WHERE candidate_id=%s AND status='enrolled' AND selected_fact_ids_json IS NULL""",
-        (json.dumps(selected, separators=(",", ":")), utc_now_iso(), reviewer,
+            WHERE candidate_id=%s AND status='enrolled'""",
+        (json.dumps(selected, separators=(",", ":")), encoded_sections, utc_now_iso(), reviewer,
          reason.strip(), candidate_id),
     )
     conn.commit()
     return {"candidate_id": candidate_id, "status": "enrolled",
-            "selected_fact_ids": selected, "reused": False, "public_eligible": False}
+            "selected_fact_ids": selected, "fact_sections": normalized,
+            "reused": False, "public_eligible": False}
+
+
+def revise_enrollment(conn, candidate_id: str, decision: str, *,
+                      reason: str, reviewer: str) -> dict:
+    """Conservatively remove a previously enrolled source after newer curation."""
+    if (decision not in {"hold", "reject"} or not candidate_id.startswith("ic_")
+            or not reviewer.strip() or len(reviewer) > 80 or not reason.strip()
+            or len(reason.strip()) > 1000):
+        raise ValueError("incident_candidate_revision_invalid")
+    status = "held" if decision == "hold" else "rejected"
+    changed = conn.execute(
+        """UPDATE incident_candidates SET status=%s,selected_fact_ids_json=NULL,
+                  selected_fact_sections_json=NULL,reviewed_at=%s,reviewed_by=%s,
+                  review_reason=%s WHERE candidate_id=%s AND status='enrolled'""",
+        (status, utc_now_iso(), reviewer, reason.strip(), candidate_id),
+    )
+    if changed.rowcount != 1:
+        raise ValueError("incident_candidate_missing_or_decided")
+    conn.commit()
+    return {"candidate_id": candidate_id, "status": status,
+            "selected_fact_ids": [], "fact_sections": {}, "public_eligible": False}
 
 
 def list_candidates(conn, *, status: str = "suggested", limit: int = 50) -> list[dict]:
@@ -249,7 +289,7 @@ def list_candidates(conn, *, status: str = "suggested", limit: int = 50) -> list
         SELECT c.candidate_id, c.evidence_revision_id, c.article_id, c.status,
                c.kind, c.title, c.signals_json, c.created_at, c.reviewed_at,
                c.reviewed_by, c.review_reason, r.status, r.evidence_json,
-               c.selected_fact_ids_json, c.event_id
+               c.selected_fact_ids_json, c.event_id, c.selected_fact_sections_json
         FROM incident_candidates c
         JOIN article_evidence_revisions r ON r.revision_id=c.evidence_revision_id
         {where}
@@ -262,12 +302,14 @@ def list_candidates(conn, *, status: str = "suggested", limit: int = 50) -> list
     for row in rows:
         evidence = _decode(row[12])
         selected = json.loads(row[13]) if row[13] else None
+        sections = json.loads(row[15]) if row[15] else None
         result.append({"candidate_id": row[0], "evidence_revision_id": row[1],
              "article_id": row[2], "status": row[3], "kind": row[4],
              "title": row[5], "signals": _decode(row[6]), "created_at": row[7],
              "reviewed_at": row[8], "reviewed_by": row[9], "review_reason": row[10]}
             | {"evidence_status": row[11], "eligible_for_curation": row[11] == "accepted",
                "selected_fact_ids": selected, "event_id": row[14],
+               "fact_sections": sections,
                "facts": [{key: fact.get(key) for key in
                            ("id", "statement", "kind", "date_text", "date_role")}
                           for fact in evidence.get("facts", [])]})

@@ -9,8 +9,10 @@ from .event_review import _json
 from .investigation import _version
 from .utils import utc_now_iso
 
-WORKFLOW = "event-ledger-composition-v4"
-SECTION_POLICY = "deterministic-sections-v2"
+WORKFLOW = "event-ledger-composition-v5"
+LEGACY_WORKFLOW = "event-ledger-composition-v4"
+SECTION_POLICY = "curated-sections-v3"
+DETERMINISTIC_SECTION_POLICY = "deterministic-sections-v2"
 LEGACY_SECTION_POLICY = "stored-union-v1"
 MAX_INPUT_BYTES = 48000
 MAX_OUTPUT_BYTES = 24000
@@ -49,15 +51,17 @@ def _active_facts(ledger: dict) -> tuple[list[dict], dict[str, dict]]:
 
 def _allowed_sections(fact: dict, policy: str = SECTION_POLICY) -> list[str]:
     result = {"overview"}
-    mapping = {"timeline": "timeline", "attack_path": "attack_path",
+    mapping = {"timeline": "timeline", "attack_vector": "attack_vector",
+               "attack_path": "attack_path",
                "impact": "impact", "mitigation": "mitigations",
                "response_recovery": "response_recovery",
                "attribution": "attribution", "open_question": "open_questions"}
     from .event_ledger import _section_tags
     if policy == SECTION_POLICY:
-        # Persisted tags explain the historical extraction decision. Future
-        # compositions use the current classifier so a corrected rule can narrow
-        # an unsafe permission without mutating immutable evidence.
+        sections = set(fact.get("sections", []))
+        if not sections:
+            raise ValueError("event_composition_fact_sections_missing")
+    elif policy == DETERMINISTIC_SECTION_POLICY:
         sections = set(_section_tags(fact))
     elif policy == LEGACY_SECTION_POLICY:
         sections = set(fact.get("sections", [])) | set(_section_tags(fact))
@@ -68,7 +72,7 @@ def _allowed_sections(fact: dict, policy: str = SECTION_POLICY) -> list[str]:
     for section in sections:
         if section in mapping:
             result.add(mapping[section])
-        if section == "attack_path":
+        if section == "attack_path" and policy != SECTION_POLICY:
             result.add("attack_vector")
     return [section for section in SECTIONS if section in result]
 
@@ -99,7 +103,8 @@ def _timeline_refs(aliases: dict[str, dict]) -> list[str]:
     """Choose one auditable milestone per equivalent non-publication date label."""
     candidates = [(ref, fact, _date_parts(str(fact.get("date_text") or "")))
                   for ref, fact in aliases.items()
-                  if fact.get("date_text") and fact.get("date_role") != "publication"]
+                  if fact.get("date_text") and fact.get("date_role") != "publication"
+                  and "timeline" in _allowed_sections(fact)]
     explicit_years: dict[tuple[int | None, int | None, str], set[int]] = {}
     for _, _, (year, month, day, qualifier) in candidates:
         if year:

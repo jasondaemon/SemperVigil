@@ -580,6 +580,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_event_composition_audit_completion_requeue_054")
             applied.add("pg_event_composition_audit_completion_requeue_054")
+        if "pg_event_fact_semantic_sections_055" not in applied:
+            _migrate_event_fact_semantic_sections(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_event_fact_semantic_sections_055", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_event_fact_semantic_sections_055")
+            applied.add("pg_event_fact_semantic_sections_055")
         else:
             conn.commit()
         return
@@ -933,6 +942,15 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_event_composition_audit_completion_requeue_054")
+
+    conn.execute("BEGIN")
+    _migrate_event_fact_semantic_sections(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_event_fact_semantic_sections_055", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_event_fact_semantic_sections_055")
 
 def _bootstrap_schema(conn) -> None:
     conn.execute(
@@ -1918,6 +1936,13 @@ def _migrate_event_composition_audit_completion_requeue(conn) -> None:
               AND decision_reason='composition audit failed: input_size'""",
         (utc_now_iso(),),
     )
+
+
+def _migrate_event_fact_semantic_sections(conn) -> None:
+    if not _has_column(conn, "incident_candidates", "selected_fact_sections_json"):
+        conn.execute(
+            "ALTER TABLE incident_candidates ADD COLUMN selected_fact_sections_json TEXT NULL"
+        )
 
 
 def _migrate_article_products(conn) -> None:

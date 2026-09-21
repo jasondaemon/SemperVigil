@@ -4,9 +4,10 @@ import json
 import jsonschema
 
 from .event_review import _json
+from .event_fact_roles import SECTIONS, validate as validate_sections
 from .investigation import _version
 
-WORKFLOW = "event-fact-curation-v3"
+WORKFLOW = "event-fact-curation-v4"
 MAX_INPUT_BYTES = 48000
 MAX_OUTPUT_BYTES = 8000
 SYSTEM_PROMPT = """Review one article's extracted facts for one specific cybersecurity Event.
@@ -29,13 +30,20 @@ selected fact must explicitly establish the incident. Use unrelated when the
 article concerns another incident, and ambiguous when the identity cannot be
 resolved safely. A fact can establish the incident only when incident_anchor is
 true. If no supplied fact has incident_anchor true, do not use same_incident.
-For unrelated or ambiguous, selected_fact_ids must be empty. Do not rewrite facts
-or invent a title. Return exactly the JSON shape supplied."""
+For every selected fact, assign one or more semantic sections based on its meaning
+in this Event: attack_vector for the delivery or initial-access method; attack_path
+for post-access actions and progression; timeline for a dated Event milestone;
+impact; response_recovery; mitigation only for advice; attribution;
+open_question; or context when the fact is useful only for the overview. Do not
+classify by keyword alone. For unrelated or ambiguous, selected_fact_ids and
+fact_sections must be empty. Do not rewrite facts or invent a title. Return
+exactly the JSON shape supplied."""
 
 
 def schema(fact_ids: list[str]) -> dict:
     return {"type": "object", "additionalProperties": False,
-            "required": ["evidence_verdict", "incident_verdict", "selected_fact_ids", "reason"],
+            "required": ["evidence_verdict", "incident_verdict", "selected_fact_ids",
+                         "fact_sections", "reason"],
             "properties": {
                 "evidence_verdict": {"type": "string", "enum": ["supported", "hold"]},
                 "incident_verdict": {"type": "string",
@@ -43,6 +51,12 @@ def schema(fact_ids: list[str]) -> dict:
                 "selected_fact_ids": {"type": "array",
                                       "maxItems": len(fact_ids),
                                       "items": {"type": "string", "enum": fact_ids}},
+                "fact_sections": {"type": "array", "maxItems": len(fact_ids),
+                    "items": {"type": "object", "additionalProperties": False,
+                        "required": ["fact_id", "sections"], "properties": {
+                            "fact_id": {"type": "string", "enum": fact_ids},
+                            "sections": {"type": "array", "minItems": 1, "maxItems": 4,
+                                         "items": {"type": "string", "enum": list(SECTIONS)}}}}},
                 "reason": {"type": "string", "minLength": 1, "maxLength": 320},
             }}
 
@@ -110,8 +124,9 @@ def validate(raw: bytes, request_record: dict, supporting_fact_ids: set[str]) ->
     if len(selected) != len(selected_values):
         raise ValueError("event_fact_curation_duplicate_selection")
     resolution = None
-    if value["evidence_verdict"] == "hold" and selected:
+    if value["evidence_verdict"] == "hold" and (selected or value["fact_sections"]):
         selected = set()
+        value["fact_sections"] = []
         value["incident_verdict"] = "ambiguous"
         resolution = "evidence_hold_selection_discarded"
     if value["incident_verdict"] == "same_incident":
@@ -119,17 +134,22 @@ def validate(raw: bytes, request_record: dict, supporting_fact_ids: set[str]) ->
             raise ValueError("event_fact_curation_selection_required")
         if not selected & supporting_fact_ids:
             selected = set()
+            value["fact_sections"] = []
             value["incident_verdict"] = "ambiguous"
             resolution = "incident_anchor_missing"
-    elif selected:
+    elif selected or value["fact_sections"]:
         selected = set()
+        value["fact_sections"] = []
         resolution = "nonmatching_selection_discarded"
+    facts = {row["id"]: row for row in json.loads(request_record["input"])["facts"]}
+    sections = validate_sections(facts, selected, value["fact_sections"])
     result = {"workflow": WORKFLOW, "event_id": request_record["event_id"],
             "article_id": request_record["article_id"],
             "evidence_revision_id": request_record["evidence_revision_id"],
             "request_version": request_record["request_version"],
             "generation_version": request_record["generation"], **value,
-            "selected_fact_ids": sorted(selected), "public_eligible": False}
+            "selected_fact_ids": sorted(selected), "fact_sections": sections,
+            "public_eligible": False}
     if resolution:
         result["conservative_resolution"] = resolution
     return result
