@@ -51,3 +51,12 @@ def test_curation_rejects_unknown_fact_ids_in_schema():
            "selected_fact_ids": ["missing"], "reason": "Unknown."}
     with pytest.raises(ValueError, match="invalid_shape"):
         curation.validate(json.dumps(raw).encode(), req, {"f1"})
+
+
+def test_curation_rejects_duplicate_fact_ids_without_unsupported_schema_keyword():
+    req = curation.request(*material(), GENERATION)
+    assert "uniqueItems" not in req["schema"]["properties"]["selected_fact_ids"]
+    raw = {"evidence_verdict": "supported", "incident_verdict": "same_incident",
+           "selected_fact_ids": ["f1", "f1"], "reason": "Duplicate selection."}
+    with pytest.raises(ValueError, match="duplicate_selection"):
+        curation.validate(json.dumps(raw).encode(), req, {"f1"})

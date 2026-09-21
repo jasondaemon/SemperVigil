@@ -36,7 +36,7 @@ def schema(fact_ids: list[str]) -> dict:
                 "evidence_verdict": {"type": "string", "enum": ["supported", "hold"]},
                 "incident_verdict": {"type": "string",
                                      "enum": ["same_incident", "unrelated", "ambiguous"]},
-                "selected_fact_ids": {"type": "array", "uniqueItems": True,
+                "selected_fact_ids": {"type": "array",
                                       "maxItems": len(fact_ids),
                                       "items": {"type": "string", "enum": fact_ids}},
                 "reason": {"type": "string", "minLength": 1, "maxLength": 320},
@@ -83,7 +83,10 @@ def validate(raw: bytes, request_record: dict, supporting_fact_ids: set[str]) ->
         jsonschema.validate(value, request_record["schema"])
     except jsonschema.ValidationError as exc:
         raise ValueError("event_fact_curation_invalid_shape") from exc
-    selected = set(value["selected_fact_ids"])
+    selected_values = value["selected_fact_ids"]
+    selected = set(selected_values)
+    if len(selected) != len(selected_values):
+        raise ValueError("event_fact_curation_duplicate_selection")
     if value["evidence_verdict"] == "hold" and selected:
         raise ValueError("event_fact_curation_held_evidence_selected")
     if value["incident_verdict"] == "same_incident":
