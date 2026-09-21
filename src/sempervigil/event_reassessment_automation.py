@@ -295,6 +295,6 @@ def tick(conn) -> list[dict]:
             conn.rollback()
             result = _hold(conn, event_id, str(exc) if isinstance(exc, ValueError) else type(exc).__name__)
         results.append(result)
-        if result["status"] not in {"unchanged", "deferred"}:
+        if result["status"] not in {"unchanged", "deferred", "pending"}:
             break
     return results

@@ -49,3 +49,29 @@ def test_repairable_composition_reuses_current_generation_without_query(monkeypa
                         lambda _conn: ({}, {}, generation))
 
     assert automation._repairable_composition(object(), "elr_revision", current) == current
+
+
+def test_tick_skips_waiting_case_but_stops_after_one_advancement(monkeypatch):
+    class TickConn:
+        def execute(self, sql, params=()):
+            assert "FROM event_reassessment_cases c" in sql
+            return type("Rows", (), {"fetchall": lambda _self: [
+                ("evt_waiting",), ("evt_advanced",), ("evt_not_reached",),
+            ]})()
+
+    calls = []
+
+    def advance(_conn, event_id):
+        calls.append(event_id)
+        if event_id == "evt_waiting":
+            return {"status": "pending", "event_id": event_id}
+        return {"status": "queued", "event_id": event_id}
+
+    monkeypatch.setattr(automation, "enabled", lambda: True)
+    monkeypatch.setattr(automation, "advance", advance)
+
+    assert automation.tick(TickConn()) == [
+        {"status": "pending", "event_id": "evt_waiting"},
+        {"status": "queued", "event_id": "evt_advanced"},
+    ]
+    assert calls == ["evt_waiting", "evt_advanced"]
