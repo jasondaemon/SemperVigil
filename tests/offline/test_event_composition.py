@@ -52,6 +52,7 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
         {"dimension": "event_scope", "fact_refs": ["F01"]},
         {"dimension": "attack_mechanics", "fact_refs": ["F01"]},
     ]
+    assert payload["overview_min_paragraphs"] == 1
     assert payload["facts"][0]["suggested_sections"] == ["overview", "attack_vector", "attack_path", "timeline"]
     properties = req["schema"]["properties"]
     assert properties["overview"]["minItems"] == 1
@@ -188,26 +189,29 @@ def rich_ledger_revision():
     return revision
 
 
-def test_rich_event_requires_core_semantic_coverage_without_prescribing_paragraph_count():
+def test_rich_event_requires_core_semantic_coverage_and_readable_paragraphs():
     revision = rich_ledger_revision()
     req = composition.request(revision, GENERATION)
     payload = json.loads(req["input"])
-    assert "overview_min_paragraphs" not in payload
-    assert req["schema"]["properties"]["overview"]["minItems"] == 1
+    assert payload["overview_min_paragraphs"] == 2
+    assert req["schema"]["properties"]["overview"]["minItems"] == 2
     assert {row["dimension"] for row in payload["overview_requirements"]} == {
         "event_scope", "attack_mechanics", "impact", "response_and_current_state",
     }
 
     output = valid_output()
-    with pytest.raises(ValueError, match="overview_incomplete"):
+    with pytest.raises(ValueError, match="invalid_shape"):
         composition.validate(json.dumps(output).encode(), revision, GENERATION)
 
     output["overview"] = [{
         "text": "Acme disclosed an intrusion into its hosted service, which exposed customer records before Acme contained it.",
         "fact_refs": ["F01", "F03", "F04", "F06"],
+    }, {
+        "text": "Recovery remains unconfirmed, and the available reporting attributes the activity to Group One.",
+        "fact_refs": ["F02", "F05"],
     }]
     record = composition.validate(json.dumps(output).encode(), revision, GENERATION)
-    assert len(record["sections"]["overview"]) == 1
+    assert len(record["sections"]["overview"]) == 2
 
 
 def test_validation_rejects_unknown_or_unsupported_evidence():

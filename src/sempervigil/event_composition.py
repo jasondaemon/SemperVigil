@@ -9,11 +9,12 @@ from .event_review import _json
 from .investigation import _version
 from .utils import utc_now_iso
 
-WORKFLOW = "event-ledger-composition-v9"
+WORKFLOW = "event-ledger-composition-v10"
 LEGACY_WORKFLOW = "event-ledger-composition-v4"
 LEGACY_WORKFLOWS = frozenset({
     LEGACY_WORKFLOW, "event-ledger-composition-v5", "event-ledger-composition-v6",
     "event-ledger-composition-v7", "event-ledger-composition-v8",
+    "event-ledger-composition-v9",
 })
 SECTION_POLICY = "curated-sections-v3"
 DETERMINISTIC_SECTION_POLICY = "deterministic-sections-v2"
@@ -33,11 +34,15 @@ OVERVIEW_DIMENSIONS = (
 )
 SYSTEM_PROMPT = """You are a cybersecurity editor. Create a coherent executive
 overview and concise analytical sections for the risk Event from the accepted facts.
-Explain what happened, how it worked, material impact, and the response or current
-state when the facts support them. Consolidate corroborating or equivalent facts into
-one reader-facing paragraph with all supporting references. Do not mechanically list
-facts, repeat the same claim within or across sections, add unsupported claims or
-causal links, strengthen uncertain attribution, or omit material qualifications.
+The overview is the lead account a reader should understand without reading the rest
+of the page. Explain what happened and how, the material impact, and the response and
+current state when the facts support them. For an event with several supported
+dimensions, organize the overview into natural paragraphs rather than compressing it
+into one dense paragraph or mechanically listing facts. Use as many paragraphs as the
+evidence needs within the response schema. Consolidate corroborating or equivalent
+facts and include all supporting references. Do not repeat the same claim within or
+across sections, add unsupported claims or causal links, strengthen uncertain
+attribution, or omit material qualifications.
 
 Use each section only for its editorial purpose: attack_vector for initial access or
 delivery; attack_path for post-access actions and progression; impact for consequences;
@@ -178,7 +183,8 @@ def validate_overview_coverage(sections: dict, facts: list[dict]) -> None:
         raise ValueError("event_composition_overview_incomplete")
 
 
-def schema(fact_refs: dict[str, list[str]] | None = None) -> dict:
+def schema(fact_refs: dict[str, list[str]] | None = None,
+           *, overview_min_paragraphs: int = 1) -> dict:
     all_refs = sorted({ref for refs in (fact_refs or {}).values() for ref in refs})
     ref = ({"type": "string", "enum": all_refs} if fact_refs
            else {"type": "string", "pattern": "^F[0-9]{2}$"})
@@ -190,7 +196,8 @@ def schema(fact_refs: dict[str, list[str]] | None = None) -> dict:
     properties = {}
     for section in GENERATED_SECTIONS:
         properties[section] = {
-            "type": "array", "minItems": 1 if section == "overview" else 0,
+            "type": "array",
+            "minItems": overview_min_paragraphs if section == "overview" else 0,
             "maxItems": 4, "items": item,
         }
     return {"type": "object", "additionalProperties": False,
@@ -220,6 +227,7 @@ def request(ledger_revision: dict, generation: str) -> dict:
     if not facts:
         raise ValueError("event_composition_no_active_facts")
     overview_requirements = _overview_requirements(facts)
+    overview_min_paragraphs = 2 if len(overview_requirements) >= 3 else 1
     aliases_by_id = {fact["fact_id"]: ref for ref, fact in aliases.items()}
     allowed_by_ref = {
         ref: _allowed_sections(fact)
@@ -233,6 +241,7 @@ def request(ledger_revision: dict, generation: str) -> dict:
                                   for fact_id in requirement["fact_ids"]]}
                    for requirement in overview_requirements
                ],
+               "overview_min_paragraphs": overview_min_paragraphs,
                "facts": [{"ref": ref, "statement": fact["statement"],
                           "kind": fact["kind"], "date_text": fact["date_text"],
                           "date_role": fact["date_role"],
@@ -242,7 +251,9 @@ def request(ledger_revision: dict, generation: str) -> dict:
     # generated claim still requires accepted fact references and an independent
     # support audit.
     allowed_refs = {section: list(aliases) for section in GENERATED_SECTIONS}
-    response_schema = schema(allowed_refs)
+    response_schema = schema(
+        allowed_refs, overview_min_paragraphs=overview_min_paragraphs
+    )
     encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     if len((SYSTEM_PROMPT + encoded + json.dumps(response_schema)).encode()) > MAX_INPUT_BYTES:
         raise ValueError("event_composition_input_over_budget")
