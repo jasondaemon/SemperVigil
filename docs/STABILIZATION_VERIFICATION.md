@@ -2414,3 +2414,14 @@ excluded, and both retirement runs retain independent restore manifests.
   reports no console warnings or errors.
 - The daily feed contract is unchanged. `/feed/days/2026-09-21.json` returns HTTP
   200, 1,054,341 bytes and 171 items, and remains the homepage download target.
+- Follow-up daily-edition work replaced the oversized hero and uniform card stack
+  with a compact masthead, featured report and responsive two-column story grid.
+  The public presentation filters webinar and sponsored title/URL variants while
+  retaining source icons, names and links. It does not rewrite the JSON artifact.
+- API build `job_0a174f8a24f64e02ab2f3283a9f00e53` completed in 20.15 seconds,
+  activated release `20260921221022`, and live DOM inspection found zero matching
+  promotional links and no console warnings or errors.
+- One browser navigation at the activation boundary received a transient nginx
+  404; five immediate probes and a reload were successful. Treat atomic activation
+  as locally implemented but the complete edge/NFS serving path as still requiring
+  a dedicated zero-gap verification under repeated concurrent requests.

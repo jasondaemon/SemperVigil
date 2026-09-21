@@ -648,3 +648,29 @@ If you (Codex) propose edits affecting pipeline stability, you must:
   `codex/remove-cybernews-ads` are pushed to the configured remote.
 - Rollback: restore the prior Hugo commit in `/site-src` and invoke the supported
   build API. No database, feed archive or application rollback is required.
+
+# 2026-09-21: redesign the CyberNews daily edition
+
+- Summary: Replace the oversized campaign hero and uniform article stack with a
+  compact publication masthead, featured lead report and responsive two-column
+  news grid. Remove explanatory interface prose from the daily desk.
+- Scope: Hugo homepage markup, CSS and client-side presentation only. Publisher
+  icons, publisher names, direct source links, Event paging, date navigation,
+  settings and the daily download remain present.
+- Promotional policy: omit titles containing webinar, sponsor/sponsored/
+  sponsorship, advertorial, registration or virtual-event language, plus known
+  `/webinar`, `/spons`, `/sponsored` and `/advertorial` URL paths. Matching is
+  title/URL based to avoid dropping legitimate reporting whose summary discusses
+  sponsored search abuse.
+- Feed contract: the filter affects only the rendered news view. Daily JSON
+  content, order, schema, archive path and downstream behavior are unchanged.
+- Verification: JavaScript syntax and source diff checks pass. API build
+  `job_0a174f8a24f64e02ab2f3283a9f00e53` completed in 20.15 seconds and activated
+  release `20260921221022`; live DOM inspection found no promotional matches,
+  retained the dated JSON link and reported no browser warnings or errors.
+- Availability observation: a browser request made exactly at activation received
+  a transient nginx 404. Five immediate command-line probes and the browser reload
+  returned 200. This does not invalidate the current release but remains evidence
+  that the end-to-end serving path is not yet proven gap-free at switch time.
+- Source of truth: Hugo commits `d3628f58`, `203675f5`, `81578586` and `4d628ef4`
+  on `codex/remove-cybernews-ads` are pushed to the configured remote.
