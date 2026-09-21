@@ -173,8 +173,36 @@ def advance(conn, candidate: dict) -> dict:
             ).fetchone()
             decision = (_decode(row[0]) or {}).get("audit") if row else None
             if decision:
+                from . import event_composition_audit as composition_audit
+                from .event_composition_repair_jobs import material as repair_material
+                composition, ledger_revision = repair_material(conn, repairable[0])
+                audit_request = composition_audit.request(
+                    repairable[0], composition, ledger_revision["ledger"],
+                    decision.get("generation_version", ""),
+                )
+                item_sections = {item["id"]: item["section"]
+                                 for item in json.loads(audit_request["input"])["items"]}
+                failures = [item for item in decision.get("audits", [])
+                            if item.get("verdict") != "supported"]
+                if failures and not any(
+                        item_sections.get(item.get("id")) == "overview"
+                        for item in failures):
+                    filtered = composition_audit.filtered_record(
+                        repairable[0], composition, ledger_revision["ledger"], decision)
+                    filtered_id = event_composition.store_unreviewed(conn, filtered)
+                    accepted = event_composition.review(
+                        conn, filtered_id, "accept", reason="",
+                        reviewer="policy:event-composition-audit-v1")
+                    return {"status": "accepted", "event_id": event_id,
+                            "composition_id": filtered_id, "application": accepted,
+                            "action": "published_composition_detail_filtered",
+                            "workflow": WORKFLOW}
                 from .event_composition_repair_jobs import submit
-                job_id = submit(conn, repairable[0], decision)
+                try:
+                    job_id = submit(conn, repairable[0], decision)
+                except ValueError as exc:
+                    return {"status": "held", "event_id": event_id,
+                            "reason": str(exc)[:160], "workflow": WORKFLOW}
                 status, error = _job_state(conn, job_id)
                 if status == "failed":
                     return {"status": "held", "event_id": event_id,
