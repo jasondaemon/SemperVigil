@@ -25,7 +25,9 @@ the pass and preserves bounded admission.
    coverage is insufficient, use the existing research, fetch, relevance,
    enrichment, and evidence path to seek corroboration.
 6. Build and accept a deterministic ledger from the selected facts, then queue one
-   hosted narrative composition.
+   hosted narrative composition. If additional selected facts make an open proposal
+   stale, reject that obsolete proposal and rebuild it; never weaken the lineage
+   check or hold the Event merely because its evidence grew before acceptance.
 7. Audit every generated narrative item against only its cited fact statements.
    A rejected first composition may receive one constrained corrective rewrite
    using the fixed citations and audit reasons. The replacement must pass a new
