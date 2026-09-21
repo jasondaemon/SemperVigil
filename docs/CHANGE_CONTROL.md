@@ -685,11 +685,13 @@ If you (Codex) propose edits affecting pipeline stability, you must:
 - Feed contract: publisher icons, source labels, direct links, article summaries,
   settings, date navigation and `/feed/days/<date>.json` remain present. No JSON
   content, schema, ordering or generation behavior changed.
-- Verification: JavaScript syntax and source diff checks pass. Supported API build
-  `job_15d73c8087bb4227a25b22241917dfed` completed in 22.92 seconds and activated
-  release `20260921222530`. A 390-pixel live viewport reported no horizontal
-  overflow, one Event card, 40-pixel navigation targets and no console errors.
+- Verification: JavaScript syntax and source diff checks pass. The follow-up day
+  control refinement uses a bordered two-row panel with equal-width Prev, Today
+  and Next buttons. Supported API build `job_9393b96d4d5c4d5c9a1a63ad8dd5772f`
+  completed in 22.22 seconds and activated release `20260921223240`. A 390-pixel
+  live viewport reported no horizontal overflow, one Event card, three 99-by-40
+  pixel day controls and no console errors.
   Homepage, Events, JavaScript and the September 21 JSON return HTTP 200; the JSON
   remains valid with 194 items.
-- Source of truth: Hugo commit `b1829d74` on `codex/remove-cybernews-ads` is pushed
+- Source of truth: Hugo commit `1f5d2a16` on `codex/remove-cybernews-ads` is pushed
   and matches the build worker's `/site-src` CSS and JavaScript hashes.
