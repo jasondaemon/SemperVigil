@@ -41,9 +41,16 @@ def resolve(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dic
         from .event_composition_publication import validate_bundle
         projection = validate_bundle(bundle, event_id=event_id, expected_revision=expected_revision)
         dates = sorted(source["brief_day"] for source in projection["sources"] if source["brief_day"])
+        unique_sources, _ = _canonical_sources(projection["sources"])
+        from .event_composition import SECTIONS
+        populated = [section for section in SECTIONS if projection["sections"][section]]
         metadata = {"title": projection["ledger"]["title"], "event_revision": expected_revision,
                     "event_report_format": bundle["workflow"],
                     "event_kind": projection["ledger"]["kind"],
+                    "event_source_count": len(unique_sources),
+                    "event_section_count": len(populated),
+                    "event_has_open_questions": bool(projection["sections"]["open_questions"]),
+                    "event_change_kind": projection["composition"]["change"]["kind"],
                     "first_seen_at": dates[0] if dates else None,
                     "last_seen_at": dates[-1] if dates else None}
         return metadata, projection
@@ -101,16 +108,20 @@ def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict
         facts = {fact["fact_id"]: fact for fact in projection["ledger"]["facts"]}
         sources = {source["article_id"]: source for source in projection["sources"]}
         unique_sources, source_numbers = _canonical_sources(projection["sources"])
-        lines = [f'<section id="sv-event-coverage" data-event-id="{escape(event_id, quote=True)}" '
+        lines = [f'<section id="sv-event-coverage" class="event-report" '
+                 f'data-event-id="{escape(event_id, quote=True)}" '
                  f'data-event-revision="{expected_revision}">',
                  '<p class="event-evidence-note">This deconstruction is maintained from attributed reporting. '
-                 'Claims link to the source material used to support them.</p>']
+                 'Claims link to the source material used to support them.</p>',
+                 '<div class="event-report-sections">']
         # Stored composition JSON is canonicalized with sorted keys. Presentation
         # order is editorial, not an implementation detail of JSON serialization.
         for section in SECTIONS:
             items = projection["sections"][section]
             if not items:
                 continue
+            section_class = f"event-report-section event-report-section--{section.replace('_', '-')}"
+            lines.append(f'<section class="{section_class}" id="{section.replace("_", "-")}">')
             lines.append(f"<h2>{headings[section]}</h2>")
             if section == "timeline":
                 lines.append('<ol class="event-timeline">')
@@ -123,23 +134,38 @@ def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict
                         linked.append((number, unique_sources[number - 1]))
                 citations = " ".join(
                     f'<a class="event-source" href="{escape(url_quote(source["url"], safe=":/?&=%#@+"), quote=True)}" '
-                    f'title="{escape(source["title"], quote=True)}">Source {index}</a>'
+                    f'title="Source {index}: {escape(source["title"], quote=True)}" '
+                    f'target="_blank" rel="noopener" aria-label="Source {index}">[{index}]</a>'
                     for index, source in linked)
                 text = escape(" ".join(item["text"].split()))
+                kinds = {facts[fact_id]["kind"] for fact_id in item["fact_ids"]}
+                state = ("Unresolved" if kinds & {"uncertainty", "disputed"}
+                         else "Attributed" if "allegation" in kinds else "Reported")
+                badge = f'<span class="event-claim-state event-claim-state--{state.lower()}">{state}</span>'
                 if section == "timeline":
-                    lines.append(f'<li><time>{escape(item["date_text"])}</time> {text} {citations}</li>')
+                    lines.append(f'<li><time>{escape(item["date_text"])}</time><div>{badge}<p>{text} {citations}</p></div></li>')
                 else:
-                    lines.append(f"<p>{text} {citations}</p>")
+                    lines.append(f'<div class="event-claim">{badge}<p>{text} {citations}</p></div>')
             if section == "timeline":
                 lines.append("</ol>")
-        lines.extend(["<h2>Sources</h2>", '<ol class="event-sources">'])
+            lines.append("</section>")
+        lines.extend(["</div>", '<section class="event-report-section event-report-section--sources" id="sources">',
+                      "<h2>Sources</h2>", '<ol class="event-sources">'])
         for source in unique_sources:
             url = escape(url_quote(source["url"], safe=":/?&=%#@+"), quote=True)
             date = escape(source["brief_day"] or "Date unknown")
             title = escape(source["title"])
             site = escape(_source_site(source["url"]))
-            lines.append(f'<li><a href="{url}">{date} - {title} - {site}</a></li>')
-        lines.extend(["</ol>", f"<p>Revision: <code>{expected_revision}</code>.</p>", "</section>", ""])
+            lines.append(f'<li><a href="{url}" target="_blank" rel="noopener">'
+                         f'<time>{date}</time><span>{title}</span><small>{site}</small></a></li>')
+        change = projection["composition"]["change"]
+        delta = (f'{len(change["added_fact_ids"])} added, '
+                 f'{len(change["supersedes_fact_ids"])} superseded, '
+                 f'{len(change["conflict_fact_ids"])} disputed')
+        lines.extend(["</ol>", "</section>", '<footer class="event-revision">',
+                      f'<span>Revision {escape(expected_revision[:12])}</span>',
+                      f'<span>{escape(change["kind"].title())}: {delta}</span>',
+                      "</footer>", "</section>", ""])
         return metadata, "\n".join(lines)
     lines = [f'<section id="sv-event-coverage" data-event-id="{escape(event_id, quote=True)}" '
              f'data-event-revision="{expected_revision}">',

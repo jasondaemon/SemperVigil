@@ -82,7 +82,11 @@ def test_composition_bundle_renders_reproducible_page_and_index():
     assert page.index("<h2>Overview</h2>") < page.index("<h2>Attack vector</h2>")
     assert "<script>" not in page and "&lt;script&gt;" in page
     assert "https://example.test/report" in page
-    assert "2026-09-18 - Primary report - example.test" in page
+    assert "<time>2026-09-18</time>" in page
+    assert "<span>Primary report</span>" in page
+    assert "<small>example.test</small>" in page
+    assert 'class="event-report-section event-report-section--overview"' in page
+    assert 'class="event-claim-state event-claim-state--reported"' in page
     entry = index_entry(bundle, event_id=event_id, expected_revision=revision)
     assert entry["status"] == "source_backed_event"
     assert entry["counts"]["articles"] == 1
