@@ -571,6 +571,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_event_fact_curation_passage_requeue_053")
             applied.add("pg_event_fact_curation_passage_requeue_053")
+        if "pg_event_composition_audit_completion_requeue_054" not in applied:
+            _migrate_event_composition_audit_completion_requeue(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_event_composition_audit_completion_requeue_054", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_event_composition_audit_completion_requeue_054")
+            applied.add("pg_event_composition_audit_completion_requeue_054")
         else:
             conn.commit()
         return
@@ -915,6 +924,15 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_event_fact_curation_passage_requeue_053")
+
+    conn.execute("BEGIN")
+    _migrate_event_composition_audit_completion_requeue(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_event_composition_audit_completion_requeue_054", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_event_composition_audit_completion_requeue_054")
 
 def _bootstrap_schema(conn) -> None:
     conn.execute(
@@ -1888,6 +1906,16 @@ def _migrate_event_fact_curation_passage_requeue(conn) -> None:
               SET status='active',decision_reason=NULL,updated_at=%s
             WHERE status='held'
               AND decision_reason='event_fact_curation_input_over_budget'""",
+        (utc_now_iso(),),
+    )
+
+
+def _migrate_event_composition_audit_completion_requeue(conn) -> None:
+    conn.execute(
+        """UPDATE event_reassessment_cases
+              SET status='active',decision_reason=NULL,updated_at=%s
+            WHERE status='held'
+              AND decision_reason='composition audit failed: input_size'""",
         (utc_now_iso(),),
     )
 

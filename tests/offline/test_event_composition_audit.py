@@ -45,6 +45,27 @@ def test_audit_rejects_duplicate_or_missing_items():
         audit.validate(json.dumps(raw).encode(), req)
 
 
+def test_audit_accepts_schema_legal_large_response():
+    from sempervigil.event_composition import SECTIONS
+    sections = {section: [] for section in SECTIONS}
+    sections["overview"] = [
+        {"text": f"Supported item {index}", "fact_ids": ["f1"]}
+        for index in range(42)
+    ]
+    composition = {"ledger_revision_id": "elr_large", "sections": sections}
+    ledger = {"facts": [{"fact_id": "f1", "statement": "Direct support.",
+                          "kind": "reported_fact", "date_text": None,
+                          "date_role": "none"}]}
+    req = audit.request("elc_large", composition, ledger, GENERATION)
+    raw = json.dumps({"audits": [
+        {"id": item_id, "verdict": "supported", "reason": "R" * 280}
+        for item_id in req["item_ids"]
+    ]}).encode()
+    assert len(raw) > 12000
+    assert len(raw) <= audit.MAX_OUTPUT_BYTES
+    assert audit.validate(raw, req)["ready"] is True
+
+
 def test_filter_removes_only_unsupported_items_and_preserves_required_content():
     composition, ledger = material()
     composition.update({"workflow": "event-ledger-composition-v4",

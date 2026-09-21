@@ -2308,3 +2308,26 @@ excluded, and both retirement runs retain independent restore manifests.
   repair result and moves the case to its existing audit-held terminal state.
   It does not permit another repair or weaken audit. Twelve focused tests and the
   1,108-test full offline suite pass; orchestrator-only deployment is pending.
+
+## Event audit completion-budget diagnosis (2026-09-21, local)
+
+- The scheduler correction was deployed as application `92db75d` and terminated
+  the repeated-repair loop. Cases then advanced in normal priority order without
+  manual queue insertion or reprioritization.
+- Vercel completed all seven reactivated `event-fact-curation-v3` jobs. The former
+  blocker, article 26194 / revision `aer_22d9e...`, used 15,237 request characters,
+  completed in 9.30 seconds, and received HTTP 200. No curation input-size hold
+  recurred.
+- The accepted ledger produced a 42-item composition. Its audit request measured
+  25,795 characters, below the unchanged 48,000-byte request guard. The hosted
+  model consumed the complete 1,800-token allowance as reasoning, returned zero
+  visible characters, and stopped with `finish_reason=length`. The generic parser
+  error `input_size` described the empty response, not an oversized request.
+- The pending correction changes only the composition-audit completion allowance
+  from 1,800 to 4,800 tokens and the response parser cap from 12 KB to 20 KB. The
+  latter covers the legal maximum of the existing strict 42-item response schema.
+  Migration 054 reactivates only the exact `composition audit failed: input_size`
+  hold. Audit rules, evidence, model, concurrency, composition, publication, Hugo,
+  feed JSON and public content remain unchanged.
+- Focused tests pass, and the complete documented offline gate passes: 1,109
+  passed, one skipped, four existing warnings.

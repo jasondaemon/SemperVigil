@@ -27,8 +27,18 @@ That canary exposed a separate pre-existing scheduler starvation defect: a repai
 composition that failed its second audit rediscovered its already-successful repair
 job on every tick. The local correction identifies repaired compositions from the
 persisted successful repair result and holds the failed repaired narrative, preserving
-the one-repair policy while allowing later Events to proceed. Full offline suite:
-1,108 passed, one skipped. The orchestrator-only correction rollout remains pending.
+the one-repair policy while allowing later Events to proceed. Application `92db75d`
+is deployed to the orchestrator, and normal scheduler ordering subsequently advanced
+the Vercel case through all seven reactivated curation revisions. The formerly blocked
+article completed in 9.30 seconds with a 15,237-character request and HTTP 200.
+
+The resulting 42-item composition audit then exhausted its 1,800-token completion
+allowance entirely as hidden reasoning and returned no JSON. The audit request itself
+was only 25,795 characters, so this is not an input-size failure. The pending narrow
+correction raises only the audit completion allowance to 4,800 tokens and its response
+parser cap from 12 KB to 20 KB, sufficient for the schema's legal response size.
+Migration 054 reactivates only cases held with the exact resulting reason. Full offline
+suite: 1,109 passed, one skipped.
 
 ## September 20: resilient fact curation deployed
 

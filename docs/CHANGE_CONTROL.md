@@ -585,3 +585,21 @@ If you (Codex) propose edits affecting pipeline stability, you must:
 - Status: local implementation; orchestrator-only rollout pending.
 - Rollback: restore the prior orchestrator image. The affected case would resume
   looping but its held composition would remain non-public.
+
+# 2026-09-21: allow complete large Event composition audits
+
+- Summary: Increase only the hosted composition audit's completion allowance from
+  1,800 to 4,800 tokens and align its response parser cap with the existing strict
+  schema by raising it from 12 KB to 20 KB.
+- Scope: private `event_composition_audit` jobs only; no request, evidence, prompt,
+  model, concurrency, composition, publication, build, Hugo or feed change.
+- Motivation: Vercel's 42-item audit request was 25,795 characters, but the model
+  spent all 1,800 completion tokens on reasoning and returned no visible JSON.
+- Controls: unchanged 48,000-byte input guard and strict output schema; migration
+  054 reactivates only `composition audit failed: input_size` cases.
+- Verification: schema-maximum response regression test plus full offline suite:
+  1,109 passed, one skipped, four existing warnings.
+- Status: local implementation; targeted admin, orchestrator and hosted-model
+  worker rollout plus Vercel recovery observation remain pending.
+- Rollback: restore the prior three image tags. Migration 054 is state-only; the
+  prior worker will safely hold the case again if its response is empty.
