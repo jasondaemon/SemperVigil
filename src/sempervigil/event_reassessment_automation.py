@@ -90,12 +90,18 @@ def _repairable_composition(conn, ledger_revision_id: str, composition):
     ).fetchone()
 
 
-def _is_repaired_composition(conn, composition_id: str) -> bool:
+def _is_repaired_composition(conn, composition_id: str,
+                             *, generation: str | None = None) -> bool:
+    generation_clause = ""
+    params: tuple[str, ...] = (composition_id,)
+    if generation is not None:
+        generation_clause = " AND payload_json::jsonb->>'generation'=%s"
+        params = (composition_id, generation)
     return bool(conn.execute(
         """SELECT 1 FROM jobs
             WHERE job_type='event_composition_repair' AND status='succeeded'
-              AND result_json::jsonb->>'repaired_composition_id'=%s
-            LIMIT 1""", (composition_id,),
+              AND result_json::jsonb->>'repaired_composition_id'=%s"""
+        + generation_clause + " LIMIT 1", params,
     ).fetchone())
 
 

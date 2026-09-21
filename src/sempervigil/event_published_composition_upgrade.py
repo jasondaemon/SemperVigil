@@ -155,7 +155,9 @@ def advance(conn, candidate: dict) -> dict:
             _is_repaired_composition,
             _repairable_composition,
         )
-        if _is_repaired_composition(conn, held[0]):
+        from .event_composition_repair_jobs import configuration as repair_configuration
+        repair_generation = repair_configuration(conn)[2]
+        if _is_repaired_composition(conn, held[0], generation=repair_generation):
             return {"status": "held", "event_id": event_id,
                     "reason": "replacement overview failed support audit"}
         repairable = _repairable_composition(

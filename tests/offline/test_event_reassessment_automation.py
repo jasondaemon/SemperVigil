@@ -72,6 +72,18 @@ def test_repaired_composition_lineage_comes_from_successful_job_result():
     assert automation._is_repaired_composition(missing, "elc_original") is False
 
 
+def test_repaired_composition_can_be_scoped_to_current_repair_generation():
+    class RepairConn:
+        def execute(self, sql, params=()):
+            assert "payload_json::jsonb->>'generation'=%s" in sql
+            assert params == ("elc_repaired", "g" * 64)
+            return _Result((1,))
+
+    assert automation._is_repaired_composition(
+        RepairConn(), "elc_repaired", generation="g" * 64
+    ) is True
+
+
 def test_repaired_derivative_resolves_successful_repair_result():
     repaired = ("elc_repaired", "unreviewed", None, "generation")
 
