@@ -605,3 +605,23 @@ If you (Codex) propose edits affecting pipeline stability, you must:
   cluster and node health checks pass.
 - Rollback: restore the prior three image tags. Migration 054 is state-only; the
   prior worker will safely hold the case again if its response is empty.
+
+# 2026-09-21: retain Event publication history for public daily views
+
+- Summary: Export immutable qualified Event promotion history and use it for a
+  paginated public archive plus a two-card Event-update lead on affected days.
+- Scope: Event export/activation verification and public Hugo presentation only;
+  no article or CVE daily JSON schema, content generation, qualification rule,
+  model, prompt, queue, build command, cache, concurrency or atomic activation
+  change.
+- Controls: canonical Event URLs and exact history are verified against the
+  database under the activation lock. The existing daily JSON remains the sole
+  source for the news/CVE feed and download.
+- Verification: application offline suite, focused Event release tests and
+  JavaScript syntax checks pass. Production API build
+  `job_d0ebf3dd0b2d4ea09c224748bd8e825c` succeeded in 19.03 seconds and
+  atomically activated release `20260921211933`. Browser checks confirmed the
+  Event archive filters, independent daily Event pager and empty-day omission.
+- Rollback: restore the prior application builder image and Hugo source commit,
+  then invoke the normal build API. Retained database revisions are immutable and
+  require no data rollback.

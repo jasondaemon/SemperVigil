@@ -2373,3 +2373,25 @@ excluded, and both retirement runs retain independent restore manifests.
   The affected pods are Ready with zero restarts; homepage, Events index and feed
   index return HTTP 200. Hugo, build behavior, daily JSON, fetch workers, local
   inference, model choice and concurrency are unchanged.
+
+## Event archive and daily feed integration (2026-09-21)
+
+- Qualified Event exports now retain immutable promotion history with canonical
+  public URLs and exact revision publication timestamps. Build preparation and
+  activation both verify that projection against the database while holding the
+  existing activation lock.
+- The public Event archive presents three recently updated reports followed by a
+  searchable, type-filtered archive with ten reports per page. Filter and page
+  state remain addressable in the URL.
+- A daily feed now leads with a separate two-card pager when qualified Event
+  revisions were promoted on the selected date. A date with no Event promotion
+  hides the section. Existing `/feed/days/<date>.json` files and download links
+  are not modified.
+- The application offline suite passes with 1,111 tests and two skips. The Hugo
+  JavaScript syntax and source diffs pass. API build
+  `job_d0ebf3dd0b2d4ea09c224748bd8e825c` completed successfully and atomically
+  activated release `20260921211933` in 19.03 seconds; Hugo rendering took
+  2.415 seconds.
+- Production verification showed two Event cards, independent paging from
+  `1–2 of 29` to `3–4 of 29`, a hidden Event section on 2026-09-19, and the
+  unchanged `/feed/days/2026-09-19.json` download target.
