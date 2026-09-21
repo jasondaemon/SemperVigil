@@ -138,7 +138,7 @@ def _pending_articles(conn: Any) -> set[int]:
     return result
 
 
-def _case_metrics(conn: Any, record: dict, pending: set[int]) -> dict:
+def _case_metrics(conn: Any, event_id: str, record: dict, pending: set[int]) -> dict:
     article_ids = [int(row["article_id"]) for row in record["articles"]]
     rows = conn.execute(
         """SELECT article_id,status,count(*) FROM article_evidence_revisions
@@ -156,14 +156,16 @@ def _case_metrics(conn: Any, record: dict, pending: set[int]) -> dict:
     missing = sum(not statuses[item] and item not in pending for item in article_ids)
     candidates = conn.execute(
         """SELECT status,count(*) FROM incident_candidates
-            WHERE article_id=ANY(%s) GROUP BY status""", (article_ids,)
+            WHERE article_id=ANY(%s) AND event_id=%s GROUP BY status""",
+        (article_ids, event_id)
     ).fetchall()
     candidate_counts = {str(status): int(count) for status, count in candidates}
     title_rows = conn.execute(
         """SELECT DISTINCT title FROM incident_candidates
             WHERE article_id=ANY(%s) AND status='enrolled'
+              AND event_id=%s
               AND title IS NOT NULL AND btrim(title)<>''
-            ORDER BY title""", (article_ids,)
+            ORDER BY title""", (article_ids, event_id)
     ).fetchall()
     if missing_source:
         stage = "source_hold"
@@ -210,7 +212,7 @@ def list_cases(conn: Any, *, status: str = "active", limit: int = 200) -> list[d
             stale = snapshot(conn, row[0])["snapshot_version"] != row[1]
         except ValueError:
             stale = True
-        metrics = _case_metrics(conn, record, pending)
+        metrics = _case_metrics(conn, row[0], record, pending)
         ledger_status = composition_status = None
         if row[5]:
             ledger = conn.execute(
@@ -278,6 +280,78 @@ def queue_evidence(conn: Any, event_id: str, *, confirmation: str) -> dict:
             "job_ids": jobs, "held": held, "public_content_changed": False}
 
 
+def queue_next_evidence(conn: Any, event_id: str) -> dict:
+    """Queue at most one missing source for bounded autonomous processing."""
+    row = conn.execute(
+        "SELECT snapshot_version,snapshot_json,status FROM event_reassessment_cases WHERE event_id=%s",
+        (event_id,),
+    ).fetchone()
+    if not row or row[2] != "active":
+        raise ValueError("event_reassessment_case_unavailable")
+    current = snapshot(conn, event_id)
+    if current["snapshot_version"] != row[0]:
+        raise ValueError("event_reassessment_snapshot_stale")
+    pending = _pending_articles(conn)
+    record = _decode(row[1])
+    from .article_review_jobs import configuration
+    generation = configuration(conn)[3]
+    for item in record["articles"]:
+        article_id = int(item["article_id"])
+        if not item.get("source_version") or article_id in pending:
+            continue
+        existing = conn.execute(
+            """SELECT 1 FROM article_evidence_revisions
+                WHERE article_id=%s AND source_version=%s AND generation_version=%s
+                LIMIT 1""",
+            (article_id, item["source_version"], generation),
+        ).fetchone()
+        if existing:
+            continue
+        from .article_review_jobs import submit
+        return {"event_id": event_id, "status": "queued",
+                "job_id": submit(conn, [article_id]), "article_id": article_id,
+                "public_content_changed": False}
+    return {"event_id": event_id, "status": "unchanged", "public_content_changed": False}
+
+
+def refresh_case(conn: Any, event_id: str) -> dict:
+    """Rebase an active case while preserving immutable ledgers and decisions."""
+    row = conn.execute(
+        "SELECT snapshot_version,snapshot_json,status FROM event_reassessment_cases WHERE event_id=%s FOR UPDATE",
+        (event_id,),
+    ).fetchone()
+    if not row or row[2] != "active":
+        raise ValueError("event_reassessment_case_unavailable")
+    current = snapshot(conn, event_id)
+    if current["snapshot_version"] == row[0]:
+        return {"event_id": event_id, "status": "unchanged"}
+    old = _decode(row[1])
+    old_sources = {(item["article_id"], item.get("source_version")) for item in old["articles"]}
+    new_sources = {(item["article_id"], item.get("source_version")) for item in current["articles"]}
+    accepted = conn.execute(
+        """SELECT 1 FROM event_ledger_targets t JOIN event_ledger_revisions r
+               ON r.ledger_id=t.ledger_id
+              WHERE t.event_id=%s AND r.status='accepted' LIMIT 1""",
+        (event_id,),
+    ).fetchone()
+    if accepted and old_sources != new_sources:
+        raise ValueError("event_reassessment_accepted_ledger_source_change")
+    conn.execute(
+        """UPDATE event_reassessment_cases
+              SET snapshot_version=%s,snapshot_json=%s,updated_at=%s
+            WHERE event_id=%s""",
+        (current["snapshot_version"], json.dumps(current, sort_keys=True, ensure_ascii=True),
+         utc_now_iso(), event_id),
+    )
+    conn.execute(
+        "UPDATE event_ledger_targets SET snapshot_version=%s WHERE event_id=%s",
+        (current["snapshot_version"], event_id),
+    )
+    conn.commit()
+    return {"event_id": event_id, "status": "refreshed",
+            "source_membership_changed": old_sources != new_sources}
+
+
 def project_accepted(conn: Any, event_id: str, *, confirmation: str) -> dict:
     if confirmation != PROJECT_CONFIRMATION:
         raise ValueError("event_reassessment_projection_confirmation_required")
@@ -295,7 +369,7 @@ def project_accepted(conn: Any, event_id: str, *, confirmation: str) -> dict:
             ORDER BY article_id,revision_id""", (article_ids,)
     ).fetchall()
     from .incident_candidates import project
-    results = [project(conn, revision_id) for (revision_id,) in revisions]
+    results = [project(conn, revision_id, event_id=event_id) for (revision_id,) in revisions]
     return {"event_id": event_id, "status": "projected", "items": results,
             "public_content_changed": False}
 
@@ -319,8 +393,8 @@ def propose_ledger(conn: Any, event_id: str, *, confirmation: str,
     rows = conn.execute(
         """SELECT c.candidate_id,c.article_id,a.original_url,c.title
              FROM incident_candidates c JOIN articles a ON a.id=c.article_id
-            WHERE c.article_id=ANY(%s) AND c.status='enrolled'
-            ORDER BY c.candidate_id""", (article_ids,)
+            WHERE c.article_id=ANY(%s) AND c.status='enrolled' AND c.event_id=%s
+            ORDER BY c.candidate_id""", (article_ids, event_id)
     ).fetchall()
     candidate_ids = [row[0] for row in rows]
     from urllib.parse import urlparse
@@ -329,7 +403,8 @@ def propose_ledger(conn: Any, event_id: str, *, confirmation: str,
     domains.discard("")
     if len(candidate_ids) < 2 or len(domains) < 2:
         raise ValueError("event_reassessment_independent_sources_required")
-    title = _evidence_title(title, rows)
+    if title != str(record["event"]["title"] or "").strip():
+        title = _evidence_title(title, rows)
     ledger_id = case[3] or ("eld_" + _version(
         {"workflow": WORKFLOW, "event_id": event_id, "snapshot_version": case[0]}))
     if case[3]:
@@ -343,7 +418,8 @@ def propose_ledger(conn: Any, event_id: str, *, confirmation: str,
             prior_candidates = sorted(
                 str(item.get("candidate_id")) for item in prior.get("sources", [])
             )
-            if prior.get("title") == title and prior_candidates == sorted(candidate_ids):
+            if (existing[1] != "withdrawn" and prior.get("title") == title
+                    and prior_candidates == sorted(candidate_ids)):
                 return {"event_id": event_id, "ledger_id": ledger_id,
                         "revision_id": existing[0], "status": existing[1],
                         "reused": True, "public_content_changed": False}

@@ -229,6 +229,8 @@ WORKER_JOB_TYPES = [
     "event_review_private",
     "article_review_private",
     "event_ledger_compose",
+    "event_fact_curate",
+    "event_composition_audit",
     "event_promote_reviewed",
     "legacy_event_retire",
     "legacy_event_restore",
@@ -272,7 +274,8 @@ QUEUE_WORKER_TYPES = {
         "article_threat_actors_backfill",
         "cve_threat_actors_backfill",
     ],
-    "openai": ["build_daily_brief", "event_ledger_compose"],
+    "openai": ["build_daily_brief", "event_ledger_compose", "event_fact_curate",
+               "event_composition_audit"],
     "build": ["write_article_markdown"],
 }
 
@@ -318,6 +321,8 @@ HANDLED_JOB_TYPES = {
     "event_review_private",
     "article_review_private",
     "event_ledger_compose",
+    "event_fact_curate",
+    "event_composition_audit",
     "event_promote_reviewed",
     "legacy_event_retire",
     "legacy_event_restore",
@@ -455,6 +460,8 @@ _LLM_JOB_TYPES = {
     "enrich_event_summary_llm",
     "event_report_llm",
     "build_daily_brief",
+    "event_fact_curate",
+    "event_composition_audit",
 }
 if os.environ.get("SV_EVENT_REVIEW_MODEL_ENABLED", "0") == "1":
     _LLM_JOB_TYPES.add("event_review_private")
@@ -9832,6 +9839,12 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         return run(conn, job)
     if job.job_type == "event_ledger_compose":
         from .event_composition_jobs import run
+        return run(conn, job)
+    if job.job_type == "event_fact_curate":
+        from .event_fact_curation_jobs import run
+        return run(conn, job)
+    if job.job_type == "event_composition_audit":
+        from .event_composition_audit_jobs import run
         return run(conn, job)
     if job.job_type == "event_promote_reviewed":
         from .event_approval import run

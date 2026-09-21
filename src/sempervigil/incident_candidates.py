@@ -67,7 +67,9 @@ def projection(record: dict, title: str) -> dict | None:
     }
 
 
-def project(conn, revision_id: str) -> dict:
+def project(conn, revision_id: str, *, event_id: str | None = None) -> dict:
+    if event_id is not None and (not event_id.startswith("evt_") or len(event_id) > 128):
+        raise ValueError("incident_candidate_event_invalid")
     row = conn.execute(
         """
         SELECT r.article_id, r.status, r.evidence_json, a.title
@@ -86,15 +88,19 @@ def project(conn, revision_id: str) -> dict:
     if signals is None:
         return {"status": "skipped", "reason": "no_incident_signal",
                 "revision_id": revision_id, "article_id": article_id}
-    candidate_id = "ic_" + _version({"revision_id": revision_id, **signals})
+    identity = {"revision_id": revision_id, **signals}
+    if event_id is not None:
+        identity["event_id"] = event_id
+    candidate_id = "ic_" + _version(identity)
     encoded = json.dumps(signals, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     existing = conn.execute(
         """
         SELECT candidate_id, status, signals_json
         FROM incident_candidates WHERE evidence_revision_id=%s
+          AND event_id IS NOT DISTINCT FROM %s
         FOR UPDATE
         """,
-        (revision_id,),
+        (revision_id, event_id),
     ).fetchone()
     if existing and existing[2] != encoded:
         if existing[1] != "suggested":
@@ -103,33 +109,37 @@ def project(conn, revision_id: str) -> dict:
             """
             UPDATE incident_candidates
             SET candidate_id=%s, kind=%s, title=%s, signals_json=%s, created_at=%s
-            WHERE evidence_revision_id=%s AND status='suggested'
+            WHERE evidence_revision_id=%s AND event_id IS NOT DISTINCT FROM %s
+              AND status='suggested'
             """,
-            (candidate_id, signals["kind"], signals["title"], encoded, utc_now_iso(), revision_id),
+            (candidate_id, signals["kind"], signals["title"], encoded, utc_now_iso(),
+             revision_id, event_id),
         )
     conn.execute(
         """
         INSERT INTO incident_candidates
-            (candidate_id, evidence_revision_id, article_id, status, kind, title,
-             signals_json, created_at)
-        VALUES (%s, %s, %s, 'suggested', %s, %s, %s, %s)
-        ON CONFLICT (evidence_revision_id) DO NOTHING
+            (candidate_id, evidence_revision_id, article_id, event_id, status, kind,
+             title, signals_json, created_at)
+        VALUES (%s, %s, %s, %s, 'suggested', %s, %s, %s, %s)
+        ON CONFLICT DO NOTHING
         """,
-        (candidate_id, revision_id, article_id, signals["kind"], signals["title"],
+        (candidate_id, revision_id, article_id, event_id, signals["kind"], signals["title"],
          encoded, utc_now_iso()),
     )
     stored = conn.execute(
         """
         SELECT candidate_id, status, signals_json
         FROM incident_candidates WHERE evidence_revision_id=%s
+          AND event_id IS NOT DISTINCT FROM %s
         """,
-        (revision_id,),
+        (revision_id, event_id),
     ).fetchone()
     if not stored or stored[2] != encoded:
         raise ValueError("incident_candidate_projection_conflict")
     conn.commit()
     return {"candidate_id": stored[0], "revision_id": revision_id,
-            "article_id": article_id, "status": stored[1], "signals": signals,
+            "article_id": article_id, "event_id": event_id,
+            "status": stored[1], "signals": signals,
             "public_eligible": False}
 
 
@@ -189,6 +199,45 @@ def review(conn, candidate_id: str, decision: str, *, reason: str, reviewer: str
             "selected_fact_ids": sorted(selected_fact_ids or []), "public_eligible": False}
 
 
+def refine_selection(conn, candidate_id: str, selected_fact_ids: list[str], *,
+                     reason: str, reviewer: str) -> dict:
+    """Add the first scoped fact selection to a legacy enrolled candidate."""
+    if (not candidate_id.startswith("ic_") or not reviewer.strip() or len(reviewer) > 80
+            or not reason.strip() or len(reason.strip()) > 1000
+            or not selected_fact_ids or len(selected_fact_ids) > 100
+            or len(set(selected_fact_ids)) != len(selected_fact_ids)
+            or any(not isinstance(item, str) or not item for item in selected_fact_ids)):
+        raise ValueError("incident_candidate_fact_selection_invalid")
+    row = conn.execute(
+        """SELECT c.status,c.selected_fact_ids_json,r.status,r.evidence_json
+             FROM incident_candidates c JOIN article_evidence_revisions r
+               ON r.revision_id=c.evidence_revision_id
+            WHERE c.candidate_id=%s FOR UPDATE""",
+        (candidate_id,),
+    ).fetchone()
+    if not row or row[0] != "enrolled" or row[2] != "accepted":
+        raise ValueError("incident_candidate_missing_or_decided")
+    selected = sorted(selected_fact_ids)
+    if row[1]:
+        if json.loads(row[1]) != selected:
+            raise ValueError("incident_candidate_fact_selection_conflict")
+        return {"candidate_id": candidate_id, "status": "enrolled",
+                "selected_fact_ids": selected, "reused": True, "public_eligible": False}
+    known = {str(item.get("id") or "") for item in _decode(row[3]).get("facts", [])}
+    if not set(selected) <= known:
+        raise ValueError("incident_candidate_fact_selection_invalid")
+    conn.execute(
+        """UPDATE incident_candidates SET selected_fact_ids_json=%s,reviewed_at=%s,
+                  reviewed_by=%s,review_reason=%s
+            WHERE candidate_id=%s AND status='enrolled' AND selected_fact_ids_json IS NULL""",
+        (json.dumps(selected, separators=(",", ":")), utc_now_iso(), reviewer,
+         reason.strip(), candidate_id),
+    )
+    conn.commit()
+    return {"candidate_id": candidate_id, "status": "enrolled",
+            "selected_fact_ids": selected, "reused": False, "public_eligible": False}
+
+
 def list_candidates(conn, *, status: str = "suggested", limit: int = 50) -> list[dict]:
     allowed = {"suggested", "held", "rejected", "enrolled", "all"}
     if status not in allowed or not 1 <= limit <= 200:
@@ -200,7 +249,7 @@ def list_candidates(conn, *, status: str = "suggested", limit: int = 50) -> list
         SELECT c.candidate_id, c.evidence_revision_id, c.article_id, c.status,
                c.kind, c.title, c.signals_json, c.created_at, c.reviewed_at,
                c.reviewed_by, c.review_reason, r.status, r.evidence_json,
-               c.selected_fact_ids_json
+               c.selected_fact_ids_json, c.event_id
         FROM incident_candidates c
         JOIN article_evidence_revisions r ON r.revision_id=c.evidence_revision_id
         {where}
@@ -218,7 +267,7 @@ def list_candidates(conn, *, status: str = "suggested", limit: int = 50) -> list
              "title": row[5], "signals": _decode(row[6]), "created_at": row[7],
              "reviewed_at": row[8], "reviewed_by": row[9], "review_reason": row[10]}
             | {"evidence_status": row[11], "eligible_for_curation": row[11] == "accepted",
-               "selected_fact_ids": selected,
+               "selected_fact_ids": selected, "event_id": row[14],
                "facts": [{key: fact.get(key) for key in
                            ("id", "statement", "kind", "date_text", "date_role")}
                           for fact in evidence.get("facts", [])]})

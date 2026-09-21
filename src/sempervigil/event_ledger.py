@@ -222,7 +222,7 @@ def propose_initial_sources(conn, candidate_ids: list[str], *, ledger_id: str,
     ).fetchone()
     if prior and not replace_open:
         raise ValueError("event_ledger_initial_cohort_exists")
-    if prior and prior[1] not in {"proposed", "held", "rejected"}:
+    if prior and prior[1] not in {"proposed", "held", "rejected", "withdrawn"}:
         raise ValueError("event_ledger_initial_cohort_not_replaceable")
     source_rows = sorted((_source(conn, candidate_id) for candidate_id in candidate_ids),
                          key=lambda row: row["candidate_id"])
@@ -301,7 +301,30 @@ def _lineage_current(conn, revision_id: str) -> bool:
                  OR c.evidence_revision_id<>s.evidence_revision_id) LIMIT 1""",
         (revision_id,),
     ).fetchone()
-    return stale is None
+    if stale is not None:
+        return False
+    row = conn.execute(
+        "SELECT ledger_json FROM event_ledger_revisions WHERE revision_id=%s",
+        (revision_id,),
+    ).fetchone()
+    if not row:
+        return False
+    ledger = _decode(row[0])
+    actual: dict[str, set[str]] = {}
+    for fact in ledger.get("facts", []):
+        actual.setdefault(str(fact.get("candidate_id") or ""), set()).add(
+            str(fact.get("fact_id") or "")
+        )
+    rows = conn.execute(
+        """SELECT s.candidate_id,c.selected_fact_ids_json
+             FROM event_ledger_revision_sources s JOIN incident_candidates c
+               ON c.candidate_id=s.candidate_id
+            WHERE s.revision_id=%s""", (revision_id,),
+    ).fetchall()
+    for candidate_id, selected_raw in rows:
+        if selected_raw and actual.get(candidate_id, set()) != set(json.loads(selected_raw)):
+            return False
+    return True
 
 
 def review(conn, revision_id: str, decision: str, *, reason: str, reviewer: str) -> dict:

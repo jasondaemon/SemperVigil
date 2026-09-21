@@ -1,0 +1,53 @@
+import json
+
+import pytest
+
+from sempervigil import event_fact_curation as curation
+
+pytestmark = pytest.mark.offline
+GENERATION = "a" * 64
+
+
+def material():
+    event = {"event_id": "evt_test", "title": "Acme ransomware incident"}
+    article = {"id": 7, "title": "Acme reports ransomware attack"}
+    evidence = {"revision_id": "aer_test", "facts": [
+        {"id": "f1", "statement": "Acme reported a ransomware attack.",
+         "kind": "reported_fact", "date_text": None, "date_role": "none",
+         "evidence_passages": [{"id": "p001", "text": "Acme reported a ransomware attack."}]},
+        {"id": "f2", "statement": "The company restored affected systems.",
+         "kind": "reported_fact", "date_text": None, "date_role": "none",
+         "evidence_passages": [{"id": "p002", "text": "The company restored affected systems."}]},
+        {"id": "f3", "statement": "A different company was breached in 2024.",
+         "kind": "reported_fact", "date_text": "2024", "date_role": "incident",
+         "evidence_passages": [{"id": "p003", "text": "A different company was breached in 2024."}]},
+    ]}
+    return event, article, evidence
+
+
+def test_curation_selects_only_event_scoped_facts():
+    req = curation.request(*material(), GENERATION)
+    raw = {"evidence_verdict": "supported", "incident_verdict": "same_incident",
+           "selected_fact_ids": ["f1", "f2"], "reason": "The first two facts concern Acme."}
+    result = curation.validate(json.dumps(raw).encode(), req, {"f1"})
+    assert result["selected_fact_ids"] == ["f1", "f2"]
+    assert result["public_eligible"] is False
+
+
+def test_curation_requires_incident_anchor_and_no_selection_on_hold():
+    req = curation.request(*material(), GENERATION)
+    raw = {"evidence_verdict": "supported", "incident_verdict": "same_incident",
+           "selected_fact_ids": ["f2"], "reason": "Recovery only."}
+    with pytest.raises(ValueError, match="incident_anchor_required"):
+        curation.validate(json.dumps(raw).encode(), req, {"f1"})
+    raw.update(evidence_verdict="hold", incident_verdict="ambiguous")
+    with pytest.raises(ValueError, match="held_evidence_selected"):
+        curation.validate(json.dumps(raw).encode(), req, {"f1"})
+
+
+def test_curation_rejects_unknown_fact_ids_in_schema():
+    req = curation.request(*material(), GENERATION)
+    raw = {"evidence_verdict": "supported", "incident_verdict": "same_incident",
+           "selected_fact_ids": ["missing"], "reason": "Unknown."}
+    with pytest.raises(ValueError, match="invalid_shape"):
+        curation.validate(json.dumps(raw).encode(), req, {"f1"})

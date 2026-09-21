@@ -67,8 +67,10 @@ def _utc(value: Any) -> datetime:
 def advance(conn: Any, event_id: str, *, now: datetime | None = None) -> dict[str, object]:
     available = conn.execute(
         """SELECT 1 FROM events e
-             JOIN event_public_pointers p ON p.event_id=e.id
-            WHERE e.id=%s AND e.visibility='active'""",
+            WHERE e.id=%s AND e.visibility='active' AND (
+                EXISTS(SELECT 1 FROM event_public_pointers p WHERE p.event_id=e.id)
+                OR EXISTS(SELECT 1 FROM event_reassessment_cases c
+                           WHERE c.event_id=e.id AND c.status='active'))""",
         (event_id,),
     ).fetchone()
     if not available:

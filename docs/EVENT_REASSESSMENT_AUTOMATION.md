@@ -1,0 +1,48 @@
+# Autonomous Event reassessment
+
+The confirmed-Event reassessment coordinator advances retained legacy Events
+through the existing evidence-first publication path without operator shepherding.
+It is default-disabled through `SV_EVENT_REASSESSMENT_AUTOMATION_ENABLED`.
+
+## Bounded workflow
+
+Each orchestrator pass performs at most one material action across active cases:
+
+1. Refresh a stale case only when the current Event remains eligible. An accepted
+   ledger blocks an automatic rebase if its source membership changed.
+2. Queue one missing retained article for passage-bound evidence extraction.
+3. Queue one hosted curation job. The independent curation checks the extracted
+   statements against their exact passages and selects only facts belonging to
+   this Event. Background incidents and generic actor history are excluded.
+4. Store Event-scoped incident candidates. The same article evidence may support
+   different Events without sharing a fact selection.
+5. Require at least two enrolled sources from different publisher domains. When
+   coverage is insufficient, use the existing research, fetch, relevance,
+   enrichment, and evidence path to seek corroboration.
+6. Build and accept a deterministic ledger from the selected facts, then queue one
+   hosted narrative composition.
+7. Audit every generated narrative item against only its cited fact statements.
+   Unsupported or uncertain prose is held rather than repaired or published.
+8. Admit a passing composition through a policy qualification, restricted
+   promotion role, activation-time freshness checks, the normal build API, and
+   atomic release switching.
+
+The local Qwen worker remains single-job and performs article evidence extraction.
+The existing OpenAI worker remains single-job and serializes curation, composition,
+and support audit calls. Queue dedupe keys bind every call to source, prompt,
+model, and snapshot versions, so unchanged work is reused rather than repeated.
+
+## Failure behavior
+
+No failure falls back to the legacy narrative. Missing retained text, extraction
+failure, ambiguous incident identity, inadequate independent coverage, stale
+lineage, unsupported composition prose, or publication conflicts move the case to
+an explicit held state visible in Admin. Evidence, decisions, revisions, and jobs
+remain auditable. Publication authorization identifies the reviewer as a versioned
+policy, never as a human.
+
+## Compatibility
+
+The workflow does not modify article summaries, daily JSON, feed generation, Hugo
+commands, build caching, or release activation. Legacy unscoped candidate rows are
+preserved; new automated candidates are keyed by Event and evidence revision.

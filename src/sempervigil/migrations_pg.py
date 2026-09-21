@@ -517,6 +517,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_incident_candidate_fact_selection_047")
             applied.add("pg_incident_candidate_fact_selection_047")
+        if "pg_event_scoped_incident_candidates_048" not in applied:
+            _migrate_event_scoped_incident_candidates(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_event_scoped_incident_candidates_048", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_event_scoped_incident_candidates_048")
+            applied.add("pg_event_scoped_incident_candidates_048")
         else:
             conn.commit()
         return
@@ -807,6 +816,15 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_incident_candidate_fact_selection_047")
+
+    conn.execute("BEGIN")
+    _migrate_event_scoped_incident_candidates(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_event_scoped_incident_candidates_048", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_event_scoped_incident_candidates_048")
 
 def _bootstrap_schema(conn) -> None:
     conn.execute(
@@ -1669,6 +1687,36 @@ def _migrate_incident_candidate_fact_selection(conn) -> None:
             created_at TEXT NOT NULL,
             created_by TEXT NOT NULL
         )
+        """
+    )
+
+
+def _migrate_event_scoped_incident_candidates(conn) -> None:
+    if not _has_column(conn, "incident_candidates", "event_id"):
+        conn.execute(
+            "ALTER TABLE incident_candidates ADD COLUMN event_id TEXT NULL REFERENCES events(id) ON DELETE RESTRICT"
+        )
+    conn.execute(
+        "ALTER TABLE incident_candidates DROP CONSTRAINT IF EXISTS incident_candidates_evidence_revision_id_key"
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_incident_candidates_event_evidence
+        ON incident_candidates(event_id,evidence_revision_id)
+        WHERE event_id IS NOT NULL
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_incident_candidates_legacy_evidence
+        ON incident_candidates(evidence_revision_id)
+        WHERE event_id IS NULL
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_incident_candidates_event_status
+        ON incident_candidates(event_id,status,created_at)
         """
     )
 

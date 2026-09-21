@@ -279,10 +279,13 @@ def queue_research_if_needed(conn, material: dict) -> tuple[str, int] | None:
     return job_id, minimum
 
 
-def submit(conn, composition_id: str, *, confirmation: str) -> dict:
-    if confirmation != CONFIRMATION:
-        raise ValueError("event_composition_publication_confirmation_required")
+def _submit(conn, composition_id: str, *, reviewer_kind: str,
+            required_reviewer: str | None = None) -> dict:
+    if reviewer_kind not in {"human", "policy"}:
+        raise ValueError("event_composition_publication_reviewer_invalid")
     material = materialize_event(conn, composition_id)
+    if required_reviewer is not None and material.get("reviewed_by") != required_reviewer:
+        raise ValueError("event_composition_publication_review_policy_required")
     event_id = material["event_id"]
     research = queue_research_if_needed(conn, material)
     if research:
@@ -300,7 +303,8 @@ def submit(conn, composition_id: str, *, confirmation: str) -> dict:
         predecessor = pointer[0] if pointer else None
         qualification = {"workflow": QUALIFICATION_WORKFLOW, "event_id": event_id,
             "ledger_revision_id": current["ledger_revision_id"], "composition_id": composition_id,
-            "reviewer": {"kind": "human", "id": current["reviewed_by"] or "authenticated-admin",
+            "reviewer": {"kind": reviewer_kind,
+                         "id": current["reviewed_by"] or "authenticated-admin",
                          "version": _version(POLICY)}, "reviewed_at": current["reviewed_at"]}
         approval = {"workflow": APPROVAL_WORKFLOW, "event_id": event_id,
                     "ledger_revision_id": current["ledger_revision_id"],
@@ -342,6 +346,18 @@ def submit(conn, composition_id: str, *, confirmation: str) -> dict:
             (approval_id, event_id, qualification_id, raw, job_id, utc_now_iso()))
     return {"event_id": event_id, "approval_id": approval_id, "job_id": job_id,
             "status": "queued", "public_eligible": False}
+
+
+def submit(conn, composition_id: str, *, confirmation: str) -> dict:
+    if confirmation != CONFIRMATION:
+        raise ValueError("event_composition_publication_confirmation_required")
+    return _submit(conn, composition_id, reviewer_kind="human")
+
+
+def submit_automated(conn, composition_id: str) -> dict:
+    """Admit only a composition accepted by the versioned support-audit policy."""
+    return _submit(conn, composition_id, reviewer_kind="policy",
+                   required_reviewer="policy:event-composition-audit-v1")
 
 
 def promote(factory, approval: dict, *, qualification_id: str) -> dict:
