@@ -2425,3 +2425,19 @@ excluded, and both retirement runs retain independent restore manifests.
   404; five immediate probes and a reload were successful. Treat atomic activation
   as locally implemented but the complete edge/NFS serving path as still requiring
   a dedicated zero-gap verification under repeated concurrent requests.
+
+## CyberNews mobile daily-edition verification (2026-09-21)
+
+- Nested sections no longer receive repeated full-page gutters. At a 390-pixel
+  production viewport the document width is 382 pixels and the homepage has no
+  horizontal overflow.
+- The compact masthead, daily date/view controls, one-card Event pager and article
+  cards remain readable without removing publisher icons, source names or article
+  summaries. Primary navigation targets measure at least 40 pixels high.
+- The live browser loaded `test-front.js?v=cybernews-edition-4`, rendered one daily
+  Event card, retained `/feed/days/2026-09-21.json`, and reported no console errors.
+- Supported build `job_15d73c8087bb4227a25b22241917dfed` succeeded in 22.92
+  seconds and activated release `20260921222530`. Homepage, Events, JavaScript and
+  daily JSON return HTTP 200; the valid JSON contains 194 items.
+- Local Hugo commit `b1829d74`, its configured remote and the build worker's
+  `/site-src` CSS/JavaScript hashes agree.

@@ -674,3 +674,22 @@ If you (Codex) propose edits affecting pipeline stability, you must:
   that the end-to-end serving path is not yet proven gap-free at switch time.
 - Source of truth: Hugo commits `d3628f58`, `203675f5`, `81578586` and `4d628ef4`
   on `codex/remove-cybernews-ads` are pushed to the configured remote.
+
+# 2026-09-21: improve the CyberNews mobile daily edition
+
+- Summary: Remove compounded nested-section gutters, compact the phone masthead
+  and daily controls, use touch-sized navigation, and show one independently
+  paged Event update per phone viewport before the news feed.
+- Scope: Hugo homepage CSS and client-side Event presentation only. Desktop keeps
+  two Event cards and the existing editorial grid.
+- Feed contract: publisher icons, source labels, direct links, article summaries,
+  settings, date navigation and `/feed/days/<date>.json` remain present. No JSON
+  content, schema, ordering or generation behavior changed.
+- Verification: JavaScript syntax and source diff checks pass. Supported API build
+  `job_15d73c8087bb4227a25b22241917dfed` completed in 22.92 seconds and activated
+  release `20260921222530`. A 390-pixel live viewport reported no horizontal
+  overflow, one Event card, 40-pixel navigation targets and no console errors.
+  Homepage, Events, JavaScript and the September 21 JSON return HTTP 200; the JSON
+  remains valid with 194 items.
+- Source of truth: Hugo commit `b1829d74` on `codex/remove-cybernews-ads` is pushed
+  and matches the build worker's `/site-src` CSS and JavaScript hashes.
