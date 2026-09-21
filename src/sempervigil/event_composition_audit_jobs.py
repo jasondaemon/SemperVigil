@@ -119,11 +119,24 @@ def run(conn, job, *, generate=None) -> dict:
     from .event_composition import review
     if decision["ready"]:
         applied = review(conn, payload["composition_id"], "accept", reason="", reviewer=REVIEWER)
+        remediation = None
     else:
         failures = [row for row in decision["audits"] if row["verdict"] != "supported"]
         reason = "; ".join(f'{row["id"]}: {row["verdict"]} - {row["reason"]}' for row in failures)[:1000]
         applied = review(conn, payload["composition_id"], "hold", reason=reason, reviewer=REVIEWER)
-    result.update(status="applied", application=applied)
+        remediation = None
+        from .event_composition_jobs import configuration as composition_configuration
+        if composition.get("generation_version") == composition_configuration(conn)[2]:
+            try:
+                from .event_composition import store_unreviewed
+                record = audit.filtered_record(payload["composition_id"], composition, ledger, decision)
+                remediation = {"status": "unreviewed",
+                               "composition_id": store_unreviewed(conn, record),
+                               "workflow": audit.FILTER_WORKFLOW}
+            except ValueError as exc:
+                remediation = {"status": "held", "reason": str(exc),
+                               "workflow": audit.FILTER_WORKFLOW}
+    result.update(status="applied", application=applied, remediation=remediation)
     if not update_job_result(conn, job.id, result):
         raise ValueError("event_composition_audit_job_not_running")
     return result

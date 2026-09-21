@@ -7,6 +7,7 @@ from .event_review import _json
 from .investigation import _version
 
 WORKFLOW = "event-composition-support-audit-v1"
+FILTER_WORKFLOW = "event-composition-support-filter-v1"
 MAX_INPUT_BYTES = 48000
 MAX_OUTPUT_BYTES = 12000
 SYSTEM_PROMPT = """Audit every generated Event item against only its cited facts.
@@ -78,3 +79,50 @@ def validate(raw: bytes, req: dict) -> dict:
             "request_version": req["request_version"], "generation_version": req["generation"],
             "audits": audits, "ready": all(row["verdict"] == "supported" for row in audits),
             "public_eligible": False}
+
+
+def filtered_record(composition_id: str, composition: dict, ledger: dict,
+                    decision: dict) -> dict:
+    """Create one immutable, deletion-only remediation from an audit decision."""
+    req = request(composition_id, composition, ledger, decision.get("generation_version", ""))
+    if (decision.get("workflow") != WORKFLOW
+            or decision.get("request_version") != req["request_version"]
+            or decision.get("composition_id") != composition_id
+            or decision.get("ready") is not False):
+        raise ValueError("event_composition_filter_audit_invalid")
+    from . import event_composition
+    if set(composition.get("sections", {})) != set(event_composition.SECTIONS):
+        raise ValueError("event_composition_filter_sections_invalid")
+    verdicts = {row["id"]: row["verdict"] for row in decision.get("audits", [])}
+    if set(verdicts) != set(req["item_ids"]):
+        raise ValueError("event_composition_filter_audit_invalid")
+    sections = {section: [] for section in composition.get("sections", {})}
+    counter = 0
+    for section, items in composition.get("sections", {}).items():
+        for item in items:
+            counter += 1
+            if verdicts[f"C{counter:02d}"] == "supported":
+                sections[section].append(dict(item))
+    if not sections.get("overview"):
+        raise ValueError("event_composition_filter_overview_required")
+
+    _, aliases = event_composition._active_facts(ledger)
+    required_timeline = {aliases[ref]["fact_id"] for ref in event_composition._timeline_refs(aliases)}
+    actual_timeline = {fact_id for item in sections.get("timeline", [])
+                       for fact_id in item.get("fact_ids", [])}
+    if actual_timeline != required_timeline:
+        raise ValueError("event_composition_filter_timeline_incomplete")
+    source_generation = composition.get("generation_version")
+    source_request = composition.get("request_version")
+    supported_ids = sorted(key for key, verdict in verdicts.items() if verdict == "supported")
+    generation = _version({"workflow": FILTER_WORKFLOW,
+                           "source_generation": source_generation,
+                           "audit_generation": decision["generation_version"]})
+    request_version = _version({"workflow": FILTER_WORKFLOW,
+                                "composition_id": composition_id,
+                                "source_request": source_request,
+                                "audit_request": decision["request_version"],
+                                "supported_item_ids": supported_ids})
+    return {**composition, "generation_version": generation,
+            "request_version": request_version, "sections": sections,
+            "status": "unreviewed", "public_eligible": False}

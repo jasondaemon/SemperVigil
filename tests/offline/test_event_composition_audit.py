@@ -9,10 +9,11 @@ GENERATION = "b" * 64
 
 
 def material():
-    composition = {"ledger_revision_id": "elr_test", "sections": {
-        "overview": [{"text": "Acme reported unauthorized access.", "fact_ids": ["f1"]}],
-        "impact": [{"text": "Customer records were exposed.", "fact_ids": ["f2"]}],
-    }}
+    from sempervigil.event_composition import SECTIONS
+    sections = {section: [] for section in SECTIONS}
+    sections["overview"] = [{"text": "Acme reported unauthorized access.", "fact_ids": ["f1"]}]
+    sections["impact"] = [{"text": "Customer records were exposed.", "fact_ids": ["f2"]}]
+    composition = {"ledger_revision_id": "elr_test", "sections": sections}
     ledger = {"facts": [
         {"fact_id": "f1", "statement": "Acme reported unauthorized access.",
          "kind": "reported_fact", "date_text": None, "date_role": "none"},
@@ -42,3 +43,34 @@ def test_audit_rejects_duplicate_or_missing_items():
     ]}
     with pytest.raises(ValueError, match="incomplete"):
         audit.validate(json.dumps(raw).encode(), req)
+
+
+def test_filter_removes_only_unsupported_items_and_preserves_required_content():
+    composition, ledger = material()
+    composition.update({"workflow": "event-ledger-composition-v4",
+                        "ledger_id": "eld_test", "generation_version": "c" * 64,
+                        "request_version": "d" * 64, "status": "held",
+                        "public_eligible": False, "section_policy": "deterministic-sections-v2",
+                        "change": {}})
+    req = audit.request("elc_test", composition, ledger, GENERATION)
+    decision = audit.validate(json.dumps({"audits": [
+        {"id": "C01", "verdict": "supported", "reason": "Direct."},
+        {"id": "C02", "verdict": "unsupported", "reason": "Overstated."},
+    ]}).encode(), req)
+    result = audit.filtered_record("elc_test", composition, ledger, decision)
+    assert result["sections"]["overview"] == composition["sections"]["overview"]
+    assert result["sections"]["impact"] == []
+    assert result["status"] == "unreviewed"
+    assert result["generation_version"] != composition["generation_version"]
+
+
+def test_filter_holds_when_audit_removes_every_overview_item():
+    composition, ledger = material()
+    composition.update({"generation_version": "c" * 64, "request_version": "d" * 64})
+    req = audit.request("elc_test", composition, ledger, GENERATION)
+    decision = audit.validate(json.dumps({"audits": [
+        {"id": "C01", "verdict": "unsupported", "reason": "Overstated."},
+        {"id": "C02", "verdict": "supported", "reason": "Direct."},
+    ]}).encode(), req)
+    with pytest.raises(ValueError, match="overview_required"):
+        audit.filtered_record("elc_test", composition, ledger, decision)
