@@ -2340,3 +2340,36 @@ excluded, and both retirement runs retain independent restore manifests.
   all nodes are Ready with MemoryPressure false; Kubernetes readiness, homepage,
   Events index, admin route and `/feed/index.json` pass. The feed index retains
   5,062 days. No Hugo or public build was invoked.
+
+## Event semantic fact roles (2026-09-21)
+
+- The prior Event ledger inferred section meaning by scanning fact text for fixed
+  words. Production inspection showed that grounded recovery and attack details
+  were retained in article evidence but often unavailable to composition because
+  they did not contain those cues.
+- `event-fact-curation-v4` now returns one compact object per selected fact with
+  Event-specific semantic roles. Python validates exact fact membership, known
+  roles, recommendation boundaries and timeline date roles; it does not infer
+  meaning. `accepted-evidence-event-ledger-v2` stores those roles and
+  `curated-sections-v3` authorizes composition from them.
+- Existing immutable v1/v4 publications retain their recorded section policy.
+  New role decisions make affected older ledgers stale through the existing
+  lineage check, causing normal withdrawal and reconstruction rather than
+  mutation.
+- The complete offline suite passes: 1,112 passed, one skipped, four existing
+  warnings. Read-only production history showed 323 prior successful curation
+  requests at 2,779-40,534 input characters and 0-2,030 output characters.
+- A disposable Kubernetes canary used a real 25-fact retained source but performed
+  no database or public write. It completed in 7.75 seconds, used 1,007 completion
+  tokens, selected 13 grounded facts, and returned six valid semantic roles. The
+  canary Job was deleted.
+- Migration `pg_event_fact_semantic_sections_055` installed successfully. The
+  first normal v4 job completed in 8.77 seconds with 1,147 completion tokens,
+  selected 15 facts and persisted six role types. Its Event remained deferred for
+  independent corroboration, confirming that role retention did not bypass the
+  two-source gate.
+- Application `6abba55` is deployed only to admin, orchestrator and the serial
+  hosted worker. Platform `9636c18` contains only those image substitutions.
+  The affected pods are Ready with zero restarts; homepage, Events index and feed
+  index return HTTP 200. Hugo, build behavior, daily JSON, fetch workers, local
+  inference, model choice and concurrency are unchanged.

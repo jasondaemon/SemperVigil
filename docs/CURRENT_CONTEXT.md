@@ -7,7 +7,7 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
-## September 21: semantic Event fact roles in local qualification
+## September 21: semantic Event fact roles deployed
 
 The next Event pipeline revision removes keyword-based section inference from new
 ledgers. `event-fact-curation-v4` retains an Event-aware semantic role for every
@@ -21,8 +21,17 @@ Read-only production measurements cover 323 successful curation calls: input
 length 2,779-40,534 characters (10,681 average) and output length 0-2,030
 characters (937 average). The compact role assignment fits the existing 48 KB
 input and 2,400-token output limits without changing model concurrency. The full
-offline gate passes 1,112 tests with one skip. Live hosted-model qualification and
-deployment remain pending. See `EVENT_SEMANTIC_FACT_ROLES.md`.
+offline gate passes 1,112 tests with one skip.
+
+A non-publishing production canary on a 25-fact retained source completed in 7.75
+seconds and used 1,007 completion tokens after the response schema was compacted
+to bind each selected fact directly to its roles. The first normal orchestrated v4
+job completed in 8.77 seconds with 1,147 completion tokens, retained 15 facts, and
+stored timeline, impact, response/recovery, attribution, unresolved-question and
+context roles. The one-source Event then remained deferred for independent
+corroboration as designed. Migration 055 is installed; application `6abba55` is
+live on admin, orchestrator and the hosted worker; platform `9636c18` matches the
+rendered and live deployment. See `EVENT_SEMANTIC_FACT_ROLES.md`.
 
 ## September 20: normalized Event fact-curation requests deployed
 
