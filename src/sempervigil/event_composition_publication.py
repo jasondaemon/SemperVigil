@@ -171,8 +171,8 @@ def validate_bundle(bundle: dict, *, event_id: str, expected_revision: str | Non
             or bundle["ledger_revision_id"] != "elr_" + _version(ledger_record)
             or bundle["composition_id"] != "elc_" + _version(composition)
             or composition.get("ledger_revision_id") != bundle["ledger_revision_id"]
-            or composition.get("workflow") not in {
-                event_composition.WORKFLOW, event_composition.LEGACY_WORKFLOW}
+            or composition.get("workflow") not in (
+                {event_composition.WORKFLOW} | event_composition.LEGACY_WORKFLOWS)
             or composition.get("public_eligible") is not False
             or ledger_record["ledger"].get("workflow") not in {
                 "accepted-evidence-event-ledger-v1", "accepted-evidence-event-ledger-v2"}
@@ -216,6 +216,8 @@ def validate_bundle(bundle: dict, *, event_id: str, expected_revision: str | Non
                 dated = [active[ref].get("date_text") for ref in refs if active[ref].get("date_text")]
                 if len(dated) != 1 or item.get("date_text") != dated[0]:
                     raise ValueError("event_composition_publication_timeline_invalid")
+    if composition.get("workflow") == event_composition.WORKFLOW:
+        event_composition.validate_overview_coverage(sections, list(active.values()))
     revision = _version({"workflow": PUBLIC_WORKFLOW, "bundle": bundle})
     if expected_revision is not None and revision != expected_revision:
         raise ValueError("event_publication_pointer_mismatch")

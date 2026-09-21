@@ -110,6 +110,18 @@ def test_composition_bundle_rejects_section_and_revision_tampering():
         validate_bundle(bundle, event_id=event_id, expected_revision="0" * 64)
 
 
+@pytest.mark.parametrize("workflow", [
+    "event-ledger-composition-v4", "event-ledger-composition-v5",
+])
+def test_prior_composition_workflows_remain_publishable(workflow):
+    event_id, bundle = _bundle()
+    bundle["composition"]["workflow"] = workflow
+    bundle["composition_id"] = "elc_" + _version(bundle["composition"])
+    bundle["qualification"]["composition_id"] = bundle["composition_id"]
+
+    assert validate_bundle(bundle, event_id=event_id)["revision_id"]
+
+
 def test_canonical_sources_collapse_legacy_trailing_slash_duplicates():
     sources = [
         {"article_id": 7, "url": "https://example.test/report/", "title": "Original"},

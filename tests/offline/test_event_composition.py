@@ -37,8 +37,9 @@ def ledger_revision():
 
 def valid_output():
     output = {section: [] for section in composition.SECTIONS}
-    output["overview"] = [{"text": "Acme disclosed an intrusion affecting its environment.",
-                           "fact_refs": ["F01"]}]
+    output["overview"] = [{"text": "Acme disclosed an intrusion affecting its environment; "
+                                   "recovery remains unconfirmed.",
+                           "fact_refs": ["F01", "F02"]}]
     output["timeline"] = [{"text": "Acme reported that unauthorized access occurred.",
                            "fact_refs": ["F01"]}]
     output["open_questions"] = [{"text": "The available evidence does not confirm recovery.",
@@ -52,6 +53,12 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
     assert payload["section_policy"] == composition.SECTION_POLICY
     assert [fact["ref"] for fact in payload["facts"]] == ["F01", "F02"]
     assert payload["required_timeline_refs"] == ["F01"]
+    assert payload["overview_min_paragraphs"] == 1
+    assert payload["overview_requirements"] == [
+        {"dimension": "event_scope", "fact_refs": ["F01"]},
+        {"dimension": "attack_mechanics", "fact_refs": ["F01"]},
+        {"dimension": "remaining_uncertainty", "fact_refs": ["F02"]},
+    ]
     assert payload["facts"][0]["allowed_sections"] == ["overview", "attack_vector", "attack_path", "timeline"]
     properties = req["schema"]["properties"]
     assert properties["overview"]["minItems"] == 1
@@ -165,6 +172,56 @@ def test_validation_allows_narrative_overview_paragraphs_but_keeps_them_bounded(
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
 
 
+def rich_ledger_revision():
+    revision = ledger_revision()
+    revision["ledger"]["facts"].extend([
+        {"fact_id": "f4", "statement": "Customer records were exposed.",
+         "kind": "reported_fact", "date_text": None, "date_role": "none",
+         "sections": ["impact"], "exact_passages": [{"passage_id": "p4", "text": "Customer records were exposed."}]},
+        {"fact_id": "f5", "statement": "Acme contained the intrusion.",
+         "kind": "reported_fact", "date_text": None, "date_role": "none",
+         "sections": ["response_recovery"], "exact_passages": [{"passage_id": "p5", "text": "Acme contained the intrusion."}]},
+        {"fact_id": "f6", "statement": "Acme attributed the activity to Group One.",
+         "kind": "reported_fact", "date_text": None, "date_role": "none",
+         "sections": ["attribution"], "exact_passages": [{"passage_id": "p6", "text": "Acme attributed the activity to Group One."}]},
+        {"fact_id": "f7", "statement": "The intrusion affected Acme's hosted service.",
+         "kind": "reported_fact", "date_text": None, "date_role": "none",
+         "sections": ["context"], "exact_passages": [{"passage_id": "p7", "text": "The intrusion affected Acme's hosted service."}]},
+    ])
+    return revision
+
+
+def test_rich_event_requires_multiple_paragraphs_and_semantic_coverage():
+    revision = rich_ledger_revision()
+    req = composition.request(revision, GENERATION)
+    payload = json.loads(req["input"])
+    assert payload["overview_min_paragraphs"] == 2
+    assert req["schema"]["properties"]["overview"]["minItems"] == 2
+    assert {row["dimension"] for row in payload["overview_requirements"]} == {
+        "event_scope", "attack_mechanics", "impact", "response_and_current_state",
+        "attribution", "remaining_uncertainty",
+    }
+
+    output = valid_output()
+    with pytest.raises(ValueError, match="invalid_shape"):
+        composition.validate(json.dumps(output).encode(), revision, GENERATION)
+    output["overview"].append(
+        {"text": "The available reporting does not establish additional consequences.",
+         "fact_refs": ["F02"]}
+    )
+    with pytest.raises(ValueError, match="overview_incomplete"):
+        composition.validate(json.dumps(output).encode(), revision, GENERATION)
+
+    output["overview"] = [
+        {"text": "Acme disclosed an intrusion into its hosted service that exposed customer records.",
+         "fact_refs": ["F01", "F03", "F06"]},
+        {"text": "Acme attributed the activity to Group One and contained it, while full recovery remains unconfirmed.",
+         "fact_refs": ["F02", "F04", "F05"]},
+    ]
+    record = composition.validate(json.dumps(output).encode(), revision, GENERATION)
+    assert len(record["sections"]["overview"]) == 2
+
+
 def test_validation_rejects_unknown_or_unsupported_evidence():
     output = valid_output()
     output["overview"][0]["fact_refs"] = ["unknown"]
@@ -192,7 +249,7 @@ def test_model_prose_is_stored_with_immutable_evidence_ids():
     output["overview"][0]["text"] = "A varied, readable account grounded in accepted evidence."
     record = composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
     assert record["sections"]["overview"][0] == {
-        "text": output["overview"][0]["text"], "fact_ids": ["f1"]}
+        "text": output["overview"][0]["text"], "fact_ids": ["f1", "f2"]}
     assert record["sections"]["timeline"][0]["date_text"] == "July 4"
 
 
@@ -236,7 +293,7 @@ def test_job_is_one_attempt_private_and_review_gated(harness):
     assert len(calls) == 1 and result["status"] == "review_required"
     assert result["public_eligible"] is False and result["attempts"] == 1
     assert result["composition_id"].startswith("elc_")
-    assert json.loads(result["raw"])["overview"][0]["fact_refs"] == ["F01"]
+    assert json.loads(result["raw"])["overview"][0]["fact_refs"] == ["F01", "F02"]
 
 
 @pytest.mark.parametrize("change", [{"attempt_count": 1}, {"max_attempts": 2},
