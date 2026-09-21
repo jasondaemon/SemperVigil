@@ -535,6 +535,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_event_reassessment_source_outcomes_049")
             applied.add("pg_event_reassessment_source_outcomes_049")
+        if "pg_event_composition_repair_requeue_050" not in applied:
+            _migrate_event_composition_repair_requeue(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_event_composition_repair_requeue_050", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_event_composition_repair_requeue_050")
+            applied.add("pg_event_composition_repair_requeue_050")
         else:
             conn.commit()
         return
@@ -843,6 +852,15 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_event_reassessment_source_outcomes_049")
+
+    conn.execute("BEGIN")
+    _migrate_event_composition_repair_requeue(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_event_composition_repair_requeue_050", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_event_composition_repair_requeue_050")
 
 def _bootstrap_schema(conn) -> None:
     conn.execute(
@@ -1768,6 +1786,20 @@ def _migrate_event_reassessment_source_outcomes(conn) -> None:
             WHERE status='held' AND decision_reason IN
               ('evidence extraction produced no reviewable revision',
                'article_evidence_over_budget','retained source unavailable')""",
+        (utc_now_iso(),),
+    )
+
+
+def _migrate_event_composition_repair_requeue(conn) -> None:
+    conn.execute(
+        """UPDATE event_reassessment_cases c
+              SET status='active',decision_reason=NULL,updated_at=%s
+            WHERE c.status='held'
+              AND c.decision_reason='composition support audit held the narrative'
+              AND EXISTS (
+                SELECT 1 FROM event_ledger_compositions x
+                 WHERE x.ledger_id=c.ledger_id AND x.status='held'
+                   AND x.reviewed_by='policy:event-composition-audit-v1')""",
         (utc_now_iso(),),
     )
 

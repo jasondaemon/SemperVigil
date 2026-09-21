@@ -203,7 +203,8 @@ def advance(conn, event_id: str) -> dict:
         return {"status": "deferred", "event_id": event_id, "reason": "ledger_not_ready"}
 
     composition = conn.execute(
-        """SELECT composition_id,status,reviewed_by FROM event_ledger_compositions
+        """SELECT composition_id,status,reviewed_by,generation_version
+            FROM event_ledger_compositions
             WHERE ledger_revision_id=%s ORDER BY created_at DESC,composition_id DESC LIMIT 1""",
         (latest[0],),
     ).fetchone()
@@ -223,6 +224,26 @@ def advance(conn, event_id: str) -> dict:
             return _hold(conn, event_id, "composition audit failed: " + error)
         return {"status": "queued", "event_id": event_id, "job_id": job_id,
                 "action": "composition_audit_queued"}
+    if (composition[1] == "held"
+            and composition[2] == "policy:event-composition-audit-v1"):
+        from .event_composition_jobs import configuration as composition_configuration
+        if composition[3] == composition_configuration(conn)[2]:
+            audit_row = conn.execute(
+                """SELECT result_json FROM jobs
+                    WHERE job_type='event_composition_audit' AND status='succeeded'
+                      AND payload_json::jsonb->>'composition_id'=%s
+                    ORDER BY finished_at DESC,id DESC LIMIT 1""", (composition[0],),
+            ).fetchone()
+            if audit_row and audit_row[0]:
+                decision = json.loads(audit_row[0]).get("audit")
+                if decision:
+                    from .event_composition_repair_jobs import submit
+                    job_id = submit(conn, composition[0], decision)
+                    status, error = _job_state(conn, job_id)
+                    if status == "failed":
+                        return _hold(conn, event_id, "composition repair failed: " + error)
+                    return {"status": status, "event_id": event_id, "job_id": job_id,
+                            "action": "composition_repair_queued"}
     if composition[1] == "held":
         return _hold(conn, event_id, "composition support audit held the narrative")
     if (composition[1] == "accepted"
