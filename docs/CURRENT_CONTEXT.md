@@ -7,7 +7,7 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
-## September 20: normalized Event fact-curation requests pending deployment
+## September 20: normalized Event fact-curation requests deployed
 
 `event-fact-curation-v3` transmits every exact evidence passage once and has each
 fact reference the shared passage table by immutable passage ID. Stored article
@@ -18,9 +18,17 @@ unchanged. Conflicting text for one passage ID fails before inference.
 Read-only production measurement of the held Vercel cohort found that its failing
 21-fact source shrinks from 48,792 bytes to 17,087 bytes. All eight current source
 requests fit between 8,870 and 17,624 bytes after normalization, so the safety
-limit does not need to increase. Migration 053 will reactivate only cases held by
-the exact `event_fact_curation_input_over_budget` reason. Local verification:
-1,107 offline tests passed, one skipped. Deployment and live canary remain pending.
+limit does not need to increase. Migration 053 reactivated only cases held by the
+exact `event_fact_curation_input_over_budget` reason. Application `61440ce` is
+deployed to admin, orchestrator and the hosted-model worker. Its first v3 request
+completed successfully in 4.16 seconds with 4,744 prompt tokens.
+
+That canary exposed a separate pre-existing scheduler starvation defect: a repaired
+composition that failed its second audit rediscovered its already-successful repair
+job on every tick. The local correction identifies repaired compositions from the
+persisted successful repair result and holds the failed repaired narrative, preserving
+the one-repair policy while allowing later Events to proceed. Full offline suite:
+1,108 passed, one skipped. The orchestrator-only correction rollout remains pending.
 
 ## September 20: resilient fact curation deployed
 

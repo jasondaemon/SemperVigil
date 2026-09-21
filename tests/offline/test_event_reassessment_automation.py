@@ -52,6 +52,26 @@ def test_repairable_composition_reuses_current_generation_without_query(monkeypa
     assert automation._repairable_composition(object(), "elr_revision", current) == current
 
 
+def test_repaired_composition_lineage_comes_from_successful_job_result():
+    class RepairConn:
+        def __init__(self, row):
+            self.row = row
+            self.params = None
+
+        def execute(self, sql, params=()):
+            assert "job_type='event_composition_repair'" in sql
+            assert "status='succeeded'" in sql
+            assert "repaired_composition_id" in sql
+            self.params = params
+            return _Result(self.row)
+
+    found = RepairConn((1,))
+    missing = RepairConn(None)
+    assert automation._is_repaired_composition(found, "elc_repaired") is True
+    assert found.params == ("elc_repaired",)
+    assert automation._is_repaired_composition(missing, "elc_original") is False
+
+
 def test_tick_skips_waiting_case_but_stops_after_one_advancement(monkeypatch):
     class TickConn:
         def execute(self, sql, params=()):

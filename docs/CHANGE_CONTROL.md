@@ -569,3 +569,19 @@ If you (Codex) propose edits affecting pipeline stability, you must:
 - Rollback: restore the prior three image tags. Migration 053 is state-only and
   need not be reversed; a reactivated case can safely be held again by the prior
   request guard.
+
+# 2026-09-20: terminate failed one-time Event repairs
+
+- Summary: Recognize a held composition created by a successful repair job and
+  stop the reassessment case after its failed second audit instead of repeatedly
+  returning the already-completed repair job.
+- Scope: autonomous reassessment coordinator only; no prompt, model, evidence,
+  audit, repair, publication, build, Hugo or public data change.
+- Controls: repair lineage is read from the immutable successful job result; the
+  existing support-audit hold remains authoritative and no second repair is added.
+- Verification: 12 focused tests pass; full offline suite passes 1,108 tests with
+  one skip and four existing warnings. Production observation reproduced the
+  loop against repaired composition `elc_9fe4...` before implementation.
+- Status: local implementation; orchestrator-only rollout pending.
+- Rollback: restore the prior orchestrator image. The affected case would resume
+  looping but its held composition would remain non-public.

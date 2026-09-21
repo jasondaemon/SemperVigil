@@ -59,6 +59,15 @@ def _repairable_composition(conn, ledger_revision_id: str, composition):
     ).fetchone()
 
 
+def _is_repaired_composition(conn, composition_id: str) -> bool:
+    return bool(conn.execute(
+        """SELECT 1 FROM jobs
+            WHERE job_type='event_composition_repair' AND status='succeeded'
+              AND result_json::jsonb->>'repaired_composition_id'=%s
+            LIMIT 1""", (composition_id,),
+    ).fetchone())
+
+
 def _advance_proposed_ledger(conn, event_id: str, revision_id: str) -> dict:
     from .event_ledger import review, _lineage_current
     if not _lineage_current(conn, revision_id):
@@ -254,6 +263,8 @@ def advance(conn, event_id: str) -> dict:
             return _hold(conn, event_id, "composition audit failed: " + error)
         return {"status": "queued", "event_id": event_id, "job_id": job_id,
                 "action": "composition_audit_queued"}
+    if composition[1] == "held" and _is_repaired_composition(conn, composition[0]):
+        return _hold(conn, event_id, "composition support audit held the repaired narrative")
     repairable = _repairable_composition(conn, latest[0], composition)
     if repairable:
         audit_row = conn.execute(

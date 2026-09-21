@@ -2290,3 +2290,21 @@ excluded, and both retirement runs retain independent restore manifests.
   skipped, four existing warnings. No model call, queue admission, migration,
   build, Hugo invocation, public write or production rollout occurred in this
   local slice.
+
+### Compact-request rollout and scheduler finding
+
+- Application `61440ce` was imported on all four schedulable nodes. Namespace-
+  correct render/live comparison contained only admin, orchestrator and hosted-
+  model worker image substitutions. Admission was empty, the orchestrator was
+  fully stopped, the worker and admin were replaced, migration 053 reactivated
+  Vercel, and only then was the new orchestrator started.
+- The first live v3 request used 4,744 prompt tokens and completed successfully in
+  4.16 seconds. It belonged to another normally ordered active Event, confirming
+  transport/schema behavior without manually inserting or reprioritizing work.
+- Continued observation found that Event repeatedly returned an already-successful
+  one-time repair job after its repaired composition failed the second support
+  audit. This pre-existing state transition starved later active Events. A local
+  correction recognizes the repaired composition from the immutable successful
+  repair result and moves the case to its existing audit-held terminal state.
+  It does not permit another repair or weaken audit. Twelve focused tests and the
+  1,108-test full offline suite pass; orchestrator-only deployment is pending.
