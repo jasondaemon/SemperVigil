@@ -23,7 +23,13 @@ supplied JSON shape."""
 
 def _items(composition: dict) -> list[tuple[str, str, dict]]:
     result, counter = [], 0
-    for section, rows in composition.get("sections", {}).items():
+    sections = composition.get("sections", {})
+    from . import event_composition
+    if composition.get("workflow") == event_composition.WORKFLOW:
+        selected = (("overview", sections.get("overview", [])),)
+    else:
+        selected = sections.items()
+    for section, rows in selected:
         for item in rows:
             counter += 1
             result.append((f"C{counter:02d}", section, item))

@@ -13,6 +13,8 @@ def material():
     sections = {section: [] for section in SECTIONS}
     sections["overview"] = [{"text": "Acme confirmed records were stolen.",
                              "fact_ids": ["f1"]}]
+    sections["impact"] = [{"text": "Acme said records may have been exposed.",
+                            "fact_ids": ["f1"]}]
     composition = {"workflow": WORKFLOW, "ledger_revision_id": "elr_test", "sections": sections}
     ledger = {"public_eligible": False, "title": "Acme incident", "kind": "breach",
               "facts": [{"fact_id": "f1",
@@ -36,7 +38,18 @@ def test_repair_rewrites_only_rejected_text_and_revalidates_composition():
         req, composition, revision)
     assert record["sections"]["overview"] == [{
         "text": "Acme said records may have been exposed.", "fact_ids": ["f1"]}]
+    assert record["sections"]["impact"] == [{
+        "text": "Acme said records may have been exposed.", "fact_ids": ["f1"]}]
     assert record["status"] == "unreviewed"
+
+
+def test_v8_repair_ids_match_overview_only_audit_ids():
+    composition, revision, decision = material()
+    req = repair.request("elc_test", composition, revision, decision, "b" * 64)
+    item = json.loads(req["input"])["items"][0]
+    assert item["id"] == "C01"
+    assert item["section"] == "overview"
+    assert item["text"] == "Acme confirmed records were stolen."
 
 
 def test_repair_requires_every_rejected_item_exactly_once():
