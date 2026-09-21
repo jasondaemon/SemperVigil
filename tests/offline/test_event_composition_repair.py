@@ -14,7 +14,7 @@ def material():
     sections = {section: [] for section in SECTIONS}
     sections["overview"] = [{"text": "Acme confirmed records were stolen.",
                              "fact_ids": ["f1"]}]
-    sections["impact"] = [{"text": "Acme said records may have been exposed.",
+    sections["impact"] = [{"text": "The incident may have exposed records.",
                             "fact_ids": ["f1"]}]
     composition = {"workflow": WORKFLOW, "ledger_revision_id": "elr_test", "sections": sections}
     ledger = {"public_eligible": False, "title": "Acme incident", "kind": "breach",
@@ -26,8 +26,10 @@ def material():
     revision = {"revision_id": "elr_test", "ledger_id": "eld_test", "status": "accepted",
                 "lineage_current": True, "ledger": ledger, "change": {}}
     audit_req = audit.request("elc_test", composition, ledger, "a" * 64)
-    decision = audit.validate(json.dumps({"audits": [{"id": "C01",
-        "verdict": "unsupported", "reason": "The source only says may."}]}).encode(), audit_req)
+    decision = audit.validate(json.dumps({"audits": [
+        {"id": "C01", "verdict": "unsupported", "reason": "The source only says may."},
+        {"id": "C02", "verdict": "supported", "reason": "Directly supported."},
+    ]}).encode(), audit_req)
     return composition, revision, decision
 
 
@@ -40,11 +42,11 @@ def test_repair_rewrites_only_rejected_text_and_revalidates_composition():
     assert record["sections"]["overview"] == [{
         "text": "Acme said records may have been exposed.", "fact_ids": ["f1"]}]
     assert record["sections"]["impact"] == [{
-        "text": "Acme said records may have been exposed.", "fact_ids": ["f1"]}]
+        "text": "The incident may have exposed records.", "fact_ids": ["f1"]}]
     assert record["status"] == "unreviewed"
 
 
-def test_v8_repair_ids_match_overview_only_audit_ids():
+def test_v9_repair_ids_match_generated_section_audit_ids():
     composition, revision, decision = material()
     req = repair.request("elc_test", composition, revision, decision, "b" * 64)
     item = json.loads(req["input"])["items"][0]

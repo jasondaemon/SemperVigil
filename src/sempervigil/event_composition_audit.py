@@ -37,9 +37,9 @@ def request(composition_id: str, composition: dict, ledger: dict, generation: st
     items = []
     counter = 0
     from . import event_composition
-    overview_only = composition.get("workflow") == event_composition.WORKFLOW
+    generated_only = composition.get("workflow") == event_composition.WORKFLOW
     for section, rows in composition.get("sections", {}).items():
-        if overview_only and section != "overview":
+        if generated_only and section not in event_composition.GENERATED_SECTIONS:
             continue
         for item in rows:
             counter += 1

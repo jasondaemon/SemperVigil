@@ -26,7 +26,8 @@ def _items(composition: dict) -> list[tuple[str, str, dict]]:
     sections = composition.get("sections", {})
     from . import event_composition
     if composition.get("workflow") == event_composition.WORKFLOW:
-        selected = (("overview", sections.get("overview", [])),)
+        selected = ((section, sections.get(section, []))
+                    for section in event_composition.GENERATED_SECTIONS)
     else:
         selected = sections.items()
     for section, rows in selected:
@@ -98,14 +99,13 @@ def validate(raw: bytes, req: dict, composition: dict, ledger_revision: dict) ->
     _, aliases = event_composition._active_facts(ledger_revision["ledger"])
     alias_by_id = {fact["fact_id"]: alias for alias, fact in aliases.items()}
     if composition.get("workflow") == event_composition.WORKFLOW:
-        overview = []
+        output = {section: [] for section in event_composition.GENERATED_SECTIONS}
         for item_id, section, item in _items(composition):
-            if section == "overview":
-                overview.append({"text": replacements.get(item_id, item["text"]),
-                                 "fact_refs": [alias_by_id[ref]
-                                               for ref in item.get("fact_ids", [])]})
+            output[section].append({"text": replacements.get(item_id, item["text"]),
+                                    "fact_refs": [alias_by_id[ref]
+                                                  for ref in item.get("fact_ids", [])]})
         return event_composition.validate(
-            json.dumps({"overview": overview}).encode(), ledger_revision, req["generation"])
+            json.dumps(output).encode(), ledger_revision, req["generation"])
     output = {section: [] for section in event_composition.SECTIONS}
     for item_id, section, item in _items(composition):
         output[section].append({"text": replacements.get(item_id, item["text"]),

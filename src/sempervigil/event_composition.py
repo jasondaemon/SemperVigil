@@ -9,11 +9,11 @@ from .event_review import _json
 from .investigation import _version
 from .utils import utc_now_iso
 
-WORKFLOW = "event-ledger-composition-v8"
+WORKFLOW = "event-ledger-composition-v9"
 LEGACY_WORKFLOW = "event-ledger-composition-v4"
 LEGACY_WORKFLOWS = frozenset({
     LEGACY_WORKFLOW, "event-ledger-composition-v5", "event-ledger-composition-v6",
-    "event-ledger-composition-v7",
+    "event-ledger-composition-v7", "event-ledger-composition-v8",
 })
 SECTION_POLICY = "curated-sections-v3"
 DETERMINISTIC_SECTION_POLICY = "deterministic-sections-v2"
@@ -24,6 +24,7 @@ SECTIONS = (
     "overview", "attack_vector", "attack_path", "timeline", "impact",
     "response_recovery", "mitigations", "attribution", "open_questions",
 )
+GENERATED_SECTIONS = tuple(section for section in SECTIONS if section != "timeline")
 OVERVIEW_DIMENSIONS = (
     ("event_scope", frozenset({"context", "timeline"})),
     ("attack_mechanics", frozenset({"attack_vector", "attack_path"})),
@@ -31,22 +32,29 @@ OVERVIEW_DIMENSIONS = (
     ("response_and_current_state", frozenset({"response_recovery"})),
 )
 SYSTEM_PROMPT = """You are a cybersecurity editor. Create a coherent executive
-overview of the risk Event from the accepted facts. Explain what happened, how it
-worked, material impact, and the response or current state when the facts support
-them. Choose the clearest narrative structure and use as much detail as needed.
-Do not mechanically list facts, add unsupported claims or causal links, strengthen
-uncertain attribution, or omit material qualifications.
+overview and concise analytical sections for the risk Event from the accepted facts.
+Explain what happened, how it worked, material impact, and the response or current
+state when the facts support them. Consolidate corroborating or equivalent facts into
+one reader-facing paragraph with all supporting references. Do not mechanically list
+facts, repeat the same claim within or across sections, add unsupported claims or
+causal links, strengthen uncertain attribution, or omit material qualifications.
+
+Use each section only for its editorial purpose: attack_vector for initial access or
+delivery; attack_path for post-access actions and progression; impact for consequences;
+response_recovery for investigation, containment, remediation, and restoration;
+mitigations for source-supported defensive guidance; attribution for actor identity
+or attribution; and open_questions for material unresolved issues. An empty section
+must be an empty array. The timeline is assembled separately and is not requested.
 
 Every material clause must be directly entailed by a cited fact. Do not invent
 who identified, concluded, confirmed, or recommended something. Do not turn an
 association into a cause, origin, or attribution. Preserve each fact's subject,
 object, uncertainty, and technical relationships.
 
-Return exactly one JSON object with one key named overview. overview must be an
-array of paragraph objects. Each paragraph object must contain only text and
-fact_refs. Put clean reader-facing prose in text and every fact that directly
-supports that paragraph in fact_refs. Never put F-number labels in the prose.
-Do not return any other keys."""
+Return exactly one JSON object with the requested section keys. Each section must be
+an array of paragraph objects containing only text and fact_refs. Put clean
+reader-facing prose in text and every fact that directly supports that paragraph in
+fact_refs. Never put F-number labels in the prose or return any other keys."""
 
 
 def _active_facts(ledger: dict) -> tuple[list[dict], dict[str, dict]]:
@@ -179,26 +187,25 @@ def schema(fact_refs: dict[str, list[str]] | None = None) -> dict:
                 "text": {"type": "string", "minLength": 1, "maxLength": 3200},
                 "fact_refs": {"type": "array", "minItems": 1, "maxItems": 16,
                               "items": ref}}}
-    properties = {"overview": {"type": "array", "minItems": 1,
-                                "maxItems": 4, "items": item}}
+    properties = {}
+    for section in GENERATED_SECTIONS:
+        refs = (fact_refs or {}).get(section, [])
+        properties[section] = {
+            "type": "array", "minItems": 1 if section == "overview" else 0,
+            "maxItems": 4 if refs else 0, "items": item,
+        }
     return {"type": "object", "additionalProperties": False,
-            "required": ["overview"], "properties": properties}
+            "required": list(GENERATED_SECTIONS), "properties": properties}
 
 
 def _deterministic_sections(aliases: dict[str, dict]) -> dict[str, list[dict]]:
-    """Project accepted facts verbatim; only the overview is generated prose."""
+    """Project only dated milestones; narrative sections are generated and audited."""
     sections = {section: [] for section in SECTIONS}
     timeline_refs = set(_timeline_refs(aliases))
     for ref, fact in aliases.items():
         item = {"text": fact["statement"], "fact_ids": [fact["fact_id"]]}
-        for section in _allowed_sections(fact):
-            if section == "overview":
-                continue
-            if section == "timeline":
-                if ref in timeline_refs:
-                    sections[section].append({**item, "date_text": fact["date_text"]})
-                continue
-            sections[section].append(dict(item))
+        if ref in timeline_refs:
+            sections["timeline"].append({**item, "date_text": fact["date_text"]})
     return sections
 
 
@@ -232,7 +239,10 @@ def request(ledger_revision: dict, generation: str) -> dict:
                           "date_role": fact["date_role"],
                           "allowed_sections": allowed_by_ref[ref]}
                          for ref, fact in aliases.items()]}
-    allowed_refs = {"overview": list(aliases)}
+    allowed_refs = {
+        section: [ref for ref, allowed in allowed_by_ref.items() if section in allowed]
+        for section in GENERATED_SECTIONS
+    }
     response_schema = schema(allowed_refs)
     encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     if len((SYSTEM_PROMPT + encoded + json.dumps(response_schema)).encode()) > MAX_INPUT_BYTES:
@@ -252,14 +262,24 @@ def validate(raw: bytes, ledger_revision: dict, generation: str) -> dict:
         raise ValueError("event_composition_invalid_shape") from exc
     _, aliases = _active_facts(ledger_revision["ledger"])
     sections = _deterministic_sections(aliases)
-    for item in value["overview"]:
-        if re.search(r"(?:\[F\d{2}\]|\bF\d{2}\b)", item["text"], re.IGNORECASE):
-            raise ValueError("event_composition_fact_alias_in_prose")
-        if len(item["fact_refs"]) != len(set(item["fact_refs"])):
-            raise ValueError("event_composition_duplicate_fact_ref")
-        facts = [aliases[ref] for ref in item["fact_refs"]]
-        sections["overview"].append({"text": item["text"].strip(),
-                                     "fact_ids": [fact["fact_id"] for fact in facts]})
+    normalized_text = set()
+    for section in GENERATED_SECTIONS:
+        allowed = {ref for ref, fact in aliases.items() if section in _allowed_sections(fact)}
+        for item in value[section]:
+            text = item["text"].strip()
+            if re.search(r"(?:\[F\d{2}\]|\bF\d{2}\b)", text, re.IGNORECASE):
+                raise ValueError("event_composition_fact_alias_in_prose")
+            if len(item["fact_refs"]) != len(set(item["fact_refs"])):
+                raise ValueError("event_composition_duplicate_fact_ref")
+            if not set(item["fact_refs"]) <= allowed:
+                raise ValueError("event_composition_fact_section_invalid")
+            normalized = re.sub(r"\W+", " ", text.lower()).strip()
+            if normalized in normalized_text:
+                raise ValueError("event_composition_duplicate_narrative")
+            normalized_text.add(normalized)
+            facts = [aliases[ref] for ref in item["fact_refs"]]
+            sections[section].append({"text": text,
+                                      "fact_ids": [fact["fact_id"] for fact in facts]})
     validate_overview_coverage(sections, list(aliases.values()))
     return {
         "workflow": WORKFLOW, "ledger_id": ledger_revision["ledger_id"],

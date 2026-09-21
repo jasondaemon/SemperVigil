@@ -121,6 +121,9 @@ def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict
             if not items:
                 continue
             section_class = f"event-report-section event-report-section--{section.replace('_', '-')}"
+            if section not in {"overview", "timeline"} and (
+                    len(items) >= 3 or sum(len(item["text"]) for item in items) >= 900):
+                section_class += " event-report-section--wide"
             lines.append(f'<section class="{section_class}" id="{section.replace("_", "-")}">')
             lines.append(f"<h2>{headings[section]}</h2>")
             if section == "timeline":

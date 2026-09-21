@@ -36,9 +36,11 @@ def ledger_revision():
 
 
 def valid_output():
-    return {"overview": [{"text": "Acme disclosed an intrusion affecting its environment; "
-                                  "recovery remains unconfirmed.",
-                          "fact_refs": ["F01", "F02"]}]}
+    output = {section: [] for section in composition.GENERATED_SECTIONS}
+    output["overview"] = [{"text": "Acme disclosed an intrusion affecting its environment; "
+                                   "recovery remains unconfirmed.",
+                           "fact_refs": ["F01", "F02"]}]
+    return output
 
 
 def test_request_uses_only_active_exact_evidence_and_remains_private():
@@ -56,7 +58,7 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
     assert properties["overview"]["maxItems"] == 4
     assert properties["overview"]["items"]["properties"]["text"]["maxLength"] == 3200
     assert properties["overview"]["items"]["properties"]["fact_refs"]["maxItems"] == 16
-    assert set(properties) == {"overview"}
+    assert set(properties) == set(composition.GENERATED_SECTIONS)
     record = composition.validate(json.dumps(valid_output()).encode(), ledger_revision(), GENERATION)
     assert record["public_eligible"] is False and record["status"] == "unreviewed"
     assert record["section_policy"] == composition.SECTION_POLICY
@@ -65,8 +67,8 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
         "text": "Acme reported unauthorized access on July 4.",
         "fact_ids": ["f1"], "date_text": "July 4",
     }]
-    assert record["sections"]["attack_vector"][0]["text"] == ledger_revision()["ledger"]["facts"][0]["statement"]
-    assert record["sections"]["open_questions"][0]["fact_ids"] == ["f2"]
+    assert record["sections"]["attack_vector"] == []
+    assert record["sections"]["open_questions"] == []
 
 
 def test_allowed_sections_use_curated_semantics_without_keyword_reclassification():
@@ -213,7 +215,7 @@ def test_validation_rejects_unknown_or_unsupported_evidence():
     output["overview"][0]["fact_refs"] = ["unknown"]
     with pytest.raises(ValueError, match="invalid_shape"):
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
-    output = valid_output(); output["impact"] = []
+    output = valid_output(); del output["impact"]
     with pytest.raises(ValueError, match="invalid_shape"):
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
 
