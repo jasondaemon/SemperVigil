@@ -1,4 +1,5 @@
 import copy
+import json
 
 import pytest
 
@@ -6,6 +7,7 @@ from sempervigil.event_composition_publication import (
     PUBLIC_WORKFLOW,
     QUALIFICATION_WORKFLOW,
     _compatibility_recovery,
+    _is_current_public_composition,
     event_identity,
     validate_bundle,
 )
@@ -180,3 +182,28 @@ def test_compatibility_recovery_preserves_failed_parent_and_is_bounded(monkeypat
     assert captured["payload"] == {"approval_id": "a" * 64}
     assert captured["kwargs"]["parent_job_id"] == "job_failed"
     assert captured["kwargs"]["max_attempts"] == 1
+
+
+def test_superseded_composition_is_eligible_only_while_its_pointer_is_current():
+    class Result:
+        def __init__(self, row):
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+    class Conn:
+        def __init__(self, composition_id):
+            self.composition_id = composition_id
+
+        def execute(self, sql, params=()):
+            assert "FROM event_public_pointers" in sql
+            assert params == ("evt_test",)
+            return Result((json.dumps({
+                "workflow": PUBLIC_WORKFLOW,
+                "event_id": "evt_test",
+                "composition_id": self.composition_id,
+            }),))
+
+    assert _is_current_public_composition(Conn("elc_old"), "evt_test", "elc_old")
+    assert not _is_current_public_composition(Conn("elc_new"), "evt_test", "elc_old")

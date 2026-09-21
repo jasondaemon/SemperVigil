@@ -179,7 +179,12 @@ This snapshot is not a lease: build activation still needs revocation coordinati
             if bundle.get("workflow") == "event-composition-public-revision-v1":
                 from .event_composition_publication import current_material
                 try:
-                    current = current_material(conn, bundle["composition_id"], event_id=event_id)
+                    current = current_material(
+                        conn,
+                        bundle["composition_id"],
+                        event_id=event_id,
+                        allow_current_public_superseded=True,
+                    )
                 except ValueError:
                     result["withdrawn"][event_id] = "evidence_unavailable"
                     continue

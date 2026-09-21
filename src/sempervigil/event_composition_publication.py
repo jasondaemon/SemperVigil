@@ -84,8 +84,31 @@ def _source_rows(conn, revision_id: str, *, lock: bool) -> list[dict]:
     return result
 
 
+def _is_current_public_composition(conn, event_id: str, composition_id: str) -> bool:
+    row = conn.execute(
+        """SELECT r.bundle_json
+             FROM event_public_pointers p
+             JOIN event_public_revisions r
+               ON r.event_id=p.event_id AND r.revision_id=p.revision_id
+            WHERE p.event_id=%s""",
+        (event_id,),
+    ).fetchone()
+    if not row:
+        return False
+    try:
+        bundle = _decode(row[0])
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    return (
+        bundle.get("workflow") == PUBLIC_WORKFLOW
+        and bundle.get("event_id") == event_id
+        and bundle.get("composition_id") == composition_id
+    )
+
+
 def current_material(conn, composition_id: str, *, event_id: str | None = None,
-                     lock: bool = False) -> dict:
+                     lock: bool = False,
+                     allow_current_public_superseded: bool = False) -> dict:
     if not isinstance(composition_id, str) or not composition_id.startswith("elc_"):
         raise ValueError("event_composition_publication_composition_invalid")
     suffix = " FOR SHARE NOWAIT" if lock else ""
@@ -98,7 +121,13 @@ def current_material(conn, composition_id: str, *, event_id: str | None = None,
             WHERE c.composition_id=%s""" + suffix,
         (composition_id,),
     ).fetchone()
-    if not row or row[2] != "accepted" or row[6] != "accepted":
+    composition_available = bool(row and row[2] == "accepted")
+    if (row and row[2] == "superseded" and allow_current_public_superseded
+            and event_id is not None):
+        composition_available = _is_current_public_composition(
+            conn, event_id, composition_id
+        )
+    if not row or not composition_available or row[6] != "accepted":
         raise ValueError("event_composition_publication_not_accepted")
     from .event_ledger import _lineage_current
     if not _lineage_current(conn, row[1]):

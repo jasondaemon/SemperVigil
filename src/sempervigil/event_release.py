@@ -21,7 +21,13 @@ def check_current(conn, bundle: dict) -> None:
     """Short activation-time source lock window; the event row is already locked."""
     if bundle.get("workflow") == "event-composition-public-revision-v1":
         from .event_composition_publication import current_material
-        current = current_material(conn, bundle["composition_id"], event_id=bundle["event_id"], lock=True)
+        current = current_material(
+            conn,
+            bundle["composition_id"],
+            event_id=bundle["event_id"],
+            lock=True,
+            allow_current_public_superseded=True,
+        )
         if (current["ledger_revision_id"] != bundle["ledger_revision_id"]
                 or current["ledger_record"] != bundle["ledger_record"]
                 or current["composition"] != bundle["composition"]
