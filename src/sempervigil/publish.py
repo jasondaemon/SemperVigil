@@ -216,13 +216,24 @@ def events_index_payload(events: Iterable[dict[str, object]], *,
     payload = []
     for event in events:
         event_id = str(event.get("id") or "")
+        site_slug = str(event.get("site_slug") or event_id).strip()
+        if site_slug and (not re.fullmatch(r"[\w][\w.-]*", site_slug)
+                          or site_slug.casefold() == "_index"
+                          or len(site_slug.encode("utf-8")) > 240):
+            raise ValueError("invalid_event_slug")
+        event_url = f"/events/{site_slug}/" if site_slug else ""
+        revision_published_at = (event.get("_publication_updated_at")
+                                 or event.get("updated_at") or event.get("published_at"))
         if event_id in qualified_revisions:
             from .event_render import index_entry
             if event_id in qualified_seen:
                 raise ValueError("duplicate_qualified_event")
             qualified_seen.add(event_id)
-            payload.append(index_entry(qualified_revisions[event_id], event_id=event_id,
-                                       expected_revision=promoted_revision_ids[event_id]))
+            entry = index_entry(qualified_revisions[event_id], event_id=event_id,
+                                expected_revision=promoted_revision_ids[event_id])
+            entry.update({"url": event_url, "revision_published_at": revision_published_at,
+                          "publication_history": event.get("_publication_history") or []})
+            payload.append(entry)
             continue
         items = event.get("items") or {}
         cves = items.get("cves") or []
@@ -231,6 +242,8 @@ def events_index_payload(events: Iterable[dict[str, object]], *,
         payload.append(
             {
                 "event_id": event.get("id"),
+                "url": event_url,
+                "revision_published_at": revision_published_at,
                 "title": event.get("title"),
                 "summary": event.get("summary"),
                 "severity": event.get("severity"),
@@ -375,6 +388,8 @@ def write_events_markdown(
             metadata, body = render(qualified_revisions[event_id], event_id=event_id,
                                     expected_revision=promoted_revision_ids[event_id])
             metadata["slug"] = site_slug
+            metadata["revision_published_at"] = (event.get("_publication_updated_at")
+                                                  or event.get("updated_at") or event.get("published_at"))
             content = "---\n" + yaml.safe_dump(metadata, sort_keys=False, allow_unicode=False).strip()
             content += "\n---\n\n" + body
             path = os.path.join(output_dir, f"{site_slug}.md")

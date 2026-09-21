@@ -122,15 +122,18 @@ The caller must supply a dedicated connection and a bounded local switch only.
         if [row[0] for row in locked] != sorted(expected):
             raise ValueError("event_activation_event_unavailable")
         rows = conn.execute("""SELECT p.event_id,p.revision_id,r.bundle_json,
-                   r.qualification_id,q.qualification_json,q.revoked_at
+                   r.qualification_id,q.qualification_json,q.revoked_at,p.updated_at
             FROM event_public_pointers p
             LEFT JOIN event_public_revisions r ON r.event_id=p.event_id AND r.revision_id=p.revision_id
             LEFT JOIN event_quote_qualifications q ON q.event_id=r.event_id AND q.qualification_id=r.qualification_id
             ORDER BY p.event_id LIMIT %s""", (MAX_EVENTS + 1,)).fetchall()
         if {row[0]: row[1] for row in rows} != expected:
             raise ValueError("event_activation_inventory_changed")
+        from .event_release import publication_history
+        histories = publication_history(conn, sorted(expected), expected,
+                                         {row[0]: row[6] for row in rows})
         bundles = {}
-        for event_id, revision, raw, qid, qraw, revoked in rows:
+        for event_id, revision, raw, qid, qraw, revoked, _updated_at in rows:
             if raw is None or qraw is None:
                 raise ValueError("broken_publication_reference")
             if event_id in manifest["withdrawn"]:
@@ -147,7 +150,7 @@ The caller must supply a dedicated connection and a bounded local switch only.
                 check_current(conn, bundle)
         if release is not None:
             from .event_release import verify_release
-            verify_release(release, manifest, bundles)
+            verify_release(release, manifest, bundles, histories)
         # Reproduction above is local CPU work. Refuse if the server expired the
         # idle transaction, and renew its short window before the bounded switch.
         conn.execute("SELECT 1").fetchone()

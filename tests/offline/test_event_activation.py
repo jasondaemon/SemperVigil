@@ -50,6 +50,8 @@ class Connection:
             return Mock(fetchone=lambda: (self.guarded,))
         if "SELECT id FROM events" in query:
             return Mock(fetchall=lambda: [(key,) for key in args[0]])
+        if "FROM event_public_revisions r" in query:
+            return Mock(fetchall=lambda: [(row[0], row[1], row[6]) for row in self.rows])
         return Mock(fetchall=lambda: self.rows)
 
 
@@ -74,7 +76,8 @@ def test_switch_is_inside_authorization_transaction(database):
     bundle, revision = approved_fixture(database)
     q = bundle["qualification"]
     conn = Connection([("event", revision)],
-        [("event", revision, json.dumps(bundle), _version(q), json.dumps(q), None)])
+        [("event", revision, json.dumps(bundle), _version(q), json.dumps(q), None,
+          "2026-09-21T12:00:00Z")])
     def switch():
         assert conn.open
         assert any("SHARE MODE NOWAIT" in sql for sql in conn.statements)
@@ -96,7 +99,8 @@ def test_authorization_failures_never_switch(database, fault):
     if fault == "bundle": bundle["qualification"]["quotes"][0]["quote"] = "fabricated"
     if fault == "qualification": q["reviewer"]["id"] = "changed"
     conn = Connection(pointers, [("event", revision, json.dumps(bundle),
-                                 _version(bundle["qualification"]), json.dumps(q), revoked)])
+                                 _version(bundle["qualification"]), json.dumps(q), revoked,
+                                 "2026-09-21T12:00:00Z")])
     if fault == "guard": conn.guarded = False
     if fault == "autocommit": conn.autocommit = True
     if fault == "transaction": conn.info = SimpleNamespace(transaction_status=psycopg.pq.TransactionStatus.INTRANS)
@@ -108,7 +112,8 @@ def test_authorization_failures_never_switch(database, fault):
 
 
 def test_explicit_withdrawal_keeps_inventory_without_reauthorizing():
-    conn = Connection([("event", "a"*64)], [("event", "a"*64, "{}", "b"*64, "{}", "revoked")])
+    conn = Connection([("event", "a"*64)], [("event", "a"*64, "{}", "b"*64, "{}", "revoked",
+                                               "2026-09-21T12:00:00Z")])
     switch = Mock()
     activation.authorize_and_activate(lambda: conn, manifest(withdrawn={"event": "a"*64}), switch)
     switch.assert_called_once_with()

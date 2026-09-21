@@ -20,7 +20,11 @@ def candidate(tmp_path, bundle, revision):
     page.write_text("<!doctype html><html><body><article>" + fragment + "</article></body></html>")
     index = tmp_path / release.INDEX_PATH
     index.parent.mkdir(parents=True)
-    index.write_text(json.dumps([index_entry(bundle, event_id="event", expected_revision=revision)]))
+    entry = index_entry(bundle, event_id="event", expected_revision=revision)
+    history = [{"event_revision": revision, "published_at": "2026-09-21T12:00:00Z"}]
+    entry.update({"url": "/events/stable/", "revision_published_at": "2026-09-21T12:00:00Z",
+                  "publication_history": history})
+    index.write_text(json.dumps([entry]))
     manifest = {"workflow": "event-release-authorization-v2", "revisions": {"event": revision}, "withdrawn": {},
         "pages": {"event": "stable"}, "fragments": {"event": release.fragment_identity(fragment)},
         "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest()}
@@ -30,10 +34,11 @@ def candidate(tmp_path, bundle, revision):
 def test_candidate_binds_rendered_html_and_index(database, tmp_path):
     bundle, revision = approved_fixture(database)
     manifest, page, _ = candidate(tmp_path, bundle, revision)
+    history = [{"event_revision": revision, "published_at": "2026-09-21T12:00:00Z"}]
     validate_manifest(manifest)
-    release.verify_release(tmp_path, manifest, {"event": bundle})
+    release.verify_release(tmp_path, manifest, {"event": bundle}, {"event": history})
     page.write_text(page.read_text().replace('\n', '').replace('data-event-id="event"', 'data-event-id=event'))
-    release.verify_release(tmp_path, manifest, {"event": bundle})
+    release.verify_release(tmp_path, manifest, {"event": bundle}, {"event": history})
 
 
 @pytest.mark.parametrize("fault", ["quote", "duplicate", "missing", "index", "wrong_id", "withdrawal", "path", "unbound"])
@@ -52,7 +57,8 @@ def test_candidate_mismatches_refuse(database, tmp_path, fault):
         page.symlink_to(other)
     if fault == "unbound": manifest["workflow"] = "event-release-authorization-v1"
     with pytest.raises((ValueError, OSError)):
-        release.verify_release(tmp_path, manifest, {"event": bundle})
+        release.verify_release(tmp_path, manifest, {"event": bundle}, {
+            "event": [{"event_revision": revision, "published_at": "2026-09-21T12:00:00Z"}]})
 
 
 def test_builder_preparation_and_unchanged_reuse(database, tmp_path, monkeypatch):
@@ -61,7 +67,12 @@ def test_builder_preparation_and_unchanged_reuse(database, tmp_path, monkeypatch
     class Read:
         def __enter__(self): return self
         def __exit__(self, *args): pass
-        def execute(self, *args): return SimpleNamespace(fetchall=lambda: [("event", revision)])
+        def execute(self, *args):
+            if "FROM event_public_revisions r" in args[0]:
+                rows = [("event", revision, "2026-09-21T12:00:00Z")]
+            else:
+                rows = [("event", revision, "2026-09-21T12:00:00Z")]
+            return SimpleNamespace(fetchall=lambda: rows)
     monkeypatch.setattr(release, "database", lambda: Read())
     monkeypatch.setattr(release, "load_export", lambda *a: {
         "managed_event_ids": ["event"], "promoted_revision_ids": {"event": revision},

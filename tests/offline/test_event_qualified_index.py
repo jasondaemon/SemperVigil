@@ -62,7 +62,8 @@ def test_content_failures_never_replace_either_output(database, tmp_path, fault)
 def test_legacy_index_payload_compatibility(tmp_path):
     item = event()
     path = publish.write_events_index([item], str(tmp_path))
-    expected = {"event_id": item["id"], **{k: item[k] for k in (
+    expected = {"event_id": item["id"], "url": "/events/evt_one/",
+        "revision_published_at": item.get("updated_at") or item.get("published_at"), **{k: item[k] for k in (
         "title", "summary", "severity", "kind", "status", "first_seen_at", "last_seen_at")},
         **item["items"], "counts": {"cves": 1, "products": 1, "articles": 1}}
     assert Path(path).read_text() == json.dumps([expected], indent=2)

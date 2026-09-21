@@ -15,6 +15,31 @@ from .event_render import index_entry, render
 from .utils import atomic_write_json
 
 INDEX_PATH = "sempervigil/index/events.json"
+MAX_EVENT_UPDATES = 5000
+
+
+def publication_history(conn, event_ids: list[str], pointers: dict[str, str],
+                        current_updates: dict[str, str]) -> dict[str, list[dict[str, str]]]:
+    """Return immutable promoted revisions; revision insertion and promotion are one transaction."""
+    if not event_ids:
+        return {}
+    rows = conn.execute("""SELECT r.event_id,r.revision_id,r.recorded_at
+        FROM event_public_revisions r
+        WHERE r.event_id=ANY(%s)
+        ORDER BY r.event_id,r.recorded_at,r.revision_id LIMIT %s""",
+        (event_ids, MAX_EVENT_UPDATES + 1)).fetchall()
+    if len(rows) > MAX_EVENT_UPDATES:
+        raise ValueError("event_publication_history_too_large")
+    result = {event_id: [] for event_id in event_ids}
+    for event_id, revision, recorded_at in rows:
+        published_at = current_updates[event_id] if pointers[event_id] == revision else recorded_at
+        if (type(published_at) is not str
+                or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T[^\s]+", published_at)):
+            raise ValueError("invalid_event_publication_timestamp")
+        result[event_id].append({"event_revision": revision, "published_at": published_at})
+    if any(not result[event_id] for event_id in event_ids):
+        raise ValueError("event_publication_history_missing")
+    return result
 
 
 def check_current(conn, bundle: dict) -> None:
@@ -102,8 +127,13 @@ def prepare_site(conn, config, logger) -> dict:
     with database() as read:
         read.execute("SET TRANSACTION READ ONLY")
         read.execute("SET LOCAL statement_timeout='3s'")
-        pointers = dict(read.execute("SELECT event_id,revision_id FROM event_public_pointers ORDER BY event_id LIMIT %s",
-                                     (MAX_EVENTS + 1,)).fetchall())
+        pointer_rows = read.execute(
+            "SELECT event_id,revision_id,updated_at FROM event_public_pointers ORDER BY event_id LIMIT %s",
+            (MAX_EVENTS + 1,),
+        ).fetchall()
+        pointers = {row[0]: row[1] for row in pointer_rows}
+        publication_updates = {row[0]: row[2] for row in pointer_rows}
+        histories = publication_history(read, list(pointers), pointers, publication_updates)
     if len(pointers) > MAX_EVENTS:
         raise ValueError("event_publication_inventory_too_large")
     authorization = load_export(database, list(pointers))
@@ -124,6 +154,9 @@ def prepare_site(conn, config, logger) -> dict:
         if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,200}", slug) or slug.lower() == "_index":
             raise ValueError("invalid_event_release_slug")
         slugs[event_id] = slug
+        event = dict(event)
+        event["_publication_updated_at"] = publication_updates[event_id]
+        event["_publication_history"] = histories[event_id]
         by_id[event_id] = event
     if len({s.casefold() for s in slugs.values()}) != len(slugs):
         raise ValueError("duplicate_event_release_slug")
@@ -146,7 +179,8 @@ def prepare_site(conn, config, logger) -> dict:
     return {"published": len(active), "withdrawn": authorization["withdrawn"], "pages": len(pages)}
 
 
-def verify_release(release: Path, manifest: dict, bundles: dict) -> None:
+def verify_release(release: Path, manifest: dict, bundles: dict,
+                   histories: dict[str, list[dict[str, str]]]) -> None:
     """Bind the actual candidate page and index to database-approved quotations."""
     if manifest.get("workflow") != "event-release-authorization-v2":
         raise ValueError("event_release_bound_manifest_required")
@@ -171,7 +205,15 @@ def verify_release(release: Path, manifest: dict, bundles: dict) -> None:
     by_id = {row["event_id"]: row for row in entries}
     for key, revision in manifest["revisions"].items():
         bundle = bundles[key]
-        if by_id.get(key) != index_entry(bundle, event_id=key, expected_revision=revision):
+        actual = dict(by_id.get(key) or {})
+        url = actual.pop("url", None)
+        published = actual.pop("revision_published_at", None)
+        history = actual.pop("publication_history", None)
+        if (actual != index_entry(bundle, event_id=key, expected_revision=revision)
+                or url != f"/events/{manifest['pages'][key]}/"
+                or type(published) is not str
+                or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T[^\s]+", published)
+                or history != histories.get(key)):
             raise ValueError("event_release_index_projection_mismatch")
         expected = fragment_identity(render(bundle, event_id=key, expected_revision=revision)[1])
         page = read(f"events/{manifest['pages'][key]}/index.html", 2 * 1024 * 1024)
