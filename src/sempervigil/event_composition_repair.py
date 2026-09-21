@@ -87,6 +87,15 @@ def validate(raw: bytes, req: dict, composition: dict, ledger_revision: dict) ->
     from . import event_composition
     _, aliases = event_composition._active_facts(ledger_revision["ledger"])
     alias_by_id = {fact["fact_id"]: alias for alias, fact in aliases.items()}
+    if composition.get("workflow") == event_composition.WORKFLOW:
+        overview = []
+        for item_id, section, item in _items(composition):
+            if section == "overview":
+                overview.append({"text": replacements.get(item_id, item["text"]),
+                                 "fact_refs": [alias_by_id[ref]
+                                               for ref in item.get("fact_ids", [])]})
+        return event_composition.validate(
+            json.dumps({"overview": overview}).encode(), ledger_revision, req["generation"])
     output = {section: [] for section in event_composition.SECTIONS}
     for item_id, section, item in _items(composition):
         output[section].append({"text": replacements.get(item_id, item["text"]),

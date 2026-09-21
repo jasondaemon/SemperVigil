@@ -1,15 +1,15 @@
-"""Single-attempt OpenAI composition jobs for accepted Event ledgers."""
+"""Single-attempt local composition jobs for accepted Event ledgers."""
 import os
 import time
 
 from . import event_composition as composition
 from .investigation import _version
-from .services.ai_service import get_model, get_provider, load_provider_secret
+from .services.ai_service import get_model, get_provider
 from .storage import enqueue_job, insert_llm_run, update_job_result
 
 JOB_TYPE = "event_ledger_compose"
-MODEL_NAME = "gpt-5.6-luna"
-PARAMS = {"max_completion_tokens": 4096, "reasoning_effort": "medium"}
+MODEL_NAME = "ollama/qwen3.5:9b-q4_K_M-16k"
+PARAMS = {"max_tokens": 4096, "temperature": 0.2}
 TRANSIENT_BASELINE_ERRORS = {
     "event_composition_baseline_changed",
     "event_composition_configuration_changed",
@@ -24,15 +24,15 @@ def require_enabled() -> None:
 def configuration(conn) -> tuple[dict, dict, str]:
     row = conn.execute(
         """SELECT p.id, m.id FROM llm_providers p JOIN llm_models m ON m.provider_id=p.id
-           WHERE lower(p.name)='openai' AND lower(p.type)='openai_compatible'
+           WHERE lower(p.type)='ollama_native'
              AND p.is_enabled=1 AND m.is_enabled=1 AND m.model_name=%s
            ORDER BY p.name, m.id LIMIT 1""", (MODEL_NAME,),
     ).fetchone()
     if not row:
-        raise ValueError("event_composition_openai_model_missing")
+        raise ValueError("event_composition_local_model_missing")
     provider, model = get_provider(conn, row[0]) or {}, get_model(conn, row[1]) or {}
     if not provider.get("base_url") or model.get("model_name") != MODEL_NAME:
-        raise ValueError("event_composition_openai_model_invalid")
+        raise ValueError("event_composition_local_model_invalid")
     generation = _version({"workflow": composition.WORKFLOW, "params": PARAMS,
         "model": model["id"], "model_name": model["model_name"],
         "provider": provider["id"], "base_url": provider["base_url"],
@@ -76,7 +76,7 @@ def submit(conn, revision_id: str) -> str:
                        "generation": generation,
                        "request_version": req["request_version"]}
             return enqueue_job(
-                conn, JOB_TYPE, payload, priority=-10, queue_name="openai",
+                conn, JOB_TYPE, payload, priority=-10, queue_name="llm_local",
                 max_attempts=1, parent_job_id=existing[0],
                 dedupe_key=recovery_key,
             )
@@ -84,29 +84,27 @@ def submit(conn, revision_id: str) -> str:
         return existing[0]
     payload = {"workflow": composition.WORKFLOW, "ledger_revision_id": revision_id,
                "generation": generation, "request_version": req["request_version"]}
-    return enqueue_job(conn, JOB_TYPE, payload, priority=-10, queue_name="openai",
+    return enqueue_job(conn, JOB_TYPE, payload, priority=-10, queue_name="llm_local",
                        max_attempts=1, dedupe_key=key)
 
 
 def complete(conn, job_id: str, req: dict) -> str:
-    from .llm.router import _http_request, _auth_headers, _join_url, _read_openai
+    from .llm.router import _call_ollama_native
     require_enabled()
     model, provider, generation = configuration(conn)
     if generation != req["generation"]:
         raise ValueError("event_composition_configuration_changed")
     response_format = {"type": "json_schema", "json_schema": {
         "name": "event_ledger_composition", "strict": True, "schema": req["schema"]}}
-    payload = {"model": model["model_name"], **PARAMS,
-               "messages": [{"role": "system", "content": composition.SYSTEM_PROMPT},
-                            {"role": "user", "content": req["input"]}],
-               "response_format": response_format}
+    messages = [{"role": "system", "content": composition.SYSTEM_PROMPT},
+                {"role": "user", "content": req["input"]}]
     started, raw, error = time.monotonic(), "", None
     try:
-        raw = _read_openai(_http_request(
-            "POST", _join_url(provider["base_url"], "/chat/completions"),
-            _auth_headers(provider["type"], load_provider_secret(conn, provider["id"])),
-            payload, provider, context={"stage": JOB_TYPE, "job_id": job_id},
-        ))
+        raw = _call_ollama_native(
+            provider["base_url"], model["model_name"], messages, PARAMS, provider,
+            context={"stage": JOB_TYPE, "job_id": job_id},
+            response_format=response_format,
+        )
         if configuration(conn)[2] != generation:
             raise ValueError("event_composition_configuration_changed")
         return raw
@@ -124,7 +122,7 @@ def run(conn, job, *, generate=None) -> dict:
     require_enabled()
     payload = job.payload or {}
     if (job.job_type != JOB_TYPE or job.result or job.attempt_count != 0 or job.max_attempts != 1
-            or job.queue_name != "openai" or job.status != "running"
+            or job.queue_name != "llm_local" or job.status != "running"
             or set(payload) != {"workflow", "ledger_revision_id", "generation", "request_version"}
             or payload["workflow"] != composition.WORKFLOW):
         raise ValueError("event_composition_invalid_or_replayed_job")

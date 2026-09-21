@@ -36,7 +36,11 @@ def request(composition_id: str, composition: dict, ledger: dict, generation: st
     facts = {str(item["fact_id"]): item for item in ledger.get("facts", [])}
     items = []
     counter = 0
+    from . import event_composition
+    overview_only = composition.get("workflow") == event_composition.WORKFLOW
     for section, rows in composition.get("sections", {}).items():
+        if overview_only and section != "overview":
+            continue
         for item in rows:
             counter += 1
             identity = f"C{counter:02d}"
@@ -101,7 +105,8 @@ def filtered_record(composition_id: str, composition: dict, ledger: dict,
     for section, items in composition.get("sections", {}).items():
         for item in items:
             counter += 1
-            if verdicts[f"C{counter:02d}"] == "supported":
+            verdict = verdicts.get(f"C{counter:02d}")
+            if verdict == "supported" or (verdict is None and section != "overview"):
                 sections[section].append(dict(item))
     if not sections.get("overview"):
         raise ValueError("event_composition_filter_overview_required")

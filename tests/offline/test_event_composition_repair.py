@@ -9,11 +9,11 @@ pytestmark = pytest.mark.offline
 
 
 def material():
-    from sempervigil.event_composition import SECTIONS
+    from sempervigil.event_composition import SECTIONS, WORKFLOW
     sections = {section: [] for section in SECTIONS}
     sections["overview"] = [{"text": "Acme confirmed records were stolen.",
                              "fact_ids": ["f1"]}]
-    composition = {"ledger_revision_id": "elr_test", "sections": sections}
+    composition = {"workflow": WORKFLOW, "ledger_revision_id": "elr_test", "sections": sections}
     ledger = {"public_eligible": False, "title": "Acme incident", "kind": "breach",
               "facts": [{"fact_id": "f1",
                          "statement": "Acme said records may have been exposed.",

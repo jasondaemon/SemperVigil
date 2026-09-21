@@ -36,15 +36,9 @@ def ledger_revision():
 
 
 def valid_output():
-    output = {section: [] for section in composition.SECTIONS}
-    output["overview"] = [{"text": "Acme disclosed an intrusion affecting its environment; "
-                                   "recovery remains unconfirmed.",
-                           "fact_refs": ["F01", "F02"]}]
-    output["timeline"] = [{"text": "Acme reported that unauthorized access occurred.",
-                           "fact_refs": ["F01"]}]
-    output["open_questions"] = [{"text": "The available evidence does not confirm recovery.",
-                                 "fact_refs": ["F02"]}]
-    return output
+    return {"overview": [{"text": "Acme disclosed an intrusion affecting its environment; "
+                                  "recovery remains unconfirmed.",
+                          "fact_refs": ["F01", "F02"]}]}
 
 
 def test_request_uses_only_active_exact_evidence_and_remains_private():
@@ -52,12 +46,9 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
     payload = json.loads(req["input"])
     assert payload["section_policy"] == composition.SECTION_POLICY
     assert [fact["ref"] for fact in payload["facts"]] == ["F01", "F02"]
-    assert payload["required_timeline_refs"] == ["F01"]
-    assert payload["overview_min_paragraphs"] == 1
     assert payload["overview_requirements"] == [
         {"dimension": "event_scope", "fact_refs": ["F01"]},
         {"dimension": "attack_mechanics", "fact_refs": ["F01"]},
-        {"dimension": "remaining_uncertainty", "fact_refs": ["F02"]},
     ]
     assert payload["facts"][0]["allowed_sections"] == ["overview", "attack_vector", "attack_path", "timeline"]
     properties = req["schema"]["properties"]
@@ -65,13 +56,17 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
     assert properties["overview"]["maxItems"] == 4
     assert properties["overview"]["items"]["properties"]["text"]["maxLength"] == 3200
     assert properties["overview"]["items"]["properties"]["fact_refs"]["maxItems"] == 16
-    assert properties["attack_path"]["items"]["properties"]["fact_refs"]["items"]["enum"] == ["F01"]
-    assert properties["open_questions"]["items"]["properties"]["fact_refs"]["items"]["enum"] == ["F02"]
-    assert properties["response_recovery"]["maxItems"] == 0
+    assert set(properties) == {"overview"}
     record = composition.validate(json.dumps(valid_output()).encode(), ledger_revision(), GENERATION)
     assert record["public_eligible"] is False and record["status"] == "unreviewed"
     assert record["section_policy"] == composition.SECTION_POLICY
     assert record["change"] == ledger_revision()["change"]
+    assert record["sections"]["timeline"] == [{
+        "text": "Acme reported unauthorized access on July 4.",
+        "fact_ids": ["f1"], "date_text": "July 4",
+    }]
+    assert record["sections"]["attack_vector"][0]["text"] == ledger_revision()["ledger"]["facts"][0]["statement"]
+    assert record["sections"]["open_questions"][0]["fact_ids"] == ["f2"]
 
 
 def test_allowed_sections_use_curated_semantics_without_keyword_reclassification():
@@ -191,35 +186,26 @@ def rich_ledger_revision():
     return revision
 
 
-def test_rich_event_requires_multiple_paragraphs_and_semantic_coverage():
+def test_rich_event_requires_core_semantic_coverage_without_prescribing_paragraph_count():
     revision = rich_ledger_revision()
     req = composition.request(revision, GENERATION)
     payload = json.loads(req["input"])
-    assert payload["overview_min_paragraphs"] == 2
-    assert req["schema"]["properties"]["overview"]["minItems"] == 2
+    assert "overview_min_paragraphs" not in payload
+    assert req["schema"]["properties"]["overview"]["minItems"] == 1
     assert {row["dimension"] for row in payload["overview_requirements"]} == {
         "event_scope", "attack_mechanics", "impact", "response_and_current_state",
-        "attribution", "remaining_uncertainty",
     }
 
     output = valid_output()
-    with pytest.raises(ValueError, match="invalid_shape"):
-        composition.validate(json.dumps(output).encode(), revision, GENERATION)
-    output["overview"].append(
-        {"text": "The available reporting does not establish additional consequences.",
-         "fact_refs": ["F02"]}
-    )
     with pytest.raises(ValueError, match="overview_incomplete"):
         composition.validate(json.dumps(output).encode(), revision, GENERATION)
 
-    output["overview"] = [
-        {"text": "Acme disclosed an intrusion into its hosted service that exposed customer records.",
-         "fact_refs": ["F01", "F03", "F06"]},
-        {"text": "Acme attributed the activity to Group One and contained it, while full recovery remains unconfirmed.",
-         "fact_refs": ["F02", "F04", "F05"]},
-    ]
+    output["overview"] = [{
+        "text": "Acme disclosed an intrusion into its hosted service, which exposed customer records before Acme contained it.",
+        "fact_refs": ["F01", "F03", "F04", "F06"],
+    }]
     record = composition.validate(json.dumps(output).encode(), revision, GENERATION)
-    assert len(record["sections"]["overview"]) == 2
+    assert len(record["sections"]["overview"]) == 1
 
 
 def test_validation_rejects_unknown_or_unsupported_evidence():
@@ -227,21 +213,17 @@ def test_validation_rejects_unknown_or_unsupported_evidence():
     output["overview"][0]["fact_refs"] = ["unknown"]
     with pytest.raises(ValueError, match="invalid_shape"):
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
-    output = valid_output()
-    output["timeline"][0]["fact_refs"] = ["F02"]
-    with pytest.raises(ValueError, match="invalid_shape"):
-        composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
-    output = valid_output()
-    output["open_questions"][0]["fact_refs"] = ["F01"]
+    output = valid_output(); output["impact"] = []
     with pytest.raises(ValueError, match="invalid_shape"):
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
 
 
 def test_dated_fact_is_deterministically_added_to_timeline():
-    output = valid_output()
-    output["timeline"] = []
-    with pytest.raises(ValueError, match="timeline_incomplete"):
-        composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
+    record = composition.validate(json.dumps(valid_output()).encode(), ledger_revision(), GENERATION)
+    assert record["sections"]["timeline"][0] == {
+        "text": "Acme reported unauthorized access on July 4.",
+        "fact_ids": ["f1"], "date_text": "July 4",
+    }
 
 
 def test_model_prose_is_stored_with_immutable_evidence_ids():
@@ -251,6 +233,18 @@ def test_model_prose_is_stored_with_immutable_evidence_ids():
     assert record["sections"]["overview"][0] == {
         "text": output["overview"][0]["text"], "fact_ids": ["f1", "f2"]}
     assert record["sections"]["timeline"][0]["date_text"] == "July 4"
+
+
+@pytest.mark.parametrize("text", [
+    "Acme disclosed the incident. [F01]",
+    "Acme disclosed the incident (F01).",
+    "F01 establishes that Acme disclosed the incident.",
+])
+def test_validation_rejects_internal_fact_aliases_in_reader_facing_prose(text):
+    output = valid_output()
+    output["overview"][0]["text"] = text
+    with pytest.raises(ValueError, match="fact_alias_in_prose"):
+        composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
 
 
 def test_noncurrent_or_public_ledger_is_never_composed():
@@ -278,7 +272,7 @@ def harness(monkeypatch):
 def running_job():
     req = composition.request(ledger_revision(), GENERATION)
     return SimpleNamespace(id="test", job_type=jobs.JOB_TYPE, result=None, attempt_count=0,
-        max_attempts=1, queue_name="openai", status="running", payload={
+        max_attempts=1, queue_name="llm_local", status="running", payload={
             "workflow": composition.WORKFLOW, "ledger_revision_id": ledger_revision()["revision_id"],
             "generation": GENERATION, "request_version": req["request_version"]})
 
@@ -297,7 +291,7 @@ def test_job_is_one_attempt_private_and_review_gated(harness):
 
 
 @pytest.mark.parametrize("change", [{"attempt_count": 1}, {"max_attempts": 2},
-    {"queue_name": "llm_local"}, {"status": "queued"}, {"result": {"status": "started"}}])
+    {"queue_name": "openai"}, {"status": "queued"}, {"result": {"status": "started"}}])
 def test_replay_or_wrong_lane_never_calls_model(harness, change):
     current = running_job()
     for key, value in change.items():
@@ -354,7 +348,7 @@ def test_submit_retries_transient_baseline_failure_once_and_keeps_parent(monkeyp
 
 def test_worker_registry_and_queue_mapping():
     from sempervigil.storage import get_queue_name_for_job_type
-    assert get_queue_name_for_job_type(jobs.JOB_TYPE) == "openai"
-    assert jobs.JOB_TYPE not in worker._LLM_JOB_TYPES
-    assert jobs.JOB_TYPE in worker.QUEUE_WORKER_TYPES["openai"]
+    assert get_queue_name_for_job_type(jobs.JOB_TYPE) == "llm_local"
+    assert jobs.JOB_TYPE in worker._LLM_JOB_TYPES
+    assert jobs.JOB_TYPE in worker.QUEUE_WORKER_TYPES["llm_local"]
     assert jobs.JOB_TYPE in worker.HANDLED_JOB_TYPES
