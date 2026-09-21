@@ -47,6 +47,17 @@ def test_deconstruction_configuration_reaches_runtime(enabled):
 
 @pytest.mark.skipif(not shutil.which("helm"), reason="Helm is not installed")
 @pytest.mark.parametrize("enabled", ["0", "1"])
+def test_published_composition_upgrade_configuration_reaches_runtime(enabled):
+    chart = Path(__file__).resolve().parents[2] / "deploy/helm/sempervigil"
+    raw = subprocess.check_output(["helm", "template", "test", str(chart),
+        "--show-only", "templates/configmap-env.yaml", "--set-string",
+        "env.SV_EVENT_PUBLIC_COMPOSITION_UPGRADE_ENABLED=" + enabled], text=True)
+    data = yaml.safe_load(raw)["data"]
+    assert data["SV_EVENT_PUBLIC_COMPOSITION_UPGRADE_ENABLED"] == enabled
+
+
+@pytest.mark.skipif(not shutil.which("helm"), reason="Helm is not installed")
+@pytest.mark.parametrize("enabled", ["0", "1"])
 def test_scoped_review_chart_configuration(enabled):
     chart = Path(__file__).resolve().parents[2] / "deploy/helm/sempervigil"
     raw = subprocess.check_output(["helm", "template", "test", str(chart),
