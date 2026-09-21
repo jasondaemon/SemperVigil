@@ -7,6 +7,9 @@ It is default-disabled through `SV_EVENT_REASSESSMENT_AUTOMATION_ENABLED`.
 ## Bounded workflow
 
 Each orchestrator pass performs at most one material action across active cases:
+cases already waiting on queued or running work are skipped so they cannot starve
+other Events, while the first newly initiated or state-changing action still ends
+the pass and preserves bounded admission.
 
 1. Refresh a stale case only when the current Event remains eligible. An accepted
    ledger blocks an automatic rebase if its source membership changed.
@@ -26,7 +29,9 @@ Each orchestrator pass performs at most one material action across active cases:
 7. Audit every generated narrative item against only its cited fact statements.
    A rejected first composition may receive one constrained corrective rewrite
    using the fixed citations and audit reasons. The replacement must pass a new
-   independent audit; a second failure is held.
+   independent audit; a second failure is held. When a legacy derivative sorts
+   after the audited draft, repair selection uses the current composer's audited
+   original rather than treating the obsolete derivative as authoritative.
 8. Admit a passing composition through a policy qualification, restricted
    promotion role, activation-time freshness checks, the normal build API, and
    atomic release switching.
