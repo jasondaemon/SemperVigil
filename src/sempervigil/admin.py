@@ -252,6 +252,7 @@ _DASHBOARD_LLM_JOB_TYPES = [
     "event_ledger_compose",
     "event_fact_curate",
     "event_composition_audit",
+    "event_composition_repair",
 ]
 _DASHBOARD_FETCH_JOB_TYPES = [
     "event_promote_reviewed",

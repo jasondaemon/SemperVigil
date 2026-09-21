@@ -48,7 +48,7 @@ def _candidate_rows(conn, event_id: str) -> list[tuple]:
 
 
 def advance(conn, event_id: str) -> dict:
-    from .event_reassessment import snapshot, refresh_case, queue_next_evidence
+    from .event_reassessment import snapshot, refresh_case, queue_next_evidence, exclude_source
     from .article_review_jobs import configuration as evidence_configuration
 
     case = conn.execute(
@@ -68,9 +68,6 @@ def advance(conn, event_id: str) -> dict:
             return _hold(conn, event_id, str(exc))
         return {**refreshed, "action": "case_refreshed"}
     record = json.loads(case[1])
-    if any(not item.get("source_version") for item in record["articles"]):
-        return _hold(conn, event_id, "retained source unavailable")
-
     from .event_reassessment import _pending_articles
     pending_articles = _pending_articles(conn)
     linked_ids = {int(item["article_id"]) for item in record["articles"]}
@@ -82,7 +79,8 @@ def advance(conn, event_id: str) -> dict:
         """SELECT id,job_type,status FROM jobs
             WHERE status IN ('queued','running') AND job_type IN
               ('article_review_private','event_fact_curate','event_ledger_compose',
-               'event_composition_audit','event_promote_reviewed','enrich_event_from_web')
+               'event_composition_audit','event_composition_repair',
+               'event_promote_reviewed','enrich_event_from_web')
               AND (payload_json::jsonb->>'event_id'=%s OR payload_json::jsonb->>'composition_id' IN (
                     SELECT composition_id FROM event_ledger_compositions WHERE ledger_id=%s)
                    OR payload_json::jsonb->>'ledger_revision_id' IN (
@@ -94,16 +92,35 @@ def advance(conn, event_id: str) -> dict:
                 "job_id": active_job[0], "job_type": active_job[1]}
 
     queued = queue_next_evidence(conn, event_id)
+    if queued["status"] == "excluded":
+        return {**queued, "action": "source_excluded"}
     if queued["status"] == "queued":
         status, error = _job_state(conn, queued["job_id"])
         if status == "failed":
-            return _hold(conn, event_id, "evidence extraction failed: " + error)
+            return {**exclude_source(conn, event_id, queued["article_id"],
+                                     queued["source_version"], queued["generation_version"],
+                                     "evidence extraction failed: " + error),
+                    "action": "source_excluded"}
         if status == "succeeded":
-            return _hold(conn, event_id, "evidence extraction produced no reviewable revision")
+            row = conn.execute("SELECT result_json FROM jobs WHERE id=%s", (queued["job_id"],)).fetchone()
+            reason = "evidence extraction produced no reviewable revision"
+            if row and row[0]:
+                result = json.loads(row[0])
+                phases = [phase for article in result.get("articles", [])
+                          for phase in article.get("phases", [])]
+                detail = next((phase.get("error") or phase.get("status") for phase in phases
+                               if phase.get("status") != "structurally_valid_unreviewed"), None)
+                if detail:
+                    reason += ": " + str(detail)
+            return {**exclude_source(conn, event_id, queued["article_id"],
+                                     queued["source_version"], queued["generation_version"], reason),
+                    "action": "source_excluded"}
         return {**queued, "action": "evidence_queued"}
 
     evidence_generation = evidence_configuration(conn)[3]
     for source in record["articles"]:
+        if not source.get("source_version"):
+            continue
         revision = conn.execute(
             """SELECT revision_id,status FROM article_evidence_revisions
                 WHERE article_id=%s AND source_version=%s AND generation_version=%s
@@ -111,6 +128,14 @@ def advance(conn, event_id: str) -> dict:
             (source["article_id"], source["source_version"], evidence_generation),
         ).fetchone()
         if not revision:
+            excluded = conn.execute(
+                """SELECT 1 FROM event_reassessment_source_outcomes
+                    WHERE event_id=%s AND article_id=%s AND source_version=%s
+                      AND generation_version=%s AND status='excluded'""",
+                (event_id, source["article_id"], source["source_version"], evidence_generation),
+            ).fetchone()
+            if excluded:
+                continue
             return _hold(conn, event_id, "current evidence revision unavailable")
         candidate = conn.execute(
             """SELECT status,selected_fact_ids_json FROM incident_candidates
@@ -212,8 +237,16 @@ def tick(conn) -> list[dict]:
     if not enabled():
         return []
     rows = conn.execute(
-        """SELECT event_id FROM event_reassessment_cases WHERE status='active'
-            ORDER BY priority,updated_at,event_id LIMIT 25"""
+        """SELECT c.event_id FROM event_reassessment_cases c WHERE c.status='active'
+            ORDER BY CASE
+              WHEN EXISTS (
+                SELECT 1 FROM event_ledger_compositions x
+                 WHERE x.ledger_id=c.ledger_id AND x.status='unreviewed') THEN 0
+              WHEN EXISTS (
+                SELECT 1 FROM event_ledger_revisions r
+                 WHERE r.ledger_id=c.ledger_id AND r.status IN ('proposed','accepted')) THEN 1
+              ELSE 2 END,
+              c.priority,c.updated_at,c.event_id LIMIT 25"""
     ).fetchall()
     results = []
     for (event_id,) in rows:

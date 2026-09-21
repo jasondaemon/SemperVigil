@@ -57,6 +57,7 @@ _QUEUE_NAME_BY_JOB_TYPE: dict[str, str] = {
     "event_ledger_compose": "openai",
     "event_fact_curate": "openai",
     "event_composition_audit": "openai",
+    "event_composition_repair": "openai",
     "event_promote_reviewed": "fetch",
     "legacy_event_retire": "fetch",
     "legacy_event_restore": "fetch",

@@ -299,6 +299,14 @@ def queue_next_evidence(conn: Any, event_id: str) -> dict:
         article_id = int(item["article_id"])
         if not item.get("source_version") or article_id in pending:
             continue
+        excluded = conn.execute(
+            """SELECT 1 FROM event_reassessment_source_outcomes
+                WHERE event_id=%s AND article_id=%s AND source_version=%s
+                  AND generation_version=%s AND status='excluded'""",
+            (event_id, article_id, item["source_version"], generation),
+        ).fetchone()
+        if excluded:
+            continue
         existing = conn.execute(
             """SELECT 1 FROM article_evidence_revisions
                 WHERE article_id=%s AND source_version=%s AND generation_version=%s
@@ -308,10 +316,32 @@ def queue_next_evidence(conn: Any, event_id: str) -> dict:
         if existing:
             continue
         from .article_review_jobs import submit
-        return {"event_id": event_id, "status": "queued",
-                "job_id": submit(conn, [article_id]), "article_id": article_id,
-                "public_content_changed": False}
+        try:
+            job_id = submit(conn, [article_id])
+        except ValueError as exc:
+            result = exclude_source(conn, event_id, article_id, item["source_version"],
+                                    generation, str(exc))
+            return {**result, "public_content_changed": False}
+        return {"event_id": event_id, "status": "queued", "job_id": job_id,
+                "article_id": article_id, "source_version": item["source_version"],
+                "generation_version": generation, "public_content_changed": False}
     return {"event_id": event_id, "status": "unchanged", "public_content_changed": False}
+
+
+def exclude_source(conn: Any, event_id: str, article_id: int, source_version: str,
+                   generation_version: str, reason: str) -> dict:
+    """Persist a generation-scoped source exclusion without rejecting the Event."""
+    reason = str(reason).strip()[:1000] or "source produced no reviewable evidence"
+    conn.execute(
+        """INSERT INTO event_reassessment_source_outcomes
+           (event_id,article_id,source_version,generation_version,status,reason,created_at)
+           VALUES (%s,%s,%s,%s,'excluded',%s,%s)
+           ON CONFLICT(event_id,article_id,source_version,generation_version) DO NOTHING""",
+        (event_id, article_id, source_version, generation_version, reason, utc_now_iso()),
+    )
+    conn.commit()
+    return {"event_id": event_id, "article_id": article_id, "status": "excluded",
+            "reason": reason[:160]}
 
 
 def refresh_case(conn: Any, event_id: str) -> dict:

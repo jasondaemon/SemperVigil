@@ -526,6 +526,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_event_scoped_incident_candidates_048")
             applied.add("pg_event_scoped_incident_candidates_048")
+        if "pg_event_reassessment_source_outcomes_049" not in applied:
+            _migrate_event_reassessment_source_outcomes(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_event_reassessment_source_outcomes_049", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_event_reassessment_source_outcomes_049")
+            applied.add("pg_event_reassessment_source_outcomes_049")
         else:
             conn.commit()
         return
@@ -825,6 +834,15 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_event_scoped_incident_candidates_048")
+
+    conn.execute("BEGIN")
+    _migrate_event_reassessment_source_outcomes(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_event_reassessment_source_outcomes_049", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_event_reassessment_source_outcomes_049")
 
 def _bootstrap_schema(conn) -> None:
     conn.execute(
@@ -1719,6 +1737,40 @@ def _migrate_event_scoped_incident_candidates(conn) -> None:
         ON incident_candidates(event_id,status,created_at)
         """
     )
+
+
+def _migrate_event_reassessment_source_outcomes(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS event_reassessment_source_outcomes (
+            event_id TEXT NOT NULL REFERENCES event_reassessment_cases(event_id) ON DELETE CASCADE,
+            article_id BIGINT NOT NULL REFERENCES articles(id) ON DELETE RESTRICT,
+            source_version TEXT NOT NULL,
+            generation_version TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('excluded')),
+            reason TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(event_id,article_id,source_version,generation_version)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_event_reassessment_source_outcomes_event
+        ON event_reassessment_source_outcomes(event_id,status,article_id)
+        """
+    )
+    # These failures were produced by the superseded v8 extraction contract.
+    # Reassessment under v9 is bounded and records unusable sources explicitly.
+    conn.execute(
+        """UPDATE event_reassessment_cases
+              SET status='active',decision_reason=NULL,updated_at=%s
+            WHERE status='held' AND decision_reason IN
+              ('evidence extraction produced no reviewable revision',
+               'article_evidence_over_budget','retained source unavailable')""",
+        (utc_now_iso(),),
+    )
+
 
 def _migrate_article_products(conn) -> None:
     _create_article_product_tables(conn)

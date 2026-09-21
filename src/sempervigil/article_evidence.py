@@ -10,7 +10,7 @@ import re
 from .investigation import _version
 from .event_review import _json
 
-WORKFLOW = "article-evidence-v8"
+WORKFLOW = "article-evidence-v9"
 MAX_INPUT_BYTES = 15000
 MAX_OUTPUT_BYTES = 16000
 MAX_PASSAGE_CHARS = 900
@@ -195,11 +195,14 @@ def validate_context(raw: bytes, article: dict, generation: str) -> dict:
             selected = [passage_by_id[passage_id] for passage_id in row["passage_ids"]]
         except KeyError as exc:
             raise ValueError("article_evidence_unknown_passage") from exc
-        if row["date_text"] is not None and not any(
-                row["date_text"] in passage["text"] for passage in selected):
-            raise ValueError("article_evidence_date_not_in_passage")
-        if (row["date_text"] is None) != (row["date_role"] == "none"):
-            raise ValueError("article_evidence_date_role_mismatch")
+        # Date metadata is optional indexing context. A model mistake here must
+        # not discard otherwise passage-grounded facts; remove the metadata and
+        # let downstream curation decide whether the statement is supported.
+        if (row["date_text"] is not None and not any(
+                row["date_text"] in passage["text"] for passage in selected)):
+            row["date_text"], row["date_role"] = None, "none"
+        elif (row["date_text"] is None) != (row["date_role"] == "none"):
+            row["date_text"], row["date_role"] = None, "none"
         key = _version(row)
         if key in seen:
             raise ValueError("article_evidence_duplicate_fact")

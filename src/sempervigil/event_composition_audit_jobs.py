@@ -128,14 +128,13 @@ def run(conn, job, *, generate=None) -> dict:
         from .event_composition_jobs import configuration as composition_configuration
         if composition.get("generation_version") == composition_configuration(conn)[2]:
             try:
-                from .event_composition import store_unreviewed
-                record = audit.filtered_record(payload["composition_id"], composition, ledger, decision)
-                remediation = {"status": "unreviewed",
-                               "composition_id": store_unreviewed(conn, record),
-                               "workflow": audit.FILTER_WORKFLOW}
+                from .event_composition_repair_jobs import submit
+                remediation = {"status": "queued",
+                               "job_id": submit(conn, payload["composition_id"], decision),
+                               "workflow": "event-composition-repair-v1"}
             except ValueError as exc:
                 remediation = {"status": "held", "reason": str(exc),
-                               "workflow": audit.FILTER_WORKFLOW}
+                               "workflow": "event-composition-repair-v1"}
     result.update(status="applied", application=applied, remediation=remediation)
     if not update_job_result(conn, job.id, result):
         raise ValueError("event_composition_audit_job_not_running")

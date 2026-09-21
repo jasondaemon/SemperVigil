@@ -138,12 +138,13 @@ def test_modified_passage_record_or_old_contract_is_rejected(change):
         evidence.summary_request(article, result, GEN)
 
 
-def test_date_text_must_come_from_a_selected_passage():
+def test_unsupported_date_metadata_is_removed_without_discarding_fact():
     article = {**ARTICLE, 'content_text': 'Incident occurred May 1.\n\nUpdate published May 2.'}
     data = context(); data['facts'][0].update(
         passage_ids=['p001'], date_text='May 2', date_role='incident')
-    with pytest.raises(ValueError, match='date_not_in_passage'):
-        evidence.validate_context(encode(data), article, GEN)
+    result = evidence.validate_context(encode(data), article, GEN)
+    assert result['facts'][0]['date_text'] is None
+    assert result['facts'][0]['date_role'] == 'none'
 
     data['facts'][0]['passage_ids'] = ['p001', 'p002']
     result = evidence.validate_context(encode(data), article, GEN)
@@ -159,10 +160,11 @@ def test_relative_incident_date_is_not_normalized_from_publication_metadata():
     assert '2026-09-18' not in json.dumps(result)
 
 
-def test_date_role_requires_explicit_date_wording():
+def test_date_role_without_explicit_date_is_removed():
     data = context(); data['facts'][0]['date_role'] = 'incident'
-    with pytest.raises(ValueError, match='date_role_mismatch'):
-        evidence.validate_context(encode(data), ARTICLE, GEN)
+    result = evidence.validate_context(encode(data), ARTICLE, GEN)
+    assert result['facts'][0]['date_text'] is None
+    assert result['facts'][0]['date_role'] == 'none'
 
 
 def test_context_prompt_states_exact_root_and_field_contract():
