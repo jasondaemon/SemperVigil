@@ -4,6 +4,7 @@ import json
 import pytest
 
 from sempervigil.event_composition_publication import (
+    COMPATIBILITY_RECOVERY_VERSION,
     PUBLIC_WORKFLOW,
     QUALIFICATION_WORKFLOW,
     _compatibility_recovery,
@@ -166,7 +167,11 @@ def test_compatibility_recovery_preserves_failed_parent_and_is_bounded(monkeypat
         def execute(self, sql, params=()):
             if "COALESCE(error" in sql:
                 return Result(("failed", "event_composition_publication_integrity_failure"))
-            if "parent_job_id" in sql:
+            if "dedupe_key" in sql:
+                assert params[1] == (
+                    "event-publication-compatibility:"
+                    + COMPATIBILITY_RECOVERY_VERSION + ":" + "a" * 64
+                )
                 return Result(None)
             raise AssertionError(sql)
 
@@ -182,6 +187,20 @@ def test_compatibility_recovery_preserves_failed_parent_and_is_bounded(monkeypat
     assert captured["payload"] == {"approval_id": "a" * 64}
     assert captured["kwargs"]["parent_job_id"] == "job_failed"
     assert captured["kwargs"]["max_attempts"] == 1
+
+
+def test_current_composition_section_tags_are_editorial_hints():
+    event_id, bundle = _bundle()
+    bundle["composition"]["workflow"] = "event-ledger-composition-v9"
+    bundle["composition"]["section_policy"] = "curated-sections-v3"
+    bundle["ledger_record"]["ledger"]["facts"][0]["sections"] = ["impact"]
+    bundle["ledger_revision_id"] = "elr_" + _version(bundle["ledger_record"])
+    bundle["composition"]["ledger_revision_id"] = bundle["ledger_revision_id"]
+    bundle["composition_id"] = "elc_" + _version(bundle["composition"])
+    bundle["qualification"]["ledger_revision_id"] = bundle["ledger_revision_id"]
+    bundle["qualification"]["composition_id"] = bundle["composition_id"]
+
+    assert validate_bundle(bundle, event_id=event_id)["revision_id"]
 
 
 def test_superseded_composition_is_eligible_only_while_its_pointer_is_current():

@@ -20,6 +20,7 @@ CONFIRMATION = "PUBLISH_ACCEPTED_EVENT"
 POLICY = {"workflow": QUALIFICATION_WORKFLOW, "review": "accepted-composition",
           "source_freshness": "activation-rechecked", "generated_prose": True}
 COMPATIBILITY_FAILURES = {"event_composition_publication_integrity_failure"}
+COMPATIBILITY_RECOVERY_VERSION = "v2"
 
 
 def _publisher_key(source: dict) -> str:
@@ -238,8 +239,9 @@ def validate_bundle(bundle: dict, *, event_id: str, expected_revision: str | Non
             if (not isinstance(item.get("text"), str) or not item["text"].strip()
                     or not isinstance(refs, list) or not refs or len(refs) != len(set(refs))
                     or any(ref not in active for ref in refs)
-                    or any(section not in event_composition._allowed_sections(
-                        active[ref], section_policy) for ref in refs)):
+                    or (section_policy != event_composition.SECTION_POLICY
+                        and any(section not in event_composition._allowed_sections(
+                            active[ref], section_policy) for ref in refs))):
                 raise ValueError("event_composition_publication_citation_invalid")
             if section == "timeline":
                 dated = [active[ref].get("date_text") for ref in refs if active[ref].get("date_text")]
@@ -320,16 +322,19 @@ def _compatibility_recovery(authority, approval_id: str, prior_job_id: str) -> s
     ).fetchone()
     if not prior or prior[0] != "failed" or prior[1] not in COMPATIBILITY_FAILURES:
         return None
+    recovery_key = (
+        "event-publication-compatibility:" + COMPATIBILITY_RECOVERY_VERSION + ":" + approval_id
+    )
     existing = authority.execute(
-        """SELECT id FROM jobs WHERE job_type=%s AND parent_job_id=%s
-            ORDER BY requested_at LIMIT 1""", (JOB_TYPE, prior_job_id),
+        """SELECT id FROM jobs WHERE job_type=%s AND dedupe_key=%s
+            ORDER BY requested_at LIMIT 1""", (JOB_TYPE, recovery_key),
     ).fetchone()
     if existing:
         return existing[0]
     return enqueue_job(
         authority, JOB_TYPE, {"approval_id": approval_id}, priority=-10,
         queue_name="fetch", max_attempts=1, parent_job_id=prior_job_id,
-        dedupe_key="event-publication-compatibility:" + approval_id,
+        dedupe_key=recovery_key,
         commit=False,
     )
 

@@ -13,6 +13,7 @@ PARAMS = {"max_completion_tokens": 3200, "reasoning_effort": "low"}
 TRANSIENT_BASELINE_ERRORS = {
     "event_composition_baseline_changed",
     "event_composition_configuration_changed",
+    "event_composition_overview_incomplete",
 }
 
 
