@@ -87,7 +87,7 @@ def test_repaired_composition_can_be_scoped_to_current_repair_generation():
     ) is True
 
 
-def test_repaired_detail_failures_are_filtered_before_holding(monkeypatch):
+def test_detail_failures_are_filtered_before_holding(monkeypatch):
     class Conn:
         def execute(self, sql, params=()):
             assert "job_type='event_composition_audit'" in sql
@@ -110,7 +110,7 @@ def test_repaired_detail_failures_are_filtered_before_holding(monkeypatch):
     monkeypatch.setattr(event_composition, "review",
                         lambda *_args, **_kwargs: {"status": "accepted"})
 
-    result = automation._filter_repaired_detail_failures(Conn(), "elc_repaired")
+    result = automation._filter_detail_failures(Conn(), "elc_repaired")
     assert result == {
         "composition_id": "elc_filtered", "application": {"status": "accepted"},
     }
@@ -148,6 +148,7 @@ def test_tick_skips_waiting_case_but_stops_after_one_advancement(monkeypatch):
         return {"status": "queued", "event_id": event_id}
 
     monkeypatch.setattr(automation, "enabled", lambda: True)
+    monkeypatch.setattr(automation, "_resume_detail_filter_hold", lambda _conn: None)
     monkeypatch.setattr(automation, "_resume_transient_composition_hold", lambda _conn: None)
     monkeypatch.setattr(automation, "advance", advance)
 
@@ -162,10 +163,23 @@ def test_tick_prioritizes_one_viable_transient_composition_recovery(monkeypatch)
     recovery = {"status": "queued", "event_id": "evt_recover",
                 "job_id": "job_recover", "action": "composition_transient_recovery"}
     monkeypatch.setattr(automation, "enabled", lambda: True)
+    monkeypatch.setattr(automation, "_resume_detail_filter_hold", lambda _conn: None)
     monkeypatch.setattr(automation, "_resume_transient_composition_hold",
                         lambda _conn: recovery)
     monkeypatch.setattr(automation, "advance",
                         lambda *_args: pytest.fail("active cases must wait"))
+
+    assert automation.tick(object()) == [recovery]
+
+
+def test_tick_prioritizes_detail_filter_recovery(monkeypatch):
+    recovery = {"status": "accepted", "event_id": "evt_recover",
+                "action": "composition_detail_filter_recovery"}
+    monkeypatch.setattr(automation, "enabled", lambda: True)
+    monkeypatch.setattr(automation, "_resume_detail_filter_hold",
+                        lambda _conn: recovery)
+    monkeypatch.setattr(automation, "_resume_transient_composition_hold",
+                        lambda _conn: pytest.fail("detail recovery must run first"))
 
     assert automation.tick(object()) == [recovery]
 

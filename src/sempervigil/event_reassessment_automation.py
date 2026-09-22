@@ -105,8 +105,8 @@ def _is_repaired_composition(conn, composition_id: str,
     ).fetchone())
 
 
-def _filter_repaired_detail_failures(conn, composition_id: str) -> dict | None:
-    """Accept a deletion-only derivative when a repaired overview passed audit."""
+def _filter_detail_failures(conn, composition_id: str) -> dict | None:
+    """Accept a deletion-only derivative when every rejected item is non-overview."""
     row = conn.execute(
         """SELECT result_json FROM jobs
             WHERE job_type='event_composition_audit' AND status='succeeded'
@@ -146,6 +146,38 @@ def _filter_repaired_detail_failures(conn, composition_id: str) -> dict | None:
         reviewer="policy:event-composition-audit-v1",
     )
     return {"composition_id": filtered_id, "application": application}
+
+
+def _resume_detail_filter_hold(conn) -> dict | None:
+    """Recover a case held because detail-only failures were sent to overview repair."""
+    row = conn.execute(
+        """SELECT c.event_id,x.composition_id
+             FROM event_reassessment_cases c
+             JOIN event_ledger_revisions r
+               ON r.ledger_id=c.ledger_id AND r.status='accepted'
+             JOIN event_ledger_compositions x
+               ON x.ledger_revision_id=r.revision_id
+              AND x.status='held'
+              AND x.reviewed_by='policy:event-composition-audit-v1'
+            WHERE c.status='held'
+              AND c.decision_reason='event_composition_repair_overview_items_missing'
+            ORDER BY c.priority,c.updated_at,c.event_id,x.created_at DESC LIMIT 1"""
+    ).fetchone()
+    if not row:
+        return None
+    filtered = _filter_detail_failures(conn, row[1])
+    if not filtered:
+        return None
+    conn.execute(
+        """UPDATE event_reassessment_cases
+              SET status='active',decision_reason=NULL,updated_at=%s
+            WHERE event_id=%s AND status='held'
+              AND decision_reason='event_composition_repair_overview_items_missing'""",
+        (utc_now_iso(), row[0]),
+    )
+    conn.commit()
+    return {"status": "accepted", "event_id": row[0], **filtered,
+            "action": "composition_detail_filter_recovery"}
 
 
 def _repaired_derivative(conn, composition_id: str):
@@ -414,6 +446,15 @@ def advance(conn, event_id: str) -> dict:
             return _hold(conn, event_id, "composition failed: " + error)
         return {"status": "queued", "event_id": event_id, "job_id": job_id,
                 "action": "composition_queued"}
+    accepted = conn.execute(
+        """SELECT composition_id,status,reviewed_by,generation_version
+             FROM event_ledger_compositions
+            WHERE ledger_revision_id=%s AND status='accepted'
+            ORDER BY created_at DESC,composition_id DESC LIMIT 1""",
+        (latest[0],),
+    ).fetchone()
+    if accepted:
+        composition = accepted
     repaired = _repaired_derivative(conn, composition[0])
     if repaired:
         composition = repaired
@@ -425,12 +466,13 @@ def advance(conn, event_id: str) -> dict:
             return _hold(conn, event_id, "composition audit failed: " + error)
         return {"status": "queued", "event_id": event_id, "job_id": job_id,
                 "action": "composition_audit_queued"}
-    if composition[1] == "held" and _is_repaired_composition(conn, composition[0]):
-        filtered = _filter_repaired_detail_failures(conn, composition[0])
+    if composition[1] == "held":
+        filtered = _filter_detail_failures(conn, composition[0])
         if filtered:
             return {"status": "accepted", "event_id": event_id, **filtered,
                     "action": "composition_detail_filtered"}
-        return _hold(conn, event_id, "composition support audit held the repaired overview")
+        if _is_repaired_composition(conn, composition[0]):
+            return _hold(conn, event_id, "composition support audit held the repaired overview")
     repairable = _repairable_composition(conn, latest[0], composition)
     if repairable:
         audit_row = conn.execute(
@@ -462,6 +504,9 @@ def advance(conn, event_id: str) -> dict:
 def tick(conn) -> list[dict]:
     if not enabled():
         return []
+    recovery = _resume_detail_filter_hold(conn)
+    if recovery:
+        return [recovery]
     recovery = _resume_transient_composition_hold(conn)
     if recovery and recovery["status"] != "held":
         return [recovery]
