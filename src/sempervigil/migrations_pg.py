@@ -598,6 +598,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_event_repair_openai_model_056")
             applied.add("pg_event_repair_openai_model_056")
+        if "pg_llm_event_classify_regulatory_057" not in applied:
+            _migrate_llm_event_classify_prompts_v3(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_llm_event_classify_regulatory_057", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_llm_event_classify_regulatory_057")
+            applied.add("pg_llm_event_classify_regulatory_057")
         else:
             conn.commit()
         return
@@ -719,6 +728,22 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_llm_event_classify_012")
+
+    _migrate_llm_event_classify_prompts_v2(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_llm_event_classify_033", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_llm_event_classify_033")
+
+    _migrate_llm_event_classify_prompts_v3(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_llm_event_classify_regulatory_057", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_llm_event_classify_regulatory_057")
 
     _migrate_source_overrides(conn)
     conn.execute(
@@ -2500,6 +2525,49 @@ def _migrate_llm_event_classify_prompts_v2(conn) -> None:
         conn,
         "derive_events_from_articles",
         "prompt_event_classify_v2",
+        "schema_event_classify_v2",
+    )
+
+
+def _migrate_llm_event_classify_prompts_v3(conn) -> None:
+    if not (
+        _table_exists(conn, "llm_prompts")
+        and _table_exists(conn, "llm_schemas")
+        and _table_exists(conn, "pipeline_stage_config")
+    ):
+        return
+    _upsert_llm_prompt(
+        conn,
+        "prompt_event_classify_v3",
+        "Event Classify",
+        "v3",
+        "\n".join(
+            [
+                "Classify whether the article describes an actionable cybersecurity incident event.",
+                "Return JSON only.",
+                "",
+                "Output must be:",
+                '{"is_event":true|false,"event_type":"...","victim":"...","headline":"...","summary":"...","what_compromised":"...","incident_date":"YYYY-MM-DD|unknown","confidence":0-100}',
+                "",
+                "Rules:",
+                "- is_event must be false for research, funding, policy, guidance, predictions, generic threat commentary, lawsuits, regulatory investigations, fines, or compliance actions that do not describe an actual cyber incident.",
+                "- A breach of a law, regulation, contract, duty, privacy rule, or policy is not a cybersecurity breach.",
+                "- Mishandling, retaining, collecting, or processing data unlawfully is not a cybersecurity breach unless the article separately establishes unauthorized access, disclosure, theft, exfiltration, compromise, encryption, or operational disruption.",
+                "- A fine imposed after a real cyber incident may still be an event only when the underlying unauthorized access, disclosure, theft, compromise, or disruption is explicit.",
+                "- event_type must be one of: breach, ransomware, compromise, active_exploitation, ddos, outage, other.",
+                "- victim must be the concrete organization or entity that suffered the cyber incident, not a company bringing a lawsuit or a regulator imposing a fine.",
+                "- what_compromised must name data, systems, accounts, networks, or services affected by unauthorized activity; lawful collection or regulatory noncompliance alone does not qualify.",
+                "- incident_date must be YYYY-MM-DD if explicit, otherwise 'unknown'.",
+                "- Do not invent details.",
+            ]
+        ),
+        "{{input}}",
+        "Strict JSON-only actionable incident classification with regulatory-language exclusions.",
+    )
+    _update_stage_profile_prompt_schema(
+        conn,
+        "derive_events_from_articles",
+        "prompt_event_classify_v3",
         "schema_event_classify_v2",
     )
 

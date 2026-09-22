@@ -6483,6 +6483,36 @@ def _slugify(value: str) -> str:
     return normalize_name(value).replace("_", "-")
 
 
+def _legacy_event_key(kind: str, entity: str, bucket: str) -> str:
+    """Keep unrelated incidents at the same organization from sharing a key."""
+    return f"event:{kind}:{_slugify(entity)}:{bucket}"
+
+
+def _is_regulatory_only_event_classification(parsed: dict[str, object]) -> bool:
+    """Reject legal/compliance uses of 'breach' without a cyber compromise."""
+    text = " ".join(
+        str(parsed.get(field) or "")
+        for field in ("headline", "summary", "what_compromised")
+    ).lower()
+    regulatory_cues = (
+        "fine", "fined", "penalty", "regulator", "regulatory", "gdpr",
+        "privacy rule", "privacy law", "data protection commission",
+        "unlawful processing", "lawful processing", "mishandling data",
+        "mishandled data", "rule breach", "breach of law", "breaching eu",
+    )
+    compromise_cues = (
+        "unauthorized access", "unauthorised access", "threat actor", "attacker",
+        "hacked", "intrusion", "ransomware", "malware", "stolen data",
+        "data stolen", "exfiltrat", "data leak", "data exposure",
+        "exposed records", "exposed personal", "compromised account",
+        "compromised system", "compromised network", "encrypted systems",
+        "service disruption",
+    )
+    return any(cue in text for cue in regulatory_cues) and not any(
+        cue in text for cue in compromise_cues
+    )
+
+
 def _extract_incident_date(text: str) -> str | None:
     if not text:
         return None
@@ -6644,6 +6674,8 @@ def _handle_derive_events_from_articles(
         else:
             if not parsed.get("is_event"):
                 return _done({"status": "skipped", "reason": "llm_non_event"})
+            if _is_regulatory_only_event_classification(parsed):
+                return _done({"status": "skipped", "reason": "llm_regulatory_non_incident"})
             event_type_raw = str(parsed.get("event_type") or "").strip()
             victim_raw = str(parsed.get("victim") or "").strip()
             kind = _normalize_event_type(event_type_raw)
@@ -6664,7 +6696,7 @@ def _handle_derive_events_from_articles(
             bucket = parsed_incident_date or (article.get("published_at") or article.get("ingested_at") or "")[:10] or utc_now_iso()[:10]
             kind_label = _event_kind_label(kind)
             event_title = headline or f"{entity} — {kind_label} — {bucket}"
-            event_key = f"event:{kind}:{_slugify(str(entity))}"
+            event_key = _legacy_event_key(kind, str(entity), bucket)
             confidence = float(parsed.get("confidence") or 0) / 100.0
             confidence_tier = _derive_confidence_tier(" ".join([headline, summary_text or "", combined]))
             _, qualifier_reasons = _has_event_qualifier(
@@ -6791,7 +6823,7 @@ def _handle_derive_events_from_articles(
     bucket = bucket or utc_now_iso()[:10]
     kind_label = _event_kind_label(kind)
     event_title = f"{entity} — {kind_label} — {bucket}"
-    event_key = f"event:{kind}:{_slugify(str(entity))}"
+    event_key = _legacy_event_key(kind, str(entity), bucket)
     confidence_tier = _derive_confidence_tier(combined)
     candidate = True
     lifecycle = "candidate"
