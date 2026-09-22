@@ -695,3 +695,9 @@ If you (Codex) propose edits affecting pipeline stability, you must:
   remains valid with 194 items.
 - Source of truth: Hugo commit `1f5d2a16` on `codex/remove-cybernews-ads` is pushed
   and matches the build worker's `/site-src` CSS and JavaScript hashes.
+- Follow-up: article publisher labels now consume a dedicated mobile metadata row,
+  with all remaining chips beginning on the next row. API build
+  `job_0b7a9da473b842a3b979349b6294618f` completed in 19.06 seconds and activated
+  release `20260922010721`. Live 390-pixel measurements confirmed the row break,
+  no horizontal overflow and no console errors. Hugo source `15091126` is pushed
+  and matches the production `/site-src` CSS hash.

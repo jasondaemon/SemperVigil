@@ -2441,3 +2441,9 @@ excluded, and both retirement runs retain independent restore manifests.
   daily JSON return HTTP 200; the valid JSON contains 194 items.
 - Local Hugo commit `1f5d2a16`, its configured remote and the build worker's
   `/site-src` CSS/JavaScript hashes agree.
+- Follow-up mobile metadata verification: publisher labels occupy a dedicated row;
+  time, vendor/product and topic chips begin together 40 pixels below it. API build
+  `job_0b7a9da473b842a3b979349b6294618f` activated release `20260922010721` in
+  19.06 seconds. The 390-pixel viewport retained a 382-pixel document width and
+  reported no console errors. Hugo source `15091126` and `/site-src` CSS hashes
+  agree; the current September 21 JSON is valid with 214 items.
