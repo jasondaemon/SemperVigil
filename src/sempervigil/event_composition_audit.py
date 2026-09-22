@@ -21,6 +21,15 @@ unsupported means any material claim is added or changed; uncertain means the
 comparison cannot be resolved safely. Return exactly one audit for every item."""
 
 
+def _section_rows(composition: dict):
+    from . import event_composition
+    sections = composition.get("sections", {})
+    if composition.get("workflow") == event_composition.WORKFLOW:
+        return ((section, sections.get(section, []))
+                for section in event_composition.GENERATED_SECTIONS)
+    return sections.items()
+
+
 def schema(item_ids: list[str]) -> dict:
     row = {"type": "object", "additionalProperties": False,
            "required": ["id", "verdict", "reason"], "properties": {
@@ -38,7 +47,7 @@ def request(composition_id: str, composition: dict, ledger: dict, generation: st
     counter = 0
     from . import event_composition
     generated_only = composition.get("workflow") == event_composition.WORKFLOW
-    for section, rows in composition.get("sections", {}).items():
+    for section, rows in _section_rows(composition):
         if generated_only and section not in event_composition.GENERATED_SECTIONS:
             continue
         for item in rows:
@@ -105,7 +114,7 @@ def filtered_record(composition_id: str, composition: dict, ledger: dict,
     if current:
         sections["timeline"] = [dict(item) for item in composition["sections"]["timeline"]]
     counter = 0
-    for section, items in composition.get("sections", {}).items():
+    for section, items in _section_rows(composition):
         if current and section not in event_composition.GENERATED_SECTIONS:
             continue
         for item in items:

@@ -113,3 +113,20 @@ def test_v9_filter_removes_rejected_detail_and_preserves_supported_overview():
     result = audit.filtered_record("elc_test", composition, ledger, decision)
     assert result["sections"]["overview"] == composition["sections"]["overview"]
     assert result["sections"]["impact"] == []
+
+
+def test_current_audit_uses_canonical_section_order():
+    from sempervigil.event_composition import SECTIONS, WORKFLOW
+
+    composition, ledger = material()
+    composition["workflow"] = WORKFLOW
+    composition["sections"] = {
+        section: composition["sections"][section] for section in reversed(SECTIONS)
+    }
+
+    req = audit.request("elc_test", composition, ledger, GENERATION)
+    items = json.loads(req["input"])["items"]
+
+    assert [(item["id"], item["section"]) for item in items] == [
+        ("C01", "overview"), ("C02", "impact"),
+    ]
