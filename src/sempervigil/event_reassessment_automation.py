@@ -148,6 +148,10 @@ def _filter_detail_failures(conn, composition_id: str) -> dict | None:
     return {"composition_id": filtered_id, "application": application}
 
 
+# Retained for the independent legacy publication-upgrade coordinator.
+_filter_repaired_detail_failures = _filter_detail_failures
+
+
 def _resume_detail_filter_hold(conn) -> dict | None:
     """Recover a case held because detail-only failures were sent to overview repair."""
     row = conn.execute(

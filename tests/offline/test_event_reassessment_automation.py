@@ -114,6 +114,7 @@ def test_detail_failures_are_filtered_before_holding(monkeypatch):
     assert result == {
         "composition_id": "elc_filtered", "application": {"status": "accepted"},
     }
+    assert automation._filter_repaired_detail_failures is automation._filter_detail_failures
 
 
 def test_repaired_derivative_resolves_successful_repair_result():
