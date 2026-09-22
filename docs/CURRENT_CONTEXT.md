@@ -7,6 +7,23 @@
 > automatic-publication gates. Do not infer current production settings from the
 > February snapshot alone.
 
+## September 21: Event research is private to Event enrichment
+
+The public feed contract now excludes articles stored under source ID
+`web_enrich`. These records still pass through the article enrichment and Event
+evidence workflow and remain linked to their Events, but they no longer appear on
+the daily homepage or in `/feed/days/<date>.json`. The same rule is applied by the
+inventory signature and payload exporter so unchanged public dates do not become
+dirty merely because Event research changes.
+
+Application `f64f9d3`, builder image `f64f9d3`, Hugo `aa510b32`, and platform
+`97bad29` are deployed. The first dirty-only run reconciled an older production
+manifest, updating 5,052 day files once; subsequent builds use the new signatures.
+All 32 research-affected dates were checked, September 21 dropped from 219 to 216
+items, and all 45 research articles remain linked internally across 15 Events.
+The desktop story modal is centered and retains the publisher icon; phone summary
+expansion remains inline.
+
 ## September 21: semantic Event fact roles deployed
 
 The next Event pipeline revision removes keyword-based section inference from new

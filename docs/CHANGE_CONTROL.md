@@ -726,3 +726,26 @@ If you (Codex) propose edits affecting pipeline stability, you must:
   viewports reported no console errors.
 - Source of truth: Hugo commit `dc123021` is pushed and matches production
   `/site-src` CSS and JavaScript hashes.
+
+# 2026-09-21: isolate Event research from the public daily feed
+
+- Summary: Treat articles collected by Event web research as private enrichment
+  inputs. They remain stored and linked to Events, but are excluded from the
+  public homepage and `/feed/days/<date>.json` exports.
+- Scope: The canonical feed inventory and builder export boundary only. No
+  research, evidence, Event composition, Hugo command, publication activation,
+  database content, queue concurrency or JSON schema changed.
+- Presentation follow-up: Desktop story summaries now open in a centered modal
+  that retains the publisher icon and original-source action. Mobile disclosure
+  remains inline.
+- Verification: 32 feed-contract tests passed. Production build
+  `job_60b4f74c049840f7a0f7e1ce0e9573b6` succeeded and atomically activated the
+  release. The one-time dirty-manifest reconciliation updated 5,052 files,
+  removed 14 stale files and skipped 35 unchanged files; Hugo rendered in 2.56
+  seconds. All 32 dates containing Event research were checked: 31 exports now
+  contain zero research items and the one research-only date was removed from
+  the archive and index. September 21 changed from 219 to 216 items. All 45
+  research articles and their links to 15 Events remain in the database.
+- Source of truth: application `f64f9d3`, Hugo `aa510b32`, and platform
+  `97bad29` are pushed. Production runs builder image `f64f9d3` with the existing
+  2 GiB request and 16 GiB limit.

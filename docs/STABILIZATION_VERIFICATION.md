@@ -2470,3 +2470,28 @@ excluded, and both retirement runs retain independent restore manifests.
   `20260922025321` in 22.09 seconds. Hugo source `dc123021`, its remote and the
   production CSS/JavaScript source hashes agree. The current September 21 JSON is
   valid with 219 items and retains its existing contract.
+
+## Event-research feed isolation verification (2026-09-21)
+
+- The canonical public-feed inventory excludes source ID `web_enrich`, and both
+  recent and historical builder exports apply the same boundary. Research
+  articles remain available to Event evidence and composition.
+- Focused feed-contract, inventory and archive-parity suites pass: 32 tests.
+- Builder image `f64f9d3` is present on every Kubernetes node. Only the
+  `sempervigil-build-worker` Deployment changed; it remains Ready with its 2 GiB
+  request and 16 GiB limit. Platform source and rendered manifests use the same
+  image at commit `97bad29`.
+- Dirty-only build `job_60b4f74c049840f7a0f7e1ce0e9573b6` succeeded. The
+  production manifest required a one-time signature reconciliation: 5,052 files
+  updated, 14 stale files removed, 35 files skipped, and no work deferred. Hugo
+  rendered 124 pages in 2.56 seconds and publication completed normally.
+- Each of the 32 dates associated with the 45 stored research articles was
+  checked against the public archive. Thirty-one JSON files contain no research
+  source; the sole research-only date returns 404 and is absent from the feed
+  index. The September 21 JSON contains 216 items, including 85 articles and 131
+  CVEs, with zero `web_enrich` rows. Homepage HTML contains no `Web Enrichment`.
+- The 45 internal articles remain linked across 15 Events. No article, evidence,
+  Event link or source record was deleted.
+- Desktop story-dialog verification measured a 768 by 578.5 pixel dialog centered
+  in a 1280 by 720 viewport. It displayed the matching publisher icon and source
+  label; mobile retains the inline expander.
