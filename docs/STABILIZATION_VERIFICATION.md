@@ -2447,3 +2447,10 @@ excluded, and both retirement runs retain independent restore manifests.
   19.06 seconds. The 390-pixel viewport retained a 382-pixel document width and
   reported no console errors. Hugo source `15091126` and `/site-src` CSS hashes
   agree; the current September 21 JSON is valid with 214 items.
+- Mobile summary disclosure verification: a centered 40-pixel chevron expands the
+  full article or CVE summary and rotates upward to collapse it. At 390 pixels the
+  sampled summary changed from 65 to 480 pixels of visible text, returned to its
+  compact state, maintained correct `aria-expanded` and labels, and produced no
+  console errors. API build `job_3a53713856804dbfa44732666922dd80`
+  activated release `20260922015631`; Hugo source `6a2d0c64` and production CSS/
+  JavaScript hashes agree. The current September 21 JSON is valid with 215 items.

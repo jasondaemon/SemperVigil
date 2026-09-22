@@ -701,3 +701,10 @@ If you (Codex) propose edits affecting pipeline stability, you must:
   release `20260922010721`. Live 390-pixel measurements confirmed the row break,
   no horizontal overflow and no console errors. Hugo source `15091126` is pushed
   and matches the production `/site-src` CSS hash.
+- Follow-up: mobile article and CVE summaries now expose a centered chevron rather
+  than visible link text. It expands the complete summary in place, rotates upward
+  for collapse and updates its accessible label/state. API build
+  `job_3a53713856804dbfa44732666922dd80` completed in 23.64 seconds and activated
+  release `20260922015631`. Live phone validation expanded the sampled text from
+  65 to 480 pixels and collapsed it again without browser errors. Hugo source
+  `6a2d0c64` is pushed and matches production CSS and JavaScript hashes.
