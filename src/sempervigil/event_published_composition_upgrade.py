@@ -38,6 +38,9 @@ def candidates(conn, *, limit: int = 25) -> list[dict]:
              FROM event_public_pointers p
              JOIN event_public_revisions r
                ON r.event_id=p.event_id AND r.revision_id=p.revision_id
+             JOIN event_ledger_revisions l
+               ON l.revision_id=(r.bundle_json::jsonb->>'ledger_revision_id')
+              AND l.status='accepted'
             ORDER BY p.updated_at,p.event_id
             LIMIT 200"""
     ).fetchall()
@@ -234,7 +237,12 @@ def tick(conn) -> list[dict]:
         return []
     results = []
     for candidate in candidates(conn):
-        result = advance(conn, candidate)
+        try:
+            result = advance(conn, candidate)
+        except ValueError as exc:
+            conn.rollback()
+            result = {"status": "held", "event_id": candidate["event_id"],
+                      "reason": str(exc)[:160], "workflow": WORKFLOW}
         results.append(result)
         if result["status"] not in {"unchanged", "held"}:
             break

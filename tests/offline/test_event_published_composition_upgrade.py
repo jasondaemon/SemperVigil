@@ -30,6 +30,7 @@ def test_candidates_select_only_published_legacy_compositions():
     class Conn:
         def execute(self, sql, params=()):
             assert "FROM event_public_pointers" in sql
+            assert "l.status='accepted'" in sql
             return _Rows([
                 ("evt_old", "a" * 64, "2026-09-20", _bundle("event-ledger-composition-v4")),
                 ("evt_current", "b" * 64, "2026-09-21", _bundle(event_composition.WORKFLOW)),
@@ -66,6 +67,32 @@ def test_tick_stops_after_one_material_upgrade(monkeypatch):
         {"status": "queued", "event_id": "evt_queued"},
     ]
     assert calls == ["evt_held", "evt_queued"]
+
+
+def test_tick_isolates_stale_legacy_upgrade_candidate(monkeypatch):
+    class Conn:
+        rolled_back = False
+
+        def rollback(self):
+            self.rolled_back = True
+
+    conn = Conn()
+    rows = [{"event_id": "evt_stale"}, {"event_id": "evt_next"}]
+    monkeypatch.setattr(upgrade, "enabled", lambda: True)
+    monkeypatch.setattr(upgrade, "candidates", lambda _conn: rows)
+
+    def advance(_conn, candidate):
+        if candidate["event_id"] == "evt_stale":
+            raise ValueError("event_ledger_revision_missing")
+        return {"status": "queued", "event_id": candidate["event_id"]}
+
+    monkeypatch.setattr(upgrade, "advance", advance)
+    assert upgrade.tick(conn) == [
+        {"status": "held", "event_id": "evt_stale",
+         "reason": "event_ledger_revision_missing", "workflow": upgrade.WORKFLOW},
+        {"status": "queued", "event_id": "evt_next"},
+    ]
+    assert conn.rolled_back is True
 
 
 def test_upgrade_enablement_is_explicit(monkeypatch):
