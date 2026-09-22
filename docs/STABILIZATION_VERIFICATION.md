@@ -2454,3 +2454,19 @@ excluded, and both retirement runs retain independent restore manifests.
   console errors. API build `job_3a53713856804dbfa44732666922dd80`
   activated release `20260922015631`; Hugo source `6a2d0c64` and production CSS/
   JavaScript hashes agree. The current September 21 JSON is valid with 215 items.
+
+## Unified Event and News presentation verification (2026-09-21)
+
+- News now mirrors the Event section's rounded outer panel, rounded inner cards,
+  border color, surface treatment and spacing. The lead report remains visually
+  prominent without square card geometry.
+- Desktop summary chevrons promote a secondary card from 445 to 902 pixels, reveal
+  the full summary, update accessible state and return it to the two-column grid.
+  Only one card remains expanded at a time.
+- A 390-pixel regression check retained a 313-pixel card inside the 334-pixel News
+  panel, a 382-pixel document width, working expansion, the dated JSON link and no
+  console errors.
+- API build `job_e0f45514269a40b7be2ef35762d41d33` activated release
+  `20260922025321` in 22.09 seconds. Hugo source `dc123021`, its remote and the
+  production CSS/JavaScript source hashes agree. The current September 21 JSON is
+  valid with 219 items and retains its existing contract.

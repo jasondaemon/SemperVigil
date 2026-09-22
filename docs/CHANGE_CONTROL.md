@@ -708,3 +708,21 @@ If you (Codex) propose edits affecting pipeline stability, you must:
   release `20260922015631`. Live phone validation expanded the sampled text from
   65 to 480 pixels and collapsed it again without browser errors. Hugo source
   `6a2d0c64` is pushed and matches production CSS and JavaScript hashes.
+
+# 2026-09-21: unify CyberNews Event and News presentation
+
+- Summary: Give the News feed the same rounded outer-panel and inner-card hierarchy
+  as the daily Event section while retaining an emphasized lead report.
+- Desktop disclosure: summary chevrons are now available at desktop widths. A
+  secondary card expands from the two-column grid to full panel width rather than
+  becoming a long narrow column; opening another card closes the prior one.
+- Scope: Hugo CSS and client-side presentation only. Feed data, ordering, filters,
+  source attribution, Event data and daily JSON generation are unchanged.
+- Verification: JavaScript and diff checks pass. Supported API build
+  `job_e0f45514269a40b7be2ef35762d41d33` completed in 22.09 seconds and activated
+  release `20260922025321`. Live desktop measurements showed a 445-pixel card
+  expanding to 902 pixels and collapsing back. A 390-pixel check retained the
+  single-column layout, 382-pixel document width and working disclosure. Both
+  viewports reported no console errors.
+- Source of truth: Hugo commit `dc123021` is pushed and matches production
+  `/site-src` CSS and JavaScript hashes.
