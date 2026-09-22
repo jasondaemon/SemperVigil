@@ -185,6 +185,43 @@ def test_tick_prioritizes_detail_filter_recovery(monkeypatch):
     assert automation.tick(object()) == [recovery]
 
 
+def test_detail_filter_recovery_reaudits_obsolete_decision(monkeypatch):
+    class Conn:
+        def __init__(self):
+            self.updated = False
+
+        def execute(self, sql, params=()):
+            if "SELECT c.event_id,x.composition_id" in sql:
+                return _Result(("evt_recover", "elc_held"))
+            if "UPDATE event_reassessment_cases" in sql:
+                self.updated = True
+                return _Result(None)
+            raise AssertionError(sql)
+
+        def commit(self):
+            pass
+
+    conn = Conn()
+    monkeypatch.setattr(
+        automation,
+        "_filter_detail_failures",
+        lambda *_args: (_ for _ in ()).throw(
+            ValueError("event_composition_filter_audit_invalid")
+        ),
+    )
+    from sempervigil import event_composition_audit_jobs
+    monkeypatch.setattr(event_composition_audit_jobs, "submit",
+                        lambda *_args: "job_reaudit")
+    monkeypatch.setattr(automation, "_job_state",
+                        lambda *_args: ("queued", ""))
+
+    assert automation._resume_detail_filter_hold(conn) == {
+        "status": "queued", "event_id": "evt_recover",
+        "job_id": "job_reaudit", "action": "composition_reaudit_recovery",
+    }
+    assert conn.updated is True
+
+
 def test_stale_proposed_ledger_is_rejected_for_deterministic_rebuild(monkeypatch):
     decisions = []
     monkeypatch.setattr(event_ledger, "_lineage_current", lambda _conn, _revision: False)

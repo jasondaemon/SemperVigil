@@ -169,7 +169,12 @@ def _resume_detail_filter_hold(conn) -> dict | None:
     ).fetchone()
     if not row:
         return None
-    filtered = _filter_detail_failures(conn, row[1])
+    try:
+        filtered = _filter_detail_failures(conn, row[1])
+    except ValueError as exc:
+        if str(exc) != "event_composition_filter_audit_invalid":
+            raise
+        filtered = None
     job_id = None
     if not filtered:
         from .event_composition_audit_jobs import submit
