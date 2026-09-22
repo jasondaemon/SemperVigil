@@ -209,6 +209,8 @@ workerFetch:
     dnsRebindingProtectionExemptHostnames: media-postgres.media-postgres.svc.cluster.local,sempervigil-searxng.sempervigil.svc.cluster.local,sempervigil-admin.sempervigil.svc.cluster.local,sempervigil-web.sempervigil.svc.cluster.local
 
 workerFetchPublic:
+  # Optional independent release; empty values inherit the shared image.
+  image: {}
   enabled: false
   replicaCount: 1
   nodeSelector: {}
