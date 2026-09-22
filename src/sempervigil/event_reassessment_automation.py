@@ -190,6 +190,28 @@ def _candidate_rows(conn, event_id: str) -> list[tuple]:
     ).fetchall()
 
 
+def _accepted_ledger_source_rows(conn, ledger_id: str | None) -> list[tuple[int, str]]:
+    if not ledger_id:
+        return []
+    rows = conn.execute(
+        """SELECT s.article_id,a.original_url
+             FROM event_ledger_revisions r
+             JOIN event_ledger_revision_sources s ON s.revision_id=r.revision_id
+             JOIN articles a ON a.id=s.article_id
+            WHERE r.ledger_id=%s AND r.status='accepted'
+            ORDER BY s.article_id""",
+        (ledger_id,),
+    ).fetchall()
+    return [(int(row[0]), str(row[1] or "")) for row in rows]
+
+
+def _next_additive_candidate(ledger: dict, candidates: list[tuple]) -> str | None:
+    existing = {str(item.get("candidate_id") or "") for item in ledger.get("sources", [])}
+    return next((str(row[0]) for row in candidates
+                 if row[1] == "enrolled" and row[2] and row[4]
+                 and str(row[0]) not in existing), None)
+
+
 def advance(conn, event_id: str) -> dict:
     from .event_reassessment import snapshot, refresh_case, queue_next_evidence, exclude_source
     from .article_review_jobs import configuration as evidence_configuration
@@ -234,7 +256,13 @@ def advance(conn, event_id: str) -> dict:
         return {"status": "pending", "event_id": event_id,
                 "job_id": active_job[0], "job_type": active_job[1]}
 
-    queued = queue_next_evidence(conn, event_id)
+    accepted_source_rows = _accepted_ledger_source_rows(conn, case[3])
+    accepted_article_ids = {row[0] for row in accepted_source_rows}
+    queued = queue_next_evidence(
+        conn,
+        event_id,
+        exclude_article_ids=accepted_article_ids,
+    )
     if queued["status"] == "excluded":
         return {**queued, "action": "source_excluded"}
     if queued["status"] == "queued":
@@ -262,6 +290,8 @@ def advance(conn, event_id: str) -> dict:
 
     evidence_generation = evidence_configuration(conn)[3]
     for source in record["articles"]:
+        if int(source["article_id"]) in accepted_article_ids:
+            continue
         if not source.get("source_version"):
             continue
         revision = conn.execute(
@@ -308,8 +338,12 @@ def advance(conn, event_id: str) -> dict:
     enrolled = [row for row in candidates if row[1] == "enrolled" and row[2] and row[4]]
     domains = {(urlparse(str(row[3] or "")).hostname or "").lower().removeprefix("www.")
                for row in enrolled}
+    domains.update(
+        (urlparse(url).hostname or "").lower().removeprefix("www.")
+        for _, url in accepted_source_rows
+    )
     domains.discard("")
-    if len(enrolled) < 2 or len(domains) < 2:
+    if len(enrolled) + len(accepted_source_rows) < 2 or len(domains) < 2:
         from .event_living_research import advance as research
         result = research(conn, event_id)
         if result["status"] == "research_queued":
@@ -342,6 +376,26 @@ def advance(conn, event_id: str) -> dict:
         return _hold(conn, event_id, "ledger requires intervention")
     if latest[1] != "accepted":
         return {"status": "deferred", "event_id": event_id, "reason": "ledger_not_ready"}
+
+    latest_ledger_row = conn.execute(
+        "SELECT ledger_json FROM event_ledger_revisions WHERE revision_id=%s",
+        (latest[0],),
+    ).fetchone()
+    if not latest_ledger_row:
+        return _hold(conn, event_id, "accepted ledger unavailable")
+    latest_ledger = json.loads(latest_ledger_row[0]) if isinstance(
+        latest_ledger_row[0], str
+    ) else latest_ledger_row[0]
+    additive_candidate = _next_additive_candidate(latest_ledger, candidates)
+    if additive_candidate:
+        from .event_ledger import propose
+        result = propose(
+            conn,
+            additive_candidate,
+            ledger_id=ledger_id,
+            change_kind="additive",
+        )
+        return {**result, "event_id": event_id, "action": "ledger_additive_proposed"}
 
     from .event_composition_jobs import configuration as composition_configuration
     composition_generation = composition_configuration(conn)[2]

@@ -6603,6 +6603,109 @@ def _maybe_queue_event_research(conn, event_id: str) -> bool:
     return True
 
 
+def _existing_event_candidates_for_article(
+    conn, article_id: int, *, limit: int = 8
+) -> list[dict[str, object]]:
+    """Find a bounded set of published Events sharing a normalized actor."""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT e.id
+        FROM article_threat_actors current_actor
+        JOIN article_threat_actors prior_actor
+          ON prior_actor.actor_id=current_actor.actor_id
+         AND prior_actor.article_id<>current_actor.article_id
+        JOIN event_articles ea ON ea.article_id=prior_actor.article_id
+        JOIN events e ON e.id=ea.event_id
+        WHERE current_actor.article_id=%s
+          AND e.visibility='active'
+          AND e.lifecycle='confirmed'
+          AND e.publish_state='published'
+        ORDER BY e.id
+        LIMIT %s
+        """,
+        (article_id, max(1, min(limit, 20))),
+    ).fetchall()
+    return [event for row in rows if (event := get_event(conn, str(row[0])))]
+
+
+def _select_existing_event_match(
+    decisions: list[tuple[dict[str, object], dict[str, object]]],
+    *, min_confidence: float = 0.8,
+) -> tuple[dict[str, object] | None, str]:
+    matches = [
+        event for event, decision in decisions
+        if bool(decision.get("related"))
+        and float(decision.get("confidence") or 0) >= min_confidence
+        and not decision.get("contradictions")
+    ]
+    if not matches:
+        return None, "no_match"
+    if len(matches) != 1:
+        return None, "ambiguous_match"
+    return matches[0], "unique_match"
+
+
+def _match_existing_event_for_article(
+    conn,
+    logger: logging.Logger,
+    *,
+    article_id: int,
+    article: dict[str, object],
+    content: str,
+) -> tuple[dict[str, object] | None, str]:
+    candidates = _existing_event_candidates_for_article(conn, article_id)
+    if not candidates:
+        return None, "no_actor_candidates"
+    source = {
+        "title": article.get("title"),
+        "snippet": article.get("summary") or "",
+        "url": article.get("original_url") or article.get("normalized_url"),
+    }
+    source["domain"] = (
+        urlparse(str(source["url"] or "")).hostname or ""
+    ).lower().removeprefix("www.")
+    decisions = []
+    for event in candidates:
+        decision, validation_route = _validate_event_source_with_llm(
+            conn, logger, event=event, source=source, content=content,
+        )
+        validator = str(decision.get("validator") or validation_route or "llm")
+        decision = {**decision, "validator": validator}
+        decisions.append((event, decision))
+        log_event(
+            logger,
+            logging.INFO,
+            "existing_event_match_evaluated",
+            article_id=article_id,
+            event_id=event.get("id"),
+            related=decision.get("related"),
+            confidence=decision.get("confidence"),
+            validator=validator,
+        )
+    minimum = float(os.getenv("SV_EVENT_EXISTING_MATCH_MIN_CONFIDENCE", "0.8"))
+    minimum = max(0.0, min(1.0, minimum))
+    return _select_existing_event_match(decisions, min_confidence=minimum)
+
+
+def _link_existing_event_update(
+    conn, *, event_id: str, article_id: int
+) -> dict[str, object]:
+    from .event_reassessment import activate_update
+
+    update = activate_update(
+        conn,
+        event_id,
+        article_id=article_id,
+        created_by="event-correlation",
+    )
+    return {
+        "status": "linked_existing",
+        "event_id": event_id,
+        "article_id": article_id,
+        "reassessment": update,
+    }
+
+
 def _handle_derive_events_from_articles(
     conn, config, payload: dict[str, object], logger: logging.Logger
 ) -> dict[str, object]:
@@ -6663,6 +6766,20 @@ def _handle_derive_events_from_articles(
             context={"stage": "derive_events_from_articles", "job_type": "derive_events_from_articles"},
         )
         parsed, error_reason = _parse_event_classification(result if isinstance(result, dict) else {})
+        existing_event, match_reason = _match_existing_event_for_article(
+            conn,
+            logger,
+            article_id=article_id,
+            article=article,
+            content=content,
+        )
+        if existing_event:
+            result = _link_existing_event_update(
+                conn,
+                event_id=str(existing_event["id"]),
+                article_id=article_id,
+            )
+            return _done({**result, "match_reason": match_reason})
         if error_reason:
             log_event(
                 logger,

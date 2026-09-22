@@ -51,7 +51,7 @@ def test_reassessment_title_must_come_from_enrolled_evidence_candidate():
         event_reassessment._evidence_title("Legacy unsupported title", rows)
 
 
-def test_snapshot_rejects_managed_event():
+def test_snapshot_accepts_managed_event_for_living_updates():
     conn = _SnapshotConn()
     original = conn.execute
 
@@ -64,8 +64,8 @@ def test_snapshot_rejects_managed_event():
         return result
 
     conn.execute = execute
-    with pytest.raises(ValueError, match="event_reassessment_event_ineligible"):
-        event_reassessment.snapshot(conn, "evt_managed")
+    result = event_reassessment.snapshot(conn, "evt_managed")
+    assert result["event"]["event_key"] == "event-ledger:eld_managed"
 
 
 def test_mutating_operations_require_exact_confirmation_before_database_access():

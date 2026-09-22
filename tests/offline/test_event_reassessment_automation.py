@@ -188,3 +188,23 @@ def test_stale_proposed_ledger_is_rejected_for_deterministic_rebuild(monkeypatch
         "reason": "superseded by Event-scoped fact selection",
         "reviewer": "policy:event-reassessment-automation-v1",
     })]
+
+
+def test_next_additive_candidate_ignores_sources_already_in_accepted_ledger():
+    ledger = {"sources": [{"candidate_id": "ic_existing"}]}
+    candidates = [
+        ("ic_existing", "enrolled", "[\"f1\"]", "https://one.test", "{}"),
+        ("ic_held", "held", None, "https://two.test", None),
+        ("ic_new", "enrolled", "[\"f2\"]", "https://three.test", "{}"),
+    ]
+
+    assert automation._next_additive_candidate(ledger, candidates) == "ic_new"
+
+
+def test_next_additive_candidate_requires_curated_fact_sections():
+    candidates = [
+        ("ic_unselected", "enrolled", None, "https://one.test", None),
+        ("ic_unassigned", "enrolled", "[\"f1\"]", "https://two.test", None),
+    ]
+
+    assert automation._next_additive_candidate({"sources": []}, candidates) is None

@@ -59,8 +59,7 @@ def snapshot(conn: Any, event_id: str) -> dict:
              FROM events e WHERE e.id=%s""",
         (event_id,),
     ).fetchone()
-    if (not row or row[7] != "active" or row[8] != "confirmed"
-            or str(row[2] or "").startswith("event-ledger:")):
+    if not row or row[7] != "active" or row[8] != "confirmed":
         raise ValueError("event_reassessment_event_ineligible")
     articles = conn.execute(
         """SELECT a.id,a.title,a.original_url,a.content_text
@@ -121,6 +120,69 @@ def start_cohort(conn: Any, *, confirmation: str, created_by: str) -> dict:
     conn.commit()
     return {"status": "ready", "created": created, "reused": reused,
             "held": held, "total": len(rows), "public_content_changed": False}
+
+
+def activate_update(
+    conn: Any, event_id: str, *, article_id: int, created_by: str
+) -> dict:
+    """Open a successor reassessment for a published, ledger-backed Event."""
+    if article_id <= 0 or not created_by.strip() or len(created_by) > 80:
+        raise ValueError("event_reassessment_identity_invalid")
+    current = snapshot(conn, event_id)
+    ledger_id = str(current["event"]["event_key"] or "").removeprefix("event-ledger:")
+    if not ledger_id.startswith("eld_") or not current["event"]["has_public_pointer"]:
+        raise ValueError("event_reassessment_update_target_invalid")
+    now = utc_now_iso()
+    linked = conn.execute(
+        """INSERT INTO event_articles(event_id,article_id,added_by,created_at)
+           VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
+        (event_id, article_id, created_by, now),
+    ).rowcount == 1
+    conn.execute(
+        """UPDATE events SET updated_at=%s,last_seen_at=%s,visibility='active'
+            WHERE id=%s""",
+        (now, now, event_id),
+    )
+    record = snapshot(conn, event_id)
+    existing = conn.execute(
+        "SELECT status,ledger_id FROM event_reassessment_cases WHERE event_id=%s FOR UPDATE",
+        (event_id,),
+    ).fetchone()
+    if existing and existing[1] not in {None, ledger_id}:
+        raise ValueError("event_reassessment_update_ledger_conflict")
+    encoded = json.dumps(record, sort_keys=True, ensure_ascii=True)
+    if existing:
+        conn.execute(
+            """UPDATE event_reassessment_cases
+                  SET snapshot_version=%s,snapshot_json=%s,priority=0,status='active',
+                      ledger_id=%s,completed_at=NULL,decision_reason=NULL,updated_at=%s
+                WHERE event_id=%s""",
+            (record["snapshot_version"], encoded, ledger_id, now, event_id),
+        )
+        status = "reopened"
+    else:
+        conn.execute(
+            """INSERT INTO event_reassessment_cases
+               (event_id,snapshot_version,snapshot_json,priority,status,ledger_id,
+                created_at,created_by,updated_at)
+               VALUES (%s,%s,%s,0,'active',%s,%s,%s,%s)""",
+            (event_id, record["snapshot_version"], encoded, ledger_id,
+             now, created_by, now),
+        )
+        status = "created"
+    conn.execute(
+        """INSERT INTO event_ledger_targets
+           (ledger_id,event_id,snapshot_version,created_at,created_by)
+           VALUES (%s,%s,%s,%s,%s)
+           ON CONFLICT(ledger_id) DO UPDATE
+             SET snapshot_version=EXCLUDED.snapshot_version""",
+        (ledger_id, event_id, record["snapshot_version"], now, created_by),
+    )
+    conn.commit()
+    return {"event_id": event_id, "ledger_id": ledger_id, "status": status,
+            "article_linked": linked,
+            "snapshot_version": record["snapshot_version"],
+            "public_content_changed": False}
 
 
 def _pending_articles(conn: Any) -> set[int]:
@@ -280,7 +342,9 @@ def queue_evidence(conn: Any, event_id: str, *, confirmation: str) -> dict:
             "job_ids": jobs, "held": held, "public_content_changed": False}
 
 
-def queue_next_evidence(conn: Any, event_id: str) -> dict:
+def queue_next_evidence(
+    conn: Any, event_id: str, *, exclude_article_ids: set[int] | None = None
+) -> dict:
     """Queue at most one missing source for bounded autonomous processing."""
     row = conn.execute(
         "SELECT snapshot_version,snapshot_json,status FROM event_reassessment_cases WHERE event_id=%s",
@@ -293,11 +357,12 @@ def queue_next_evidence(conn: Any, event_id: str) -> dict:
         raise ValueError("event_reassessment_snapshot_stale")
     pending = _pending_articles(conn)
     record = _decode(row[1])
+    excluded_ids = exclude_article_ids or set()
     from .article_review_jobs import configuration
     generation = configuration(conn)[3]
     for item in record["articles"]:
         article_id = int(item["article_id"])
-        if not item.get("source_version") or article_id in pending:
+        if article_id in excluded_ids or not item.get("source_version") or article_id in pending:
             continue
         excluded = conn.execute(
             """SELECT 1 FROM event_reassessment_source_outcomes
@@ -358,14 +423,6 @@ def refresh_case(conn: Any, event_id: str) -> dict:
     old = _decode(row[1])
     old_sources = {(item["article_id"], item.get("source_version")) for item in old["articles"]}
     new_sources = {(item["article_id"], item.get("source_version")) for item in current["articles"]}
-    accepted = conn.execute(
-        """SELECT 1 FROM event_ledger_targets t JOIN event_ledger_revisions r
-               ON r.ledger_id=t.ledger_id
-              WHERE t.event_id=%s AND r.status='accepted' LIMIT 1""",
-        (event_id,),
-    ).fetchone()
-    if accepted and old_sources != new_sources:
-        raise ValueError("event_reassessment_accepted_ledger_source_change")
     conn.execute(
         """UPDATE event_reassessment_cases
               SET snapshot_version=%s,snapshot_json=%s,updated_at=%s
