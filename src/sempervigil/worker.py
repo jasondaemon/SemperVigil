@@ -25,7 +25,7 @@ from urllib.parse import urlparse, parse_qsl, urlencode, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
 
-from .feed_inventory import list_feed_content_inventory
+from .feed_inventory import PUBLIC_FEED_EXCLUDED_SOURCE_IDS, list_feed_content_inventory
 from .article_enrichment import validated_output as validated_article_output
 
 from .config import (
@@ -430,6 +430,14 @@ def _is_article_suppressed(meta_json: object) -> bool:
     return False
 
 
+def _is_public_feed_article(article: dict[str, object]) -> bool:
+    source_id = str(article.get("source_id") or "").strip()
+    return (
+        source_id not in PUBLIC_FEED_EXCLUDED_SOURCE_IDS
+        and not _is_article_suppressed(article.get("meta_json"))
+    )
+
+
 def _is_timeout_error(exc: Exception) -> bool:
     if isinstance(exc, (TimeoutError, socket.timeout)):
         return True
@@ -716,7 +724,7 @@ def _is_article_in_today_feed(
 
     items: list[dict[str, object]] = []
     for row in recent_rows:
-        if _is_article_suppressed(row.get("meta_json")):
+        if not _is_public_feed_article(row):
             continue
         published_at = row.get("published_at") or row.get("ingested_at")
         parsed = _parse_ts(published_at)
@@ -1354,7 +1362,7 @@ def _build_feed_day_payload(
 ) -> dict[str, object]:
     articles = [
         article for article in list_articles_for_day(conn, day_key)
-        if not _is_article_suppressed(article.get("meta_json"))
+        if _is_public_feed_article(article)
     ]
     article_ids = [int(article["id"]) for article in articles if article.get("id") is not None]
     event_keys_map = list_event_keys_for_articles(conn, article_ids) if article_ids else {}
@@ -1671,7 +1679,7 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
 
     items = []
     for row in recent_rows:
-        if _is_article_suppressed(row.get("meta_json")):
+        if not _is_public_feed_article(row):
             continue
         published_at = row.get("published_at") or row.get("ingested_at")
         parsed = _parse_ts(published_at)

@@ -11,6 +11,9 @@ from typing import Any
 from .storage import _brief_day_from, _table_columns, _table_exists
 
 
+PUBLIC_FEED_EXCLUDED_SOURCE_IDS = frozenset({"web_enrich"})
+
+
 ARTICLE_FIELDS = (
     "id", "source_id", "title", "original_url", "published_at", "ingested_at",
     "summary_llm", "meta_json",
@@ -58,12 +61,21 @@ def feed_inventory_query(conn: Any, source_icons: tuple[str, ...] = ()) -> tuple
             params.extend([ids, days])
             day = "COALESCE(NULLIF(b.brief_day, ''), f.day)"
             extra = "LEFT JOIN fallback_days f ON f.id = b.id"
+            excluded_sources = ", ".join(
+                "'" + source_id.replace("'", "''") + "'"
+                for source_id in sorted(PUBLIC_FEED_EXCLUDED_SOURCE_IDS)
+            )
+            base_where = (
+                f"WHERE COALESCE(b.source_id, '') NOT IN ({excluded_sources})"
+                if excluded_sources else ""
+            )
         else:
             day = "substr(COALESCE(b.published_at, b.last_modified_at), 1, 10)"
             extra = ""
+            base_where = ""
         ctes.append(
             f"{kind}_base AS MATERIALIZED (SELECT b.{key} AS owner, {day} AS day, "
-            f"{projection('b', fields, columns)} AS payload FROM {table} b {extra})"
+            f"{projection('b', fields, columns)} AS payload FROM {table} b {extra} {base_where})"
         )
         parts.append(
             f"SELECT day, '{kind}' AS kind, owner::text, 'base' AS dependency, "

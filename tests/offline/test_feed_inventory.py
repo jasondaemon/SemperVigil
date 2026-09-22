@@ -36,6 +36,11 @@ def test_check_timestamps_are_not_substituted_for_content(query_case):
     assert "k.due_date" in sql
 
 
+def test_event_research_articles_do_not_dirty_public_feed_days(query_case):
+    sql, _ = inventory.feed_inventory_query(query_case)
+    assert "COALESCE(b.source_id, '') NOT IN ('web_enrich')" in sql
+
+
 def test_missing_brief_day_uses_application_timezone(query_case, monkeypatch):
     monkeypatch.setenv("SV_APP_TIMEZONE", "America/New_York")
     query_case.execute.return_value.fetchall.return_value = [(7, "2026-09-09T01:00:00Z")]
