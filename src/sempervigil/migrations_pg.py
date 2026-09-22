@@ -607,6 +607,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_llm_event_classify_regulatory_057")
             applied.add("pg_llm_event_classify_regulatory_057")
+        if "pg_llm_event_classify_non_event_shape_058" not in applied:
+            _migrate_llm_event_classify_prompts_v3(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                ("pg_llm_event_classify_non_event_shape_058", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_llm_event_classify_non_event_shape_058")
+            applied.add("pg_llm_event_classify_non_event_shape_058")
         else:
             conn.commit()
         return
@@ -744,6 +753,14 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_llm_event_classify_regulatory_057")
+
+    _migrate_llm_event_classify_prompts_v3(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_llm_event_classify_non_event_shape_058", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_llm_event_classify_non_event_shape_058")
 
     _migrate_source_overrides(conn)
     conn.execute(
@@ -2557,6 +2574,7 @@ def _migrate_llm_event_classify_prompts_v3(conn) -> None:
                 "- event_type must be one of: breach, ransomware, compromise, active_exploitation, ddos, outage, other.",
                 "- victim must be the concrete organization or entity that suffered the cyber incident, not a company bringing a lawsuit or a regulator imposing a fine.",
                 "- what_compromised must name data, systems, accounts, networks, or services affected by unauthorized activity; lawful collection or regulatory noncompliance alone does not qualify.",
+                "- When is_event is false, set event_type to 'other', victim and what_compromised to 'not applicable', and incident_date to 'unknown'.",
                 "- incident_date must be YYYY-MM-DD if explicit, otherwise 'unknown'.",
                 "- Do not invent details.",
             ]
