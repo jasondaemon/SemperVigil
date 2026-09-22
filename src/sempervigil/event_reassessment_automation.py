@@ -154,6 +154,10 @@ _filter_repaired_detail_failures = _filter_detail_failures
 
 def _resume_detail_filter_hold(conn) -> dict | None:
     """Recover a case held because audit and repair item identities diverged."""
+    recoverable_reasons = (
+        "event_composition_repair_overview_items_missing",
+        "event_composition_filter_audit_invalid",
+    )
     row = conn.execute(
         """SELECT c.event_id,x.composition_id
              FROM event_reassessment_cases c
@@ -163,9 +167,9 @@ def _resume_detail_filter_hold(conn) -> dict | None:
                ON x.ledger_revision_id=r.revision_id
               AND x.status='held'
               AND x.reviewed_by='policy:event-composition-audit-v1'
-            WHERE c.status='held'
-              AND c.decision_reason='event_composition_repair_overview_items_missing'
-            ORDER BY c.priority,c.updated_at,c.event_id,x.created_at DESC LIMIT 1"""
+            WHERE c.status='held' AND c.decision_reason=ANY(%s)
+            ORDER BY c.priority,c.updated_at,c.event_id,x.created_at DESC LIMIT 1""",
+        (list(recoverable_reasons),),
     ).fetchone()
     if not row:
         return None
@@ -187,8 +191,8 @@ def _resume_detail_filter_hold(conn) -> dict | None:
         """UPDATE event_reassessment_cases
               SET status='active',decision_reason=NULL,updated_at=%s
             WHERE event_id=%s AND status='held'
-              AND decision_reason='event_composition_repair_overview_items_missing'""",
-        (utc_now_iso(), row[0]),
+              AND decision_reason=ANY(%s)""",
+        (utc_now_iso(), row[0], list(recoverable_reasons)),
     )
     conn.commit()
     if job_id:
