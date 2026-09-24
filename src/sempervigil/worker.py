@@ -6604,9 +6604,10 @@ def _maybe_queue_event_research(conn, event_id: str) -> bool:
 
 
 def _existing_event_candidates_for_article(
-    conn, article_id: int, *, limit: int = 8
+    conn, article_id: int, *, incident_date: str = "", window_days: int = 14,
+    limit: int = 8,
 ) -> list[dict[str, object]]:
-    """Find a bounded set of published Events sharing a normalized actor."""
+    """Find published actor matches and drafts in the incident window."""
     rows = conn.execute(
         """
         SELECT DISTINCT e.id
@@ -6625,7 +6626,52 @@ def _existing_event_candidates_for_article(
         """,
         (article_id, max(1, min(limit, 20))),
     ).fetchall()
-    return [event for row in rows if (event := get_event(conn, str(row[0])))]
+    try:
+        article_day = datetime.fromisoformat(incident_date[:10]).date()
+    except ValueError:
+        return [event for row in rows if (event := get_event(conn, str(row[0])))]
+    earliest = (article_day - timedelta(days=window_days)).isoformat()
+    latest = (article_day + timedelta(days=window_days)).isoformat()
+    draft_rows = conn.execute(
+        """
+        SELECT e.id
+        FROM events e
+        WHERE e.visibility='active'
+          AND e.lifecycle IN ('candidate', 'confirmed')
+          AND e.publish_state='draft'
+          AND LEFT(e.incident_date, 10) BETWEEN %s AND %s
+        ORDER BY e.created_at DESC, e.id
+        LIMIT %s
+        """,
+        (earliest, latest, 200),
+    ).fetchall()
+    ids = list(dict.fromkeys([row[0] for row in rows] + [row[0] for row in draft_rows]))
+    return [event for event_id in ids if (event := get_event(conn, str(event_id)))]
+
+
+def _same_event_entity(left: str, right: str) -> bool:
+    def forms(value: str) -> set[str]:
+        words = re.findall(r"[a-z0-9]+", re.sub(r"\bu\.?s\.?(?=\W|$)", "us", value.lower()))
+        words = [word for word in words if word not in {"the", "us", "usa", "united", "states", "of"}]
+        if not words:
+            return set()
+        full = "".join(words)
+        acronym = "".join(word[0] for word in words) if len(words) >= 3 else ""
+        return {form for form in (full, acronym) if len(form) >= 3}
+
+    return bool(forms(left) & forms(right))
+
+
+def _draft_event_in_scope(event: dict[str, object], *, entity: str, incident_date: str,
+                          window_days: int) -> bool:
+    if not entity or not _same_event_entity(entity, str(event.get("entity") or "")):
+        return False
+    try:
+        candidate_day = datetime.fromisoformat(str(event.get("incident_date") or "")[:10]).date()
+        article_day = datetime.fromisoformat(incident_date[:10]).date()
+    except ValueError:
+        return False
+    return abs((candidate_day - article_day).days) <= window_days
 
 
 def _select_existing_event_match(
@@ -6652,8 +6698,17 @@ def _match_existing_event_for_article(
     article_id: int,
     article: dict[str, object],
     content: str,
+    entity: str = "",
+    incident_date: str = "",
+    window_days: int = 14,
 ) -> tuple[dict[str, object] | None, str]:
-    candidates = _existing_event_candidates_for_article(conn, article_id)
+    candidates = [
+        event for event in _existing_event_candidates_for_article(
+            conn, article_id, incident_date=incident_date, window_days=window_days)
+        if str(event.get("publish_state") or "") == "published"
+        or _draft_event_in_scope(event, entity=entity, incident_date=incident_date,
+                                    window_days=window_days)
+    ]
     if not candidates:
         return None, "no_actor_candidates"
     source = {
@@ -6704,6 +6759,17 @@ def _link_existing_event_update(
         "article_id": article_id,
         "reassessment": update,
     }
+
+
+def _link_existing_draft_update(conn, *, event_id: str, article_id: int,
+                                article: dict[str, object]) -> dict[str, object]:
+    link_event_article(conn, event_id, article_id, "event-correlation")
+    lifecycle = _maybe_promote_event_lifecycle(conn, event_id, article)
+    update_event_summary_from_articles(conn, event_id)
+    enqueue_job(conn, "event_report_llm", {"event_id": event_id}, dedupe=True)
+    _maybe_queue_event_research(conn, event_id)
+    return {"status": "linked_existing_draft", "event_id": event_id,
+            "article_id": article_id, "lifecycle": lifecycle}
 
 
 def _handle_derive_events_from_articles(
@@ -6766,19 +6832,29 @@ def _handle_derive_events_from_articles(
             context={"stage": "derive_events_from_articles", "job_type": "derive_events_from_articles"},
         )
         parsed, error_reason = _parse_event_classification(result if isinstance(result, dict) else {})
+        parsed_date = str(parsed.get("incident_date") or "").strip()
+        if parsed_date.lower() in {"unknown", "n/a", "none", "null"}:
+            parsed_date = ""
         existing_event, match_reason = _match_existing_event_for_article(
             conn,
             logger,
             article_id=article_id,
             article=article,
             content=content,
+            entity=_normalize_entity(str(parsed.get("victim") or "")),
+            incident_date=parsed_date or str(article.get("published_at") or article.get("ingested_at") or "")[:10],
+            window_days=int(policy.get("merge_window_days") or 14),
         )
         if existing_event:
-            result = _link_existing_event_update(
-                conn,
-                event_id=str(existing_event["id"]),
-                article_id=article_id,
-            )
+            if str(existing_event.get("publish_state") or "") == "published":
+                result = _link_existing_event_update(
+                    conn, event_id=str(existing_event["id"]), article_id=article_id,
+                )
+            else:
+                result = _link_existing_draft_update(
+                    conn, event_id=str(existing_event["id"]), article_id=article_id,
+                    article=article,
+                )
             return _done({**result, "match_reason": match_reason})
         if error_reason:
             log_event(
