@@ -6393,6 +6393,13 @@ def _maybe_promote_event_lifecycle(
     return "candidate"
 
 
+def _enroll_confirmed_draft(conn, event_id: str, lifecycle: str) -> None:
+    if lifecycle != "confirmed":
+        return
+    from .event_reassessment import enroll_confirmed_draft
+    enroll_confirmed_draft(conn, event_id, created_by="event-correlation")
+
+
 def _is_generic_event_entity(entity: str) -> bool:
     value = normalize_name(entity or "").replace("_", " ").strip()
     if not value:
@@ -6765,6 +6772,7 @@ def _link_existing_draft_update(conn, *, event_id: str, article_id: int,
                                 article: dict[str, object]) -> dict[str, object]:
     link_event_article(conn, event_id, article_id, "event-correlation")
     lifecycle = _maybe_promote_event_lifecycle(conn, event_id, article)
+    _enroll_confirmed_draft(conn, event_id, lifecycle)
     update_event_summary_from_articles(conn, event_id)
     enqueue_job(conn, "event_report_llm", {"event_id": event_id}, dedupe=True)
     _maybe_queue_event_research(conn, event_id)
@@ -6955,6 +6963,7 @@ def _handle_derive_events_from_articles(
                 article,
                 min_confirm_confidence=float(policy["min_confirm_confidence"]),
             )
+            _enroll_confirmed_draft(conn, event_id, lifecycle)
             for cve_id in cve_ids:
                 upsert_event_item(conn, event_id, "cve", cve_id)
                 for product_key in list_product_keys_for_cve(conn, cve_id):
@@ -7061,6 +7070,7 @@ def _handle_derive_events_from_articles(
         article,
         min_confirm_confidence=float(policy["min_confirm_confidence"]),
     )
+    _enroll_confirmed_draft(conn, event_id, lifecycle)
     for cve_id in cve_ids:
         upsert_event_item(conn, event_id, "cve", cve_id)
         for product_key in list_product_keys_for_cve(conn, cve_id):

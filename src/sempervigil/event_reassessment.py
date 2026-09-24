@@ -122,6 +122,28 @@ def start_cohort(conn: Any, *, confirmation: str, created_by: str) -> dict:
             "held": held, "total": len(rows), "public_content_changed": False}
 
 
+def enroll_confirmed_draft(conn: Any, event_id: str, *, created_by: str) -> bool:
+    """Admit one confirmed draft to the existing evidence-first publication path."""
+    record = snapshot(conn, event_id)
+    event = record["event"]
+    if (event["publish_state"] != "draft" or event["has_public_pointer"]
+            or str(event["event_key"] or "").startswith("event-ledger:")):
+        raise ValueError("event_reassessment_draft_required")
+    now = utc_now_iso()
+    inserted = conn.execute(
+        """INSERT INTO event_reassessment_cases
+           (event_id,snapshot_version,snapshot_json,priority,status,
+            created_at,created_by,updated_at)
+           VALUES (%s,%s,%s,10,'active',%s,%s,%s)
+           ON CONFLICT(event_id) DO NOTHING""",
+        (event_id, record["snapshot_version"],
+         json.dumps(record, sort_keys=True, ensure_ascii=True),
+         now, created_by, now),
+    ).rowcount == 1
+    conn.commit()
+    return inserted
+
+
 def activate_update(
     conn: Any, event_id: str, *, article_id: int, created_by: str
 ) -> dict:

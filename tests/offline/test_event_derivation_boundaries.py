@@ -119,6 +119,7 @@ def test_draft_update_rebuilds_report_without_publishing(monkeypatch):
     calls = []
     monkeypatch.setattr(worker, "link_event_article", lambda *_args: calls.append("link"))
     monkeypatch.setattr(worker, "_maybe_promote_event_lifecycle", lambda *_args: "confirmed")
+    monkeypatch.setattr(worker, "_enroll_confirmed_draft", lambda *_args: calls.append("enroll"))
     monkeypatch.setattr(worker, "update_event_summary_from_articles", lambda *_args: calls.append("summary"))
     monkeypatch.setattr(worker, "enqueue_job", lambda *_args, **_kwargs: calls.append("report"))
     monkeypatch.setattr(worker, "_maybe_queue_event_research", lambda *_args: calls.append("research"))
@@ -128,7 +129,7 @@ def test_draft_update_rebuilds_report_without_publishing(monkeypatch):
     )
 
     assert result["lifecycle"] == "confirmed"
-    assert calls == ["link", "summary", "report", "research"]
+    assert calls == ["link", "enroll", "summary", "report", "research"]
 
 
 def test_draft_matching_uses_victim_and_validator_not_just_actor(monkeypatch):
