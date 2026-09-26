@@ -45,3 +45,23 @@ def test_build_status_reuses_supplied_queue_health(monkeypatch):
     assert result["status"] == "building"
     assert result["reason"] == "build_queued"
     assert result["queued"] == 2
+
+
+def test_runner_stats_reuses_job_metrics_without_requerying():
+    rows = storage.get_runner_stats(
+        _EmptyConn(),
+        job_metrics=[
+            {"queue_name": "fetch", "job_type": "launch_fetch_worker", "status": "failed", "count": 5},
+            {"queue_name": "control", "job_type": "launch_build_worker", "status": "succeeded", "count": 3},
+            {"queue_name": "control", "job_type": "unrelated", "status": "succeeded", "count": 8},
+        ],
+    )
+
+    assert rows == [
+        {
+            "runner_type": "build",
+            "job_type": "launch_build_worker",
+            "status": "succeeded",
+            "count": 3,
+        }
+    ]
