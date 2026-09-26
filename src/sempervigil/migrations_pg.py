@@ -1542,6 +1542,18 @@ def _bootstrap_schema(conn) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_locked ON jobs(locked_by, locked_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_health_alerts_source ON health_alerts(source_id, created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cves_last_modified ON cves(last_modified_at DESC)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cves_missing_description "
+        "ON cves(cve_id) WHERE description_text IS NULL OR description_text = ''"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cves_unchecked_products "
+        "ON cves(cve_id) WHERE cve_products_checked_at IS NULL"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cves_unchecked_threat_actors "
+        "ON cves(cve_id) WHERE cve_threat_actors_checked_at IS NULL"
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cve_snapshots_cve ON cve_snapshots(cve_id, observed_at DESC)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cve_changes_cve ON cve_changes(cve_id, change_at DESC)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_models_provider ON llm_models(provider_id)")

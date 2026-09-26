@@ -2032,57 +2032,6 @@ def get_dashboard_metrics(conn: Any, *, include_backlog: bool = True) -> dict[st
     metrics["articles_max_retries_count"] = content_max_retries_count
     metrics["articles_missing_summary_count"] = missing_summary_count
     metrics["articles_missing_context_count"] = missing_context_count
-    metrics["articles_missing_products_count"] = 0
-    metrics["articles_missing_threat_actors_count"] = 0
-    if _table_exists(conn, "articles"):
-        cols = _table_columns(conn, "articles")
-        error_exclude_clause = None
-        if "content_error" in cols:
-            error_404_clause = (
-                "content_error IN ('http_404','http_410') "
-                "OR content_error LIKE '%%HTTP Error 404%%' "
-                "OR content_error LIKE '%%HTTP Error 410%%'"
-            )
-            error_stale_clause = "content_error = 'stale_older_than_week'"
-            error_exclude_clause = (
-                f"(content_error IS NULL OR NOT ({error_404_clause} OR {error_stale_clause}))"
-            )
-        if _table_exists(conn, "article_products"):
-            where = "1=1"
-            if error_exclude_clause:
-                where = f"{where} AND {error_exclude_clause}"
-            row = conn.execute(
-                f"""
-                SELECT COUNT(*) FROM (
-                    SELECT a.id
-                    FROM articles a
-                    LEFT JOIN article_products ap ON ap.article_id = a.id
-                    WHERE {where}
-                    GROUP BY a.id
-                    HAVING COUNT(ap.article_id) = 0
-                ) t
-                """
-            ).fetchone()
-            metrics["articles_missing_products_count"] = int(row[0] or 0)
-        if _table_exists(conn, "article_threat_actors"):
-            where = "1=1"
-            if error_exclude_clause:
-                where = f"{where} AND {error_exclude_clause}"
-            row = conn.execute(
-                f"""
-                SELECT COUNT(*) FROM (
-                    SELECT a.id
-                    FROM articles a
-                    LEFT JOIN article_threat_actors ata ON ata.article_id = a.id
-                    WHERE {where}
-                    GROUP BY a.id
-                    HAVING COUNT(ata.article_id) = 0
-                ) t
-                """
-            ).fetchone()
-            metrics["articles_missing_threat_actors_count"] = int(row[0] or 0)
-
-
     cve_missing_desc = 0
     if _table_exists(conn, "cves") and "description_text" in _table_columns(conn, "cves"):
         row = conn.execute(
@@ -2091,27 +2040,10 @@ def get_dashboard_metrics(conn: Any, *, include_backlog: bool = True) -> dict[st
         cve_missing_desc = int(row[0] or 0)
     metrics["cves_missing_description_count"] = cve_missing_desc
 
-    cve_missing_products = 0
-    if _table_exists(conn, "cves") and _table_exists(conn, "cve_products"):
-        row = conn.execute(
-            """
-            SELECT COUNT(*) FROM (
-                SELECT c.cve_id
-                FROM cves c
-                LEFT JOIN cve_products cp ON cp.cve_id = c.cve_id
-                LEFT JOIN cve_product_versions cpv ON cpv.cve_id = c.cve_id
-                GROUP BY c.cve_id
-                HAVING COUNT(cp.cve_id) = 0 OR COUNT(cpv.cve_id) = 0
-            ) t
-            """
-        ).fetchone()
-        cve_missing_products = int(row[0] or 0)
-    metrics["cves_missing_products_count"] = cve_missing_products
-    metrics["cves_missing_threat_actors_count"] = count_cves_missing_threat_actors(conn)
     # Keep dashboard "missing" metrics aligned with actionable queue logic.
     metrics["articles_missing_products_count"] = count_articles_missing_products(conn)
     metrics["articles_missing_threat_actors_count"] = count_articles_missing_threat_actors(conn)
-    metrics["cves_missing_products_count"] = len(list_cve_ids_missing_products(conn, limit=None))
+    metrics["cves_missing_products_count"] = count_cve_ids_missing_products(conn)
     metrics["cves_missing_threat_actors_count"] = count_cves_missing_threat_actors(conn)
     daily_missing_days = 0
     if _table_exists(conn, "articles"):
@@ -2787,9 +2719,14 @@ def get_queue_worker_health(
     conn: Any,
     *,
     idle_after_seconds: int = 60,
+    queue_stats: list[dict[str, object]] | None = None,
+    runner_health_stats: list[dict[str, object]] | None = None,
 ) -> list[dict[str, object]]:
     effective_queue_name = _effective_queue_name_sql()
-    queue_rows = {str(row.get("queue_name") or "default"): row for row in get_queue_stats(conn)}
+    queue_rows = {
+        str(row.get("queue_name") or "default"): row
+        for row in (queue_stats if queue_stats is not None else get_queue_stats(conn))
+    }
     running_rows = conn.execute(
         f"""
         SELECT {effective_queue_name} AS effective_queue_name, COUNT(*)
@@ -2800,7 +2737,11 @@ def get_queue_worker_health(
         """
     ).fetchall() if _table_exists(conn, "jobs") else []
     running_by_queue = {str(queue_name or "default"): int(count or 0) for queue_name, count in running_rows}
-    health_rows = get_runner_health_stats(conn, idle_after_seconds=idle_after_seconds)
+    health_rows = (
+        runner_health_stats
+        if runner_health_stats is not None
+        else get_runner_health_stats(conn, idle_after_seconds=idle_after_seconds)
+    )
     active_by_queue: dict[str, int] = {}
     idle_by_queue: dict[str, int] = {}
     stale_by_queue: dict[str, int] = {}
@@ -2849,10 +2790,19 @@ def get_queue_worker_health(
     return rows
 
 
-def get_build_status(conn: Any, *, idle_after_seconds: int = 60) -> dict[str, object]:
+def get_build_status(
+    conn: Any,
+    *,
+    idle_after_seconds: int = 60,
+    queue_worker_health: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
     state = get_build_state(conn)
     dirty = bool(state.get("dirty"))
-    queue_health_rows = get_queue_worker_health(conn, idle_after_seconds=idle_after_seconds)
+    queue_health_rows = (
+        queue_worker_health
+        if queue_worker_health is not None
+        else get_queue_worker_health(conn, idle_after_seconds=idle_after_seconds)
+    )
     build_metrics = {
         str(row.get("metric") or ""): int(row.get("count") or 0)
         for row in queue_health_rows
@@ -9281,20 +9231,14 @@ def _cve_vendor_product_norms(conn: Any, cve_id: str) -> list[tuple[str, str]]:
     )
     return [(row[0], row[1]) for row in cursor.fetchall()]
 
-def list_cve_ids_missing_products(conn: Any, limit: int | None = None) -> list[str]:
-    if not _table_exists(conn, "cves"):
-        return []
+def _cve_missing_products_where(conn: Any) -> str:
     cve_columns = _table_columns(conn, "cves")
     checked_clause = (
         "AND c.cve_products_checked_at IS NULL"
         if "cve_products_checked_at" in cve_columns
         else ""
     )
-    sql = """
-    SELECT c.cve_id
-    FROM cves c
-    LEFT JOIN cve_products cp ON cp.cve_id = c.cve_id
-    LEFT JOIN cve_product_versions cpv ON cpv.cve_id = c.cve_id
+    return """
     WHERE (
         (c.description_text IS NOT NULL AND c.description_text != '')
         OR (
@@ -9303,10 +9247,25 @@ def list_cve_ids_missing_products(conn: Any, limit: int | None = None) -> list[s
         )
     )
     """ + checked_clause + """
-    GROUP BY c.cve_id
-    HAVING COUNT(cp.cve_id) = 0 OR COUNT(cpv.cve_id) = 0
-    ORDER BY MAX(c.published_at) DESC
+    AND (
+        NOT EXISTS (SELECT 1 FROM cve_products cp WHERE cp.cve_id = c.cve_id)
+        OR NOT EXISTS (SELECT 1 FROM cve_product_versions cpv WHERE cpv.cve_id = c.cve_id)
+    )
     """
+
+
+def count_cve_ids_missing_products(conn: Any) -> int:
+    if not _table_exists(conn, "cves"):
+        return 0
+    row = conn.execute("SELECT COUNT(*) FROM cves c " + _cve_missing_products_where(conn)).fetchone()
+    return int(row[0] or 0)
+
+
+def list_cve_ids_missing_products(conn: Any, limit: int | None = None) -> list[str]:
+    if not _table_exists(conn, "cves"):
+        return []
+    sql = "SELECT c.cve_id FROM cves c " + _cve_missing_products_where(conn)
+    sql += " ORDER BY c.published_at DESC"
     params: list[object] = []
     if limit:
         sql += " LIMIT %s"
