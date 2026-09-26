@@ -668,10 +668,16 @@ def _build_dashboard_metrics_payload(conn: Any, *, include_backlog: bool = True)
     if not include_backlog:
         metrics["queueable_by_job_type"] = {}
         return metrics
-    metrics["build_status"] = get_build_status(conn)
     metrics["queue_stats"] = get_queue_stats(conn)
     metrics["runner_health"] = get_runner_health_stats(conn)
-    metrics["queue_worker_health"] = get_queue_worker_health(conn)
+    metrics["queue_worker_health"] = get_queue_worker_health(
+        conn,
+        queue_stats=metrics["queue_stats"],
+        runner_health_stats=metrics["runner_health"],
+    )
+    metrics["build_status"] = get_build_status(
+        conn, queue_worker_health=metrics["queue_worker_health"]
+    )
     stage_statuses = list_stage_statuses(conn, STAGE_NAMES)
     metrics["llm_stage_active"] = sum(1 for item in stage_statuses if item["status"] == "active")
     metrics["llm_stage_total"] = len(stage_statuses)
