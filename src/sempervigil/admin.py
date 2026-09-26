@@ -2055,14 +2055,19 @@ def queue_diagnostics() -> dict[str, object]:
                 "oldest_age_minutes": age_minutes,
             }
         )
+    queue_stats = get_queue_stats(conn)
+    job_metrics = get_job_metrics(conn)
+    runner_health = get_runner_health_stats(conn)
     return {
         "now": now.isoformat(),
         "queue": items,
-        "queue_stats": get_queue_stats(conn),
-        "job_metrics": get_job_metrics(conn),
-        "runner_stats": get_runner_stats(conn),
-        "runner_health": get_runner_health_stats(conn),
-        "queue_worker_health": get_queue_worker_health(conn),
+        "queue_stats": queue_stats,
+        "job_metrics": job_metrics,
+        "runner_stats": get_runner_stats(conn, job_metrics=job_metrics),
+        "runner_health": runner_health,
+        "queue_worker_health": get_queue_worker_health(
+            conn, queue_stats=queue_stats, runner_health_stats=runner_health
+        ),
         "stale_jobs": get_stale_job_stats(conn),
         "source_ingest_state": get_source_ingest_state_counts(conn),
         "build_state": get_build_state(conn),

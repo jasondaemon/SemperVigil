@@ -2585,28 +2585,44 @@ def get_job_metrics(conn: Any) -> list[dict[str, object]]:
     return rows
 
 
-def get_runner_stats(conn: Any) -> list[dict[str, object]]:
-    if not _table_exists(conn, "jobs"):
-        return []
-    effective_queue_name = _effective_queue_name_sql()
-    cursor = conn.execute(
-        f"""
-        SELECT job_type, status, COUNT(*) AS job_count
-        FROM jobs
-        WHERE {effective_queue_name} = 'control'
-          AND job_type IN ('launch_fetch_worker', 'launch_llm_worker', 'launch_openai_worker', 'launch_build_worker')
-        GROUP BY job_type, status
-        ORDER BY job_type, status
-        """
-    )
+def get_runner_stats(
+    conn: Any,
+    *,
+    job_metrics: list[dict[str, object]] | None = None,
+) -> list[dict[str, object]]:
     launch_to_runner = {
         "launch_fetch_worker": "fetch",
         "launch_llm_worker": "llm_local",
         "launch_openai_worker": "openai",
         "launch_build_worker": "build",
     }
+    if job_metrics is None:
+        if not _table_exists(conn, "jobs"):
+            return []
+        effective_queue_name = _effective_queue_name_sql()
+        cursor = conn.execute(
+            f"""
+            SELECT job_type, status, COUNT(*) AS job_count
+            FROM jobs
+            WHERE {effective_queue_name} = 'control'
+              AND job_type IN ('launch_fetch_worker', 'launch_llm_worker', 'launch_openai_worker', 'launch_build_worker')
+            GROUP BY job_type, status
+            ORDER BY job_type, status
+            """
+        )
+        counts = cursor.fetchall()
+    else:
+        counts = sorted(
+            (
+                (row["job_type"], row["status"], row["count"])
+                for row in job_metrics
+                if row.get("queue_name") == "control"
+                and row.get("job_type") in launch_to_runner
+            ),
+            key=lambda row: (str(row[0]), str(row[1])),
+        )
     rows: list[dict[str, object]] = []
-    for job_type, status, job_count in cursor.fetchall():
+    for job_type, status, job_count in counts:
         rows.append(
             {
                 "runner_type": launch_to_runner.get(str(job_type or ""), "unknown"),
