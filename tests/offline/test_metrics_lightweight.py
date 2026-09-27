@@ -83,3 +83,23 @@ def test_metrics_render_uses_active_state_and_cached_need(monkeypatch):
     assert 'sempervigil_queue_jobs{queue_name="fetch",status="queued"} 2' in rendered
     assert 'sempervigil_dashboard_current{column="need",job_type="fetch_article_content",worker_group="fetch"} 7' in rendered
     assert "sempervigil_need_snapshot_age_seconds 42" in rendered
+
+
+def test_dashboard_cache_bounds_repeated_history_reads(monkeypatch):
+    clock = [1000.0]
+    calls = []
+    monkeypatch.setattr(admin.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(admin, "_dashboard_metrics_cache", {})
+
+    def build(_conn, *, include_backlog):
+        calls.append(include_backlog)
+        return {"job_counts_by_type_status": {"fetch_article_content": {"queued": len(calls)}}}
+
+    monkeypatch.setattr(admin, "_build_dashboard_metrics_payload", build)
+    first = admin._cached_dashboard_metrics(object(), include_backlog=True)
+    clock[0] += 30
+    assert admin._cached_dashboard_metrics(object(), include_backlog=True) is first
+    assert admin._cached_dashboard_metrics(object(), include_backlog=False) is first
+    clock[0] += 90
+    assert admin._cached_dashboard_metrics(object(), include_backlog=True) is not first
+    assert calls == [True, True]
