@@ -796,6 +796,23 @@ def _build_dashboard_metrics_payload(
 _METRICS_NEED_REFRESH_SECONDS = 300
 _metrics_need_lock = threading.Lock()
 _metrics_need_cache: tuple[float, dict[str, int]] | None = None
+_DASHBOARD_REFRESH_SECONDS = 120
+_dashboard_metrics_lock = threading.Lock()
+_dashboard_metrics_cache: dict[bool, tuple[float, dict[str, object]]] = {}
+
+
+def _cached_dashboard_metrics(conn: Any, *, include_backlog: bool) -> dict[str, object]:
+    now = time.monotonic()
+    with _dashboard_metrics_lock:
+        cached = _dashboard_metrics_cache.get(include_backlog)
+        if not include_backlog and cached is None:
+            cached = _dashboard_metrics_cache.get(True)
+        if cached is not None and now - cached[0] < _DASHBOARD_REFRESH_SECONDS:
+            return cached[1]
+        payload = _build_dashboard_metrics_payload(conn, include_backlog=include_backlog)
+        payload["snapshot_generated_at"] = utc_now_iso()
+        _dashboard_metrics_cache[include_backlog] = (time.monotonic(), payload)
+        return payload
 
 
 def _cached_metrics_need(conn: Any) -> tuple[dict[str, int], float]:
@@ -1264,7 +1281,7 @@ def logs_latest_build(stream: str = "stdout", lines: int = 200) -> dict[str, obj
 @app.get("/admin/api/dashboard/metrics", dependencies=[Depends(_require_admin_token)])
 def dashboard_metrics(include_backlog: bool = True) -> dict[str, object]:
     conn = _get_conn()
-    return _build_dashboard_metrics_payload(conn, include_backlog=include_backlog)
+    return _cached_dashboard_metrics(conn, include_backlog=include_backlog)
 
 
 @app.get("/admin/api/health/vpn", dependencies=[Depends(_require_admin_token)])
@@ -1342,6 +1359,8 @@ def dashboard_reset_failures() -> dict[str, object]:
     set_setting(conn, "dashboard_failures_since", now)
     set_setting(conn, "dashboard_job_counts_since", now)
     conn.commit()
+    with _dashboard_metrics_lock:
+        _dashboard_metrics_cache.clear()
     return {
         "status": "ok",
         "failures_since": get_setting(conn, "dashboard_failures_since", None),
