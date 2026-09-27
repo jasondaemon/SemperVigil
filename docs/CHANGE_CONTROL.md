@@ -1,5 +1,37 @@
 # Change Control Log
 
+## 2026-09-27: incremental dashboard counts and guarded publication recovery
+
+- Migration `pg_dashboard_job_counters_060` seeded terminal job counts once and
+  maintains them transactionally on job status changes. The admin dashboard now
+  reads active jobs and those counters rather than grouping all historical jobs.
+  Reset-date and all-time counts matched a direct production recount; no jobs
+  sequential scans accumulated in a 4-minute-39-second post-rollout sample.
+- The activation guard still rejects missing approved Event sources. It now
+  permits additional research links only when checking the same current public
+  composition. One Event had a fifth unpublished research article linked after
+  its four-source revision; that mismatch had blocked all site builds.
+- Admin and builder image `e257d00` first applied only to their Deployments
+  after scoped server-side diff. Build
+  `job_052e0ea5e2744f80969268f565a8002b` succeeded and activated
+  `20260927024759`. Home, Events, affected Event detail and the September 26
+  daily JSON returned HTTP 200; JSON had 167 items and no `web_enrich` items.
+- A bounded cleanup removed 1,657 failed release directories without targeting
+  the then-active release or its two immediate predecessors. Builder `c046747` adds
+  candidate/temp-file cleanup on future activation rejection, without bypassing
+  the guard or changing Hugo inputs. Final ordinary build
+  `job_bb8a3cac87e84dca949267ed30bb967a` succeeded in about 53 seconds,
+  activated `20260927025734` and retained three releases.
+- Offline suite: 1,145 passed, two skipped; targeted activation suite: 36 passed.
+  Counter migration and transitions passed against disposable PostgreSQL 18.
+  The added research article is not part of the approved public revision and
+  its separate evidence review remains unresolved.
+- Final admin/builder image `9d22ca1` retains duplicate cited-source detection;
+  both Deployments are ready and their scoped rendered/live diff is empty. The
+  final builder reauthorized current release `20260927025734` without switching
+  it. Home, Events, affected Event, and daily JSON return HTTP 200; admin
+  redirects unauthenticated access as before.
+
 ## 2026-09-19: Kubernetes private article trial deployed and evaluated
 
 - Admin/LLM image `3d2a981`, platform `583da4c`; explicit default-disabled Helm
