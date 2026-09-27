@@ -2608,6 +2608,7 @@ def get_queue_stats(conn: Any) -> list[dict[str, object]]:
                COUNT(*) FILTER (WHERE status = 'running') AS running_count,
                MIN(requested_at) FILTER (WHERE status = 'queued') AS oldest_requested_at
         FROM jobs
+        WHERE status IN ('queued', 'running')
         GROUP BY effective_queue_name
         ORDER BY effective_queue_name
         """
