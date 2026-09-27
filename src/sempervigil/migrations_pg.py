@@ -616,6 +616,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_llm_event_classify_non_event_shape_058")
             applied.add("pg_llm_event_classify_non_event_shape_058")
+        if "pg_cve_kev_lookup_059" not in applied:
+            _migrate_cve_kev_lookup_index(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_cve_kev_lookup_059", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_cve_kev_lookup_059")
+            applied.add("pg_cve_kev_lookup_059")
         else:
             conn.commit()
         return
@@ -761,6 +770,14 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_llm_event_classify_non_event_shape_058")
+
+    _migrate_cve_kev_lookup_index(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_cve_kev_lookup_059", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_cve_kev_lookup_059")
 
     _migrate_source_overrides(conn)
     conn.execute(
@@ -5748,6 +5765,14 @@ def _migrate_cve_kev(conn) -> None:
             updated_at TEXT NOT NULL
         )
         """
+    )
+
+
+def _migrate_cve_kev_lookup_index(conn) -> None:
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cves_unchecked_kev "
+        "ON cves ((COALESCE(last_modified_at, published_at)) DESC) "
+        "WHERE kev_checked_at IS NULL"
     )
 
 
