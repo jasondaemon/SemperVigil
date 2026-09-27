@@ -2530,31 +2530,56 @@ def count_pending_jobs(conn: Any, job_type: str) -> int:
 
 
 def get_queue_stats(conn: Any) -> list[dict[str, object]]:
+    return get_active_queue_stats(conn)
+
+
+def get_active_queue_stats(conn: Any) -> list[dict[str, object]]:
     if not _table_exists(conn, "jobs"):
         return []
-    effective_queue_name = _effective_queue_name_sql()
     cursor = conn.execute(
-        f"""
-        SELECT {effective_queue_name} AS effective_queue_name,
+        """
+        SELECT queue_name,
                COUNT(*) FILTER (WHERE status = 'queued') AS queued_count,
                COUNT(*) FILTER (WHERE status = 'running') AS running_count,
                MIN(requested_at) FILTER (WHERE status = 'queued') AS oldest_requested_at
         FROM jobs
-        GROUP BY effective_queue_name
-        ORDER BY effective_queue_name
+        WHERE status IN ('queued', 'running')
+        GROUP BY queue_name
+        ORDER BY queue_name
         """
     )
-    rows: list[dict[str, object]] = []
-    for queue_name, queued_count, running_count, oldest_requested_at in cursor.fetchall():
-        rows.append(
-            {
-                "queue_name": queue_name or "default",
-                "queued": int(queued_count or 0),
-                "running": int(running_count or 0),
-                "oldest_requested_at": oldest_requested_at,
-            }
-        )
-    return rows
+    return [
+        {
+            "queue_name": queue_name or "default",
+            "queued": int(queued_count or 0),
+            "running": int(running_count or 0),
+            "oldest_requested_at": oldest_requested_at,
+        }
+        for queue_name, queued_count, running_count, oldest_requested_at in cursor.fetchall()
+    ]
+
+
+def get_active_job_metrics(conn: Any) -> list[dict[str, object]]:
+    if not _table_exists(conn, "jobs"):
+        return []
+    cursor = conn.execute(
+        """
+        SELECT queue_name, job_type, status, COUNT(*)
+        FROM jobs
+        WHERE status IN ('queued', 'running')
+        GROUP BY queue_name, job_type, status
+        ORDER BY queue_name, job_type, status
+        """
+    )
+    return [
+        {
+            "queue_name": queue_name or "default",
+            "job_type": str(job_type or ""),
+            "status": str(status or ""),
+            "count": int(count or 0),
+        }
+        for queue_name, job_type, status, count in cursor.fetchall()
+    ]
 
 
 def get_job_metrics(conn: Any) -> list[dict[str, object]]:
@@ -2811,6 +2836,7 @@ def get_build_status(
     *,
     idle_after_seconds: int = 60,
     queue_worker_health: list[dict[str, object]] | None = None,
+    include_latest_failed: bool = True,
 ) -> dict[str, object]:
     state = get_build_state(conn)
     dirty = bool(state.get("dirty"))
@@ -2833,7 +2859,7 @@ def get_build_status(
     idle_with_backlog = int(build_metrics.get("idle_with_backlog", 0))
 
     latest_failed = None
-    if _table_exists(conn, "jobs"):
+    if include_latest_failed and _table_exists(conn, "jobs"):
         row = conn.execute(
             """
             SELECT id, finished_at, error
