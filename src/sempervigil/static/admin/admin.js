@@ -556,8 +556,10 @@ function wireDashboard() {
   loadQueueDiagnostics().catch(() => undefined);
   setInterval(() => {
     loadMetrics().catch(() => undefined);
+  }, 120000);
+  setInterval(() => {
     loadQueueDiagnostics().catch(() => undefined);
-  }, 10000);
+  }, 30000);
 }
 function wireLogs() {
   const output = document.getElementById("logs-output");

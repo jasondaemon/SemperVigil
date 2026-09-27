@@ -2069,7 +2069,7 @@ def queue_diagnostics() -> dict[str, object]:
             }
         )
     queue_stats = get_queue_stats(conn)
-    job_metrics = get_job_metrics(conn)
+    job_metrics = get_active_job_metrics(conn)
     runner_health = get_runner_health_stats(conn)
     return {
         "now": now.isoformat(),
