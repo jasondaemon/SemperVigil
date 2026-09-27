@@ -22,6 +22,7 @@ pytestmark = pytest.mark.offline
 def test_public_composition_allows_unpublished_research_but_not_missing_sources():
     assert _membership_current([1, 2], [1, 2, 3], public_composition=True)
     assert not _membership_current([1, 2], [1, 3], public_composition=True)
+    assert not _membership_current([1, 1], [1, 2], public_composition=True)
     assert not _membership_current([1, 2], [1, 2, 3], public_composition=False)
 
 

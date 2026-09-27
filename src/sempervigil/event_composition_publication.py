@@ -5,6 +5,7 @@ activation roles independently recheck the accepted ledger, composition, source
 evidence, article availability, and Event membership before a revision can go live.
 """
 import json
+from collections import Counter
 from urllib.parse import urlparse
 
 from . import event_composition
@@ -111,7 +112,7 @@ def _membership_current(source_ids: list[int], linked_ids: list[int], *,
                         public_composition: bool) -> bool:
     # Research may link new articles before a successor composition is approved.
     # The current public revision still requires every article it actually cites.
-    return (set(source_ids) <= set(linked_ids) if public_composition
+    return (Counter(source_ids) <= Counter(linked_ids) if public_composition
             else source_ids == linked_ids)
 
 
