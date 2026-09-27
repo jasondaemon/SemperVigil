@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import time
+import threading
 import urllib.request
 import hashlib
 from typing import Any
@@ -74,7 +75,9 @@ from .storage import (
     get_build_state,
     get_build_status,
     get_job_metrics,
+    get_active_job_metrics,
     get_queue_stats,
+    get_active_queue_stats,
     get_queue_worker_health,
     get_runner_stats,
     get_runner_health_stats,
@@ -659,29 +662,33 @@ def _job_group_id_for_job_type(job_type: str) -> str:
     return "other"
 
 
-def _build_dashboard_metrics_payload(conn: Any, *, include_backlog: bool = True) -> dict[str, object]:
-    metrics = get_dashboard_metrics(conn) if include_backlog else get_dashboard_metrics(conn, include_backlog=False)
-    visible_job_types = _dashboard_visible_job_types(metrics.get("job_counts_by_type_status") or {})
-    metrics["job_types"] = visible_job_types
-    metrics["job_groups"] = _dashboard_job_groups(visible_job_types)
-    metrics["build_state"] = get_build_state(conn)
-    if not include_backlog:
-        metrics["queueable_by_job_type"] = {}
-        return metrics
-    metrics["queue_stats"] = get_queue_stats(conn)
-    metrics["runner_health"] = get_runner_health_stats(conn)
-    metrics["queue_worker_health"] = get_queue_worker_health(
-        conn,
-        queue_stats=metrics["queue_stats"],
-        runner_health_stats=metrics["runner_health"],
-    )
-    metrics["build_status"] = get_build_status(
-        conn, queue_worker_health=metrics["queue_worker_health"]
-    )
-    stage_statuses = list_stage_statuses(conn, STAGE_NAMES)
-    metrics["llm_stage_active"] = sum(1 for item in stage_statuses if item["status"] == "active")
-    metrics["llm_stage_total"] = len(stage_statuses)
-    metrics["llm_configured"] = metrics["llm_stage_active"] > 0
+def _build_dashboard_metrics_payload(
+    conn: Any, *, include_backlog: bool = True, need_only: bool = False
+) -> dict[str, object]:
+    metrics: dict[str, object] = {}
+    if not need_only:
+        metrics = get_dashboard_metrics(conn, include_backlog=include_backlog)
+        visible_job_types = _dashboard_visible_job_types(metrics.get("job_counts_by_type_status") or {})
+        metrics["job_types"] = visible_job_types
+        metrics["job_groups"] = _dashboard_job_groups(visible_job_types)
+        metrics["build_state"] = get_build_state(conn)
+        if not include_backlog:
+            metrics["queueable_by_job_type"] = {}
+            return metrics
+        metrics["queue_stats"] = get_queue_stats(conn)
+        metrics["runner_health"] = get_runner_health_stats(conn)
+        metrics["queue_worker_health"] = get_queue_worker_health(
+            conn,
+            queue_stats=metrics["queue_stats"],
+            runner_health_stats=metrics["runner_health"],
+        )
+        metrics["build_status"] = get_build_status(
+            conn, queue_worker_health=metrics["queue_worker_health"]
+        )
+        stage_statuses = list_stage_statuses(conn, STAGE_NAMES)
+        metrics["llm_stage_active"] = sum(1 for item in stage_statuses if item["status"] == "active")
+        metrics["llm_stage_total"] = len(stage_statuses)
+        metrics["llm_configured"] = metrics["llm_stage_active"] > 0
 
     def _pending_article_ids(job_type: str) -> set[int]:
         rows = conn.execute(
@@ -781,11 +788,35 @@ def _build_dashboard_metrics_payload(conn: Any, *, include_backlog: bool = True)
     pending_cve_threats = _pending_cve_ids("cve_enrich_threat_actors")
     queueable["cve_enrich_threat_actors"] = sum(1 for cve_id in cve_threat_ids if str(cve_id) not in pending_cve_threats)
     metrics["queueable_by_job_type"] = queueable
-    metrics["dashboard_display_rows"] = _dashboard_display_rows(metrics)
+    if not need_only:
+        metrics["dashboard_display_rows"] = _dashboard_display_rows(metrics)
     return metrics
 
 
-def _render_metrics_text(conn: Any) -> str:
+_METRICS_NEED_REFRESH_SECONDS = 300
+_metrics_need_lock = threading.Lock()
+_metrics_need_cache: tuple[float, dict[str, int]] | None = None
+
+
+def _cached_metrics_need(conn: Any) -> tuple[dict[str, int], float]:
+    global _metrics_need_cache
+    now = time.monotonic()
+    with _metrics_need_lock:
+        if _metrics_need_cache is None or now - _metrics_need_cache[0] >= _METRICS_NEED_REFRESH_SECONDS:
+            try:
+                values = _build_dashboard_metrics_payload(conn, need_only=True)["queueable_by_job_type"]
+            except Exception:
+                if _metrics_need_cache is None:
+                    raise
+                logging.exception("Could not refresh queueable-work metrics; retaining prior snapshot")
+            else:
+                _metrics_need_cache = (time.monotonic(), values)
+        return _metrics_need_cache[1], max(0.0, time.monotonic() - _metrics_need_cache[0])
+
+
+def _render_metrics_text(
+    conn: Any, *, need_snapshot: tuple[dict[str, int], float] | None = None
+) -> str:
     now = datetime.now(tz=timezone.utc)
     lines: list[str] = []
 
@@ -806,10 +837,19 @@ def _render_metrics_text(conn: Any) -> str:
     lines.append("# TYPE sempervigil_info gauge")
     lines.append(f'sempervigil_info{{version="{version}"}} 1')
 
-    dashboard_metrics = _build_dashboard_metrics_payload(conn)
-    build_state = dashboard_metrics.get("build_state") or get_build_state(conn)
-    build_status = dashboard_metrics.get("build_status") or get_build_status(conn)
-    counts_since = _prometheus_timestamp(dashboard_metrics.get("job_counts_since"))
+    queue_stats = get_active_queue_stats(conn)
+    job_metrics = get_active_job_metrics(conn)
+    runner_health = get_runner_health_stats(conn)
+    queue_worker_health = get_queue_worker_health(
+        conn, queue_stats=queue_stats, runner_health_stats=runner_health
+    )
+    build_state = get_build_state(conn)
+    build_status = get_build_status(
+        conn, queue_worker_health=queue_worker_health, include_latest_failed=False
+    )
+    queueable, need_age_seconds = need_snapshot or (
+        _build_dashboard_metrics_payload(conn, need_only=True)["queueable_by_job_type"], 0.0
+    )
     add_metric(
         "sempervigil_build_dirty",
         "Whether SemperVigil has a pending build request",
@@ -839,17 +879,16 @@ def _render_metrics_text(conn: Any) -> str:
             "gauge",
             [({}, last_built_at)],
         )
-    if counts_since is not None:
-        add_metric(
-            "sempervigil_dashboard_counts_since_timestamp_seconds",
-            "Unix timestamp used for dashboard failed and completed counters",
-            "gauge",
-            [({}, counts_since)],
-        )
+    add_metric(
+        "sempervigil_need_snapshot_age_seconds",
+        "Age of the queueable-work snapshot; this is not the queued-job count",
+        "gauge",
+        [({}, need_age_seconds)],
+    )
 
     queue_samples: list[tuple[dict[str, object], int | float]] = []
     oldest_samples: list[tuple[dict[str, object], int | float]] = []
-    for row in get_queue_stats(conn):
+    for row in queue_stats:
         queue_name = str(row.get("queue_name") or "default")
         queue_samples.append(({"queue_name": queue_name, "status": "queued"}, int(row.get("queued") or 0)))
         queue_samples.append(({"queue_name": queue_name, "status": "running"}, int(row.get("running") or 0)))
@@ -886,13 +925,13 @@ def _render_metrics_text(conn: Any) -> str:
                 },
                 int(row.get("count") or 0),
             )
-            for row in get_job_metrics(conn)
+            for row in job_metrics
         ],
     )
 
     runner_samples: list[tuple[dict[str, object], int | float]] = []
     active_runner_samples: list[tuple[dict[str, object], int | float]] = []
-    runner_rows = get_runner_stats(conn)
+    runner_rows = get_runner_stats(conn, job_metrics=job_metrics)
     for row in runner_rows:
         runner_type = str(row.get("runner_type") or "unknown")
         status = str(row.get("status") or "")
@@ -930,7 +969,7 @@ def _render_metrics_text(conn: Any) -> str:
                 },
                 int(row.get("count") or 0),
             )
-            for row in (dashboard_metrics.get("runner_health") or [])
+            for row in runner_health
         ],
     )
     add_metric(
@@ -945,7 +984,7 @@ def _render_metrics_text(conn: Any) -> str:
                 },
                 int(row.get("count") or 0),
             )
-            for row in (dashboard_metrics.get("queue_worker_health") or [])
+            for row in queue_worker_health
         ],
     )
 
@@ -970,36 +1009,9 @@ def _render_metrics_text(conn: Any) -> str:
         ],
     )
 
-    legacy_daily = get_public_metrics_daily_counts(conn, days=14)
-    add_metric(
-        "sv_articles_daily_count",
-        "Legacy SemperVigil public metrics: articles per day for the last 14 days",
-        "gauge",
-        [
-            ({"day": str(row.get("day") or "")}, int(row.get("articles") or 0))
-            for row in legacy_daily
-        ],
-    )
-    add_metric(
-        "sv_cves_high_daily_count",
-        "Legacy SemperVigil public metrics: high-severity CVEs per day for the last 14 days",
-        "gauge",
-        [
-            ({"day": str(row.get("day") or "")}, int(row.get("cves_high") or 0))
-            for row in legacy_daily
-        ],
-    )
-    add_metric(
-        "sv_cves_critical_daily_count",
-        "Legacy SemperVigil public metrics: critical-severity CVEs per day for the last 14 days",
-        "gauge",
-        [
-            ({"day": str(row.get("day") or "")}, int(row.get("cves_critical") or 0))
-            for row in legacy_daily
-        ],
-    )
-
-    dashboard_job_counts = dashboard_metrics.get("job_counts_by_type_status") or {}
+    dashboard_job_counts: dict[str, dict[str, int]] = {}
+    for row in job_metrics:
+        dashboard_job_counts.setdefault(str(row["job_type"]), {})[str(row["status"])] = int(row["count"])
     dashboard_jobs_samples: list[tuple[dict[str, object], int | float]] = []
     for job_type, statuses in sorted(dashboard_job_counts.items()):
         if not isinstance(statuses, dict):
@@ -1023,7 +1035,6 @@ def _render_metrics_text(conn: Any) -> str:
         dashboard_jobs_samples,
     )
 
-    queueable = dashboard_metrics.get("queueable_by_job_type") or {}
     add_metric(
         "sempervigil_dashboard_need",
         "Admin-style queueable job counts by worker group and job type",
@@ -1039,7 +1050,9 @@ def _render_metrics_text(conn: Any) -> str:
             for job_type, value in sorted(queueable.items())
         ],
     )
-    display_rows = dashboard_metrics.get("dashboard_display_rows") or []
+    display_rows = _dashboard_display_rows(
+        {"job_counts_by_type_status": dashboard_job_counts, "queueable_by_job_type": queueable}
+    )
     add_metric(
         "sempervigil_dashboard_current",
         "Exact admin dashboard display values by worker group, job type, and column",
@@ -1054,7 +1067,7 @@ def _render_metrics_text(conn: Any) -> str:
                 int(row.get(column) or 0),
             )
             for row in display_rows
-            for column in _DASHBOARD_STATUS_COLUMNS
+            for column in ("need", "queued", "running")
         ],
     )
     add_metric(
@@ -1080,7 +1093,7 @@ def _render_metrics_text(conn: Any) -> str:
 def metrics() -> PlainTextResponse:
     conn = _get_conn()
     return PlainTextResponse(
-        _render_metrics_text(conn),
+        _render_metrics_text(conn, need_snapshot=_cached_metrics_need(conn)),
         media_type="text/plain; version=0.0.4; charset=utf-8",
     )
 

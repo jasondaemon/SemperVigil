@@ -1,5 +1,5 @@
 from sempervigil.admin import _render_metrics_text
-from sempervigil.storage import claim_next_job, enqueue_job, heartbeat_job, init_db, mark_build_dirty
+from sempervigil.storage import claim_next_job, complete_job, enqueue_job, heartbeat_job, init_db, mark_build_dirty
 from sempervigil.admin import app
 from fastapi.testclient import TestClient
 
@@ -58,23 +58,35 @@ def test_render_metrics_text_exposes_runner_health_and_queue_worker_health(tmp_p
     assert 'sempervigil_queue_worker_health{metric="running_jobs",queue_name="fetch"} 1' in payload
 
 
-def test_render_metrics_text_exposes_legacy_public_daily_metrics(monkeypatch):
+def test_render_metrics_text_does_not_compute_daily_history(monkeypatch):
     conn = init_db()
 
     monkeypatch.setattr(
         "sempervigil.admin.get_public_metrics_daily_counts",
-        lambda _conn, days=14: [
-            {"day": "2026-03-10", "articles": 106, "cves_high": 209, "cves_critical": 34},
-            {"day": "2026-03-11", "articles": 87, "cves_high": 111, "cves_critical": 12},
-        ],
+        lambda _conn, days=14: (_ for _ in ()).throw(AssertionError("daily history queried")),
     )
 
     payload = _render_metrics_text(conn)
 
-    assert 'sv_articles_daily_count{day="2026-03-10"} 106' in payload
-    assert 'sv_cves_high_daily_count{day="2026-03-10"} 209' in payload
-    assert 'sv_cves_critical_daily_count{day="2026-03-10"} 34' in payload
-    assert 'sv_articles_daily_count{day="2026-03-11"} 87' in payload
+    assert "sv_articles_daily_count" not in payload
+    assert "sempervigil_need_snapshot_age_seconds 0.0" in payload
+
+
+def test_metrics_excludes_completed_history_from_queue(monkeypatch):
+    conn = init_db()
+    job_id = enqueue_job(conn, "fetch_article_content", {"article_id": 1})
+    job = claim_next_job(conn, "runner-a", allowed_queues=["fetch"])
+    assert job and job.id == job_id
+    assert complete_job(conn, job_id)
+    monkeypatch.setattr(
+        "sempervigil.admin.get_dashboard_metrics",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("job history queried")),
+    )
+
+    payload = _render_metrics_text(conn)
+
+    assert 'sempervigil_jobs{job_type="fetch_article_content",queue_name="fetch",status="succeeded"}' not in payload
+    assert 'sempervigil_dashboard_current{column="complete"' not in payload
 
 
 def test_public_metrics_daily_api_exposes_daily_rows(monkeypatch):
