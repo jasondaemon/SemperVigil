@@ -625,6 +625,15 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_cve_kev_lookup_059")
             applied.add("pg_cve_kev_lookup_059")
+        if "pg_dashboard_job_counters_060" not in applied:
+            _migrate_dashboard_job_counters(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_dashboard_job_counters_060", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_dashboard_job_counters_060")
+            applied.add("pg_dashboard_job_counters_060")
         else:
             conn.commit()
         return
@@ -778,6 +787,14 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_cve_kev_lookup_059")
+
+    _migrate_dashboard_job_counters(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_dashboard_job_counters_060", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_dashboard_job_counters_060")
 
     _migrate_source_overrides(conn)
     conn.execute(
@@ -6179,6 +6196,95 @@ def _migrate_event_composition_openai_model(conn) -> None:
          json.dumps({"max_completion_tokens": 4096, "reasoning_effort": "low"}),
         json.dumps(["event_composition", "hosted", "low_cost"])),
     )
+
+
+def _migrate_dashboard_job_counters(conn) -> None:
+    # The lock closes the gap between the one-time seed and trigger installation.
+    conn.execute("LOCK TABLE jobs IN SHARE ROW EXCLUSIVE MODE")
+    conn.execute("""
+        CREATE TABLE dashboard_job_counter_epoch (
+            singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+            cutoff TEXT NULL
+        )
+    """)
+    conn.execute("""
+        INSERT INTO dashboard_job_counter_epoch(singleton, cutoff)
+        SELECT TRUE, COALESCE(
+            (SELECT value::jsonb #>> '{}' FROM settings WHERE key='dashboard_job_counts_since'),
+            (SELECT value::jsonb #>> '{}' FROM settings WHERE key='dashboard_failures_since'))
+    """)
+    conn.execute("""
+        CREATE TABLE dashboard_job_status_counts (
+            job_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            scope TEXT NOT NULL CHECK (scope IN ('all', 'since')),
+            count BIGINT NOT NULL,
+            PRIMARY KEY (job_type, status, scope)
+        )
+    """)
+    conn.execute("""
+        INSERT INTO dashboard_job_status_counts(job_type,status,scope,count)
+        SELECT job_type,status,'all',COUNT(*) FROM jobs
+        WHERE status IN ('succeeded','failed','canceled')
+        GROUP BY job_type,status
+    """)
+    conn.execute("""
+        INSERT INTO dashboard_job_status_counts(job_type,status,scope,count)
+        SELECT j.job_type,j.status,'since',COUNT(*) FROM jobs j
+        CROSS JOIN dashboard_job_counter_epoch e
+        WHERE j.status IN ('succeeded','failed')
+          AND (e.cutoff IS NULL OR COALESCE(j.finished_at,j.requested_at) >= e.cutoff)
+        GROUP BY j.job_type,j.status
+    """)
+    conn.execute("""
+        CREATE FUNCTION dashboard_job_count_delta(
+            p_type TEXT, p_status TEXT, p_scope TEXT, p_delta BIGINT
+        ) RETURNS VOID LANGUAGE plpgsql AS $$
+        BEGIN
+            INSERT INTO dashboard_job_status_counts(job_type,status,scope,count)
+            VALUES (p_type,p_status,p_scope,p_delta)
+            ON CONFLICT(job_type,status,scope) DO UPDATE
+            SET count=dashboard_job_status_counts.count + EXCLUDED.count;
+        END $$
+    """)
+    conn.execute("""
+        CREATE FUNCTION dashboard_job_count_transition() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        DECLARE cutoff TEXT;
+        BEGIN
+            IF TG_OP = 'UPDATE' AND OLD.status = NEW.status
+               AND OLD.finished_at IS NOT DISTINCT FROM NEW.finished_at
+               AND OLD.requested_at IS NOT DISTINCT FROM NEW.requested_at
+               AND OLD.job_type = NEW.job_type THEN
+                RETURN NEW;
+            END IF;
+            IF (TG_OP <> 'INSERT' AND OLD.status IN ('succeeded','failed')) OR
+               (TG_OP <> 'DELETE' AND NEW.status IN ('succeeded','failed')) THEN
+                SELECT e.cutoff INTO cutoff FROM dashboard_job_counter_epoch e
+                WHERE singleton=TRUE FOR SHARE;
+            END IF;
+            IF TG_OP <> 'INSERT' AND OLD.status IN ('succeeded','failed','canceled') THEN
+                PERFORM dashboard_job_count_delta(OLD.job_type,OLD.status,'all',-1);
+                IF OLD.status IN ('succeeded','failed') AND
+                   (cutoff IS NULL OR COALESCE(OLD.finished_at,OLD.requested_at) >= cutoff) THEN
+                    PERFORM dashboard_job_count_delta(OLD.job_type,OLD.status,'since',-1);
+                END IF;
+            END IF;
+            IF TG_OP <> 'DELETE' AND NEW.status IN ('succeeded','failed','canceled') THEN
+                PERFORM dashboard_job_count_delta(NEW.job_type,NEW.status,'all',1);
+                IF NEW.status IN ('succeeded','failed') AND
+                   (cutoff IS NULL OR COALESCE(NEW.finished_at,NEW.requested_at) >= cutoff) THEN
+                    PERFORM dashboard_job_count_delta(NEW.job_type,NEW.status,'since',1);
+                END IF;
+            END IF;
+            RETURN COALESCE(NEW, OLD);
+        END $$
+    """)
+    conn.execute("""
+        CREATE TRIGGER dashboard_job_count_change
+        AFTER INSERT OR DELETE OR UPDATE OF status,finished_at,requested_at,job_type
+        ON jobs FOR EACH ROW EXECUTE FUNCTION dashboard_job_count_transition()
+    """)
 
 
 def _migrate_event_repair_openai_model(conn) -> None:

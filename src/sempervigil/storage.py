@@ -1875,6 +1875,7 @@ def get_dashboard_metrics(conn: Any, *, include_backlog: bool = True) -> dict[st
             """
             SELECT job_type, status, COUNT(*)
             FROM jobs
+            WHERE status IN ('queued', 'running')
             GROUP BY job_type, status
             """
         )
@@ -1891,27 +1892,20 @@ def get_dashboard_metrics(conn: Any, *, include_backlog: bool = True) -> dict[st
         for job_type, count in inflight:
             current = job_counts.setdefault(job_type, {}).get("running", 0)
             job_counts[job_type]["running"] = max(int(count or 0), int(current or 0))
-    metrics["job_counts_by_type_status"] = job_counts
     failures_since = get_setting(conn, "dashboard_failures_since", None)
     counts_since = get_setting(conn, "dashboard_job_counts_since", None) or failures_since
-    if counts_since and _table_exists(conn, "jobs"):
-        for job_type in list(job_counts.keys()):
-            if "failed" in job_counts[job_type]:
-                job_counts[job_type]["failed"] = 0
-            if "succeeded" in job_counts[job_type]:
-                job_counts[job_type]["succeeded"] = 0
+    if _table_exists(conn, "dashboard_job_status_counts"):
         cursor = conn.execute(
             """
-            SELECT job_type, status, COUNT(*)
-            FROM jobs
-            WHERE status IN ('failed', 'succeeded')
-              AND COALESCE(finished_at, requested_at) >= %s
-            GROUP BY job_type, status
+            SELECT job_type, status, count
+            FROM dashboard_job_status_counts
+            WHERE scope = %s OR (scope = 'all' AND status = 'canceled')
             """,
-            (counts_since,),
+            ("since" if counts_since else "all",),
         )
         for job_type, status, count in cursor.fetchall():
             job_counts.setdefault(job_type, {})[status] = int(count or 0)
+    metrics["job_counts_by_type_status"] = job_counts
     metrics["job_failures_since"] = failures_since
     metrics["job_counts_since"] = counts_since
     if not include_backlog:

@@ -1356,8 +1356,14 @@ def public_metrics_daily(days: int = 14) -> dict[str, object]:
 def dashboard_reset_failures() -> dict[str, object]:
     conn = _get_conn()
     now = utc_now_iso()
-    set_setting(conn, "dashboard_failures_since", now)
-    set_setting(conn, "dashboard_job_counts_since", now)
+    conn.execute("UPDATE dashboard_job_counter_epoch SET cutoff=%s WHERE singleton=TRUE", (now,))
+    conn.execute("DELETE FROM dashboard_job_status_counts WHERE scope='since'")
+    for key in ("dashboard_failures_since", "dashboard_job_counts_since"):
+        conn.execute(
+            """INSERT INTO settings(key,value,updated_at) VALUES (%s,%s,%s)
+               ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=EXCLUDED.updated_at""",
+            (key, json.dumps(now), now),
+        )
     conn.commit()
     with _dashboard_metrics_lock:
         _dashboard_metrics_cache.clear()

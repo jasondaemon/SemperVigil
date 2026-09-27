@@ -9,6 +9,7 @@ from sempervigil.event_composition_publication import (
     QUALIFICATION_WORKFLOW,
     _compatibility_recovery,
     _is_current_public_composition,
+    _membership_current,
     event_identity,
     validate_bundle,
 )
@@ -16,6 +17,12 @@ from sempervigil.event_render import _canonical_sources, index_entry, render
 from sempervigil.investigation import _version
 
 pytestmark = pytest.mark.offline
+
+
+def test_public_composition_allows_unpublished_research_but_not_missing_sources():
+    assert _membership_current([1, 2], [1, 2, 3], public_composition=True)
+    assert not _membership_current([1, 2], [1, 3], public_composition=True)
+    assert not _membership_current([1, 2], [1, 2, 3], public_composition=False)
 
 
 def _bundle():

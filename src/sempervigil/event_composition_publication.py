@@ -107,6 +107,14 @@ def _is_current_public_composition(conn, event_id: str, composition_id: str) -> 
     )
 
 
+def _membership_current(source_ids: list[int], linked_ids: list[int], *,
+                        public_composition: bool) -> bool:
+    # Research may link new articles before a successor composition is approved.
+    # The current public revision still requires every article it actually cites.
+    return (set(source_ids) <= set(linked_ids) if public_composition
+            else source_ids == linked_ids)
+
+
 def current_material(conn, composition_id: str, *, event_id: str | None = None,
                      lock: bool = False,
                      allow_current_public_superseded: bool = False) -> dict:
@@ -167,7 +175,12 @@ def current_material(conn, composition_id: str, *, event_id: str | None = None,
     if lock and not (publication_target and publication_target["active"]):
         links = conn.execute("SELECT article_id FROM event_articles WHERE event_id=%s "
                              "ORDER BY article_id FOR SHARE NOWAIT", (identity,)).fetchall()
-        if [int(item[0]) for item in links] != sorted(source["article_id"] for source in sources):
+        source_ids = sorted(source["article_id"] for source in sources)
+        linked_ids = [int(item[0]) for item in links]
+        if not _membership_current(
+            source_ids, linked_ids,
+            public_composition=_is_current_public_composition(conn, identity, composition_id),
+        ):
             raise ValueError("event_composition_publication_membership_stale")
     return {"event_id": identity, "ledger_id": row[0], "ledger_revision_id": row[1],
             "ledger_record": {"ledger": ledger, "change": change,
