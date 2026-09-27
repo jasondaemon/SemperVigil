@@ -185,6 +185,8 @@ def test_actual_shell_activation_branch_without_running_hugo(tmp_path, flag, gua
                             env=env, capture_output=True)
     assert current.readlink() == Path("releases/" + expected)
     assert (result.returncode == 0) == (expected == "new")
+    if flag == "1":
+        assert not (tmp_path / "releases/new").exists()
 
 
 def test_cli_failure_does_not_disclose_connection_details(monkeypatch, capsys):

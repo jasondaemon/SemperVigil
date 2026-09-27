@@ -222,6 +222,10 @@ EOF
       1)
         if ! "${SV_EVENT_ACTIVATION_PYTHON:-python3}" -m sempervigil.event_activation "$release_dir" "$CURRENT_LINK"; then
           echo "error: Events activation failed; no unguarded activation attempted"
+          rm -rf "$release_dir"
+          if [ -n "${resource_dir:-}" ]; then rm -rf "$resource_dir"; fi
+          if [ -n "${build_config:-}" ]; then rm -f "$build_config"; fi
+          if [ -n "${temp_config_dir:-}" ]; then rm -rf "$temp_config_dir"; fi
           exit 1
         fi
         ;;
