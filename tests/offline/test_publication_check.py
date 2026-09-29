@@ -111,11 +111,12 @@ def test_external_and_non_http_references_not_requested():
     ("2026-09-18T12:00:00", False),
     ("", False),
 ])
-def test_metrics_freshness_independent_of_fresh_feed(stamp, ok):
+@pytest.mark.parametrize("label", ["SemperVigil DB", "the CyberNews data service"])
+def test_metrics_freshness_independent_of_fresh_feed(stamp, ok, label):
     bodies = fake_site()
     bodies["/metrics/"] = (f'<title>Metrics</title><link rel="stylesheet" href="/style.css">'
                            f'<svg aria-label="Articles and CVEs per day chart"></svg>'
-                           f'<p>Updated from SemperVigil DB at {stamp}.</p>').encode()
+                           f'<p>Updated from {label} at {stamp}.</p>').encode()
     report = checker.check_site("https://example.test", historic_days=[], max_age_hours=24,
                                get=lambda url: bodies[url.removeprefix("https://example.test")], now=NOW)
     assert report["ok"] is ok

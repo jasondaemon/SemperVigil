@@ -123,7 +123,7 @@ def fetch(url: str) -> bytes:
 def validate_metrics_age(page: Page, now: datetime, max_age_hours: float) -> dict:
     text = " ".join(" ".join(page.text).split())
     match = re.search(
-        r"Updated from SemperVigil DB at (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
+        r"Updated from (?:SemperVigil DB|the CyberNews data service) at (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
         r"(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))", text,
     )
     require(match is not None, "Missing metrics timestamp with timezone")

@@ -1,5 +1,24 @@
 # Change Control Log
 
+## 2026-09-29: first guarded database remediation
+
+- Deployed source-only OCI images `683a993` to orchestrator and build worker only,
+  preserving dependency layers, runtime configuration and all publication gates.
+  Rendered/live diff is empty; platform commit `800ff3c` records the two tags.
+- Durable version-aware composition holds avoid unchanged failed promotions.
+  Compact feed inventory preserves all 5,098 signatures while reducing measured
+  temporary writes from about 235 MB to 42 MB per call. Migration 061 adds the
+  source-run lookup index; it was created concurrently and verified valid first.
+- API build `job_644e1807c41040e38942cd22563388d7` and ordinary scheduled build
+  `job_8e3be47c50e54ce5900e1fb5896623ec` succeeded. A post-deployment acquisition
+  reached the daily JSON. Public checks: 19 passed. Offline: 1,157 passed,
+  two skipped. Existing metrics label recognized by the verification tool.
+- Fully incremental dirty-day tracking is not in this release. Remaining
+  rollback causes and the monitoring collector's connection pressure need
+  further attribution. No global database memory or autocommit changes.
+- See [Database remediation](DATABASE_REMEDIATION.md) for measurements,
+  limitations, rollback and follow-up requirements.
+
 ## 2026-09-27: incremental dashboard counts and guarded publication recovery
 
 - Migration `pg_dashboard_job_counters_060` seeded terminal job counts once and
