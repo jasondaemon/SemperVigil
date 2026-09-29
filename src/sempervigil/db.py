@@ -61,7 +61,9 @@ def connect_db() -> DBConn:
         import psycopg
     except ImportError as exc:  # pragma: no cover - depends on env
         raise RuntimeError("psycopg is required for PostgreSQL support") from exc
-    raw = psycopg.connect(url)
+    component = (os.environ.get("SV_DB_APPLICATION_NAME") or
+                 os.environ.get("HOSTNAME") or "sempervigil")
+    raw = psycopg.connect(url, application_name=component[:63])
     conn = DBConn(raw, "postgres")
     if not _MIGRATIONS_APPLIED["postgres"]:
         apply_migrations_pg(conn)

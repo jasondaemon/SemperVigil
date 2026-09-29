@@ -4,6 +4,7 @@ import pytest
 
 from sempervigil import event_composition
 from sempervigil import event_published_composition_upgrade as upgrade
+from unittest.mock import Mock
 
 pytestmark = pytest.mark.offline
 
@@ -61,8 +62,11 @@ def test_tick_stops_after_one_material_upgrade(monkeypatch):
     monkeypatch.setattr(upgrade, "enabled", lambda: True)
     monkeypatch.setattr(upgrade, "candidates", lambda _conn: rows)
     monkeypatch.setattr(upgrade, "advance", advance)
+    monkeypatch.setattr(upgrade, "_attempt_version", lambda *_: "version")
+    monkeypatch.setattr(upgrade, "get_setting", lambda *_: {})
+    monkeypatch.setattr(upgrade, "set_setting", lambda *_: None)
 
-    assert upgrade.tick(object()) == [
+    assert upgrade.tick(Mock()) == [
         {"status": "held", "event_id": "evt_held"},
         {"status": "queued", "event_id": "evt_queued"},
     ]
@@ -76,10 +80,16 @@ def test_tick_isolates_stale_legacy_upgrade_candidate(monkeypatch):
         def rollback(self):
             self.rolled_back = True
 
+        def commit(self):
+            pass
+
     conn = Conn()
     rows = [{"event_id": "evt_stale"}, {"event_id": "evt_next"}]
     monkeypatch.setattr(upgrade, "enabled", lambda: True)
     monkeypatch.setattr(upgrade, "candidates", lambda _conn: rows)
+    monkeypatch.setattr(upgrade, "_attempt_version", lambda *_: "version")
+    monkeypatch.setattr(upgrade, "get_setting", lambda *_: {})
+    monkeypatch.setattr(upgrade, "set_setting", lambda *_: None)
 
     def advance(_conn, candidate):
         if candidate["event_id"] == "evt_stale":
@@ -93,6 +103,42 @@ def test_tick_isolates_stale_legacy_upgrade_candidate(monkeypatch):
         {"status": "queued", "event_id": "evt_next"},
     ]
     assert conn.rolled_back is True
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_unchanged_hold_is_not_retried_but_changed_material_is(monkeypatch, raises):
+    conn = Mock()
+    candidate = {"event_id": "evt_test"}
+    holds = {}
+    version = ["first"]
+    advance = Mock(side_effect=ValueError("invalid_audit") if raises else None,
+                   return_value={"status": "held", "event_id": "evt_test", "reason": "invalid_audit"})
+    monkeypatch.setattr(upgrade, "enabled", lambda: True)
+    monkeypatch.setattr(upgrade, "candidates", lambda _: [candidate])
+    monkeypatch.setattr(upgrade, "_attempt_version", lambda *_: version[0])
+    monkeypatch.setattr(upgrade, "get_setting", lambda _, key, default: holds.get(key, default))
+    monkeypatch.setattr(upgrade, "set_setting", lambda _, key, value: holds.update({key: value}))
+    monkeypatch.setattr(upgrade, "advance", advance)
+    assert upgrade.tick(conn)[0]["status"] == "held"
+    assert upgrade.tick(conn)[0]["reason"] == "held_inputs_unchanged"
+    assert advance.call_count == 1
+    assert conn.rollback.call_count == int(raises)
+    version[0] = "new-audit"
+    assert upgrade.tick(conn)[0]["status"] == "held"
+    assert advance.call_count == 2
+
+
+def test_attempt_version_changes_with_audit_and_policy(monkeypatch):
+    from sempervigil import event_composition_audit
+    conn = Mock()
+    conn.execute.return_value.fetchall.return_value = [("id", "digest")]
+    candidate = {"event_id": "evt_test", "ledger_revision_id": "elr_test"}
+    first = upgrade._attempt_version(conn, candidate)
+    conn.execute.return_value.fetchall.return_value = [("id", "changed")]
+    second = upgrade._attempt_version(conn, candidate)
+    assert first != second
+    monkeypatch.setattr(event_composition_audit, "SYSTEM_PROMPT", "new policy")
+    assert upgrade._attempt_version(conn, candidate) != second
 
 
 def test_upgrade_enablement_is_explicit(monkeypatch):

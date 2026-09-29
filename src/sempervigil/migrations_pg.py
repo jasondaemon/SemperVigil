@@ -634,6 +634,14 @@ def apply_migrations_pg(conn) -> None:
             conn.commit()
             logger.info("migration_applied version=pg_dashboard_job_counters_060")
             applied.add("pg_dashboard_job_counters_060")
+        if "pg_source_run_lookup_061" not in applied:
+            _migrate_source_run_lookup_index(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_source_run_lookup_061", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_source_run_lookup_061")
         else:
             conn.commit()
         return
@@ -795,6 +803,14 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_dashboard_job_counters_060")
+
+    _migrate_source_run_lookup_index(conn)
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+        ("pg_source_run_lookup_061", utc_now_iso()),
+    )
+    conn.commit()
+    logger.info("migration_applied version=pg_source_run_lookup_061")
 
     _migrate_source_overrides(conn)
     conn.execute(
@@ -6285,6 +6301,12 @@ def _migrate_dashboard_job_counters(conn) -> None:
         AFTER INSERT OR DELETE OR UPDATE OF status,finished_at,requested_at,job_type
         ON jobs FOR EACH ROW EXECUTE FUNCTION dashboard_job_count_transition()
     """)
+
+
+def _migrate_source_run_lookup_index(conn) -> None:
+    if _table_exists(conn, "source_runs"):
+        conn.execute("""CREATE INDEX IF NOT EXISTS idx_source_runs_source_started
+                        ON source_runs(source_id, started_at DESC)""")
 
 
 def _migrate_event_repair_openai_model(conn) -> None:

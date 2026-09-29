@@ -62,3 +62,12 @@ def test_optional_dependencies_can_be_absent(query_case, monkeypatch):
     assert "article_base" not in sql
     assert "JOIN" not in sql
     assert params == ()
+
+
+def test_materialized_bases_retain_hash_not_large_payload(query_case):
+    sql, _ = inventory.feed_inventory_query(query_case)
+    assert "md5(jsonb_build_array(b.id" in sql
+    assert "md5(jsonb_build_array(b.cve_id" in sql
+    assert "AS payload" not in sql
+    assert "md5(payload)" not in sql
+    assert "AS digest FROM articles" in sql

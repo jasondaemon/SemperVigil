@@ -8,11 +8,43 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
 
 from . import event_composition
+from .storage import get_setting, set_setting
 
 WORKFLOW = "event-published-composition-upgrade-v1"
 PUBLIC_WORKFLOW = "event-composition-public-revision-v1"
+HOLD_POLICY = "event-published-composition-hold-v1"
+
+
+def _attempt_version(conn, candidate: dict) -> str:
+    """Retry a hold only when its publication, composition, audit or policy changes."""
+    from . import event_composition_audit
+    compositions = conn.execute(
+        """SELECT composition_id,md5(jsonb_build_array(status,reviewed_by,
+                   generation_version,composition_json)::text)
+             FROM event_ledger_compositions WHERE ledger_revision_id=%s
+            ORDER BY composition_id""", (candidate["ledger_revision_id"],),
+    ).fetchall()
+    jobs = conn.execute(
+        """SELECT id,md5(jsonb_build_array(job_type,status,result_json,error)::text)
+             FROM jobs
+            WHERE job_type IN ('event_ledger_compose','event_composition_audit',
+                               'event_composition_repair','event_promote_reviewed')
+              AND (payload_json::jsonb->>'ledger_revision_id'=%s
+                   OR payload_json::jsonb->>'composition_id'=ANY(%s::text[]))
+            ORDER BY id""",
+        (candidate["ledger_revision_id"], [row[0] for row in compositions]),
+    ).fetchall()
+    material = [HOLD_POLICY, candidate, compositions, jobs,
+                event_composition.WORKFLOW, event_composition_audit.WORKFLOW,
+                event_composition_audit.SYSTEM_PROMPT]
+    return hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
+
+
+def _hold_key(event_id: str) -> str:
+    return "event.public_composition_upgrade.hold." + event_id
 
 
 def enabled() -> bool:
@@ -237,13 +269,24 @@ def tick(conn) -> list[dict]:
         return []
     results = []
     for candidate in candidates(conn):
+        version = _attempt_version(conn, candidate)
+        hold = get_setting(conn, _hold_key(candidate["event_id"]), {})
+        if isinstance(hold, dict) and hold.get("input_version") == version:
+            results.append({"status": "unchanged", "event_id": candidate["event_id"],
+                            "reason": "held_inputs_unchanged", "held_reason": hold.get("reason")})
+            continue
         try:
             result = advance(conn, candidate)
         except ValueError as exc:
             conn.rollback()
             result = {"status": "held", "event_id": candidate["event_id"],
                       "reason": str(exc)[:160], "workflow": WORKFLOW}
+        if result["status"] == "held":
+            set_setting(conn, _hold_key(candidate["event_id"]),
+                        {"input_version": version, "reason": result.get("reason", "held"),
+                         "workflow": HOLD_POLICY})
         results.append(result)
         if result["status"] not in {"unchanged", "held"}:
             break
+    conn.commit()
     return results

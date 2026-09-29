@@ -75,11 +75,11 @@ def feed_inventory_query(conn: Any, source_icons: tuple[str, ...] = ()) -> tuple
             base_where = ""
         ctes.append(
             f"{kind}_base AS MATERIALIZED (SELECT b.{key} AS owner, {day} AS day, "
-            f"{projection('b', fields, columns)} AS payload FROM {table} b {extra} {base_where})"
+            f"md5({projection('b', fields, columns)}) AS digest FROM {table} b {extra} {base_where})"
         )
         parts.append(
             f"SELECT day, '{kind}' AS kind, owner::text, 'base' AS dependency, "
-            f"md5(payload) AS digest FROM {kind}_base"
+            f"digest FROM {kind}_base"
         )
 
         def dependency(name: str, tables: tuple[str, ...], joins: str, payload: str) -> None:
