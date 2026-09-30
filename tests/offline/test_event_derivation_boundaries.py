@@ -261,3 +261,28 @@ def test_draft_lookup_does_not_require_threat_actor_tag(monkeypatch):
         Connection(), 123, incident_date="2026-09-23", window_days=14,
     )
     assert found == [{"id": "evt_fbi"}]
+
+
+def test_published_lookup_uses_victim_without_actor_tag(monkeypatch):
+    class Connection:
+        def execute(self, sql, params):
+            self.sql = sql
+            if "FROM article_threat_actors current_actor" in sql:
+                self.rows = []
+            elif "e.publish_state='published'" in sql:
+                assert params == ("Example Corp", 8)
+                self.rows = [("evt_published",)]
+            else:
+                self.rows = []
+            return self
+
+        def fetchall(self):
+            return self.rows
+
+    monkeypatch.setattr(worker, "get_event", lambda _conn, event_id: {
+        "id": event_id, "entity": "Example Corp", "publish_state": "published",
+    })
+    found = worker._existing_event_candidates_for_article(
+        Connection(), 123, entity="Example Corp", incident_date="2026-09-23",
+    )
+    assert [event["id"] for event in found] == ["evt_published"]

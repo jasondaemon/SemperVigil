@@ -6626,9 +6626,9 @@ def _maybe_queue_event_research(conn, event_id: str) -> bool:
 
 def _existing_event_candidates_for_article(
     conn, article_id: int, *, incident_date: str = "", window_days: int = 14,
-    limit: int = 8,
+    limit: int = 8, entity: str = "",
 ) -> list[dict[str, object]]:
-    """Find published actor matches and drafts in the incident window."""
+    """Find plausible published events and drafts for relevance validation."""
     rows = conn.execute(
         """
         SELECT DISTINCT e.id
@@ -6647,10 +6647,22 @@ def _existing_event_candidates_for_article(
         """,
         (article_id, max(1, min(limit, 20))),
     ).fetchall()
+    published_ids = []
+    if entity:
+        published_ids = [row[0] for row in conn.execute(
+            """SELECT e.id FROM events e
+               WHERE e.visibility='active' AND e.lifecycle='confirmed'
+                 AND e.publish_state='published'
+                 AND lower(e.entity)=lower(%s)
+               ORDER BY e.last_seen_at DESC NULLS LAST, e.id
+               LIMIT %s""",
+            (entity, max(1, min(limit, 20))),
+        ).fetchall()]
     try:
         article_day = datetime.fromisoformat(incident_date[:10]).date()
     except ValueError:
-        return [event for row in rows if (event := get_event(conn, str(row[0])))]
+        ids = list(dict.fromkeys([row[0] for row in rows] + published_ids))
+        return [event for event_id in ids if (event := get_event(conn, str(event_id)))]
     earliest = (article_day - timedelta(days=window_days)).isoformat()
     latest = (article_day + timedelta(days=window_days)).isoformat()
     draft_rows = conn.execute(
@@ -6667,7 +6679,7 @@ def _existing_event_candidates_for_article(
         """,
         (earliest, latest, earliest, latest, 200),
     ).fetchall()
-    ids = list(dict.fromkeys([row[0] for row in rows] + [row[0] for row in draft_rows]))
+    ids = list(dict.fromkeys([row[0] for row in rows] + published_ids + [row[0] for row in draft_rows]))
     return [event for event_id in ids if (event := get_event(conn, str(event_id)))]
 
 
@@ -6732,7 +6744,9 @@ def _match_existing_event_for_article(
 ) -> tuple[dict[str, object] | None, str]:
     candidates = [
         event for event in _existing_event_candidates_for_article(
-            conn, article_id, incident_date=incident_date, window_days=window_days)
+            conn, article_id, incident_date=incident_date, window_days=window_days,
+            entity=entity,
+        )
         if str(event.get("publish_state") or "") == "published"
         or _draft_event_in_scope(event, entity=entity, incident_date=incident_date,
                                     window_days=window_days)

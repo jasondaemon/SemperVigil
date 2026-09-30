@@ -39,6 +39,12 @@ could publish duplicates. They require a separate canonical-incident
 reconciliation step that merges article links only after a supported same-incident
 decision and retires the duplicate without touching published pointers.
 
+Later articles now retrieve a bounded set of published Events for the same
+named victim even without a shared threat-actor tag. This is only candidate
+retrieval; the relevance validator must select exactly one incident without
+contradictions before the article is linked as an update. Different incidents
+at the same organization remain separate.
+
 Release verification must cover candidate admission, publisher diversity,
 confirmed-draft enrollment, evidence jobs, guarded publication, ordinary Hugo
 builds and public daily JSON. Held fact-curation and composition audits remain
