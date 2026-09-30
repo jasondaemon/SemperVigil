@@ -6380,17 +6380,21 @@ def _maybe_promote_event_lifecycle(
     min_confirm_confidence: float = 0.8,
 ) -> str:
     linked = list_event_articles(conn, event_id)
-    distinct_sources = {
-        str(item.get("source_id") or "").strip()
-        for item in linked
-        if str(item.get("source_id") or "").strip()
-    }
-    # Auto-confirm only after three distinct sources have reported the event.
-    if len(distinct_sources) >= 3:
+    distinct_sources = {_event_publisher_key(item) for item in linked}
+    distinct_sources.discard("")
+    # Two independent publishers establish a confirmed draft, not publication.
+    if len(distinct_sources) >= 2:
         update_event(conn, event_id, candidate=False, lifecycle="confirmed", status="confirmed")
         return "confirmed"
     update_event(conn, event_id, candidate=True, lifecycle="candidate", status="candidate")
     return "candidate"
+
+
+def _event_publisher_key(article: dict[str, object]) -> str:
+    """Research articles share one synthetic source ID; count their actual sites."""
+    source_id = str(article.get("source_id") or "").strip()
+    host = (urlparse(str(article.get("url") or "")).hostname or "").lower()
+    return host.removeprefix("www.") or ("" if source_id == "web_enrich" else source_id)
 
 
 def _enroll_confirmed_draft(conn, event_id: str, lifecycle: str) -> None:
@@ -6520,6 +6524,17 @@ def _is_regulatory_only_event_classification(parsed: dict[str, object]) -> bool:
     )
 
 
+def _valid_incident_date(value: object) -> str:
+    """Do not store model qualifiers or impossible calendar dates as event dates."""
+    raw = str(value or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+        return ""
+    try:
+        return datetime.fromisoformat(raw).date().isoformat()
+    except ValueError:
+        return ""
+
+
 def _extract_incident_date(text: str) -> str | None:
     if not text:
         return None
@@ -6596,15 +6611,14 @@ def _maybe_queue_event_research(conn, event_id: str) -> bool:
     min_articles = int(settings.get("enrich_min_articles", 0) or 0)
     if min_articles <= 0:
         return False
-    article_count = len(list_event_articles(conn, event_id))
-    if article_count >= min_articles:
+    source_count = len({_event_publisher_key(item) for item in list_event_articles(conn, event_id)} - {""})
+    if source_count >= min_articles:
         return False
     max_results = int(settings.get("enrich_min_articles_max_results", 12) or 12)
     enqueue_job(
         conn,
         "enrich_event_from_web",
         {"event_id": event_id, "max_results": max_results, "replace_existing": False},
-        debounce=True,
         dedupe=True,
     )
     return True
@@ -6646,11 +6660,12 @@ def _existing_event_candidates_for_article(
         WHERE e.visibility='active'
           AND e.lifecycle IN ('candidate', 'confirmed')
           AND e.publish_state='draft'
-          AND LEFT(e.incident_date, 10) BETWEEN %s AND %s
+          AND (LEFT(e.incident_date, 10) BETWEEN %s AND %s
+               OR LEFT(e.first_seen_at, 10) BETWEEN %s AND %s)
         ORDER BY e.created_at DESC, e.id
         LIMIT %s
         """,
-        (earliest, latest, 200),
+        (earliest, latest, earliest, latest, 200),
     ).fetchall()
     ids = list(dict.fromkeys([row[0] for row in rows] + [row[0] for row in draft_rows]))
     return [event for event_id in ids if (event := get_event(conn, str(event_id)))]
@@ -6675,6 +6690,12 @@ def _draft_event_in_scope(event: dict[str, object], *, entity: str, incident_dat
         return False
     try:
         candidate_day = datetime.fromisoformat(str(event.get("incident_date") or "")[:10]).date()
+    except ValueError:
+        try:
+            candidate_day = datetime.fromisoformat(str(event.get("first_seen_at") or "")[:10]).date()
+        except ValueError:
+            return False
+    try:
         article_day = datetime.fromisoformat(incident_date[:10]).date()
     except ValueError:
         return False
@@ -6840,16 +6861,14 @@ def _handle_derive_events_from_articles(
             context={"stage": "derive_events_from_articles", "job_type": "derive_events_from_articles"},
         )
         parsed, error_reason = _parse_event_classification(result if isinstance(result, dict) else {})
-        parsed_date = str(parsed.get("incident_date") or "").strip()
-        if parsed_date.lower() in {"unknown", "n/a", "none", "null"}:
-            parsed_date = ""
+        parsed_date = _valid_incident_date((parsed or {}).get("incident_date"))
         existing_event, match_reason = _match_existing_event_for_article(
             conn,
             logger,
             article_id=article_id,
             article=article,
             content=content,
-            entity=_normalize_entity(str(parsed.get("victim") or "")),
+            entity=_normalize_entity(str((parsed or {}).get("victim") or "")),
             incident_date=parsed_date or str(article.get("published_at") or article.get("ingested_at") or "")[:10],
             window_days=int(policy.get("merge_window_days") or 14),
         )
@@ -6891,9 +6910,7 @@ def _handle_derive_events_from_articles(
                 return _done({"status": "skipped", "reason": "llm_missing_entity"})
             if not scope:
                 return _done({"status": "skipped", "reason": "llm_missing_scope"})
-            parsed_incident_date = str(parsed.get("incident_date") or "").strip()
-            if parsed_incident_date.lower() in {"unknown", "n/a", "none", "null"}:
-                parsed_incident_date = ""
+            parsed_incident_date = _valid_incident_date(parsed.get("incident_date"))
             bucket = parsed_incident_date or (article.get("published_at") or article.get("ingested_at") or "")[:10] or utc_now_iso()[:10]
             kind_label = _event_kind_label(kind)
             event_title = headline or f"{entity} — {kind_label} — {bucket}"
@@ -6940,7 +6957,7 @@ def _handle_derive_events_from_articles(
                 candidate=candidate,
                 lifecycle=status,
                 entity=entity,
-                incident_date=bucket,
+                incident_date=parsed_incident_date or None,
                 evidence=["llm:derive_events_from_articles", f"scope:{scope}"],
                 reasons=["llm:derive_events_from_articles", f"scope:{scope}"] + qualifier_reasons,
                 status=status,
@@ -6982,7 +6999,7 @@ def _handle_derive_events_from_articles(
     confidence, _, evidence = _derive_confidence(combined)
     if kind not in _STRICT_EVENT_TYPES:
         return _done({"status": "skipped", "reason": "non_incident_kind"})
-    incident_date = _extract_incident_date(combined) or ( article.get("published_at") or "")[:10] or None
+    incident_date = _valid_incident_date(_extract_incident_date(combined)) or None
     entity = _normalize_entity(_extract_event_entity(title))
     if not entity and kind == "exploit_in_the_wild":
         for cve_id in cve_ids:
@@ -7046,7 +7063,7 @@ def _handle_derive_events_from_articles(
         candidate=candidate,
         lifecycle=lifecycle,
         entity=entity,
-        incident_date=bucket,
+        incident_date=incident_date,
         evidence=evidence + qualifier_reasons + [f"scope:{scope}"],
         reasons=["derived:article"] + qualifier_reasons + [f"scope:{scope}"],
         status=status,
@@ -7354,6 +7371,10 @@ def _handle_validate_event_web_source(
         content_error=None,
         has_full_content=bool(content_text.strip()),
     )
+    article = get_article_by_id(conn, int(article_id))
+    if article and str(event.get("publish_state") or "") == "draft":
+        lifecycle = _maybe_promote_event_lifecycle(conn, event_id, article)
+        _enroll_confirmed_draft(conn, event_id, lifecycle)
     # Push promoted web articles through normal article pipelines so event synthesis has
     # structured summaries/context instead of raw snippets.
     enqueue_job(
@@ -8932,7 +8953,11 @@ def _validate_event_source_with_llm(
         return _validate_event_source_fallback(event, source, content), "fallback_no_profile"
 
     prompt_input = (
-        "Validate whether the candidate article is truly about the given security event.\n"
+        "Validate whether the candidate article reports the same incident or a later update to it. "
+        "Anchor on the affected victim, affected system or data, attack or failure, and available "
+        "incident dates. Dates may be approximate or reported later. Event labels such as breach "
+        "and compromise are not identity keys. Reject separate incidents at the same organization, "
+        "unrelated actor campaigns, and speculative connections.\n"
         "Return JSON only with keys: related (bool), confidence (0..1), matched_facts (array), "
         "contradictions (array), rationale (string).\n\n"
         f"Event title: {event.get('title')}\n"

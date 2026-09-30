@@ -428,6 +428,10 @@ def run_once(orchestrator_id: str) -> int:
         from .event_living_research import tick as event_living_research_tick
         for result in event_living_research_tick(conn):
             log_event(logger, logging.INFO, "event_living_research_tick", **result)
+        from .event_candidate_research import tick as event_candidate_research_tick
+        result = event_candidate_research_tick(conn)
+        if result["status"] != "unchanged":
+            log_event(logger, logging.INFO, "event_candidate_research_tick", **result)
         from .event_published_composition_upgrade import tick as event_published_composition_upgrade_tick
         for result in event_published_composition_upgrade_tick(conn):
             log_event(logger, logging.INFO, "event_published_composition_upgrade_tick", **result)

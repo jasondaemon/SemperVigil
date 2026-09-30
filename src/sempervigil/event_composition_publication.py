@@ -323,7 +323,6 @@ def queue_research_if_needed(conn, material: dict) -> tuple[str, int] | None:
         "enrich_event_from_web",
         {"event_id": material["event_id"], "max_results": maximum,
          "replace_existing": False},
-        debounce=True,
         dedupe=True,
     )
     return job_id, minimum

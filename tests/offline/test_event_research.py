@@ -42,7 +42,7 @@ def test_one_source_composition_queues_research_instead_of_publication(monkeypat
         "enrich_event_from_web",
         {"event_id": "evt_one", "max_results": 12, "replace_existing": False},
     )
-    assert enqueue.call_args.kwargs == {"debounce": True, "dedupe": True}
+    assert enqueue.call_args.kwargs == {"dedupe": True}
 
 
 def test_two_source_composition_can_advance_without_research(monkeypatch):

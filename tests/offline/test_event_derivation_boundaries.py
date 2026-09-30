@@ -101,18 +101,103 @@ def test_draft_match_excludes_other_victims_and_distant_incidents():
     )
 
 
-def test_draft_gains_sources_then_confirms_at_three_publishers(monkeypatch):
+def test_draft_gains_sources_then_confirms_at_two_publishers(monkeypatch):
     updates = []
-    sources = ["publisher-one", "publisher-two"]
+    sources = ["publisher-one"]
     monkeypatch.setattr(worker, "list_event_articles", lambda _conn, _id: [
         {"source_id": source} for source in sources
     ])
     monkeypatch.setattr(worker, "update_event", lambda _conn, _id, **fields: updates.append(fields))
 
     assert worker._maybe_promote_event_lifecycle(None, "evt_test", {}) == "candidate"
-    sources.append("publisher-three")
+    sources.append("publisher-two")
     assert worker._maybe_promote_event_lifecycle(None, "evt_test", {}) == "confirmed"
     assert updates[-1] == {"candidate": False, "lifecycle": "confirmed", "status": "confirmed"}
+
+
+def test_web_research_counts_real_sites_not_synthetic_source(monkeypatch):
+    updates = []
+    monkeypatch.setattr(worker, "list_event_articles", lambda _conn, _id: [
+        {"source_id": "news", "url": "https://www.news.example/incident"},
+        {"source_id": "web_enrich", "url": "https://news.example/follow-up"},
+        {"source_id": "web_enrich", "url": "https://other.example/report"},
+        {"source_id": "web_enrich", "url": "https://third.example/report"},
+    ])
+    monkeypatch.setattr(worker, "update_event", lambda _conn, _id, **fields: updates.append(fields))
+    assert worker._maybe_promote_event_lifecycle(None, "evt_test", {}) == "confirmed"
+    assert updates[-1]["lifecycle"] == "confirmed"
+
+
+def test_invalid_model_incident_dates_are_not_stored():
+    assert worker._valid_incident_date("2026-09-21") == "2026-09-21"
+    assert worker._valid_incident_date("2026-06-00|unknown") == ""
+    assert worker._valid_incident_date("2026-09-00") == ""
+    assert worker._valid_incident_date("2026-02-30") == ""
+
+
+def test_draft_match_uses_first_seen_for_legacy_malformed_date():
+    assert _draft_event_in_scope(
+        {"entity": "Bitget", "incident_date": "2026-09-00",
+         "first_seen_at": "2026-09-28T10:00:00+00:00"},
+        entity="Bitget", incident_date="2026-09-30", window_days=14,
+    )
+
+
+def test_candidate_research_admission_is_per_event_not_global(monkeypatch):
+    monkeypatch.setattr(worker, "get_events_settings", lambda _conn: {
+        "enrich_min_articles": 2, "enrich_min_articles_max_results": 6,
+    })
+    monkeypatch.setattr(worker, "list_event_articles", lambda _conn, _id: [
+        {"source_id": "one", "url": "https://one.example/story"},
+    ])
+    queued = []
+    monkeypatch.setattr(worker, "enqueue_job", lambda *args, **kwargs: queued.append((args[2], kwargs)))
+
+    assert worker._maybe_queue_event_research(None, "evt_one")
+    assert worker._maybe_queue_event_research(None, "evt_two")
+    assert [item[0]["event_id"] for item in queued] == ["evt_one", "evt_two"]
+    assert all(item[1] == {"dedupe": True} for item in queued)
+
+
+def test_validated_research_source_can_confirm_and_enroll_draft(monkeypatch):
+    from types import SimpleNamespace
+
+    calls = []
+    monkeypatch.setattr(worker, "get_event_web_source", lambda *_: {
+        "id": "src_1", "event_id": "evt_1", "status": "new",
+        "url": "https://independent.example/report",
+    })
+    monkeypatch.setattr(worker, "get_event", lambda *_: {
+        "id": "evt_1", "publish_state": "draft", "entity": "Example",
+    })
+    monkeypatch.setattr(worker, "get_recent_event_source_version", lambda *_, **__: {
+        "source_version": "v1", "content_text": "Example disclosed an intrusion.",
+        "published_at": "2026-09-30",
+    })
+    monkeypatch.setattr(worker, "_event_source_validator_version", lambda *_: "validator-v1")
+    monkeypatch.setattr(worker, "get_event_relevance_receipt", lambda *_: None)
+    monkeypatch.setattr(worker, "_validate_event_source_with_llm", lambda *_, **__: ({
+        "related": True, "confidence": 0.93, "validator": "llm",
+        "matched_facts": ["same incident"], "contradictions": [],
+    }, ""))
+    monkeypatch.setattr(worker, "store_event_relevance_receipt", lambda *_, **__: None)
+    monkeypatch.setattr(worker, "update_event_web_source_status", lambda *args, **kwargs: calls.append(("status", args[2])))
+    monkeypatch.setattr(worker, "update_event_web_source_published_at", lambda *_, **__: None)
+    monkeypatch.setattr(worker, "promote_event_web_source_to_article", lambda *_: 42)
+    monkeypatch.setattr(worker, "update_article_content", lambda *_, **__: calls.append(("content", 42)))
+    monkeypatch.setattr(worker, "get_article_by_id", lambda *_: {"id": 42, "source_id": "web_enrich"})
+    monkeypatch.setattr(worker, "_maybe_promote_event_lifecycle", lambda *_, **__: calls.append(("confirm", 42)) or "confirmed")
+    monkeypatch.setattr(worker, "_enroll_confirmed_draft", lambda *args: calls.append(("enroll", args[2])))
+    monkeypatch.setattr(worker, "enqueue_job", lambda *args, **kwargs: calls.append(("job", args[1])))
+
+    result = worker._handle_validate_event_web_source(
+        None, SimpleNamespace(ingest=SimpleNamespace()), {"source_id": "src_1"}, None,
+    )
+
+    assert result["status"] == "promoted"
+    assert ("confirm", 42) in calls
+    assert ("enroll", "confirmed") in calls
+    assert calls.index(("content", 42)) < calls.index(("confirm", 42))
 
 
 def test_draft_update_rebuilds_report_without_publishing(monkeypatch):
@@ -164,7 +249,7 @@ def test_draft_lookup_does_not_require_threat_actor_tag(monkeypatch):
         def execute(self, sql, params):
             if "FROM article_threat_actors current_actor" in sql:
                 return self
-            assert params == ("2026-09-09", "2026-10-07", 200)
+            assert params == ("2026-09-09", "2026-10-07", "2026-09-09", "2026-10-07", 200)
             self.draft_query = True
             return self
 

@@ -244,8 +244,8 @@ DEFAULT_EVENTS_SETTINGS: dict[str, Any] = {
     "publish_min_narrative_bullets": 3,
     "publish_min_narrative_sections": 2,
     "publish_min_promoted_sources": 0,
-    "enrich_min_articles": 0,
-    "enrich_min_articles_max_results": 12,
+    "enrich_min_articles": 2,
+    "enrich_min_articles_max_results": 6,
 }
 
 DEFAULT_SCHEDULE_SETTINGS: dict[str, Any] = {
@@ -326,6 +326,16 @@ def bootstrap_events_settings(conn) -> dict[str, Any]:
         cfg = get_setting(conn, EVENTS_SETTINGS_KEY, None)
     if not isinstance(cfg, dict):
         raise ConfigError("events.settings must be a JSON object")
+    # Preserve explicit opt-outs, but give older stored settings the new bounded
+    # research defaults when those keys did not yet exist.
+    missing_research = {
+        key: DEFAULT_EVENTS_SETTINGS[key]
+        for key in ("enrich_min_articles", "enrich_min_articles_max_results")
+        if key not in cfg
+    }
+    if missing_research:
+        cfg = {**cfg, **missing_research}
+        set_setting(conn, EVENTS_SETTINGS_KEY, cfg)
     return cfg
 
 
