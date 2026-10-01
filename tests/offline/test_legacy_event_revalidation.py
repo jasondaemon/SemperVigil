@@ -60,6 +60,24 @@ def test_all_match_requires_uncontradicted_source_facts(monkeypatch):
     assert legacy._all_match(None, logging.getLogger(__name__), {}, [article])
 
 
+def test_source_validator_distinguishes_incident_conflicts_from_updates(monkeypatch):
+    from sempervigil import worker
+
+    prompts = []
+    monkeypatch.setattr(worker, "_event_source_validation_profile", lambda _conn: {"id": "profile"})
+    monkeypatch.setattr(worker, "run_profile", lambda _conn, _id, prompt, _logger, **_kw:
+                        prompts.append(prompt) or {"parsed": {
+                            "related": True, "confidence": 0.99,
+                            "matched_facts": ["same incident"], "contradictions": [],
+                        }})
+    decision, _ = worker._validate_event_source_with_llm(
+        None, logging.getLogger(__name__), event={"title": "Bitget theft"},
+        source={"title": "Bitget update", "domain": "example.org"}, content="Update")
+    assert decision["related"] is True
+    assert "rounding differences" in prompts[0]
+    assert "different incident in contradictions" in prompts[0]
+
+
 def test_run_holds_changed_victim_without_mutating_event(monkeypatch):
     from sempervigil import worker
     from sempervigil.llm import router
