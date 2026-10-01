@@ -1,5 +1,28 @@
 # Change Control Log
 
+## 2026-10-01: guarded Event research canary
+
+- Deployed source-only image `f3631a2` to the orchestrator, fetch worker and
+  local-LLM worker only. Platform commit `21a017a` records just those three
+  tags; scoped Helm render and live Deployment diff are empty. No admin, builder,
+  Hugo, daily-export, or publication-gate change was applied.
+- New article classification distinguishes the directly affected victim from a
+  software/security vendor. A read-only local-model probe rejected Apple
+  zero-day, Huntress reporting, and Citrix advisory articles as named-victim
+  Events, while retaining Bitget theft and the FBI portal claim as candidates.
+  Only candidates created under this anchor version enter bounded automatic
+  research or two-publisher draft confirmation. Nearby competing drafts hold.
+  Legacy candidates are not bulk-promoted or silently merged.
+- The research scan measured about 7.5 ms on the live database and is throttled
+  to once per five minutes. After rollout, it added no legacy research jobs.
+  Verification build `job_e4bee97797a84b8b95b610dd3e30fd2a` succeeded in
+  about 53 seconds; the public home page returned HTTP 200 with a new modified
+  time. September 30 daily JSON still contained 76 articles and 365 CVEs,
+  with no Web Enrichment entries. Offline suite: 1,195 passed, one skipped.
+- Canonical reconciliation, anchor revalidation of older candidates, and a
+  naturally acquired new-candidate publication remain unverified follow-up
+  work. No Event publication is claimed from this rollout.
+
 ## 2026-09-29: first guarded database remediation
 
 - Deployed source-only OCI images `683a993` to orchestrator and build worker only,
