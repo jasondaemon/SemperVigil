@@ -77,6 +77,8 @@ spec:
               value: {{ .Values.orchestrator.eventResearchIntervalSeconds | default 86400 | quote }}
             - name: SV_EVENT_RESEARCH_MAX_RESULTS
               value: {{ .Values.orchestrator.eventResearchMaxResults | default 12 | quote }}
+            - name: SV_LEGACY_EVENT_REVALIDATION_ENABLED
+              value: {{ .Values.orchestrator.legacyRevalidationEnabled | default "0" | quote }}
             {{- if or (ne (.Values.orchestrator.eventAutoScopes | default "{}") "{}") (eq (.Values.env.SV_EVENT_REASSESSMENT_AUTOMATION_ENABLED | default "0") "1") }}
             - name: SV_EVENT_APPROVAL_DB_URL
               valueFrom:

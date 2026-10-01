@@ -221,6 +221,7 @@ WORKER_JOB_TYPES = [
     "build_daily_brief",
     "write_article_markdown",
     "derive_events_from_articles",
+    "legacy_event_revalidate",
     "enrich_event_from_web",
     "validate_event_web_source",
     "promote_event_web_source_to_article",
@@ -263,6 +264,7 @@ QUEUE_WORKER_TYPES = {
         "summarize_article_llm",
         "summarize_article_context_llm",
         "derive_events_from_articles",
+        "legacy_event_revalidate",
         "article_enrich_products",
         "article_enrich_threat_actors",
         "cve_enrich_llm",
@@ -314,6 +316,7 @@ HANDLED_JOB_TYPES = {
     "build_daily_brief",
     "write_article_markdown",
     "derive_events_from_articles",
+    "legacy_event_revalidate",
     "enrich_event_from_web",
     "validate_event_web_source",
     "promote_event_web_source_to_article",
@@ -6858,6 +6861,29 @@ def _link_existing_draft_update(conn, *, event_id: str, article_id: int,
             "article_id": article_id, "lifecycle": lifecycle}
 
 
+def _event_classification_input(article: dict[str, object]) -> str:
+    content = str(article.get("content_text") or "").strip()
+    excerpt = content[:20000]
+    if len(content) > 20000:
+        excerpt += "\n[TRUNCATED]"
+    return "\n".join([
+        "Classify only a specific cyber incident. The victim is the organization or person "
+        "whose own data, systems, accounts or service was attacked. A security vendor "
+        "reporting an attack, or a software vendor whose product has a zero-day, is not "
+        "the victim unless that vendor itself was compromised. If the affected party is "
+        "unnamed or there is no specific incident, return is_event=false. Do not use "
+        "'not applicable' or the publisher as victim. Preserve whether an attack is "
+        "only claimed or suspected.",
+        "",
+        f"Title: {article.get('title') or ''}",
+        f"Published: {article.get('published_at') or article.get('ingested_at') or ''}",
+        f"URL: {article.get('original_url') or article.get('normalized_url') or ''}",
+        "",
+        "Content:",
+        excerpt,
+    ]).strip()
+
+
 def _handle_derive_events_from_articles(
     conn, config, payload: dict[str, object], logger: logging.Logger
 ) -> dict[str, object]:
@@ -6898,29 +6924,10 @@ def _handle_derive_events_from_articles(
     if profile:
         if not content:
             return _done({"status": "skipped", "reason": "no_full_content"})
-        excerpt = content.strip()
-        if len(excerpt) > 20000:
-            excerpt = excerpt[:20000] + "\n[TRUNCATED]"
-        input_lines = [
-            "Classify only a specific cyber incident. The victim is the organization or person "
-            "whose own data, systems, accounts or service was attacked. A security vendor "
-            "reporting an attack, or a software vendor whose product has a zero-day, is not "
-            "the victim unless that vendor itself was compromised. If the affected party is "
-            "unnamed or there is no specific incident, return is_event=false. Do not use "
-            "'not applicable' or the publisher as victim. Preserve whether an attack is "
-            "only claimed or suspected.",
-            "",
-            f"Title: {title}",
-            f"Published: {article.get('published_at') or article.get('ingested_at') or ''}",
-            f"URL: {article.get('original_url') or article.get('normalized_url') or ''}",
-            "",
-            "Content:",
-            excerpt,
-        ]
         result = run_pipeline_stage(
             conn,
             "derive_events_from_articles",
-            "\n".join(input_lines).strip(),
+            _event_classification_input(article),
             logger,
             profile_id=profile["id"],
             context={"stage": "derive_events_from_articles", "job_type": "derive_events_from_articles"},
@@ -10156,6 +10163,9 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         return result
     if job.job_type == "derive_events_from_articles":
         return _handle_derive_events_from_articles(conn, config, job.payload or {}, logger)
+    if job.job_type == "legacy_event_revalidate":
+        from .legacy_event_revalidation import run
+        return run(conn, job, logger)
     if job.job_type == "enrich_event_from_web":
         return _handle_enrich_event_from_web(conn, config, job.payload or {}, logger)
     if job.job_type == "validate_event_web_source":

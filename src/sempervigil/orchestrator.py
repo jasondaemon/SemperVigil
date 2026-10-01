@@ -432,6 +432,10 @@ def run_once(orchestrator_id: str) -> int:
         result = event_candidate_research_tick(conn)
         if result["status"] != "unchanged":
             log_event(logger, logging.INFO, "event_candidate_research_tick", **result)
+        from .legacy_event_revalidation import tick as legacy_event_revalidation_tick
+        result = legacy_event_revalidation_tick(conn)
+        if result["status"] != "unchanged":
+            log_event(logger, logging.INFO, "legacy_event_revalidation_tick", **result)
         from .event_published_composition_upgrade import tick as event_published_composition_upgrade_tick
         for result in event_published_composition_upgrade_tick(conn):
             log_event(logger, logging.INFO, "event_published_composition_upgrade_tick", **result)

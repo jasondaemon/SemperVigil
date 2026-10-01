@@ -46,6 +46,7 @@ _QUEUE_NAME_BY_JOB_TYPE: dict[str, str] = {
     "summarize_article_llm": "llm_local",
     "summarize_article_context_llm": "llm_local",
     "derive_events_from_articles": "llm_local",
+    "legacy_event_revalidate": "llm_local",
     "article_enrich_products": "llm_local",
     "article_enrich_threat_actors": "llm_local",
     "cve_enrich_llm": "llm_local",

@@ -1,5 +1,29 @@
 # Event correlation and research recovery
 
+## Legacy candidate revalidation design
+
+The old private candidate set is not a publication queue. Many entries use a
+publisher, product vendor, generic population, or `not applicable` as the
+victim, and some apparent incidents have several overlapping drafts. A
+default-disabled, bounded scheduler admits one low-priority revalidation job
+at a time to the existing single local-model worker. Every job retains a
+visible result and uses the current victim-role classifier on the stored seed
+article. Other linked articles must pass the existing same-incident model
+validator; a fallback validator is not sufficient to merge records.
+
+Generic anchors can be archived privately without deleting their source links.
+Ambiguous or unsupported model decisions remain private holds. A supported
+unique draft receives the new anchor marker and then uses ordinary research,
+two-publisher confirmation, evidence, composition, audit, and atomic
+publication. A supported duplicate can be merged into one nearby canonical
+draft only when each transferred source has a high-confidence, uncontradicted
+same-incident decision. Article and CVE links transfer inside a locked
+transaction; the old draft is archived with a canonical pointer in metadata.
+Published records and cases with multiple plausible canonical matches are
+held, not merged or republished automatically. The scheduler is opt-in through
+`SV_LEGACY_EVENT_REVALIDATION_ENABLED=1`; a production canary is required
+before that setting is enabled for the full backlog.
+
 ## October 1, 2026: first new-article production result
 
 MetaMask was discovered from normal article acquisition, researched to four

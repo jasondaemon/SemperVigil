@@ -182,6 +182,7 @@ orchestrator:
   eventResearchEvents: "[]"
   eventResearchIntervalSeconds: 86400
   eventResearchMaxResults: 12
+  legacyRevalidationEnabled: "0"
   replicaCount: 1
   tickSeconds: 30
   leaseSeconds: 120

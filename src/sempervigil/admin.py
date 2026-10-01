@@ -245,6 +245,7 @@ _DASHBOARD_LLM_JOB_TYPES = [
     "summarize_article_llm",
     "summarize_article_context_llm",
     "derive_events_from_articles",
+    "legacy_event_revalidate",
     "article_enrich_products",
     "article_enrich_threat_actors",
     "cve_enrich_llm",
