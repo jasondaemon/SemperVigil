@@ -8982,9 +8982,6 @@ def _event_source_validation_profile(conn) -> dict[str, object] | None:
         if profile:
             return profile
     profile, _reason = get_active_profile_for_stage(conn, "event_web_validate")
-    if profile:
-        return profile
-    profile, _reason = get_active_profile_for_stage(conn, "summarize_article")
     return profile
 
 

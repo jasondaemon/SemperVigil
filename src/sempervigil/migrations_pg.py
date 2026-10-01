@@ -642,6 +642,14 @@ def apply_migrations_pg(conn) -> None:
             )
             conn.commit()
             logger.info("migration_applied version=pg_source_run_lookup_061")
+        if "pg_event_web_validator_profile_062" not in applied:
+            if _migrate_event_web_validator_profile(conn):
+                conn.execute(
+                    "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                    ("pg_event_web_validator_profile_062", utc_now_iso()),
+                )
+                conn.commit()
+                logger.info("migration_applied version=pg_event_web_validator_profile_062")
         else:
             conn.commit()
         return
@@ -811,6 +819,14 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_source_run_lookup_061")
+
+    if _migrate_event_web_validator_profile(conn):
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+            ("pg_event_web_validator_profile_062", utc_now_iso()),
+        )
+        conn.commit()
+        logger.info("migration_applied version=pg_event_web_validator_profile_062")
 
     _migrate_source_overrides(conn)
     conn.execute(
@@ -2650,6 +2666,63 @@ def _migrate_llm_event_classify_prompts_v3(conn) -> None:
         "prompt_event_classify_v3",
         "schema_event_classify_v2",
     )
+
+
+def _migrate_event_web_validator_profile(conn) -> bool:
+    if not all(_table_exists(conn, table) for table in
+               ("llm_prompts", "llm_schemas", "llm_profiles", "pipeline_stage_config")):
+        return False
+    schema_id = "schema_event_web_validate_v1"
+    prompt_id = "prompt_event_web_validate_v1"
+    profile_id = "profile_event_web_validate_v1"
+    schema = {
+        "type": "object", "additionalProperties": False,
+        "required": ["related", "confidence", "matched_facts", "contradictions", "rationale"],
+        "properties": {
+            "related": {"type": "boolean"},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "matched_facts": {"type": "array", "items": {"type": "string"}},
+            "contradictions": {"type": "array", "items": {"type": "string"}},
+            "rationale": {"type": "string"},
+        },
+    }
+    _upsert_llm_schema(conn, schema_id, "Event Source Validation", "v1",
+                       json.dumps(schema, sort_keys=True))
+    _upsert_llm_prompt(
+        conn, prompt_id, "Event Source Validation", "v1",
+        "Decide whether two reports describe the same single cyber incident. "
+        "Do not summarize the article. Return only the requested JSON fields. "
+        "Match the affected victim, systems or data, mechanism, and incident timeline. "
+        "A later update, corrected total, rounded figure, or reporting date can describe "
+        "the same incident. Put only facts proving a different incident in contradictions. "
+        "If the evidence is insufficient, set related=false and explain why. "
+        "Never invent matching facts.",
+        "{{input}}", "Strict same-incident validation for article-to-Event correlation.",
+    )
+    base = conn.execute(
+        """SELECT p.primary_provider_id,p.primary_model_id
+           FROM pipeline_stage_config s JOIN llm_profiles p ON p.id=s.profile_id
+           WHERE s.stage_name='derive_events_from_articles' AND p.is_enabled=1"""
+    ).fetchone()
+    if not base:
+        return False
+    now = utc_now_iso()
+    conn.execute(
+        """INSERT INTO llm_profiles
+           (id,name,primary_provider_id,primary_model_id,prompt_id,schema_id,
+            params_json,fallback_json,is_enabled,created_at,updated_at)
+           VALUES (%s,%s,%s,%s,%s,%s,NULL,NULL,1,%s,%s)
+           ON CONFLICT(id) DO NOTHING""",
+        (profile_id, "Event Source Validation", base[0], base[1],
+         prompt_id, schema_id, now, now),
+    )
+    conn.execute(
+        """INSERT INTO pipeline_stage_config(stage_name,profile_id,rules_json,updated_at)
+           VALUES ('event_web_validate',%s,NULL,%s)
+           ON CONFLICT(stage_name) DO NOTHING""",
+        (profile_id, now),
+    )
+    return True
 
 
 def _migrate_daily_briefs(conn) -> None:
