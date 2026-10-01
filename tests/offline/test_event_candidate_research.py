@@ -4,6 +4,7 @@ from unittest.mock import Mock
 import pytest
 
 from sempervigil import event_candidate_research as research
+from sempervigil import worker
 
 pytestmark = pytest.mark.offline
 
@@ -13,7 +14,7 @@ NOW = datetime(2026, 9, 30, 12, tzinfo=timezone.utc)
 
 def test_bounded_research_admits_one_unsearched_candidate(monkeypatch):
     conn = Mock()
-    conn.execute.return_value.fetchone.return_value = ("evt_one",)
+    conn.execute.return_value.fetchall.return_value = [("evt_bad",), ("evt_one",)]
     marker = []
     enqueue = Mock(return_value="job_one")
     monkeypatch.setattr(research, "get_events_settings", lambda _: {
@@ -23,12 +24,17 @@ def test_bounded_research_admits_one_unsearched_candidate(monkeypatch):
     monkeypatch.setattr(research, "get_setting", lambda *_: None)
     monkeypatch.setattr(research, "set_setting", lambda *args: marker.append(args))
     monkeypatch.setattr(research, "enqueue_job", enqueue)
+    monkeypatch.setattr(research, "get_event", lambda _, event_id: {
+        "entity": "not applicable" if event_id == "evt_bad" else "Example Corp",
+        "meta": {"anchor_version": worker.EVENT_ANCHOR_VERSION},
+    })
 
     assert research.tick(conn, now=NOW) == {
         "status": "research_queued", "event_id": "evt_one", "job_id": "job_one",
     }
     assert conn.execute.call_args.args[1] == (
-        (NOW - timedelta(days=14)).isoformat(), research.JOB_TYPE,
+        (NOW - timedelta(days=14)).isoformat(), worker.EVENT_ANCHOR_VERSION,
+        research.JOB_TYPE,
     )
     assert "NOT EXISTS" in conn.execute.call_args.args[0]
     assert "COUNT(DISTINCT" in conn.execute.call_args.args[0]

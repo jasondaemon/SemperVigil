@@ -108,6 +108,10 @@ def test_draft_gains_sources_then_confirms_at_two_publishers(monkeypatch):
         {"source_id": source} for source in sources
     ])
     monkeypatch.setattr(worker, "update_event", lambda _conn, _id, **fields: updates.append(fields))
+    monkeypatch.setattr(worker, "get_event", lambda *_: {"id": "evt_test", "entity": "Example Corp",
+                                                         "first_seen_at": "2026-09-29",
+                                                         "meta": {"anchor_version": worker.EVENT_ANCHOR_VERSION}})
+    monkeypatch.setattr(worker, "_has_competing_draft", lambda *_: False)
 
     assert worker._maybe_promote_event_lifecycle(None, "evt_test", {}) == "candidate"
     sources.append("publisher-two")
@@ -124,6 +128,10 @@ def test_web_research_counts_real_sites_not_synthetic_source(monkeypatch):
         {"source_id": "web_enrich", "url": "https://third.example/report"},
     ])
     monkeypatch.setattr(worker, "update_event", lambda _conn, _id, **fields: updates.append(fields))
+    monkeypatch.setattr(worker, "get_event", lambda *_: {"id": "evt_test", "entity": "Example Corp",
+                                                         "first_seen_at": "2026-09-29",
+                                                         "meta": {"anchor_version": worker.EVENT_ANCHOR_VERSION}})
+    monkeypatch.setattr(worker, "_has_competing_draft", lambda *_: False)
     assert worker._maybe_promote_event_lifecycle(None, "evt_test", {}) == "confirmed"
     assert updates[-1]["lifecycle"] == "confirmed"
 
@@ -133,6 +141,38 @@ def test_invalid_model_incident_dates_are_not_stored():
     assert worker._valid_incident_date("2026-06-00|unknown") == ""
     assert worker._valid_incident_date("2026-09-00") == ""
     assert worker._valid_incident_date("2026-02-30") == ""
+
+
+def test_placeholder_or_multi_victim_is_not_an_event_anchor():
+    for entity in ("not applicable", "unknown", "Affected Organization",
+                   "Company A; Company B", "Azure tenants"):
+        assert worker._is_generic_event_entity(entity)
+    assert not worker._is_generic_event_entity("Bitget")
+    assert not worker._eligible_event_anchor({"entity": "Bitget", "meta": {}})
+    assert worker._eligible_event_anchor({"entity": "Bitget", "meta": {
+        "anchor_version": worker.EVENT_ANCHOR_VERSION,
+    }})
+
+
+def test_competing_recent_draft_holds_confirmation(monkeypatch):
+    class Connection:
+        def execute(self, sql, params):
+            assert params == ("evt_new", "Bitget", "2026-09-16", "2026-10-14")
+            return self
+
+        def fetchone(self):
+            return ("evt_old",)
+
+    monkeypatch.setattr(worker, "list_event_articles", lambda *_: [
+        {"url": "https://first.example/report"},
+        {"url": "https://second.example/report"},
+    ])
+    monkeypatch.setattr(worker, "get_event", lambda *_: {
+        "id": "evt_new", "entity": "Bitget", "first_seen_at": "2026-09-30",
+        "meta": {"anchor_version": worker.EVENT_ANCHOR_VERSION},
+    })
+    monkeypatch.setattr(worker, "update_event", lambda *_args, **_kwargs: pytest.fail("promoted duplicate"))
+    assert worker._maybe_promote_event_lifecycle(Connection(), "evt_new", {}) == "candidate"
 
 
 def test_draft_match_uses_first_seen_for_legacy_malformed_date():
@@ -150,6 +190,9 @@ def test_candidate_research_admission_is_per_event_not_global(monkeypatch):
     monkeypatch.setattr(worker, "list_event_articles", lambda _conn, _id: [
         {"source_id": "one", "url": "https://one.example/story"},
     ])
+    monkeypatch.setattr(worker, "get_event", lambda *_: {
+        "entity": "Example Corp", "meta": {"anchor_version": worker.EVENT_ANCHOR_VERSION},
+    })
     queued = []
     monkeypatch.setattr(worker, "enqueue_job", lambda *args, **kwargs: queued.append((args[2], kwargs)))
 

@@ -6316,6 +6316,7 @@ _EVENT_TYPE_MAP = {
 }
 
 _STRICT_EVENT_TYPES = {"breach", "ransomware", "compromise", "exploit_in_the_wild", "outage"}
+EVENT_ANCHOR_VERSION = "victim-role-v1"
 
 
 def _normalize_event_type(value: str) -> str:
@@ -6379,11 +6380,18 @@ def _maybe_promote_event_lifecycle(
     *,
     min_confirm_confidence: float = 0.8,
 ) -> str:
+    event = get_event(conn, event_id)
+    if event and str(event.get("lifecycle") or "") == "confirmed":
+        return "confirmed"
+    if not _eligible_event_anchor(event):
+        return "candidate"
     linked = list_event_articles(conn, event_id)
     distinct_sources = {_event_publisher_key(item) for item in linked}
     distinct_sources.discard("")
     # Two independent publishers establish a confirmed draft, not publication.
     if len(distinct_sources) >= 2:
+        if _has_competing_draft(conn, event):
+            return "candidate"
         update_event(conn, event_id, candidate=False, lifecycle="confirmed", status="confirmed")
         return "confirmed"
     update_event(conn, event_id, candidate=True, lifecycle="candidate", status="candidate")
@@ -6397,6 +6405,33 @@ def _event_publisher_key(article: dict[str, object]) -> str:
     return host.removeprefix("www.") or ("" if source_id == "web_enrich" else source_id)
 
 
+def _eligible_event_anchor(event: dict[str, object] | None) -> bool:
+    if not event or _is_generic_event_entity(str(event.get("entity") or "")):
+        return False
+    meta = event.get("meta")
+    return isinstance(meta, dict) and meta.get("anchor_version") == EVENT_ANCHOR_VERSION
+
+
+def _has_competing_draft(conn, event: dict[str, object]) -> bool:
+    """Do not confirm one of several nearby drafts for the same named victim."""
+    entity = str(event.get("entity") or "").strip()
+    seen = str(event.get("first_seen_at") or "")[:10]
+    if not entity or not _valid_incident_date(seen):
+        return False
+    day = datetime.fromisoformat(seen).date()
+    earliest = (day - timedelta(days=14)).isoformat()
+    latest = (day + timedelta(days=14)).isoformat()
+    row = conn.execute(
+        """SELECT id FROM events WHERE id<>%s AND visibility='active'
+           AND publish_state='draft' AND lifecycle='candidate'
+           AND lower(entity)=lower(%s)
+           AND LEFT(first_seen_at,10) BETWEEN %s AND %s
+           LIMIT 1""",
+        (event["id"], entity, earliest, latest),
+    ).fetchone()
+    return bool(row)
+
+
 def _enroll_confirmed_draft(conn, event_id: str, lifecycle: str) -> None:
     if lifecycle != "confirmed":
         return
@@ -6408,12 +6443,18 @@ def _is_generic_event_entity(entity: str) -> bool:
     value = normalize_name(entity or "").replace("_", " ").strip()
     if not value:
         return True
+    if ";" in entity or "," in entity:
+        return True
+    if value in {"not applicable", "n a", "none", "null", "unknown", "unspecified",
+                 "affected organization", "affected entity"}:
+        return True
     if value.startswith(("multiple ", "various ", "many ", "several ", "unknown ")):
         return True
     generic_terms = {
         "multiple", "various", "many", "several", "users", "customers", "victims",
         "organizations", "companies", "devices", "systems", "endpoints", "people",
         "individuals", "accounts", "applications", "apps", "servers", "networks",
+        "tenants", "environments", "businesses", "developers",
     }
     tokens = set(value.split())
     return bool(tokens & generic_terms)
@@ -6610,6 +6651,8 @@ def _maybe_queue_event_research(conn, event_id: str) -> bool:
         return False
     min_articles = int(settings.get("enrich_min_articles", 0) or 0)
     if min_articles <= 0:
+        return False
+    if not _eligible_event_anchor(get_event(conn, event_id)):
         return False
     source_count = len({_event_publisher_key(item) for item in list_event_articles(conn, event_id)} - {""})
     if source_count >= min_articles:
@@ -6859,6 +6902,14 @@ def _handle_derive_events_from_articles(
         if len(excerpt) > 20000:
             excerpt = excerpt[:20000] + "\n[TRUNCATED]"
         input_lines = [
+            "Classify only a specific cyber incident. The victim is the organization or person "
+            "whose own data, systems, accounts or service was attacked. A security vendor "
+            "reporting an attack, or a software vendor whose product has a zero-day, is not "
+            "the victim unless that vendor itself was compromised. If the affected party is "
+            "unnamed or there is no specific incident, return is_event=false. Do not use "
+            "'not applicable' or the publisher as victim. Preserve whether an attack is "
+            "only claimed or suspected.",
+            "",
             f"Title: {title}",
             f"Published: {article.get('published_at') or article.get('ingested_at') or ''}",
             f"URL: {article.get('original_url') or article.get('normalized_url') or ''}",
@@ -6963,7 +7014,7 @@ def _handle_derive_events_from_articles(
                 first_seen_at=article.get("published_at") or article.get("ingested_at") or utc_now_iso(),
                 last_seen_at=utc_now_iso(),
                 summary=summary_text,
-                meta={"seed_article_id": article_id},
+                meta={"seed_article_id": article_id, "anchor_version": EVENT_ANCHOR_VERSION},
                 manual=False,
                 visibility="active",
                 confidence=confidence,
