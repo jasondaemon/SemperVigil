@@ -53,6 +53,7 @@ def test_all_match_requires_uncontradicted_source_facts(monkeypatch):
               "matched_facts": ["same victim"], "contradictions": ["different attack"]}
     monkeypatch.setattr(worker, "_validate_event_source_with_llm",
                         lambda *_args, **_kwargs: (answer, ""))
+    monkeypatch.setattr(legacy, "_adjudicate_match", lambda *_args: {})
     article = {"title": "Story", "original_url": "https://example.org/story",
                "content_text": "A specific incident."}
     assert not legacy._all_match(None, logging.getLogger(__name__), {}, [article])
@@ -79,6 +80,13 @@ def test_inconsistent_model_verdict_needs_independent_adjudication(monkeypatch):
         "related": True, "confidence": 0.95, "matched_facts": ["same victim", "same loss"],
         "contradictions": [],
     })
+    assert legacy._all_match(None, logging.getLogger(__name__), {}, [article])
+    monkeypatch.setattr(worker, "_validate_event_source_with_llm",
+                        lambda *_args, **_kwargs: ({
+                            "validator": "llm", "related": False, "confidence": 0.6,
+                            "matched_facts": ["same victim"],
+                            "contradictions": ["Possible date conflict"],
+                        }, ""))
     assert legacy._all_match(None, logging.getLogger(__name__), {}, [article])
 
 

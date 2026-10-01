@@ -132,8 +132,6 @@ def _all_match(conn, logger: logging.Logger, event: dict, articles: list[dict]) 
             return False
         if _verified_match(decision):
             continue
-        if decision.get("contradictions"):
-            return False
         if not _verified_match(_adjudicate_match(conn, logger, event, article, decision)):
             return False
     return True
@@ -156,7 +154,8 @@ def _adjudicate_match(conn, logger: logging.Logger, event: dict, article: dict,
     prompt = (
         "Independently decide whether this article describes the same single incident or a "
         "later update to it. The previous validator gave an uncertain or internally "
-        "inconsistent verdict; do not copy it. Compare victim, affected systems/data, "
+        "inconsistent verdict; assess its proposed conflicts, but do not copy its verdict. "
+        "Compare victim, affected systems/data, "
         "mechanism, and incident timeline. Reported dates, rounded figures, and corrected "
         "totals can differ for one incident. Reject a different attack on the same victim. "
         "Return JSON only: related (bool), confidence (0..1), matched_facts (array), "
@@ -164,6 +163,7 @@ def _adjudicate_match(conn, logger: logging.Logger, event: dict, article: dict,
         f"Event: {event.get('title')} | {event.get('entity')} | {event.get('incident_date')}\n"
         f"Event summary: {event.get('summary')}\n"
         f"Article: {article.get('title')}\n"
+        f"Proposed conflicts: {json_dumps(prior.get('contradictions') or [])[:2000]}\n"
         f"Article content: {str(article.get('content_text') or '')[:12000]}"
     )
     result = run_profile(conn, str(profile["id"]), prompt, logger,
