@@ -300,7 +300,7 @@ def run(conn, job, logger: logging.Logger) -> dict[str, object]:
         return {"status": "held", "reason": error or "not_a_specific_incident", "event_id": event_id}
     entity = _normalize_entity(str(parsed.get("victim") or ""))
     kind = _normalize_event_type(str(parsed.get("event_type") or ""))
-    if (not entity or _is_generic_event_entity(entity) or kind not in _STRICT_EVENT_TYPES
+    if (not entity or _is_generic_event_entity(entity)
             or not str(parsed.get("what_compromised") or "").strip()
             or int(parsed.get("confidence") or 0) < 75):
         return {"status": "held", "reason": "incident_anchor_unverified", "event_id": event_id}
@@ -324,6 +324,8 @@ def run(conn, job, logger: logging.Logger) -> dict[str, object]:
             return {"status": "held", "reason": "duplicate_match_unverified", "event_id": event_id,
                     "candidate_canonical_id": canonical["id"]}
         return _merge(conn, event, canonical, article_ids)
+    if kind not in _STRICT_EVENT_TYPES:
+        return {"status": "held", "reason": "incident_type_unverified", "event_id": event_id}
     return _admit(conn, event, {"seed_article_id": seed_id,
                                 "headline": proposal["title"], "summary": proposal["summary"]},
                   article_ids)

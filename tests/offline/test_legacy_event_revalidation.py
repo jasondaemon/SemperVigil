@@ -107,11 +107,10 @@ def test_run_merges_only_after_source_and_canonical_match(monkeypatch):
                         lambda *_args: ({"id": "profile"}, None))
     monkeypatch.setattr(router, "run_pipeline_stage",
                         lambda *_args, **_kwargs: {"parsed": {
-                            "is_event": True, "victim": "Bitget", "event_type": "breach",
+                            "is_event": True, "victim": "Bitget", "event_type": "other",
                             "what_compromised": "funds", "confidence": 95,
                             "headline": "Bitget theft", "summary": "Bitget lost funds.",
                         }})
-    monkeypatch.setattr(worker, "_normalize_event_type", lambda _value: "breach")
     monkeypatch.setattr(legacy, "_canonical", lambda *_args: {"id": "evt_new"})
     outcomes = iter([True, False])
     monkeypatch.setattr(legacy, "_all_match", lambda *_args: next(outcomes))
@@ -128,6 +127,8 @@ def test_run_merges_only_after_source_and_canonical_match(monkeypatch):
         "status": "merged", "event_id": "evt_old",
         "canonical_event_id": "evt_new", "articles": 2,
     }
+    monkeypatch.setattr(legacy, "_canonical", lambda *_args: None)
+    assert legacy.run(None, job, logging.getLogger(__name__))["reason"] == "incident_type_unverified"
 
 
 def test_tick_enqueues_one_low_priority_job(monkeypatch):
