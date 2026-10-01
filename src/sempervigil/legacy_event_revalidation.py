@@ -258,14 +258,26 @@ def _merge(conn, event: dict, canonical: dict, article_ids: list[int]) -> dict[s
     current = get_event(conn, event["id"])
     target = get_event(conn, canonical["id"])
     linked = {int(item["article_id"]) for item in list_event_articles(conn, event["id"])}
-    if (not _candidate(current) or not _canonical_target(target)
-            or current.get("updated_at") != event.get("updated_at")
-            or target.get("updated_at") != canonical.get("updated_at")
-            or target.get("meta", {}).get("anchor_version") != "victim-role-v1"
-            or linked != set(article_ids) or not _no_public_history(conn, event["id"])
-            or not _no_public_history(conn, canonical["id"])):
+    reason = ""
+    if not _candidate(current):
+        reason = "source_changed"
+    elif not _canonical_target(target):
+        reason = "target_changed"
+    elif current.get("updated_at") != event.get("updated_at"):
+        reason = "source_version_changed"
+    elif target.get("updated_at") != canonical.get("updated_at"):
+        reason = "target_version_changed"
+    elif target.get("meta", {}).get("anchor_version") != "victim-role-v1":
+        reason = "target_anchor_changed"
+    elif linked != set(article_ids):
+        reason = "source_articles_changed"
+    elif not _no_public_history(conn, event["id"]):
+        reason = "source_public_history_present"
+    elif not _no_public_history(conn, canonical["id"]):
+        reason = "target_public_history_present"
+    if reason:
         conn.rollback()
-        return {"status": "held", "reason": "concurrent_event_change"}
+        return {"status": "held", "reason": reason}
     updated = conn.execute(
         """INSERT INTO event_articles(event_id,article_id,added_by,created_at)
             SELECT %s,article_id,%s,%s FROM event_articles WHERE event_id=%s
