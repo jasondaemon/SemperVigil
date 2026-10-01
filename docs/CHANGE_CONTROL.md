@@ -1,5 +1,32 @@
 # Change Control Log
 
+## 2026-10-01: first newly discovered Event published autonomously
+
+- Application `f84daa4` and platform `e26ebe2` deploy a source-only curator
+  revision to the orchestrator and single hosted-model worker. The scoped Helm
+  diff changed only those two Deployments' image tags; both rolled out Ready
+  and the rendered scoped manifest matches live. The previous images remain
+  available for rollback. The public web and Hugo build worker were not changed.
+- `event-fact-curation-v5` tells the model the already-enforced role boundaries:
+  recommendations cannot become attack-path facts, and undated facts cannot
+  become timeline entries. Validation remains strict. A new-anchor Event held
+  solely by the prior unsafe-role error is retried once when the curator
+  generation changes; a failure under the new generation stays held. The full
+  offline suite passed (1,170 passed, two skipped).
+- Naturally acquired MetaMask articles produced four independent source links,
+  a confirmed draft, successful v5 curation, an accepted ledger, an audited
+  composition, and automated publication of `evt_14c81b96dd95`. The first
+  release build lost the existing activation-inventory race and correctly did
+  not activate; the next scheduled build succeeded. Its public Event page and
+  Events index returned HTTP 200. The October 1 daily JSON retained 23 articles
+  and 37 CVEs, with zero Web Enrichment entries.
+- This verifies a new-article-to-publication path, not migration of all old
+  drafts. There are still 104 active legacy candidates without the new victim
+  anchor. Bitget has multiple overlapping private drafts; automatic bulk
+  confirmation would risk duplicate publication. A private misclassified GTIG
+  candidate also remains unpublished. Canonical reconciliation and legacy
+  anchor revalidation are still required.
+
 ## 2026-10-01: guarded Event research canary
 
 - Deployed source-only image `f3631a2` to the orchestrator, fetch worker and

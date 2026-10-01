@@ -1,5 +1,18 @@
 # Event correlation and research recovery
 
+## October 1, 2026: first new-article production result
+
+MetaMask was discovered from normal article acquisition, researched to four
+independent publishers, confirmed as a draft, curated, composed and audited by
+the autonomous pipeline, then published on the public Events page. The first
+build safely refused activation while its Event inventory changed; the next
+scheduled build succeeded. This verifies publication of a new event without
+manual content work. The curator prompt now explicitly states the existing
+semantic-role safety constraints, and a new-anchor case held on the previous
+role error retries only after a curator-version change. The validation gate
+remains unchanged. The 104 legacy candidates are not migrated by this release;
+Bitget duplicates and false anchors require separate reconciliation.
+
 ## September 30, 2026
 
 Two articles about the DIVD intrusion linked because the victim and incident
