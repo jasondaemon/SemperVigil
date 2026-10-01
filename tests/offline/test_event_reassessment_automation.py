@@ -149,6 +149,7 @@ def test_tick_skips_waiting_case_but_stops_after_one_advancement(monkeypatch):
         return {"status": "queued", "event_id": event_id}
 
     monkeypatch.setattr(automation, "enabled", lambda: True)
+    monkeypatch.setattr(automation, "_resume_curator_version_hold", lambda _conn: None)
     monkeypatch.setattr(automation, "_resume_detail_filter_hold", lambda _conn: None)
     monkeypatch.setattr(automation, "_resume_transient_composition_hold", lambda _conn: None)
     monkeypatch.setattr(automation, "advance", advance)
@@ -164,6 +165,7 @@ def test_tick_prioritizes_one_viable_transient_composition_recovery(monkeypatch)
     recovery = {"status": "queued", "event_id": "evt_recover",
                 "job_id": "job_recover", "action": "composition_transient_recovery"}
     monkeypatch.setattr(automation, "enabled", lambda: True)
+    monkeypatch.setattr(automation, "_resume_curator_version_hold", lambda _conn: None)
     monkeypatch.setattr(automation, "_resume_detail_filter_hold", lambda _conn: None)
     monkeypatch.setattr(automation, "_resume_transient_composition_hold",
                         lambda _conn: recovery)
@@ -177,12 +179,44 @@ def test_tick_prioritizes_detail_filter_recovery(monkeypatch):
     recovery = {"status": "accepted", "event_id": "evt_recover",
                 "action": "composition_detail_filter_recovery"}
     monkeypatch.setattr(automation, "enabled", lambda: True)
+    monkeypatch.setattr(automation, "_resume_curator_version_hold", lambda _conn: None)
     monkeypatch.setattr(automation, "_resume_detail_filter_hold",
                         lambda _conn: recovery)
     monkeypatch.setattr(automation, "_resume_transient_composition_hold",
                         lambda _conn: pytest.fail("detail recovery must run first"))
 
     assert automation.tick(object()) == [recovery]
+
+
+def test_curator_version_recovery_only_retries_old_generation(monkeypatch):
+    class Conn:
+        def __init__(self, generation):
+            self.generation = generation
+            self.updated = False
+            self.committed = False
+
+        def execute(self, sql, params=()):
+            if "JOIN LATERAL" in sql:
+                return _Result(("evt_new", self.generation))
+            assert "UPDATE event_reassessment_cases" in sql
+            assert params[1] == "evt_new"
+            self.updated = True
+            return _Result(None)
+
+        def commit(self):
+            self.committed = True
+
+    from sempervigil import event_fact_curation_jobs
+    monkeypatch.setattr(event_fact_curation_jobs, "configuration",
+                        lambda _conn: (None, None, "new-generation"))
+    current = Conn("new-generation")
+    assert automation._resume_curator_version_hold(current) is None
+    assert not current.updated
+    old = Conn("old-generation")
+    assert automation._resume_curator_version_hold(old) == {
+        "status": "active", "event_id": "evt_new", "action": "curator_version_recovery",
+    }
+    assert old.updated and old.committed
 
 
 def test_detail_filter_recovery_reaudits_obsolete_decision(monkeypatch):

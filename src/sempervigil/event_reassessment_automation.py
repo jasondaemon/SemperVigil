@@ -65,6 +65,39 @@ def _resume_transient_composition_hold(conn) -> dict | None:
             "action": "composition_transient_recovery"}
 
 
+def _resume_curator_version_hold(conn) -> dict | None:
+    """Retry a new-contract candidate once after an unsafe old curation result."""
+    from .event_fact_curation_jobs import configuration
+
+    row = conn.execute(
+        """SELECT c.event_id,j.payload_json::jsonb->>'generation'
+             FROM event_reassessment_cases c
+             JOIN events e ON e.id=c.event_id
+             JOIN LATERAL (
+                 SELECT status,error,payload_json FROM jobs
+                  WHERE job_type='event_fact_curate'
+                    AND payload_json::jsonb->>'event_id'=c.event_id
+                  ORDER BY requested_at DESC,id DESC LIMIT 1
+             ) j ON true
+            WHERE c.status='held'
+              AND c.decision_reason='fact curation failed: event_fact_sections_unsafe'
+              AND e.meta_json::jsonb->>'anchor_version'='victim-role-v1'
+              AND j.status='failed' AND j.error='event_fact_sections_unsafe'
+            ORDER BY c.updated_at,c.event_id LIMIT 1"""
+    ).fetchone()
+    if not row or row[1] == configuration(conn)[2]:
+        return None
+    conn.execute(
+        """UPDATE event_reassessment_cases
+              SET status='active',decision_reason=NULL,updated_at=%s
+            WHERE event_id=%s AND status='held'
+              AND decision_reason='fact curation failed: event_fact_sections_unsafe'""",
+        (utc_now_iso(), row[0]),
+    )
+    conn.commit()
+    return {"status": "active", "event_id": row[0], "action": "curator_version_recovery"}
+
+
 def _job_state(conn, job_id: str) -> tuple[str, str]:
     row = conn.execute("SELECT status,COALESCE(error,'') FROM jobs WHERE id=%s", (job_id,)).fetchone()
     return (row[0], row[1]) if row else ("missing", "job unavailable")
@@ -526,6 +559,9 @@ def advance(conn, event_id: str) -> dict:
 def tick(conn) -> list[dict]:
     if not enabled():
         return []
+    recovery = _resume_curator_version_hold(conn)
+    if recovery:
+        return [recovery]
     recovery = _resume_detail_filter_hold(conn)
     if recovery:
         return [recovery]

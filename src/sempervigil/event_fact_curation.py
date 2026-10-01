@@ -7,7 +7,7 @@ from .event_review import _json
 from .event_fact_roles import SECTIONS, validate as validate_sections
 from .investigation import _version
 
-WORKFLOW = "event-fact-curation-v4"
+WORKFLOW = "event-fact-curation-v5"
 MAX_INPUT_BYTES = 48000
 MAX_OUTPUT_BYTES = 8000
 SYSTEM_PROMPT = """Review one article's extracted facts for one specific cybersecurity Event.
@@ -36,7 +36,11 @@ for post-access actions and progression; timeline for a dated Event milestone;
 impact; response_recovery; mitigation only for advice; attribution;
 open_question; or context when the fact is useful only for the overview. Do not
 classify by keyword alone. For unrelated or ambiguous, selected_facts must be
-empty. Do not rewrite facts or invent a title. Return
+empty. Only facts whose kind is recommendation may use mitigation, and those
+facts may use only mitigation or context. Only facts with date_text and a
+date_role of incident or disclosure may use timeline. Use context instead of
+an inapplicable section; never change a fact's kind or date to fit a section.
+Do not rewrite facts or invent a title. Return
 exactly the JSON shape supplied."""
 
 
