@@ -5,13 +5,16 @@
 The old private candidate set is not a publication queue. Many entries use a
 publisher, product vendor, generic population, or `not applicable` as the
 victim, and some apparent incidents have several overlapping drafts. A
-default-disabled, bounded scheduler admits one low-priority revalidation job
+bounded scheduler admits one low-priority revalidation job
 at a time to the existing single local-model worker. Every job retains a
 visible result and uses the current victim-role classifier on the stored seed
-article. Other linked articles must pass the existing same-incident model
-validator; a fallback validator is not sufficient to merge records.
+article. Other linked articles must pass a dedicated Qwen 3.5 same-incident
+profile with a strict decision schema; the article summarizer is not a valid
+substitute, and a deterministic fallback is not sufficient to merge records.
 
-Generic anchors can be archived privately without deleting their source links.
+Generic anchors are reclassified from their retained articles before a genuine
+non-event is archived; source links are not deleted. A named but incorrect
+private victim can be re-anchored only on a high-confidence classification.
 Ambiguous or unsupported model decisions remain private holds. A supported
 unique draft receives the new anchor marker and then uses ordinary research,
 two-publisher confirmation, evidence, composition, audit, and atomic
@@ -19,10 +22,19 @@ publication. A supported duplicate can be merged into one nearby canonical
 draft only when each transferred source has a high-confidence, uncontradicted
 same-incident decision. Article and CVE links transfer inside a locked
 transaction; the old draft is archived with a canonical pointer in metadata.
-Published records and cases with multiple plausible canonical matches are
-held, not merged or republished automatically. The scheduler is opt-in through
-`SV_LEGACY_EVENT_REVALIDATION_ENABLED=1`; a production canary is required
-before that setting is enabled for the full backlog.
+For an already published canonical Event, verified articles enter its existing
+reassessment path before the old draft is archived. Cases with multiple
+plausible canonical matches are held. The scheduler is enabled in production
+through `SV_LEGACY_EVENT_REVALIDATION_ENABLED=1`, processes one versioned
+candidate at a time, and gives normal article work higher priority.
+
+On October 1, a two-article Bitget duplicate merged into the anchored Bitget
+record, which advanced to a confirmed private Event. The old draft was
+suppressed without a second public page. The new-policy backlog pass then
+merged two more duplicates; unsupported cases remained private. This verifies
+reconciliation and scheduling, not universal publication: the Bitget
+reassessment is held by the existing `event_fact_sections_unsafe` curation
+gate and must clear that gate before any public release.
 
 ## October 1, 2026: first new-article production result
 
@@ -34,8 +46,8 @@ scheduled build succeeded. This verifies publication of a new event without
 manual content work. The curator prompt now explicitly states the existing
 semantic-role safety constraints, and a new-anchor case held on the previous
 role error retries only after a curator-version change. The validation gate
-remains unchanged. The 104 legacy candidates are not migrated by this release;
-Bitget duplicates and false anchors require separate reconciliation.
+remains unchanged. That initial release did not migrate the 104 legacy
+candidates; the bounded reconciliation path described above is subsequent work.
 
 ## September 30, 2026
 
