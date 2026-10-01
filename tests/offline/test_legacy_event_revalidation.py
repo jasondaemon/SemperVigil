@@ -227,6 +227,50 @@ def test_published_merge_requires_unchanged_ledger_target(monkeypatch):
         "status": "held", "reason": "published_target_changed"}
 
 
+def test_two_article_merge_checks_archive_update_not_insert_count(monkeypatch):
+    source = {"id": "evt_old", "visibility": "active", "lifecycle": "candidate",
+              "publish_state": "draft", "updated_at": "source-v1", "meta": {}}
+    target = {"id": "evt_new", "visibility": "active", "lifecycle": "candidate",
+              "publish_state": "draft", "updated_at": "target-v1",
+              "meta": {"anchor_version": "victim-role-v1"}}
+
+    class Result:
+        def __init__(self, count=0):
+            self.rowcount = count
+
+        def fetchall(self):
+            return []
+
+    class Conn:
+        def __init__(self):
+            self.commits = 0
+
+        def execute(self, sql, params=()):
+            if "INSERT INTO event_articles" in sql:
+                return Result(2)
+            if "UPDATE events SET visibility='suppressed'" in sql:
+                return Result(1)
+            return Result()
+
+        def commit(self):
+            self.commits += 1
+
+        def rollback(self):
+            pytest.fail("valid merge must not roll back")
+
+    monkeypatch.setattr(legacy, "get_event", lambda _conn, event_id:
+                        source if event_id == "evt_old" else target)
+    monkeypatch.setattr(legacy, "list_event_articles", lambda *_args: [
+        {"article_id": 7}, {"article_id": 8}])
+    monkeypatch.setattr(legacy, "_no_public_history", lambda *_args: True)
+    monkeypatch.setattr(legacy, "_finalize", lambda *_args: {"lifecycle": "confirmed"})
+    conn = Conn()
+    result = legacy._merge(conn, source, target, [7, 8])
+    assert result["status"] == "merged"
+    assert result["articles"] == 2
+    assert conn.commits == 1
+
+
 def test_only_anchored_drafts_compete_for_confirmation():
     from sempervigil import worker
 

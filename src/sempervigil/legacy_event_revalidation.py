@@ -278,7 +278,7 @@ def _merge(conn, event: dict, canonical: dict, article_ids: list[int]) -> dict[s
     if reason:
         conn.rollback()
         return {"status": "held", "reason": reason}
-    updated = conn.execute(
+    conn.execute(
         """INSERT INTO event_articles(event_id,article_id,added_by,created_at)
             SELECT %s,article_id,%s,%s FROM event_articles WHERE event_id=%s
             ON CONFLICT DO NOTHING""",
@@ -292,7 +292,7 @@ def _merge(conn, event: dict, canonical: dict, article_ids: list[int]) -> dict[s
     )
     meta = dict(current.get("meta") or {})
     meta["legacy_revalidation"] = {"status": "merged", "canonical_event_id": canonical["id"]}
-    conn.execute(
+    updated = conn.execute(
         """UPDATE events SET visibility='suppressed',lifecycle='archived',meta_json=%s,
                updated_at=%s WHERE id=%s""",
         (json_dumps(meta), utc_now_iso(), event["id"]),
