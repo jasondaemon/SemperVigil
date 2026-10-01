@@ -122,18 +122,25 @@ def test_run_holds_changed_victim_without_mutating_event(monkeypatch):
     monkeypatch.setattr(legacy, "get_article_by_id", lambda *_args: article)
     monkeypatch.setattr(ai_service, "get_active_profile_for_stage",
                         lambda *_args: ({"id": "profile"}, None))
+    decision = {"is_event": True, "victim": "Acme", "event_type": "breach",
+                "what_compromised": "customer records", "confidence": 80,
+                "headline": "Acme breached", "summary": "Acme lost data."}
     monkeypatch.setattr(router, "run_pipeline_stage",
-                        lambda *_args, **_kwargs: {"parsed": {
-                            "is_event": True, "victim": "Acme", "event_type": "breach",
-                            "what_compromised": "customer records", "confidence": 95,
-                            "headline": "Acme breached", "summary": "Acme lost data.",
-                        }})
+                        lambda *_args, **_kwargs: {"parsed": decision})
     monkeypatch.setattr(worker, "_normalize_event_type", lambda _value: "breach")
     monkeypatch.setattr(legacy, "_admit", lambda *_args: pytest.fail("must not admit"))
     result = legacy.run(None, SimpleNamespace(job_type=legacy.JOB_TYPE,
                         payload={"event_id": "evt_old"}), logging.getLogger(__name__))
     assert result["status"] == "held"
-    assert result["reason"] == "victim_identity_changed"
+    assert result["reason"] == "victim_reanchor_low_confidence"
+    decision["confidence"] = 95
+    monkeypatch.setattr(legacy, "_canonical", lambda *_args: None)
+    captured = {}
+    monkeypatch.setattr(legacy, "_admit", lambda _conn, _event, proposal, _ids:
+                        captured.update(proposal) or {"status": "admitted"})
+    assert legacy.run(None, SimpleNamespace(job_type=legacy.JOB_TYPE,
+                      payload={"event_id": "evt_old"}), logging.getLogger(__name__))["status"] == "admitted"
+    assert captured["entity"] == "Acme"
 
 
 def test_generic_legacy_victim_is_reclassified_before_disposition(monkeypatch):
@@ -313,3 +320,4 @@ def test_tick_enqueues_one_low_priority_job(monkeypatch):
     assert captured["priority"] < 0
     assert captured["queue_name"] == "llm_local"
     assert captured["payload"]["event_updated_at"] == "2026-09-24T00:00:00+00:00"
+    assert captured["payload"]["policy_version"] == legacy.POLICY_VERSION

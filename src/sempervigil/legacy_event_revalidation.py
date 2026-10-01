@@ -11,6 +11,7 @@ from .storage import (enqueue_job, get_article_by_id, get_event, get_setting,
 from .utils import json_dumps, utc_now_iso
 
 JOB_TYPE = "legacy_event_revalidate"
+POLICY_VERSION = "victim-reanchor-v2"
 LAST_SCAN_KEY = "event.legacy_revalidation.last_scan_at"
 MIN_MATCH_CONFIDENCE = 0.9
 
@@ -46,7 +47,8 @@ def tick(conn, *, now: datetime | None = None) -> dict[str, object]:
               AND NOT EXISTS (SELECT 1 FROM event_review_approvals a WHERE a.event_id=e.id)
               AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.job_type=%s
                   AND j.payload_json::jsonb->>'event_id'=e.id
-                  AND j.payload_json::jsonb->>'event_updated_at'=e.updated_at)
+                  AND j.payload_json::jsonb->>'event_updated_at'=e.updated_at
+                  AND j.payload_json::jsonb->>'policy_version'=%s)
             ORDER BY CASE WHEN lower(e.entity) IN ('not applicable','unknown','none')
                           THEN 1 ELSE 0 END,
                      (SELECT count(*) FROM events d
@@ -54,15 +56,16 @@ def tick(conn, *, now: datetime | None = None) -> dict[str, object]:
                          AND lower(d.entity)=lower(e.entity)) DESC,
                      (SELECT count(*) FROM event_articles ea WHERE ea.event_id=e.id) DESC,
                      e.created_at,e.id LIMIT 1""",
-        (JOB_TYPE,),
+        (JOB_TYPE, POLICY_VERSION),
     ).fetchone()
     set_setting(conn, LAST_SCAN_KEY, current.isoformat())
     if not row:
         return {"status": "unchanged", "reason": "backlog_drained"}
     job_id = enqueue_job(conn, JOB_TYPE,
-                         {"event_id": row[0], "event_updated_at": row[1]}, priority=-20,
+                         {"event_id": row[0], "event_updated_at": row[1],
+                          "policy_version": POLICY_VERSION}, priority=-20,
                          queue_name="llm_local", max_attempts=2,
-                         dedupe_key=f"legacy-revalidate:{row[0]}:{row[1]}")
+                         dedupe_key=f"legacy-revalidate:{POLICY_VERSION}:{row[0]}:{row[1]}")
     return {"status": "queued", "event_id": row[0], "job_id": job_id}
 
 
@@ -396,8 +399,8 @@ def run(conn, job, logger: logging.Logger) -> dict[str, object]:
             or int(parsed.get("confidence") or 0) < 75):
         return {"status": "held", "reason": "incident_anchor_unverified", "event_id": event_id}
     if (entity.casefold() != str(event.get("entity") or "").casefold()
-            and not _is_generic_event_entity(str(event.get("entity") or ""))):
-        return {"status": "held", "reason": "victim_identity_changed", "event_id": event_id,
+            and int(parsed.get("confidence") or 0) < 90):
+        return {"status": "held", "reason": "victim_reanchor_low_confidence", "event_id": event_id,
                 "proposed_victim": entity}
     proposal = {**event, "title": str(parsed.get("headline") or seed["title"]),
                 "summary": str(parsed.get("summary") or ""), "kind": kind,
