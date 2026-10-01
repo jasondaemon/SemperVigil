@@ -255,6 +255,44 @@ def _merge(conn, event: dict, canonical: dict, article_ids: list[int]) -> dict[s
             "articles": len(article_ids)}
 
 
+def _merge_published(conn, event: dict, canonical: dict, article_ids: list[int]) -> dict[str, object]:
+    from .event_reassessment import activate_update
+
+    if not _no_public_history(conn, event["id"]):
+        return {"status": "held", "reason": "source_public_history_present"}
+    current_target = get_event(conn, canonical["id"])
+    if (not current_target or current_target.get("visibility") != "active"
+            or current_target.get("publish_state") != "published"
+            or current_target.get("updated_at") != canonical.get("updated_at")
+            or not str(current_target.get("event_key") or "").startswith("event-ledger:")):
+        return {"status": "held", "reason": "published_target_changed"}
+    for article_id in article_ids:
+        activate_update(conn, canonical["id"], article_id=article_id,
+                        created_by=JOB_TYPE)
+    conn.execute("SELECT id FROM events WHERE id=%s FOR UPDATE", (event["id"],)).fetchone()
+    current = get_event(conn, event["id"])
+    linked = {int(item["article_id"]) for item in list_event_articles(conn, event["id"])}
+    if (not _candidate(current) or current.get("updated_at") != event.get("updated_at")
+            or linked != set(article_ids) or not _no_public_history(conn, event["id"])):
+        conn.rollback()
+        return {"status": "held", "reason": "concurrent_event_change"}
+    meta = dict(current.get("meta") or {})
+    meta["legacy_revalidation"] = {"status": "merged", "canonical_event_id": canonical["id"]}
+    updated = conn.execute(
+        """UPDATE events SET visibility='suppressed',lifecycle='archived',meta_json=%s,
+               updated_at=%s WHERE id=%s AND visibility='active'
+               AND lifecycle='candidate' AND publish_state='draft'""",
+        (json_dumps(meta), utc_now_iso(), event["id"]),
+    )
+    if updated.rowcount != 1:
+        conn.rollback()
+        return {"status": "held", "reason": "concurrent_event_change"}
+    conn.commit()
+    return {"status": "merged", "event_id": event["id"],
+            "canonical_event_id": canonical["id"], "lifecycle": "published",
+            "articles": len(article_ids)}
+
+
 def run(conn, job, logger: logging.Logger) -> dict[str, object]:
     from .worker import (_STRICT_EVENT_TYPES, _event_classification_input,
                          _is_generic_event_entity, _normalize_entity,
@@ -317,12 +355,11 @@ def run(conn, job, logger: logging.Logger) -> dict[str, object]:
     if canonical:
         if canonical.get("ambiguous"):
             return {"status": "held", "reason": "multiple_canonical_events", "event_id": event_id}
-        if canonical.get("publish_state") == "published":
-            return {"status": "held", "reason": "published_canonical_requires_reassessment",
-                    "event_id": event_id, "candidate_canonical_id": canonical["id"]}
         if not _all_match(conn, logger, canonical, articles):
             return {"status": "held", "reason": "duplicate_match_unverified", "event_id": event_id,
                     "candidate_canonical_id": canonical["id"]}
+        if canonical.get("publish_state") == "published":
+            return _merge_published(conn, event, canonical, article_ids)
         return _merge(conn, event, canonical, article_ids)
     if kind not in _STRICT_EVENT_TYPES:
         return {"status": "held", "reason": "incident_type_unverified", "event_id": event_id}

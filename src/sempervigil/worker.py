@@ -6427,10 +6427,11 @@ def _has_competing_draft(conn, event: dict[str, object]) -> bool:
     row = conn.execute(
         """SELECT id FROM events WHERE id<>%s AND visibility='active'
            AND publish_state='draft' AND lifecycle='candidate'
+           AND meta_json::jsonb->>'anchor_version'=%s
            AND lower(entity)=lower(%s)
            AND LEFT(first_seen_at,10) BETWEEN %s AND %s
            LIMIT 1""",
-        (event["id"], entity, earliest, latest),
+        (event["id"], EVENT_ANCHOR_VERSION, entity, earliest, latest),
     ).fetchone()
     return bool(row)
 

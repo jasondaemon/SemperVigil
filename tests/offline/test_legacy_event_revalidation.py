@@ -147,6 +147,37 @@ def test_run_merges_only_after_source_and_canonical_match(monkeypatch):
     }
     monkeypatch.setattr(legacy, "_canonical", lambda *_args: None)
     assert legacy.run(None, job, logging.getLogger(__name__))["reason"] == "incident_type_unverified"
+    monkeypatch.setattr(legacy, "_canonical", lambda *_args: {
+        "id": "evt_new", "publish_state": "published"})
+    monkeypatch.setattr(legacy, "_merge_published", lambda _conn, source, target, ids: {
+        "status": "merged", "event_id": source["id"],
+        "canonical_event_id": target["id"], "articles": len(ids),
+    })
+    assert legacy.run(None, job, logging.getLogger(__name__))["canonical_event_id"] == "evt_new"
+
+
+def test_published_merge_requires_unchanged_ledger_target(monkeypatch):
+    monkeypatch.setattr(legacy, "_no_public_history", lambda *_args: True)
+    monkeypatch.setattr(legacy, "get_event", lambda *_args: {
+        "visibility": "active", "publish_state": "published",
+        "updated_at": "later", "event_key": "event-ledger:eld_123",
+    })
+    assert legacy._merge_published(None, {"id": "evt_old"},
+                                   {"id": "evt_new", "updated_at": "earlier"}, [7]) == {
+        "status": "held", "reason": "published_target_changed"}
+
+
+def test_only_anchored_drafts_compete_for_confirmation():
+    from sempervigil import worker
+
+    class Conn:
+        def execute(self, sql, params):
+            assert "meta_json::jsonb->>'anchor_version'=%s" in sql
+            assert params[1] == worker.EVENT_ANCHOR_VERSION
+            return SimpleNamespace(fetchone=lambda: None)
+
+    assert not worker._has_competing_draft(Conn(), {
+        "id": "evt_new", "entity": "Bitget", "first_seen_at": "2026-09-24"})
 
 
 def test_tick_enqueues_one_low_priority_job(monkeypatch):

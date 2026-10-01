@@ -157,7 +157,8 @@ def test_placeholder_or_multi_victim_is_not_an_event_anchor():
 def test_competing_recent_draft_holds_confirmation(monkeypatch):
     class Connection:
         def execute(self, sql, params):
-            assert params == ("evt_new", "Bitget", "2026-09-16", "2026-10-14")
+            assert params == ("evt_new", worker.EVENT_ANCHOR_VERSION,
+                              "Bitget", "2026-09-16", "2026-10-14")
             return self
 
         def fetchone(self):
