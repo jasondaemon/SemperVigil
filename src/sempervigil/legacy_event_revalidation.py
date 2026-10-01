@@ -128,11 +128,49 @@ def _all_match(conn, logger: logging.Logger, event: dict, articles: list[dict]) 
             return False
         decision, _ = _validate_event_source_with_llm(
             conn, logger, event=event, source=_source(article), content=content)
-        if (decision.get("validator") != "llm" or decision.get("related") is not True
-                or float(decision.get("confidence") or 0) < MIN_MATCH_CONFIDENCE
-                or decision.get("contradictions") or not decision.get("matched_facts")):
+        if decision.get("validator") != "llm":
+            return False
+        if _verified_match(decision):
+            continue
+        if decision.get("contradictions"):
+            return False
+        if not _verified_match(_adjudicate_match(conn, logger, event, article, decision)):
             return False
     return True
+
+
+def _verified_match(decision: dict) -> bool:
+    return bool(decision.get("related") is True
+                and float(decision.get("confidence") or 0) >= MIN_MATCH_CONFIDENCE
+                and not decision.get("contradictions") and decision.get("matched_facts"))
+
+
+def _adjudicate_match(conn, logger: logging.Logger, event: dict, article: dict,
+                      prior: dict) -> dict:
+    from .worker import _event_source_validation_profile, _parse_event_web_validation
+    from .llm.router import run_profile
+
+    profile = _event_source_validation_profile(conn)
+    if not profile:
+        return {}
+    prompt = (
+        "Independently decide whether this article describes the same single incident or a "
+        "later update to it. The previous validator gave an uncertain or internally "
+        "inconsistent verdict; do not copy it. Compare victim, affected systems/data, "
+        "mechanism, and incident timeline. Reported dates, rounded figures, and corrected "
+        "totals can differ for one incident. Reject a different attack on the same victim. "
+        "Return JSON only: related (bool), confidence (0..1), matched_facts (array), "
+        "contradictions (array of facts proving a different incident), rationale (string).\n\n"
+        f"Event: {event.get('title')} | {event.get('entity')} | {event.get('incident_date')}\n"
+        f"Event summary: {event.get('summary')}\n"
+        f"Article: {article.get('title')}\n"
+        f"Article content: {str(article.get('content_text') or '')[:12000]}"
+    )
+    result = run_profile(conn, str(profile["id"]), prompt, logger,
+                         context={"stage": "legacy_event_match_adjudication",
+                                  "job_type": JOB_TYPE, "profile_name": profile.get("name") or ""})
+    parsed, _ = _parse_event_web_validation(result if isinstance(result, dict) else {})
+    return parsed or {}
 
 
 def _no_public_history(conn, event_id: str) -> bool:
@@ -197,10 +235,12 @@ def _admit(conn, event: dict, proposal: dict, article_ids: list[int]) -> dict[st
     meta["anchor_version"] = EVENT_ANCHOR_VERSION
     meta["legacy_revalidation"] = {"status": "accepted", "seed_article_id": proposal["seed_article_id"]}
     updated = conn.execute(
-        """UPDATE events SET meta_json=%s,title=%s,summary=%s,updated_at=%s
+        """UPDATE events SET meta_json=%s,title=%s,summary=%s,entity=%s,kind=%s,
+               incident_date=%s,updated_at=%s
              WHERE id=%s AND visibility='active' AND lifecycle='candidate'
                AND publish_state='draft'""",
         (json_dumps(meta), proposal["headline"], proposal["summary"],
+         proposal["entity"], proposal["kind"], proposal["incident_date"],
          utc_now_iso(), event["id"]),
     )
     if updated.rowcount != 1:
@@ -311,8 +351,6 @@ def run(conn, job, logger: logging.Logger) -> dict[str, object]:
         return _finalize(conn, legacy["canonical_event_id"])
     if not _candidate(event) or event.get("meta", {}).get("anchor_version"):
         return {"status": "skipped", "reason": "candidate_changed", "event_id": event_id}
-    if _is_generic_event_entity(str(event.get("entity") or "")):
-        return {"event_id": event_id, **_archive_generic(conn, event)}
     linked = list_event_articles(conn, event_id)
     seed_id = int(event.get("meta", {}).get("seed_article_id") or 0)
     article_ids = [int(item["article_id"]) for item in linked]
@@ -334,6 +372,9 @@ def run(conn, job, logger: logging.Logger) -> dict[str, object]:
         context={"stage": "derive_events_from_articles", "job_type": JOB_TYPE},
     )
     parsed, error = _parse_event_classification(result if isinstance(result, dict) else {})
+    if not error and parsed and not parsed.get("is_event") and _is_generic_event_entity(
+            str(event.get("entity") or "")):
+        return {"event_id": event_id, **_archive_generic(conn, event)}
     if error or not parsed or not parsed.get("is_event"):
         return {"status": "held", "reason": error or "not_a_specific_incident", "event_id": event_id}
     entity = _normalize_entity(str(parsed.get("victim") or ""))
@@ -342,7 +383,8 @@ def run(conn, job, logger: logging.Logger) -> dict[str, object]:
             or not str(parsed.get("what_compromised") or "").strip()
             or int(parsed.get("confidence") or 0) < 75):
         return {"status": "held", "reason": "incident_anchor_unverified", "event_id": event_id}
-    if entity.casefold() != str(event.get("entity") or "").casefold():
+    if (entity.casefold() != str(event.get("entity") or "").casefold()
+            and not _is_generic_event_entity(str(event.get("entity") or ""))):
         return {"status": "held", "reason": "victim_identity_changed", "event_id": event_id,
                 "proposed_victim": entity}
     proposal = {**event, "title": str(parsed.get("headline") or seed["title"]),
@@ -363,6 +405,7 @@ def run(conn, job, logger: logging.Logger) -> dict[str, object]:
         return _merge(conn, event, canonical, article_ids)
     if kind not in _STRICT_EVENT_TYPES:
         return {"status": "held", "reason": "incident_type_unverified", "event_id": event_id}
-    return _admit(conn, event, {"seed_article_id": seed_id,
+    return _admit(conn, event, {"seed_article_id": seed_id, "entity": entity,
+                                "kind": kind, "incident_date": proposal["incident_date"],
                                 "headline": proposal["title"], "summary": proposal["summary"]},
                   article_ids)

@@ -60,6 +60,28 @@ def test_all_match_requires_uncontradicted_source_facts(monkeypatch):
     assert legacy._all_match(None, logging.getLogger(__name__), {}, [article])
 
 
+def test_inconsistent_model_verdict_needs_independent_adjudication(monkeypatch):
+    from sempervigil import worker
+
+    monkeypatch.setattr(worker, "_validate_event_source_with_llm",
+                        lambda *_args, **_kwargs: ({
+                            "validator": "llm", "related": False, "confidence": 1.0,
+                            "matched_facts": ["same victim", "same loss"],
+                            "contradictions": [],
+                        }, ""))
+    article = {"title": "Follow-up", "content_text": "The same attack was updated."}
+    monkeypatch.setattr(legacy, "_adjudicate_match", lambda *_args: {
+        "related": False, "confidence": 1.0, "matched_facts": ["same victim"],
+        "contradictions": [],
+    })
+    assert not legacy._all_match(None, logging.getLogger(__name__), {}, [article])
+    monkeypatch.setattr(legacy, "_adjudicate_match", lambda *_args: {
+        "related": True, "confidence": 0.95, "matched_facts": ["same victim", "same loss"],
+        "contradictions": [],
+    })
+    assert legacy._all_match(None, logging.getLogger(__name__), {}, [article])
+
+
 def test_source_validator_distinguishes_incident_conflicts_from_updates(monkeypatch):
     from sempervigil import worker
 
@@ -104,6 +126,36 @@ def test_run_holds_changed_victim_without_mutating_event(monkeypatch):
                         payload={"event_id": "evt_old"}), logging.getLogger(__name__))
     assert result["status"] == "held"
     assert result["reason"] == "victim_identity_changed"
+
+
+def test_generic_legacy_victim_is_reclassified_before_disposition(monkeypatch):
+    from sempervigil import worker
+    from sempervigil.llm import router
+    from sempervigil.services import ai_service
+
+    event = {"id": "evt_old", "entity": "not applicable", "visibility": "active",
+             "lifecycle": "candidate", "publish_state": "draft", "meta": {"seed_article_id": 7}}
+    article = {"id": 7, "title": "Acme breached", "content_text": "Acme was breached.",
+               "original_url": "https://example.org/acme"}
+    monkeypatch.setattr(legacy, "get_event", lambda *_args: event)
+    monkeypatch.setattr(legacy, "list_event_articles", lambda *_args: [{"article_id": 7}])
+    monkeypatch.setattr(legacy, "get_article_by_id", lambda *_args: article)
+    monkeypatch.setattr(ai_service, "get_active_profile_for_stage",
+                        lambda *_args: ({"id": "profile"}, None))
+    monkeypatch.setattr(router, "run_pipeline_stage",
+                        lambda *_args, **_kwargs: {"parsed": {
+                            "is_event": True, "victim": "Acme", "event_type": "breach",
+                            "what_compromised": "customer records", "confidence": 95,
+                            "headline": "Acme breached", "summary": "Acme lost data.",
+                        }})
+    monkeypatch.setattr(worker, "_normalize_event_type", lambda _value: "breach")
+    monkeypatch.setattr(legacy, "_canonical", lambda *_args: None)
+    captured = {}
+    monkeypatch.setattr(legacy, "_admit", lambda _conn, _event, proposal, _ids:
+                        captured.update(proposal) or {"status": "admitted"})
+    job = SimpleNamespace(job_type=legacy.JOB_TYPE, payload={"event_id": "evt_old"})
+    assert legacy.run(None, job, logging.getLogger(__name__))["status"] == "admitted"
+    assert captured["entity"] == "Acme"
 
 
 def test_run_merges_only_after_source_and_canonical_match(monkeypatch):
