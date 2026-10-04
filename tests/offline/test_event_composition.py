@@ -39,7 +39,18 @@ def valid_output():
     output = {section: [] for section in composition.GENERATED_SECTIONS}
     output["overview"] = [{"text": "Acme disclosed an intrusion affecting its environment; "
                                    "recovery remains unconfirmed.",
-                           "fact_refs": ["F01", "F02"]}]
+                           "fact_refs": ["F01", "F02"],
+                           "claim_type": "sourced_finding", "confidence": None}]
+    output["attack_vector"] = [{"text": "Acme reported unauthorized access on July 4.",
+                                "fact_refs": ["F01"], "claim_type": "sourced_finding",
+                                "confidence": None}]
+    output["attack_path"] = [{"text": "The accepted account places the unauthorized access "
+                                      "inside Acme's environment on July 4.",
+                              "fact_refs": ["F01"], "claim_type": "sourced_finding",
+                              "confidence": None}]
+    output["open_questions"] = [{"text": "Recovery remains unconfirmed.",
+                                 "fact_refs": ["F02"], "claim_type": "sourced_finding",
+                                 "confidence": None}]
     return output
 
 
@@ -53,11 +64,13 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
         {"dimension": "attack_mechanics", "fact_refs": ["F01"]},
     ]
     assert payload["overview_min_paragraphs"] == 1
+    assert {row["section"] for row in payload["detail_requirements"]} == {
+        "attack_vector", "attack_path", "open_questions"}
     assert payload["facts"][0]["suggested_sections"] == ["overview", "attack_vector", "attack_path", "timeline"]
     properties = req["schema"]["properties"]
     assert properties["overview"]["minItems"] == 1
     assert properties["overview"]["maxItems"] == 4
-    assert properties["overview"]["items"]["properties"]["text"]["maxLength"] == 3200
+    assert properties["overview"]["items"]["properties"]["text"]["maxLength"] == 4800
     assert properties["overview"]["items"]["properties"]["fact_refs"]["maxItems"] == 16
     assert set(properties) == set(composition.GENERATED_SECTIONS)
     record = composition.validate(json.dumps(valid_output()).encode(), ledger_revision(), GENERATION)
@@ -68,8 +81,8 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
         "text": "Acme reported unauthorized access on July 4.",
         "fact_ids": ["f1"], "date_text": "July 4",
     }]
-    assert record["sections"]["attack_vector"] == []
-    assert record["sections"]["open_questions"] == []
+    assert record["sections"]["attack_vector"][0]["claim_type"] == "sourced_finding"
+    assert record["sections"]["open_questions"][0]["confidence"] is None
 
 
 def test_allowed_sections_use_curated_semantics_without_keyword_reclassification():
@@ -83,6 +96,8 @@ def test_allowed_sections_use_curated_semantics_without_keyword_reclassification
               "kind": "reported_fact", "date_text": None, "date_role": "none",
               "sections": ["context"]}
     assert "attack_path" not in composition._allowed_sections(access)
+    mitigation = {"fact_id": "m1", "sections": ["mitigation"]}
+    assert composition._detail_requirements([mitigation]) == {"mitigations": ["m1"]}
 
 
 def test_prior_policies_remain_reproducible_for_existing_publications():
@@ -140,6 +155,29 @@ def test_timeline_normalization_matches_missing_year_to_one_explicit_year():
     assert len(composition._timeline_refs(aliases)) == 1
 
 
+def test_timeline_is_returned_in_normalized_chronological_order():
+    aliases = {
+        "F01": {"fact_id": "late", "statement": "The incident was disclosed in 2026.",
+                 "kind": "reported_fact", "date_text": "February 2026",
+                 "date_role": "disclosure", "sections": ["timeline"]},
+        "F02": {"fact_id": "early", "statement": "The intrusion began in 2024.",
+                 "kind": "reported_fact", "date_text": "May 2024",
+                 "date_role": "incident", "sections": ["timeline"]},
+        "F03": {"fact_id": "middle", "statement": "Acme detected activity in 2025.",
+                 "kind": "reported_fact", "date_text": "October 2025",
+                 "date_role": "discovery", "sections": ["timeline"]},
+    }
+    assert composition._timeline_refs(aliases) == ["F02", "F03", "F01"]
+    assert [row["fact_ids"][0] for row in
+            composition._deterministic_sections(aliases)["timeline"]] == [
+                "early", "middle", "late"]
+
+
+def test_timeline_range_uses_the_first_written_month_not_calendar_order():
+    assert composition._date_parts("around December 2025 to July 2026")[:3] == (
+        2025, 12, None)
+
+
 def test_timeline_normalization_fails_closed_over_eight_distinct_milestones():
     aliases = {
         f"F{index:02d}": {"fact_id": str(index), "statement": f"Milestone {index} occurred.",
@@ -157,6 +195,45 @@ def test_response_schema_uses_openai_supported_subset_and_duplicates_fail_closed
     output = valid_output()
     output["overview"][0]["fact_refs"] = ["F01", "F01"]
     with pytest.raises(ValueError, match="duplicate_fact_ref"):
+        composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
+
+
+def test_detail_coverage_and_nonrepetition_fail_closed():
+    output = valid_output()
+    output["attack_path"] = []
+    with pytest.raises(ValueError, match="detail_incomplete"):
+        composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
+    output = valid_output()
+    output["attack_path"][0]["text"] = output["attack_vector"][0]["text"]
+    with pytest.raises(ValueError, match="duplicate_narrative"):
+        composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
+
+
+def test_nonrepetition_allows_detail_contained_in_broader_overview_synthesis():
+    output = valid_output()
+    output["overview"][0]["text"] = (
+        "Acme reported unauthorized access on July 4 and launched its investigation. "
+        "The broader event also affected its operating environment, while recovery "
+        "remains unconfirmed and attribution has not been established."
+    )
+    output["attack_vector"][0]["text"] = (
+        "Acme reported unauthorized access on July 4 and launched its investigation."
+    )
+    record = composition.validate(
+        json.dumps(output).encode(), ledger_revision(), GENERATION
+    )
+    assert record["sections"]["attack_vector"][0]["text"].startswith("Acme reported")
+
+
+def test_assessments_require_explicit_confidence_and_preserve_type():
+    output = valid_output()
+    output["overview"][0].update({"claim_type": "analyst_assessment",
+                                  "confidence": "moderate"})
+    record = composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
+    assert record["sections"]["overview"][0]["claim_type"] == "analyst_assessment"
+    assert record["sections"]["overview"][0]["confidence"] == "moderate"
+    output["overview"][0]["confidence"] = None
+    with pytest.raises(ValueError, match="claim_type_invalid"):
         composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
 
 
@@ -206,10 +283,20 @@ def test_rich_event_requires_core_semantic_coverage_and_readable_paragraphs():
     output["overview"] = [{
         "text": "Acme disclosed an intrusion into its hosted service, which exposed customer records before Acme contained it.",
         "fact_refs": ["F01", "F03", "F04", "F06"],
+        "claim_type": "sourced_finding", "confidence": None,
     }, {
         "text": "Recovery remains unconfirmed, and the available reporting attributes the activity to Group One.",
         "fact_refs": ["F02", "F05"],
+        "claim_type": "sourced_finding", "confidence": None,
     }]
+    output["impact"] = [{"text": "Customer records were exposed.", "fact_refs": ["F03"],
+                          "claim_type": "sourced_finding", "confidence": None}]
+    output["response_recovery"] = [{"text": "Acme contained the intrusion.",
+                                     "fact_refs": ["F04"],
+                                     "claim_type": "sourced_finding", "confidence": None}]
+    output["attribution"] = [{"text": "Acme attributed the activity to Group One.",
+                              "fact_refs": ["F05"],
+                              "claim_type": "sourced_finding", "confidence": None}]
     record = composition.validate(json.dumps(output).encode(), revision, GENERATION)
     assert len(record["sections"]["overview"]) == 2
 
@@ -237,7 +324,8 @@ def test_model_prose_is_stored_with_immutable_evidence_ids():
     output["overview"][0]["text"] = "A varied, readable account grounded in accepted evidence."
     record = composition.validate(json.dumps(output).encode(), ledger_revision(), GENERATION)
     assert record["sections"]["overview"][0] == {
-        "text": output["overview"][0]["text"], "fact_ids": ["f1", "f2"]}
+        "text": output["overview"][0]["text"], "fact_ids": ["f1", "f2"],
+        "claim_type": "sourced_finding", "confidence": None}
     assert record["sections"]["timeline"][0]["date_text"] == "July 4"
 
 

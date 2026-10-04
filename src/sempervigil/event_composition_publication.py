@@ -257,6 +257,14 @@ def validate_bundle(bundle: dict, *, event_id: str, expected_revision: str | Non
                         and any(section not in event_composition._allowed_sections(
                             active[ref], section_policy) for ref in refs))):
                 raise ValueError("event_composition_publication_citation_invalid")
+            if composition.get("workflow") == event_composition.WORKFLOW and section != "timeline":
+                claim_type = item.get("claim_type")
+                confidence = item.get("confidence")
+                if (claim_type not in {"sourced_finding", "analyst_assessment"}
+                        or (claim_type == "sourced_finding" and confidence is not None)
+                        or (claim_type == "analyst_assessment"
+                            and confidence not in {"high", "moderate", "low"})):
+                    raise ValueError("event_composition_publication_claim_type_invalid")
             if section == "timeline":
                 dated = [active[ref].get("date_text") for ref in refs if active[ref].get("date_text")]
                 if len(dated) != 1 or item.get("date_text") != dated[0]:

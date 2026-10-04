@@ -108,6 +108,18 @@ def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict
         facts = {fact["fact_id"]: fact for fact in projection["ledger"]["facts"]}
         sources = {source["article_id"]: source for source in projection["sources"]}
         unique_sources, source_numbers = _canonical_sources(projection["sources"])
+        def citation_links(fact_ids):
+            linked = []
+            for fact_id in fact_ids:
+                source = sources[facts[fact_id]["article_id"]]
+                number = source_numbers[source["article_id"]]
+                if number not in [value[0] for value in linked]:
+                    linked.append((number, unique_sources[number - 1]))
+            return " ".join(
+                f'<a class="event-source" href="{escape(url_quote(source["url"], safe=":/?&=%#@+"), quote=True)}" '
+                f'title="Source {index}: {escape(source["title"], quote=True)}" '
+                f'target="_blank" rel="noopener" aria-label="Source {index}">[{index}]</a>'
+                for index, source in linked)
         lines = [f'<section id="sv-event-coverage" class="event-report" '
                  f'data-event-id="{escape(event_id, quote=True)}" '
                  f'data-event-revision="{expected_revision}">',
@@ -131,33 +143,44 @@ def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict
             elif section == "overview":
                 lines.append('<div class="event-overview">')
             for item in items:
-                linked = []
-                for fact_id in item["fact_ids"]:
-                    source = sources[facts[fact_id]["article_id"]]
-                    number = source_numbers[source["article_id"]]
-                    if number not in [value[0] for value in linked]:
-                        linked.append((number, unique_sources[number - 1]))
-                citations = " ".join(
-                    f'<a class="event-source" href="{escape(url_quote(source["url"], safe=":/?&=%#@+"), quote=True)}" '
-                    f'title="Source {index}: {escape(source["title"], quote=True)}" '
-                    f'target="_blank" rel="noopener" aria-label="Source {index}">[{index}]</a>'
-                    for index, source in linked)
+                citations = citation_links(item["fact_ids"])
                 text = escape(" ".join(item["text"].split()))
                 kinds = {facts[fact_id]["kind"] for fact_id in item["fact_ids"]}
                 state = ("Unresolved" if kinds & {"uncertainty", "disputed"}
                          else "Attributed" if "allegation" in kinds else "")
                 badge = (f'<span class="event-claim-state event-claim-state--{state.lower()}">{state}</span>'
                          if state and section != "overview" else "")
+                if item.get("claim_type") == "analyst_assessment":
+                    confidence = escape(str(item.get("confidence") or "unknown").title())
+                    badge += (f'<span class="event-claim-state event-claim-state--assessment">'
+                              f'Analyst assessment · {confidence} confidence</span>')
                 if section == "timeline":
                     lines.append(f'<li><time>{escape(item["date_text"])}</time><div>{badge}<p>{text} {citations}</p></div></li>')
                 elif section == "overview":
-                    lines.append(f'<p class="event-overview__paragraph">{text} {citations}</p>')
+                    lines.append(f'<p class="event-overview__paragraph">{badge}{text} {citations}</p>')
                 else:
                     lines.append(f'<div class="event-claim">{badge}<p>{text} {citations}</p></div>')
             if section == "timeline":
                 lines.append("</ol>")
             elif section == "overview":
                 lines.append("</div>")
+            lines.append("</section>")
+        change = projection["composition"]["change"]
+        change_groups = (("Added evidence", change["added_fact_ids"]),
+                         ("Superseded evidence", change["supersedes_fact_ids"]),
+                         ("Disputed evidence", change["conflict_fact_ids"]))
+        if change["kind"] != "initial" and any(ids for _, ids in change_groups):
+            lines.extend(['<section class="event-report-section event-report-section--changes" id="changes">',
+                          "<h2>What changed</h2>"])
+            for label, fact_ids in change_groups:
+                available = [fact_id for fact_id in fact_ids if fact_id in facts]
+                if not available:
+                    continue
+                lines.append(f"<h3>{escape(label)}</h3><ul>")
+                for fact_id in available:
+                    statement = escape(" ".join(facts[fact_id]["statement"].split()))
+                    lines.append(f"<li>{statement} {citation_links([fact_id])}</li>")
+                lines.append("</ul>")
             lines.append("</section>")
         lines.extend(["</div>", '<section class="event-report-section event-report-section--sources" id="sources">',
                       "<h2>Sources</h2>", '<ol class="event-sources">'])
@@ -168,7 +191,6 @@ def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict
             site = escape(_source_site(source["url"]))
             lines.append(f'<li><a href="{url}" target="_blank" rel="noopener">'
                          f'<time>{date}</time><span>{title}</span><small>{site}</small></a></li>')
-        change = projection["composition"]["change"]
         delta = (f'{len(change["added_fact_ids"])} added, '
                  f'{len(change["supersedes_fact_ids"])} superseded, '
                  f'{len(change["conflict_fact_ids"])} disputed')

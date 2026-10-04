@@ -139,7 +139,7 @@ def _is_repaired_composition(conn, composition_id: str,
 
 
 def _filter_detail_failures(conn, composition_id: str) -> dict | None:
-    """Accept a deletion-only derivative when every rejected item is non-overview."""
+    """Retain deletion-only compatibility for pre-analyst-report compositions."""
     row = conn.execute(
         """SELECT result_json FROM jobs
             WHERE job_type='event_composition_audit' AND status='succeeded'
@@ -154,6 +154,8 @@ def _filter_detail_failures(conn, composition_id: str) -> dict | None:
     from . import event_composition, event_composition_audit as composition_audit
     from .event_composition_repair_jobs import material as repair_material
     composition, ledger_revision = repair_material(conn, composition_id)
+    if composition.get("workflow") == event_composition.WORKFLOW:
+        return None
     audit_request = composition_audit.request(
         composition_id, composition, ledger_revision["ledger"],
         decision.get("generation_version", ""),

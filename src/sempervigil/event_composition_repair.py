@@ -60,14 +60,10 @@ def request(composition_id: str, composition: dict, ledger_revision: dict,
         raise ValueError("event_composition_repair_audit_invalid")
     audit_rows = {row["id"]: row for row in decision.get("audits", [])}
     facts = {str(row["fact_id"]): row for row in ledger_revision["ledger"].get("facts", [])}
-    repairs, drop_item_ids = [], []
+    repairs = []
     for item_id, section, item in _items(composition):
         audit_row = audit_rows.get(item_id)
         if audit_row and audit_row["verdict"] != "supported":
-            if (composition.get("workflow") == event_composition.WORKFLOW
-                    and section != "overview"):
-                drop_item_ids.append(item_id)
-                continue
             refs = item.get("fact_ids", [])
             repairs.append({"id": item_id, "section": section, "text": item.get("text"),
                             "audit_reason": audit_row["reason"],
@@ -75,7 +71,7 @@ def request(composition_id: str, composition: dict, ledger_revision: dict,
                                               "statement": facts[ref]["statement"],
                                               "kind": facts[ref]["kind"]} for ref in refs]})
     if not repairs:
-        raise ValueError("event_composition_repair_overview_items_missing")
+        raise ValueError("event_composition_repair_items_missing")
     ids = [row["id"] for row in repairs]
     response_schema = schema(ids)
     encoded = json.dumps({"items": repairs}, ensure_ascii=True, sort_keys=True,
@@ -87,8 +83,7 @@ def request(composition_id: str, composition: dict, ledger_revision: dict,
                 "audit_request_version": decision["request_version"],
                 "generation": generation, "system": SYSTEM_PROMPT, "input": encoded,
                 "schema": response_schema}
-    return {**identity, "request_version": _version(identity), "item_ids": ids,
-            "drop_item_ids": drop_item_ids}
+    return {**identity, "request_version": _version(identity), "item_ids": ids}
 
 
 def validate(raw: bytes, req: dict, composition: dict, ledger_revision: dict) -> dict:
@@ -106,17 +101,20 @@ def validate(raw: bytes, req: dict, composition: dict, ledger_revision: dict) ->
     if composition.get("workflow") == event_composition.WORKFLOW:
         output = {section: [] for section in event_composition.GENERATED_SECTIONS}
         for item_id, section, item in _items(composition):
-            if item_id in req["drop_item_ids"]:
-                continue
             output[section].append({"text": replacements.get(item_id, item["text"]),
                                     "fact_refs": [alias_by_id[ref]
-                                                  for ref in item.get("fact_ids", [])]})
+                                                  for ref in item.get("fact_ids", [])],
+                                    "claim_type": item.get("claim_type", "sourced_finding"),
+                                    "confidence": item.get("confidence")})
         return event_composition.validate(
-            json.dumps(output).encode(), ledger_revision, req["generation"])
+            json.dumps(output).encode(), ledger_revision, req["generation"],
+            require_detail_coverage=False)
     output = {section: [] for section in event_composition.SECTIONS}
     for item_id, section, item in _items(composition):
         output[section].append({"text": replacements.get(item_id, item["text"]),
                                 "fact_refs": [alias_by_id[ref]
-                                              for ref in item.get("fact_ids", [])]})
+                                              for ref in item.get("fact_ids", [])],
+                                "claim_type": item.get("claim_type", "sourced_finding"),
+                                "confidence": item.get("confidence")})
     return event_composition.validate(json.dumps(output).encode(), ledger_revision,
-                                      req["generation"])
+                                      req["generation"], require_detail_coverage=False)

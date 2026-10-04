@@ -106,6 +106,30 @@ def test_composition_bundle_renders_reproducible_page_and_index():
     assert entry["counts"]["articles"] == 1
 
 
+def test_v11_renders_assessment_confidence_and_cited_revision_delta():
+    event_id, bundle = _bundle()
+    bundle["composition"]["workflow"] = "event-ledger-composition-v11"
+    for section in ("overview", "attack_vector", "impact"):
+        for item in bundle["composition"]["sections"][section]:
+            item.update(claim_type="sourced_finding", confidence=None)
+    bundle["composition"]["sections"]["overview"][0].update(
+        claim_type="analyst_assessment", confidence="moderate"
+    )
+    bundle["composition"]["change"]["kind"] = "additive"
+    bundle["ledger_record"]["change"]["kind"] = "additive"
+    bundle["ledger_revision_id"] = "elr_" + _version(bundle["ledger_record"])
+    bundle["composition"]["ledger_revision_id"] = bundle["ledger_revision_id"]
+    bundle["qualification"]["ledger_revision_id"] = bundle["ledger_revision_id"]
+    bundle["composition_id"] = "elc_" + _version(bundle["composition"])
+    bundle["qualification"]["composition_id"] = bundle["composition_id"]
+    revision = _version({"workflow": PUBLIC_WORKFLOW, "bundle": bundle})
+    _, page = render(bundle, event_id=event_id, expected_revision=revision)
+    assert "Analyst assessment · Moderate confidence" in page
+    assert "What changed" in page and "Added evidence" in page
+    assert "WaterPlum infected devices." in page
+    assert "https://example.test/report" in page
+
+
 def test_composition_bundle_rejects_section_and_revision_tampering():
     event_id, bundle = _bundle()
     revision = _version({"workflow": PUBLIC_WORKFLOW, "bundle": bundle})

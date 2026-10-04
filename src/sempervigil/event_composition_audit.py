@@ -16,6 +16,9 @@ whether every material assertion, actor, action, quantity, date implication,
 causal link, attribution, recovery claim, recommendation, and degree of certainty
 is directly supported by the cited fact statements. A citation about the same
 incident is not enough. Do not use outside knowledge and do not repair the prose.
+For analyst_assessment items, also verify that the text is explicitly presented as
+an assessment, that its confidence is no stronger than the cited evidence permits,
+and that it is a conservative synthesis rather than a new factual assertion.
 supported means all claims are entailed while preserving qualifications;
 unsupported means any material claim is added or changed; uncertain means the
 comparison cannot be resolved safely. Return exactly one audit for every item."""
@@ -58,6 +61,8 @@ def request(composition_id: str, composition: dict, ledger: dict, generation: st
                 raise ValueError("event_composition_audit_material_invalid")
             items.append({"id": identity, "section": section, "text": item.get("text"),
                           "date_text": item.get("date_text"),
+                          "claim_type": item.get("claim_type", "sourced_finding"),
+                          "confidence": item.get("confidence"),
                           "cited_facts": [{"fact_id": ref, "statement": facts[ref]["statement"],
                                            "kind": facts[ref]["kind"],
                                            "date_text": facts[ref].get("date_text"),

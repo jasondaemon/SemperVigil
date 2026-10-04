@@ -40,9 +40,11 @@ def test_repair_rewrites_only_rejected_text_and_revalidates_composition():
         "text": "Acme said records may have been exposed."}]}).encode(),
         req, composition, revision)
     assert record["sections"]["overview"] == [{
-        "text": "Acme said records may have been exposed.", "fact_ids": ["f1"]}]
+        "text": "Acme said records may have been exposed.", "fact_ids": ["f1"],
+        "claim_type": "sourced_finding", "confidence": None}]
     assert record["sections"]["impact"] == [{
-        "text": "The incident may have exposed records.", "fact_ids": ["f1"]}]
+        "text": "The incident may have exposed records.", "fact_ids": ["f1"],
+        "claim_type": "sourced_finding", "confidence": None}]
     assert record["status"] == "unreviewed"
 
 
@@ -55,7 +57,7 @@ def test_v9_repair_ids_match_generated_section_audit_ids():
     assert item["text"] == "Acme confirmed records were stolen."
 
 
-def test_v9_repair_drops_rejected_detail_instead_of_rewriting_it():
+def test_v11_repair_rewrites_rejected_detail_and_preserves_required_coverage():
     composition, revision, _ = material()
     audit_req = audit.request("elc_test", composition, revision["ledger"], "a" * 64)
     decision = audit.validate(json.dumps({"audits": [
@@ -63,12 +65,15 @@ def test_v9_repair_drops_rejected_detail_instead_of_rewriting_it():
         {"id": "C02", "verdict": "unsupported", "reason": "Redundant detail."},
     ]}).encode(), audit_req)
     req = repair.request("elc_test", composition, revision, decision, "b" * 64)
-    assert req["item_ids"] == ["C01"]
-    assert req["drop_item_ids"] == ["C02"]
-    record = repair.validate(json.dumps({"repairs": [{"id": "C01",
-        "text": "Acme said records may have been exposed."}]}).encode(),
+    assert req["item_ids"] == ["C01", "C02"]
+    record = repair.validate(json.dumps({"repairs": [
+        {"id": "C01", "text": "Acme said records may have been exposed."},
+        {"id": "C02", "text": "The reported exposure may include Acme records."},
+    ]}).encode(),
         req, composition, revision)
-    assert record["sections"]["impact"] == []
+    assert record["sections"]["impact"][0]["text"] == (
+        "The reported exposure may include Acme records."
+    )
 
 
 def test_repair_requires_every_rejected_item_exactly_once():
