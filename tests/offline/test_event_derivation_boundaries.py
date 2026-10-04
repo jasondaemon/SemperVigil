@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 from sempervigil import worker
@@ -52,8 +54,10 @@ def test_existing_event_match_requires_one_high_confidence_supported_match():
     waterplum = {"id": "evt_waterplum"}
     unrelated = {"id": "evt_unrelated"}
     selected, reason = _select_existing_event_match([
-        (waterplum, {"related": True, "confidence": 0.93, "contradictions": []}),
-        (unrelated, {"related": False, "confidence": 0.97, "contradictions": []}),
+        (waterplum, {"related": True, "confidence": 0.93, "contradictions": [],
+                     "matched_facts": ["same victim and intrusion"]}),
+        (unrelated, {"related": False, "confidence": 0.97, "contradictions": [],
+                     "matched_facts": []}),
     ])
 
     assert selected == waterplum
@@ -62,8 +66,10 @@ def test_existing_event_match_requires_one_high_confidence_supported_match():
 
 def test_existing_event_match_abstains_when_multiple_events_match():
     selected, reason = _select_existing_event_match([
-        ({"id": "evt_one"}, {"related": True, "confidence": 0.9, "contradictions": []}),
-        ({"id": "evt_two"}, {"related": True, "confidence": 0.91, "contradictions": []}),
+        ({"id": "evt_one"}, {"related": True, "confidence": 0.9, "contradictions": [],
+                             "matched_facts": ["same victim"]}),
+        ({"id": "evt_two"}, {"related": True, "confidence": 0.91, "contradictions": [],
+                             "matched_facts": ["same victim"]}),
     ])
 
     assert selected is None
@@ -72,11 +78,25 @@ def test_existing_event_match_abstains_when_multiple_events_match():
 
 def test_existing_event_match_rejects_contradicted_or_low_confidence_results():
     selected, reason = _select_existing_event_match([
-        ({"id": "evt_one"}, {"related": True, "confidence": 0.79, "contradictions": []}),
+        ({"id": "evt_one"}, {"related": True, "confidence": 0.79, "contradictions": [],
+                             "matched_facts": ["same victim"]}),
         ({"id": "evt_two"}, {"related": True, "confidence": 0.99,
-                              "contradictions": ["different campaign"]}),
+                              "contradictions": ["different campaign"],
+                              "matched_facts": ["same victim"]}),
     ])
 
+    assert selected is None
+    assert reason == "no_match"
+
+
+def test_existing_event_match_requires_llm_supported_facts():
+    selected, reason = _select_existing_event_match([
+        ({"id": "evt_bare"}, {"related": True, "confidence": 0.99,
+                              "contradictions": [], "matched_facts": []}),
+        ({"id": "evt_fallback"}, {"related": True, "confidence": 0.99,
+                                  "contradictions": [], "matched_facts": ["entity:FBI"],
+                                  "validator": "fallback"}),
+    ])
     assert selected is None
     assert reason == "no_match"
 
@@ -273,7 +293,8 @@ def test_draft_matching_uses_victim_and_validator_not_just_actor(monkeypatch):
 
     def validate(_conn, _logger, *, event, source, content):
         checked.append(event["id"])
-        return {"related": True, "confidence": 0.92, "contradictions": []}, "llm"
+        return {"related": True, "confidence": 0.92, "contradictions": [],
+                "matched_facts": ["same FBI jobs-site incident"]}, "llm"
 
     monkeypatch.setattr(worker, "_validate_event_source_with_llm", validate)
     selected, reason = worker._match_existing_event_for_article(
@@ -343,7 +364,8 @@ def test_shared_actor_draft_reaches_validator_when_article_is_classified_non_eve
 
     def validate(_conn, _logger, *, event, source, content):
         checked.append(event["id"])
-        return {"related": True, "confidence": 0.94, "contradictions": []}, "llm"
+        return {"related": True, "confidence": 0.94, "contradictions": [],
+                "matched_facts": ["same FBI jobs-site incident"]}, "llm"
 
     monkeypatch.setattr(worker, "_validate_event_source_with_llm", validate)
     selected, reason = worker._match_existing_event_for_article(
@@ -355,3 +377,106 @@ def test_shared_actor_draft_reaches_validator_when_article_is_classified_non_eve
     assert selected["id"] == "evt_arrest"
     assert reason == "unique_match"
     assert checked == ["evt_arrest"]
+
+
+def test_unique_published_match_wins_over_overlapping_private_drafts(monkeypatch):
+    events = [
+        {"id": "evt_draft", "publish_state": "draft", "entity": "FBI",
+         "incident_date": "2026-09-23", "_shared_actor_candidate": True},
+        {"id": "evt_published", "publish_state": "published", "entity": "FBI",
+         "incident_date": "2026-09-22"},
+    ]
+    checked = []
+    monkeypatch.setattr(worker, "_existing_event_candidates_for_article", lambda *_args, **_kwargs: events)
+
+    def validate(_conn, _logger, *, event, source, content):
+        checked.append(event["id"])
+        return {"related": True, "confidence": 0.95, "contradictions": [],
+                "matched_facts": ["same FBI jobs-site incident"]}, "llm"
+
+    monkeypatch.setattr(worker, "_validate_event_source_with_llm", validate)
+    selected, reason = worker._match_existing_event_for_article(
+        None, None, article_id=36682,
+        article={"title": "Suspect detained", "original_url": "https://example.test/story"},
+        content="The suspect is cooperating after the FBI jobs-site incident.",
+        entity="FBI", incident_date="2026-10-03",
+    )
+    assert selected["id"] == "evt_published"
+    assert reason == "unique_match"
+    assert checked == ["evt_published"]
+
+
+def test_ambiguous_published_matches_do_not_fall_through_to_draft(monkeypatch):
+    events = [
+        {"id": "evt_public_one", "publish_state": "published"},
+        {"id": "evt_public_two", "publish_state": "published"},
+        {"id": "evt_draft", "publish_state": "draft", "_shared_actor_candidate": True},
+    ]
+    checked = []
+    monkeypatch.setattr(worker, "_existing_event_candidates_for_article", lambda *_args, **_kwargs: events)
+
+    def validate(_conn, _logger, *, event, source, content):
+        checked.append(event["id"])
+        return {"related": True, "confidence": 0.95, "contradictions": [],
+                "matched_facts": ["same FBI jobs-site incident"]}, "llm"
+
+    monkeypatch.setattr(worker, "_validate_event_source_with_llm", validate)
+    selected, reason = worker._match_existing_event_for_article(
+        None, None, article_id=36682,
+        article={"title": "Suspect detained", "original_url": "https://example.test/story"},
+        content="A suspect was detained.", entity="FBI", incident_date="2026-10-03",
+    )
+    assert selected is None
+    assert reason == "ambiguous_match"
+    assert checked == ["evt_public_one", "evt_public_two"]
+
+
+def test_actor_marker_survives_missing_incident_date(monkeypatch):
+    class Connection:
+        def execute(self, sql, params):
+            if "FROM article_threat_actors current_actor" in sql:
+                assert "COUNT(DISTINCT current_actor.actor_id) DESC" in sql
+                assert "(e.publish_state='published') DESC" in sql
+            self.rows = [("evt_actor",)] if "FROM article_threat_actors current_actor" in sql else []
+            return self
+
+        def fetchall(self):
+            return self.rows
+
+    monkeypatch.setattr(worker, "get_event", lambda _conn, event_id: {
+        "id": event_id, "publish_state": "draft",
+    })
+    found = worker._existing_event_candidates_for_article(
+        Connection(), 36682, incident_date="unknown",
+    )
+    assert found == [{"id": "evt_actor", "publish_state": "draft",
+                      "_shared_actor_candidate": True}]
+
+
+def test_ambiguous_existing_events_hold_article_without_creating_draft(monkeypatch):
+    checked = []
+    monkeypatch.setattr(worker, "list_event_ids_for_article", lambda *_args: [])
+    monkeypatch.setattr(worker, "get_article_by_id", lambda *_args: {
+        "id": 36682, "title": "Suspect detained", "content_text": "An actor was detained.",
+        "published_at": "2026-10-03T19:09:38+00:00",
+    })
+    monkeypatch.setattr(worker, "_event_admission_policy", lambda *_args: {})
+    monkeypatch.setattr(worker, "list_article_cve_ids", lambda *_args: [])
+    monkeypatch.setattr(worker, "_is_primary_source", lambda *_args: False)
+    monkeypatch.setattr(worker, "get_active_profile_for_stage", lambda *_args: ({"id": "profile"}, ""))
+    monkeypatch.setattr(worker, "run_pipeline_stage", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(worker, "_parse_event_classification", lambda *_args: ({
+        "is_event": True, "victim": "FBI", "incident_date": "",
+    }, None))
+    monkeypatch.setattr(worker, "_match_existing_event_for_article",
+                        lambda *_args, **_kwargs: (None, "ambiguous_match"))
+    monkeypatch.setattr(worker, "mark_article_events_checked",
+                        lambda _conn, article_id, **_kwargs: checked.append(article_id))
+    monkeypatch.setattr(worker, "upsert_event_by_key",
+                        lambda *_args, **_kwargs: pytest.fail("created duplicate event"))
+
+    result = worker._handle_derive_events_from_articles(
+        None, None, {"article_id": 36682}, logging.getLogger(__name__),
+    )
+    assert result == {"status": "held", "reason": "ambiguous_existing_events"}
+    assert checked == [36682]

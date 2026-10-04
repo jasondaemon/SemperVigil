@@ -6678,7 +6678,7 @@ def _existing_event_candidates_for_article(
     """Find plausible published events and drafts for relevance validation."""
     rows = conn.execute(
         """
-        SELECT DISTINCT e.id
+        SELECT e.id
         FROM article_threat_actors current_actor
         JOIN article_threat_actors prior_actor
           ON prior_actor.actor_id=current_actor.actor_id
@@ -6689,7 +6689,10 @@ def _existing_event_candidates_for_article(
           AND e.visibility='active'
           AND e.lifecycle IN ('candidate','confirmed')
           AND e.publish_state IN ('draft','published')
-        ORDER BY e.id
+        GROUP BY e.id, e.publish_state, e.last_seen_at
+        ORDER BY (e.publish_state='published') DESC,
+                 COUNT(DISTINCT current_actor.actor_id) DESC,
+                 e.last_seen_at DESC NULLS LAST, e.id
         LIMIT %s
         """,
         (article_id, max(1, min(limit, 20))),
@@ -6709,7 +6712,12 @@ def _existing_event_candidates_for_article(
         article_day = datetime.fromisoformat(incident_date[:10]).date()
     except ValueError:
         ids = list(dict.fromkeys([row[0] for row in rows] + published_ids))
-        return [event for event_id in ids if (event := get_event(conn, str(event_id)))]
+        actor_ids = {row[0] for row in rows}
+        return [
+            {**event, "_shared_actor_candidate": True} if event_id in actor_ids else event
+            for event_id in ids
+            if (event := get_event(conn, str(event_id)))
+        ]
     earliest = (article_day - timedelta(days=window_days)).isoformat()
     latest = (article_day + timedelta(days=window_days)).isoformat()
     draft_rows = conn.execute(
@@ -6779,6 +6787,8 @@ def _select_existing_event_match(
         if bool(decision.get("related"))
         and float(decision.get("confidence") or 0) >= min_confidence
         and not decision.get("contradictions")
+        and bool(decision.get("matched_facts"))
+        and decision.get("validator", "llm") == "llm"
     ]
     if not matches:
         return None, "no_match"
@@ -6818,27 +6828,35 @@ def _match_existing_event_for_article(
     source["domain"] = (
         urlparse(str(source["url"] or "")).hostname or ""
     ).lower().removeprefix("www.")
-    decisions = []
-    for event in candidates:
-        decision, validation_route = _validate_event_source_with_llm(
-            conn, logger, event=event, source=source, content=content,
-        )
-        validator = str(decision.get("validator") or validation_route or "llm")
-        decision = {**decision, "validator": validator}
-        decisions.append((event, decision))
-        log_event(
-            logger,
-            logging.INFO,
-            "existing_event_match_evaluated",
-            article_id=article_id,
-            event_id=event.get("id"),
-            related=decision.get("related"),
-            confidence=decision.get("confidence"),
-            validator=validator,
-        )
     minimum = float(os.getenv("SV_EVENT_EXISTING_MATCH_MIN_CONFIDENCE", "0.8"))
     minimum = max(0.0, min(1.0, minimum))
-    return _select_existing_event_match(decisions, min_confidence=minimum)
+    # A verified public incident is canonical; overlapping private drafts must
+    # not turn that match into ambiguity or create yet another draft.
+    for phase in ("published", "draft"):
+        decisions = []
+        for event in candidates:
+            if str(event.get("publish_state") or "") != phase:
+                continue
+            decision, validation_route = _validate_event_source_with_llm(
+                conn, logger, event=event, source=source, content=content,
+            )
+            validator = str(decision.get("validator") or validation_route or "llm")
+            decision = {**decision, "validator": validator}
+            decisions.append((event, decision))
+            log_event(
+                logger,
+                logging.INFO,
+                "existing_event_match_evaluated",
+                article_id=article_id,
+                event_id=event.get("id"),
+                related=decision.get("related"),
+                confidence=decision.get("confidence"),
+                validator=validator,
+            )
+        selected, reason = _select_existing_event_match(decisions, min_confidence=minimum)
+        if selected or reason == "ambiguous_match":
+            return selected, reason
+    return None, "no_match"
 
 
 def _link_existing_event_update(
@@ -6883,8 +6901,9 @@ def _event_classification_input(article: dict[str, object]) -> str:
         "reporting an attack, or a software vendor whose product has a zero-day, is not "
         "the victim unless that vendor itself was compromised. If the affected party is "
         "unnamed or there is no specific incident, return is_event=false. Do not use "
-        "'not applicable' or the publisher as victim. Preserve whether an attack is "
-        "only claimed or suspected.",
+        "'not applicable' or the publisher as victim. An arrest, investigation, or "
+        "prosecution that only mentions a prior breach as background is not a new "
+        "cyber incident. Preserve whether an attack is only claimed or suspected.",
         "",
         f"Title: {article.get('title') or ''}",
         f"Published: {article.get('published_at') or article.get('ingested_at') or ''}",
@@ -6966,6 +6985,8 @@ def _handle_derive_events_from_articles(
                     article=article,
                 )
             return _done({**result, "match_reason": match_reason})
+        if match_reason == "ambiguous_match":
+            return _done({"status": "held", "reason": "ambiguous_existing_events"})
         if error_reason:
             log_event(
                 logger,
