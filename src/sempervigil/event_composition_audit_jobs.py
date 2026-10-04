@@ -33,7 +33,9 @@ def configuration(conn):
         raise ValueError("event_composition_audit_openai_model_invalid")
     generation = _version({"workflow": audit.WORKFLOW, "params": PARAMS,
         "model": model.get("id"), "provider": provider.get("id"),
-        "base_url": provider.get("base_url"), "system": audit.SYSTEM_PROMPT})
+        "base_url": provider.get("base_url"), "system": audit.SYSTEM_PROMPT,
+        "batch_items": audit.MAX_BATCH_ITEMS,
+        "batch_bytes": audit.MAX_BATCH_INPUT_BYTES})
     return model, provider, generation
 
 
@@ -111,7 +113,13 @@ def run(conn, job, *, generate=None) -> dict:
               "status": "started", "public_eligible": False}
     if not update_job_result(conn, job.id, result):
         raise ValueError("event_composition_audit_job_not_running")
-    raw = (generate or (lambda request: complete(conn, job.id, request)))(req)
+    audits = []
+    for batch in audit.batches(req):
+        raw = (generate or (lambda request: complete(conn, job.id, request)))(batch)
+        if not raw:
+            raise ValueError("event_composition_audit_empty_output")
+        audits.extend(audit.validate(raw.encode(), batch)["audits"])
+    raw = json.dumps({"audits": audits}, ensure_ascii=True)
     decision = audit.validate(raw.encode(), req)
     result.update(status="audited", audit=decision, raw=raw[:audit.MAX_OUTPUT_BYTES])
     if not update_job_result(conn, job.id, result):

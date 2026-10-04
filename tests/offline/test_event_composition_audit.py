@@ -81,6 +81,20 @@ def test_audit_accepts_measured_size_but_retains_hard_input_bound():
     req = audit.request("elc_large_input", composition, ledger, GENERATION)
     encoded_size = len((req["system"] + req["input"] + json.dumps(req["schema"])).encode())
     assert 48000 < encoded_size <= audit.MAX_INPUT_BYTES
+    parts = audit.batches(req)
+    assert len(parts) > 1
+    assert [item_id for part in parts for item_id in part["item_ids"]] == req["item_ids"]
+    assert all(len((part["system"] + part["input"] +
+                    json.dumps(part["schema"])).encode()) <= audit.MAX_BATCH_INPUT_BYTES
+               for part in parts)
+    verdicts = []
+    for part in parts:
+        response = json.dumps({"audits": [
+            {"id": item_id, "verdict": "supported", "reason": "Directly supported."}
+            for item_id in part["item_ids"]
+        ]}).encode()
+        verdicts.extend(audit.validate(response, part)["audits"])
+    assert audit.validate(json.dumps({"audits": verdicts}).encode(), req)["ready"] is True
 
     sections["overview"].extend(
         {"text": f"Supported item {index}", "fact_ids": ["f1"]}
