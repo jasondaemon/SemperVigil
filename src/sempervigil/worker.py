@@ -6687,8 +6687,8 @@ def _existing_event_candidates_for_article(
         JOIN events e ON e.id=ea.event_id
         WHERE current_actor.article_id=%s
           AND e.visibility='active'
-          AND e.lifecycle='confirmed'
-          AND e.publish_state='published'
+          AND e.lifecycle IN ('candidate','confirmed')
+          AND e.publish_state IN ('draft','published')
         ORDER BY e.id
         LIMIT %s
         """,
@@ -6726,8 +6726,17 @@ def _existing_event_candidates_for_article(
         """,
         (earliest, latest, earliest, latest, 200),
     ).fetchall()
+    actor_ids = {row[0] for row in rows}
     ids = list(dict.fromkeys([row[0] for row in rows] + published_ids + [row[0] for row in draft_rows]))
-    return [event for event_id in ids if (event := get_event(conn, str(event_id)))]
+    result = []
+    for event_id in ids:
+        event = get_event(conn, str(event_id))
+        if event:
+            result.append(
+                {**event, "_shared_actor_candidate": True}
+                if event_id in actor_ids else event
+            )
+    return result
 
 
 def _same_event_entity(left: str, right: str) -> bool:
@@ -6795,6 +6804,7 @@ def _match_existing_event_for_article(
             entity=entity,
         )
         if str(event.get("publish_state") or "") == "published"
+        or bool(event.get("_shared_actor_candidate"))
         or _draft_event_in_scope(event, entity=entity, incident_date=incident_date,
                                     window_days=window_days)
     ]

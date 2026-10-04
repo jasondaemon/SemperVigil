@@ -330,3 +330,28 @@ def test_published_lookup_uses_victim_without_actor_tag(monkeypatch):
         Connection(), 123, entity="Example Corp", incident_date="2026-09-23",
     )
     assert [event["id"] for event in found] == ["evt_published"]
+
+
+def test_shared_actor_draft_reaches_validator_when_article_is_classified_non_event(monkeypatch):
+    event = {"id": "evt_arrest", "entity": "FBI", "incident_date": None,
+             "publish_state": "draft", "_shared_actor_candidate": True}
+    monkeypatch.setattr(
+        worker, "_existing_event_candidates_for_article",
+        lambda *_args, **_kwargs: [event],
+    )
+    checked = []
+
+    def validate(_conn, _logger, *, event, source, content):
+        checked.append(event["id"])
+        return {"related": True, "confidence": 0.94, "contradictions": []}, "llm"
+
+    monkeypatch.setattr(worker, "_validate_event_source_with_llm", validate)
+    selected, reason = worker._match_existing_event_for_article(
+        None, None, article_id=36682,
+        article={"title": "Suspect detained", "original_url": "https://example.test"},
+        content="A suspected member was detained and is cooperating.",
+        entity="", incident_date="2026-10-03",
+    )
+    assert selected["id"] == "evt_arrest"
+    assert reason == "unique_match"
+    assert checked == ["evt_arrest"]
