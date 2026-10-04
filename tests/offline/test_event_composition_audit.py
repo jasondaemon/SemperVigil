@@ -66,6 +66,30 @@ def test_audit_accepts_schema_legal_large_response():
     assert audit.validate(raw, req)["ready"] is True
 
 
+def test_audit_accepts_measured_size_but_retains_hard_input_bound():
+    from sempervigil.event_composition import SECTIONS
+
+    sections = {section: [] for section in SECTIONS}
+    ledger = {"facts": [{"fact_id": "f1", "statement": "E" * 10240,
+                          "kind": "reported_fact", "date_text": None,
+                          "date_role": "none"}]}
+    sections["overview"] = [
+        {"text": f"Supported item {index}", "fact_ids": ["f1"]}
+        for index in range(5)
+    ]
+    composition = {"ledger_revision_id": "elr_large_input", "sections": sections}
+    req = audit.request("elc_large_input", composition, ledger, GENERATION)
+    encoded_size = len((req["system"] + req["input"] + json.dumps(req["schema"])).encode())
+    assert 48000 < encoded_size <= audit.MAX_INPUT_BYTES
+
+    sections["overview"].extend(
+        {"text": f"Supported item {index}", "fact_ids": ["f1"]}
+        for index in range(5, 7)
+    )
+    with pytest.raises(ValueError, match="input_over_budget"):
+        audit.request("elc_large_input", composition, ledger, GENERATION)
+
+
 def test_filter_removes_only_unsupported_items_and_preserves_required_content():
     composition, ledger = material()
     composition.update({"workflow": "event-ledger-composition-v4",
