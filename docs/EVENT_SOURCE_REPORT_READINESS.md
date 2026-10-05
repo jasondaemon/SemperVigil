@@ -451,3 +451,43 @@ unchanged evidence admits zero jobs/calls and last-tick/status/alerts are visibl
 Preserve both public revisions and fragments. A real new-source unattended cycle
 remains unobserved; never force one with synthetic production evidence or paid
 proof calls. This checkpoint is not a broad-production completion claim.
+
+## Verified bounded-pilot enablement — October 5, 2026
+
+Final `ed367b2` images were imported on nodes42/46/47/52. All five scoped
+deployments (admin, fetch, hosted worker, builder, orchestrator) completed their
+disabled source rollout, then a drained report-only configuration rollout.
+Rendered/live deployment diff is zero. Non-report ConfigMap keys are unchanged.
+The policy start is `2026-10-05T22:08:44Z`, verified by ConfigMap readback;
+expiry is exactly `2026-10-07T22:08:44Z`. Admission remained paused during
+worker rollout. All deployments were confirmed healthy by `22:12:21Z`.
+The first observed ordinary scheduler tick at `22:12:36.986203Z` returned
+`no_meaningful_evidence_change` for both events without queuing work.
+
+Cohort `sv-successor-20261005T220844`: two successors total, at most one per
+event, concurrency one, two successful model phases maximum per run, summed
+reservations at most 32,000/run and 64,000 cohort admission capacity. Writer
+Sol/none/6,000; reviewer Luna/low/2,400. No repair, retry, backfill, new research
+scope, additional roles/grants/credentials/migrations or paid proof calls.
+At verification: zero pilot runs, calls, actual/reserved tokens or active work;
+64,000 admission tokens remain. Conservative report-only public-rate capacity
+estimate is $1.28, not an invoice. Historical holds remain separately visible.
+Existing cumulative case-call counts remain Microsoft four, Astrana ten.
+
+Hosted-worker credential readiness succeeded without model HTTP. Existing
+authenticated status endpoint returns 200; unauthenticated requests return 401.
+Status exposes the ordinary tick, policy, counters and expiry/hold/build alerts.
+Full offline verification: 1,297 passed, two skipped; disposable PostgreSQL:
+50 passed using fake provider responses; isolated Hugo label tests: six passed.
+
+Public Microsoft and Astrana revision pointers, retained predecessors and report
+fragments match guarded release `20261005220733`. Whole-page SHA-256 values
+are unchanged: Microsoft
+`48e68d0b229fec6db602b934fc8ee82dd1b493196c097d1d87adb1016af3fd93`, Astrana
+`80b711ab4118949c33368da45f2d484ec69babca2e4b2c21d41d664f6307a7eb`.
+Astrana's 13 report items and 27 spans match its immutable bundle. The SEC source
+is an older primary filing newly incorporated, not a later incident development.
+Eighteen HTTP/markup/assets/sampled-feed checks passed; no browser execution or
+database-completeness claim. Real new-source unattended generation/promotion
+remains unobserved. The ordinary scheduler checks every 30 seconds; it does not
+create research or evidence merely to demonstrate this pilot.
