@@ -437,6 +437,9 @@ def run_once(orchestrator_id: str) -> int:
         if result["status"] != "unchanged":
             log_event(logger, logging.INFO, "legacy_event_revalidation_tick", **result)
         from .event_published_composition_upgrade import tick as event_published_composition_upgrade_tick
+        from .event_source_reports import tick as event_source_report_tick
+        for result in event_source_report_tick(conn):
+            log_event(logger, logging.INFO, "event_source_report_tick", **result)
         for result in event_published_composition_upgrade_tick(conn):
             log_event(logger, logging.INFO, "event_published_composition_upgrade_tick", **result)
         from .event_reassessment_automation import tick as event_reassessment_automation_tick

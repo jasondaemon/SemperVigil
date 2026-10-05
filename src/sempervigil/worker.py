@@ -230,6 +230,7 @@ WORKER_JOB_TYPES = [
     "event_review_private",
     "article_review_private",
     "event_ledger_compose",
+    "event_source_report",
     "event_fact_curate",
     "event_composition_audit",
     "event_composition_repair",
@@ -277,7 +278,7 @@ QUEUE_WORKER_TYPES = {
         "article_threat_actors_backfill",
         "cve_threat_actors_backfill",
     ],
-    "openai": ["build_daily_brief", "event_ledger_compose", "event_fact_curate",
+    "openai": ["build_daily_brief", "event_source_report", "event_ledger_compose", "event_fact_curate",
                "event_composition_audit", "event_composition_repair"],
     "build": ["write_article_markdown"],
 }
@@ -297,6 +298,7 @@ _AUTO_CATCHUP_BATCH_LIMIT = 200
 _AUTO_CATCHUP_LEASE = "auto_catchup_enqueue"
 _RUN_ONCE_IDLE = 3
 HANDLED_JOB_TYPES = {
+    "event_source_report",
     "ingest_source",
     "ingest_due_sources",
     "test_source",
@@ -462,6 +464,7 @@ def _looks_like_thn_teaser(source_id: str | None, content_text: str | None) -> b
 
 
 _LLM_JOB_TYPES = {
+    "event_source_report",
     "article_review_private",
     "summarize_article_llm",
     "summarize_article_context_llm",
@@ -10216,6 +10219,9 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         return run(conn, job)
     if job.job_type == "event_ledger_compose":
         from .event_composition_jobs import run
+        return run(conn, job)
+    if job.job_type == "event_source_report":
+        from .event_source_reports import run
         return run(conn, job)
     if job.job_type == "event_fact_curate":
         from .event_fact_curation_jobs import run

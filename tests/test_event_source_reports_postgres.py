@@ -1,0 +1,185 @@
+"""Actual persistence, budget and separated publication roles; no hosted requests."""
+import copy
+import json
+import os
+from types import SimpleNamespace
+from uuid import uuid4
+
+import psycopg
+import pytest
+
+from sempervigil import event_source_reports as reports
+from sempervigil import event_source_report_publication as publication
+from sempervigil import event_report_contract as contract
+from sempervigil.event_publication_store import SCHEMA as PUBLIC_SCHEMA
+from sempervigil.event_approval import SCHEMA as APPROVAL_SCHEMA
+
+
+@pytest.fixture
+def database(monkeypatch):
+    url=os.environ["SV_TEST_DB_URL"]
+    namespace="report_test_"+uuid4().hex[:12]
+    admin=psycopg.connect(url)
+    admin.execute(f'CREATE SCHEMA "{namespace}"')
+    admin.execute(f'SET search_path TO "{namespace}"')
+    admin.execute("""CREATE TABLE events(id TEXT PRIMARY KEY,title TEXT,visibility TEXT,lifecycle TEXT);
+      CREATE TABLE articles(id INTEGER PRIMARY KEY,title TEXT,original_url TEXT,content_text TEXT,
+        published_at TEXT,ingested_at TEXT,meta_json TEXT);
+      CREATE TABLE event_articles(event_id TEXT REFERENCES events(id),article_id INTEGER REFERENCES articles(id),
+        PRIMARY KEY(event_id,article_id));
+      CREATE TABLE jobs(id TEXT PRIMARY KEY,job_type TEXT,status TEXT,priority INTEGER,payload_json TEXT,result_json TEXT,
+        requested_at TEXT,started_at TEXT,finished_at TEXT,locked_by TEXT,locked_at TEXT,error TEXT,queue_name TEXT,
+        attempt_count INTEGER,max_attempts INTEGER,available_at TEXT,heartbeat_at TEXT,lease_expires_at TEXT,
+        parent_job_id TEXT,dedupe_key TEXT);
+      INSERT INTO events VALUES('evt_test','Acme incident','active','confirmed');
+      INSERT INTO articles VALUES(1,'Acme incident','https://example.org/incident',
+       'Acme said certain patient records may be affected. The company rotated credentials.',
+       '2026-10-01','2026-10-01', '{}');
+      INSERT INTO event_articles VALUES('evt_test',1);""")
+    admin.execute(reports.SCHEMA);admin.execute(PUBLIC_SCHEMA);admin.execute(APPROVAL_SCHEMA)
+    admin.commit()
+    monkeypatch.setenv("SV_EVENT_SOURCE_REPORT_ENABLED","1")
+    monkeypatch.setenv("SV_EVENT_HUMAN_APPROVAL_ENABLED","1")
+    monkeypatch.setattr(reports,"configuration",lambda conn:({"id":"m","model_name":"test-model"},{"id":"p"},"a"*64))
+    def factory(role=None):
+        c=psycopg.connect(url)
+        c.execute(f'SET search_path TO "{namespace}"')
+        if role:c.execute(f'SET ROLE "{role}"')
+        return c
+    yield admin,factory,namespace
+    admin.rollback();admin.close()
+    with psycopg.connect(url) as cleanup:cleanup.execute(f'DROP SCHEMA "{namespace}" CASCADE')
+
+
+def generated(kind="breach"):
+    return {"title":"Acme incident","kind":kind,"items":[
+        {"id":"P01","section":"overview","text":"Acme reported possible patient-record exposure.",
+         "claim_type":"finding","confidence":None,"rationale":"","date_label":"","date_sort":None,
+         "citations":[{"source_id":"S1","quote":"certain patient records may be affected"}]},
+        {"id":"P02","section":"response_recovery","text":"The company rotated credentials.",
+         "claim_type":"finding","confidence":None,"rationale":"","date_label":"","date_sort":None,
+         "citations":[{"source_id":"S1","quote":"The company rotated credentials."}]}]}
+
+
+def response(value):
+    return {"choices":[{"finish_reason":"stop","message":{"content":json.dumps(value)}}],
+            "usage":{"prompt_tokens":200,"completion_tokens":100,"total_tokens":300,
+                     "completion_tokens_details":{"reasoning_tokens":25}}}
+
+
+def execute(conn,values,*,allow_correction=False):
+    submitted=reports.submit(conn,"evt_test",debounce_seconds=0,allow_correction=allow_correction)
+    calls=[]
+    def complete(payload):calls.append(payload);return response(values[len(calls)-1])
+    job=SimpleNamespace(job_type=reports.JOB_TYPE,queue_name="openai",status="running",
+                        max_attempts=1,payload={"run_id":submitted["run_id"]})
+    result=reports.run(conn,job,complete=complete)
+    return submitted,result,calls,job
+
+
+@pytest.mark.parametrize("kind",["breach","compromise","law_enforcement","vulnerability"])
+def test_two_call_path_persists_responses_spans_and_replay(database,kind):
+    conn,_,_=database
+    submitted,result,calls,job=execute(conn,[generated(kind),{"ready":True,"issues":[]}])
+    assert result["status"]=="accepted" and len(calls)==2
+    record=reports._load(conn,submitted["run_id"])
+    assert record["charged_tokens"]==600 and record["reserved_tokens"]==0
+    rows=conn.execute("SELECT response_json,usage_json FROM event_source_report_calls WHERE run_id=%s",(submitted["run_id"],)).fetchall()
+    assert len(rows)==2 and all(json.loads(u)["completion_tokens_details"]["reasoning_tokens"]==25 for _,u in rows)
+    assert reports.run(conn,job,complete=lambda _:pytest.fail("replayed paid call"))["reused"]
+    assert reports.submit(conn,"evt_test",debounce_seconds=0)["status"]=="unchanged"
+    assert contract.validate(record["report"],record["snapshot"])==record["spans"]
+
+
+def test_four_call_correction_is_targeted_and_terminal(database):
+    conn,_,_=database
+    first=generated();corrected=copy.deepcopy(first)
+    corrected["items"][0]["text"]="Acme said certain patient records may be affected."
+    issue={"ready":False,"issues":[{"item_id":"P01","reason":"Preserve the specific uncertainty wording.","source_ids":["S1"]}]}
+    submitted,result,calls,job=execute(conn,[first,issue,corrected,{"ready":True,"issues":[]}],allow_correction=True)
+    assert result["status"]=="accepted" and len(calls)==4
+    assert reports._load(conn,submitted["run_id"])["charged_tokens"]==1200
+    assert reports.run(conn,job,complete=lambda _:pytest.fail("fifth call"))["reused"]
+
+
+@pytest.mark.parametrize("failure",["invalid_confidence","quote_in_previous_only","source_changed","transport","budget"])
+def test_holds_preserve_old_pointer_and_responses(database,failure):
+    conn,_,_=database
+    value=generated()
+    if failure=="invalid_confidence":value["items"][0]["confidence"]="high"
+    if failure=="quote_in_previous_only":value["items"][0]["citations"][0]["quote"]="Unsupported prior report statement."
+    submitted=reports.submit(conn,"evt_test",budget_tokens=1 if failure=="budget" else 24000,debounce_seconds=0)
+    job=SimpleNamespace(job_type=reports.JOB_TYPE,queue_name="openai",status="running",max_attempts=1,
+                        payload={"run_id":submitted["run_id"]})
+    calls=[]
+    def complete(payload):
+        calls.append(payload)
+        if failure=="transport":raise TimeoutError("fixture transport failure")
+        if failure=="source_changed":
+            conn.execute("UPDATE articles SET content_text=content_text||' Correction.' WHERE id=1");conn.commit()
+        return response(value)
+    result=reports.run(conn,job,complete=complete)
+    assert result["status"]=="held"
+    assert conn.execute("SELECT count(*) FROM event_public_pointers").fetchone()[0]==0
+    assert len(calls)==(0 if failure=="budget" else 1)
+    assert reports.submit(conn,"evt_test",debounce_seconds=0)["reused"] if failure!="source_changed" else True
+    assert reports.run(conn,job,complete=lambda _:pytest.fail("retry"))["reused"]
+
+
+@pytest.mark.parametrize("derivative",[False,True])
+def test_job_to_review_to_restricted_atomic_publication(database,derivative):
+    conn,factory,namespace=database
+    original=generated()
+    if derivative:
+        original["items"].append({**original["items"][1],"id":"P03","section":"what_changed","text":"New evidence shows credential rotation."})
+    submitted,result,_,_=execute(conn,[original,{"ready":True,"issues":[]}])
+    if derivative:
+        record=reports._load(conn,submitted["run_id"])
+        snap=contract.update_context(record["snapshot"],"generator_upgrade",record["snapshot"])
+        conn.execute("UPDATE event_source_report_runs SET snapshot_json=%s,status='held',reason='manual_quality_revision_metadata' WHERE run_id=%s",(contract.encode(snap),submitted["run_id"]));conn.commit()
+        receipt=publication.qualify_generator_refresh(conn,submitted["run_id"])
+        assert receipt["removed_item_ids"] == ["P03"]
+        assert reports._load(conn,submitted["run_id"])["status"]=="held"
+        assert reports._load(conn,submitted["run_id"])["report"]==original
+    admission="adm_"+namespace;promotion="pro_"+namespace
+    conn.execute(f'CREATE ROLE "{admission}"');conn.execute(f'CREATE ROLE "{promotion}"')
+    for role in (admission,promotion):
+        conn.execute(f'GRANT USAGE ON SCHEMA "{namespace}" TO "{role}"')
+        conn.execute(f'GRANT SELECT ON ALL TABLES IN SCHEMA "{namespace}" TO "{role}"')
+        conn.execute(f'GRANT UPDATE ON events,articles,event_articles,event_source_report_runs TO "{role}"')
+    conn.execute(f'GRANT INSERT ON jobs,event_quote_qualifications,event_review_approvals TO "{admission}"')
+    conn.execute(f'GRANT INSERT,UPDATE ON event_public_revisions,event_public_pointers TO "{promotion}"')
+    conn.commit()
+    try:
+        queued=publication.submit(conn,submitted["run_id"],factory=lambda:factory(admission))
+        from sempervigil.event_approval import run
+        result=run({"approval_id":queued["approval_id"]},factory=lambda:factory(promotion))
+        assert result["status"]=="promoted"
+        raw=conn.execute("SELECT bundle_json FROM event_public_revisions WHERE revision_id=%s",(result["revision_id"],)).fetchone()[0]
+        from sempervigil.event_render import render
+        metadata,html=render(json.loads(raw),event_id="evt_test",expected_revision=result["revision_id"])
+        assert "possible patient-record" in html and 'href="https://example.org/incident"' in html
+        assert metadata["event_report_format"]==contract.PUBLIC_WORKFLOW
+        if derivative:
+            assert contract.GENERATOR_NOTICE in html and "New evidence shows" not in html
+            assert '"raw_report_version"' in raw and '"removed_item_ids":["P03"]' in raw
+            bundle=json.loads(raw);tampered=copy.deepcopy(bundle)
+            tampered["revision_provenance"]["notice"]="New event developments."
+            with pytest.raises(ValueError,match="revision_notice_invalid"):
+                publication.validate_bundle(tampered,event_id="evt_test")
+        assert "fact_ids" not in raw and '"text":"Acme said certain' not in raw
+        with pytest.raises(PermissionError):publication.submit(conn,submitted["run_id"],factory=lambda:factory(promotion))
+        with pytest.raises(PermissionError):run({"approval_id":queued["approval_id"]},factory=lambda:factory(admission))
+    finally:
+        conn.rollback()
+        for role in (admission,promotion):
+            conn.execute(f'DROP OWNED BY "{role}"');conn.execute(f'DROP ROLE "{role}"')
+        conn.commit()
+
+
+def test_completed_model_artifacts_are_immutable(database):
+    conn,_,_=database
+    submitted,_,_,_=execute(conn,[generated(),{"ready":True,"issues":[]}])
+    with pytest.raises(psycopg.errors.CheckViolation,match="immutable"):
+        conn.execute("UPDATE event_source_report_calls SET response_json='{}' WHERE run_id=%s",(submitted["run_id"],))
+    conn.rollback()

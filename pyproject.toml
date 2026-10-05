@@ -19,6 +19,7 @@ dependencies = [
   "trafilatura>=1.7.0",
   "psycopg[binary]>=3.1.18",
   "requests>=2.31",
+  "tiktoken>=0.8,<1",
 ]
 
 [project.optional-dependencies]

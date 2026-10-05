@@ -501,7 +501,8 @@ def _http_request(
     for key, value in headers.items():
         request.add_header(key, value)
     timeout = int(provider.get("timeout_s", 1200))
-    backoff = [] if (context or {}).get("stage") == "article_review_private" else [1, 2]
+    backoff = [] if ((context or {}).get("stage") == "article_review_private"
+                     or (context or {}).get("no_retry") is True) else [1, 2]
     attempts = 0
     provider_name = str(provider.get("name") or "").lower()
     is_openai = str(provider.get("type") or "").lower() == "openai_compatible"

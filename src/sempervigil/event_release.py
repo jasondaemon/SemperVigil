@@ -44,6 +44,12 @@ def publication_history(conn, event_ids: list[str], pointers: dict[str, str],
 
 def check_current(conn, bundle: dict) -> None:
     """Short activation-time source lock window; the event row is already locked."""
+    if bundle.get("workflow") == "event-source-report-public-v1":
+        from .event_source_report_publication import current_material, bundle_for
+        current = current_material(conn,bundle["run_id"],lock=True,published=True)
+        if bundle_for(current,bundle["run_id"],bundle["qualification"],bundle["predecessor"])!=bundle:
+            raise ValueError("stale_revision_snapshot")
+        return
     if bundle.get("workflow") == "event-composition-public-revision-v1":
         from .event_composition_publication import current_material
         current = current_material(

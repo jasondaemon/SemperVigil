@@ -700,6 +700,12 @@ def apply_migrations_pg(conn) -> None:
             logger.info("migration_applied version=pg_event_composition_derivative_identity_recovery_068")
         else:
             conn.commit()
+        if "pg_event_source_reports_069" not in applied:
+            from .event_source_reports import SCHEMA as report_schema
+            conn.execute(report_schema)
+            conn.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(%s,%s)",
+                         ("pg_event_source_reports_069", utc_now_iso()))
+            conn.commit()
         return
     _bootstrap_schema(conn)
     conn.execute(
@@ -1125,6 +1131,13 @@ def apply_migrations_pg(conn) -> None:
     )
     conn.commit()
     logger.info("migration_applied version=pg_event_repair_openai_model_056")
+
+    from .event_source_reports import SCHEMA as report_schema
+    conn.execute(report_schema)
+    conn.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(%s,%s)",
+                 ("pg_event_source_reports_069", utc_now_iso()))
+    conn.commit()
+
 
 def _bootstrap_schema(conn) -> None:
     conn.execute(

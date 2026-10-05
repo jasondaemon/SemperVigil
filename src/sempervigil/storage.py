@@ -56,6 +56,7 @@ _QUEUE_NAME_BY_JOB_TYPE: dict[str, str] = {
     "event_review_private": "llm_local",
     "article_review_private": "llm_local",
     "event_ledger_compose": "openai",
+    "event_source_report": "openai",
     "event_fact_curate": "openai",
     "event_composition_audit": "openai",
     "event_composition_repair": "openai",
