@@ -14,6 +14,8 @@ spec:
       app.kubernetes.io/component: build-worker
   template:
     metadata:
+      annotations:
+        sempervigil.net/source-report-config: {{ include "sempervigil.sourceReportConfig" . | quote }}
       labels:
         {{- include "sempervigil.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: build-worker

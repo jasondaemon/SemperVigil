@@ -68,6 +68,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 
+{{- define "sempervigil.sourceReportConfig" -}}
+{{- pick .Values.env "SV_EVENT_SOURCE_REPORT_ENABLED" "SV_EVENT_SOURCE_REPORT_EVENT_IDS" "SV_EVENT_SOURCE_REPORT_WRITER_MODEL" "SV_EVENT_SOURCE_REPORT_PHASE_CONFIG" "SV_EVENT_SOURCE_REPORT_COHORT_ID" "SV_EVENT_SOURCE_REPORT_COHORT_TOKENS" "SV_EVENT_SOURCE_REPORT_PILOT_POLICY" | toJson | sha256sum -}}
+{{- end -}}
+
 {{- define "sempervigil.logsVolume" -}}
 {{- if .Values.storage.logs.enabled }}
 persistentVolumeClaim:
