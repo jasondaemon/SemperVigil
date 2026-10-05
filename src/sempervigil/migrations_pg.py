@@ -690,6 +690,14 @@ def apply_migrations_pg(conn) -> None:
             )
             conn.commit()
             logger.info("migration_applied version=pg_event_composition_fallback_overview_recovery_067")
+        if "pg_event_composition_derivative_identity_recovery_068" not in applied:
+            _migrate_event_composition_derivative_identity_recovery(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_event_composition_derivative_identity_recovery_068", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_event_composition_derivative_identity_recovery_068")
         else:
             conn.commit()
         return
@@ -2200,6 +2208,29 @@ def _migrate_event_composition_fallback_overview_recovery(conn) -> None:
         """UPDATE event_reassessment_cases c
               SET status='active',decision_reason=NULL,updated_at=%s
             WHERE c.status='held' AND c.decision_reason='event_composition_invalid_shape'
+              AND EXISTS (
+                SELECT 1 FROM jobs j
+                JOIN event_ledger_compositions x
+                  ON x.composition_id=j.payload_json::jsonb->>'composition_id'
+                 AND x.ledger_id=c.ledger_id
+                 WHERE j.job_type='event_composition_repair' AND j.status='failed'
+                   AND j.error='input_size'
+                   AND j.result_json::jsonb->>'status'='started'
+                   AND NOT (j.result_json::jsonb ?| ARRAY['raw','output_chars','repaired_composition_id'])
+                   AND EXISTS (
+                     SELECT 1 FROM llm_runs l WHERE l.job_id=j.id
+                       AND l.ok=1 AND l.output_chars=0 AND l.error IS NULL)
+              )""",
+        (utc_now_iso(),),
+    )
+
+
+def _migrate_event_composition_derivative_identity_recovery(conn) -> None:
+    """Retry only the verified zero-output derivative identity conflict."""
+    conn.execute(
+        """UPDATE event_reassessment_cases c
+              SET status='active',decision_reason=NULL,updated_at=%s
+            WHERE c.status='held' AND c.decision_reason='event_composition_storage_conflict'
               AND EXISTS (
                 SELECT 1 FROM jobs j
                 JOIN event_ledger_compositions x

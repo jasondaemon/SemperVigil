@@ -380,6 +380,26 @@ def validate(raw: bytes, ledger_revision: dict, generation: str, *,
     }
 
 
+def derive(record: dict, source_composition_id: str, workflow: str,
+           lineage: dict) -> dict:
+    """Give an immutable derivative its own deterministic storage identity."""
+    if (record.get("workflow") != WORKFLOW
+            or not source_composition_id.startswith("elc_")
+            or not workflow.strip() or not isinstance(lineage, dict)):
+        raise ValueError("event_composition_derivation_invalid")
+    parent = {"composition_id": source_composition_id,
+              "generation_version": record["generation_version"],
+              "request_version": record["request_version"]}
+    derivation = {"workflow": workflow, "parent": parent, "lineage": lineage}
+    generation = _version(derivation)
+    content = {key: value for key, value in record.items()
+               if key not in {"generation_version", "request_version", "derivation"}}
+    request_version = _version({"generation_version": generation,
+                                "derivation": derivation, "content": content})
+    return {**record, "generation_version": generation,
+            "request_version": request_version, "derivation": derivation}
+
+
 def store_unreviewed(conn, record: dict) -> str:
     if (record.get("workflow") != WORKFLOW or record.get("status") != "unreviewed"
             or record.get("public_eligible") is not False):

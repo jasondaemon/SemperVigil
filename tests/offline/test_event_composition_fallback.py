@@ -77,6 +77,11 @@ def test_fallback_relocates_exact_fact_across_event_types(kind):
     operation = next(row for row in lineage["lineage"] if row["source_item_id"] == "C03")
     assert operation["operation"] == "relocate"
     assert operation["destination_section"] == "response_recovery"
+    assert record["derivation"]["parent"]["composition_id"] == "elc_1"
+    assert record["generation_version"] != composition["generation_version"]
+    assert record["request_version"] != composition["request_version"]
+    replay, _ = fallback.build("elc_1", composition, revision, decision)
+    assert replay == record
 
 
 def test_fallback_drops_invented_absence_when_no_fact_matches():

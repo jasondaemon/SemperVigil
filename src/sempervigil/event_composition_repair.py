@@ -256,9 +256,13 @@ def validate(raw: bytes, req: dict, composition: dict, ledger_revision: dict) ->
                 "confidence": item.get("confidence"),
             }]
             output[section].extend(rows)
-        return event_composition.validate(
+        record = event_composition.validate(
             json.dumps(_deduplicate(output)).encode(), ledger_revision, req["generation"],
             require_detail_coverage=False)
+        return event_composition.derive(
+            record, req["composition_id"], WORKFLOW,
+            {"audit_request_version": req["audit_request_version"],
+             "repair_request_version": req["request_version"]})
     output = {section: [] for section in event_composition.SECTIONS}
     for item_id, section, item in _items(composition):
         rows = replacements.get(item_id) or [{
@@ -268,5 +272,9 @@ def validate(raw: bytes, req: dict, composition: dict, ledger_revision: dict) ->
             "confidence": item.get("confidence"),
         }]
         output[section].extend(rows)
-    return event_composition.validate(json.dumps(_deduplicate(output)).encode(), ledger_revision,
-                                      req["generation"], require_detail_coverage=False)
+    record = event_composition.validate(json.dumps(_deduplicate(output)).encode(), ledger_revision,
+                                        req["generation"], require_detail_coverage=False)
+    return event_composition.derive(
+        record, req["composition_id"], WORKFLOW,
+        {"audit_request_version": req["audit_request_version"],
+         "repair_request_version": req["request_version"]})

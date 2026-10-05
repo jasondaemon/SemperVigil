@@ -127,4 +127,8 @@ def build(composition_id, composition, ledger_revision, decision):
                 "source_audit_request_version": decision.get("request_version"),
                 "lineage": lineage}
     record["fallback"] = {**fallback, "version": _version(fallback)}
+    record = event_composition.derive(
+        record, composition_id, WORKFLOW,
+        {"source_audit_request_version": decision.get("request_version"),
+         "fallback_version": record["fallback"]["version"]})
     return record, record["fallback"]
