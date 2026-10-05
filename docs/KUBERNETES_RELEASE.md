@@ -1,14 +1,14 @@
 # Kubernetes source-only release
 
 SemperVigil production is Kubernetes (K3s/containerd), not Docker Compose. The
-current source-only release path uses the Kubernetes node `docker52` as an image
-packaging workstation because it retains the verified dependency layers. Docker
-on that node only constructs and exports images; it is not a SemperVigil runtime
+current source-only release path uses an approved cluster packaging node because
+it retains the verified dependency layers. Docker on that node only constructs
+and exports images; it is not a SemperVigil runtime
 component, a Hugo builder, or a separate deployment environment.
 
 1. Read CODEX_RULES, CURRENT_CONTEXT and STABILIZATION_VERIFICATION. Verify live
    image tags and platform values, dirty files, current jobs and public checks.
-2. Confirm `docker52` is still the recorded packaging node and inspect the retained
+2. Confirm the approved packaging node and inspect the retained
    base image's `org.opencontainers.image.revision` label. Deployment history and
    live K3s state override older host notes. Keep credentials and private addresses
    outside this app repo.
@@ -30,7 +30,7 @@ component, a Hugo builder, or a separate deployment environment.
    Commit and push application and platform changes; leave unrelated platform
    edits untouched. Record exact tags, tests, canary IDs, rollback and limitations.
 
-Do not use the retired pre-Kubernetes `.43` host instructions. No direct Hugo
+Do not use retired pre-Kubernetes host instructions. No direct Hugo
 execution belongs in this process. A private article comparison
 requires no web or builder rollout, public rebuild, profile edit or DB migration.
 Disposable database tests may run in a short-lived Kubernetes pod with no service,
