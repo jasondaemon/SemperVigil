@@ -198,8 +198,10 @@ def published_baseline(conn, event_id, current):
        JOIN event_public_revisions r USING(event_id,revision_id) WHERE p.event_id=%s""", (event_id,)).fetchone()
     if row:
         bundle = json.loads(row[1]) if isinstance(row[1], str) else row[1]
-        if _version(bundle) != row[0]:
-            raise ValueError("event_source_report_baseline_integrity")
+        # Each retained publication workflow owns its own revision-hash formula.
+        # Legacy compositions hash a workflow envelope, not the bare bundle.
+        from .event_render import resolve
+        resolve(bundle,event_id=event_id,expected_revision=row[0])
         if bundle.get("workflow") == contract.PUBLIC_WORKFLOW:
             from .event_source_report_publication import validate_bundle
             validate_bundle(bundle,event_id=event_id,expected_revision=row[0])

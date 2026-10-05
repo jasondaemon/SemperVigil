@@ -177,3 +177,18 @@ def test_chart_renders_default_disabled_report_flag_and_scope():
     assert 'SV_EVENT_SOURCE_REPORT_ENABLED: {{ .Values.env.SV_EVENT_SOURCE_REPORT_ENABLED' in template
     assert 'SV_EVENT_SOURCE_REPORT_EVENT_IDS: {{ .Values.env.SV_EVENT_SOURCE_REPORT_EVENT_IDS' in template
     assert 'SV_EVENT_SOURCE_REPORT_ENABLED: "0"' in (root/"deploy/helm/sempervigil/values.yaml").read_text()
+
+
+def test_scheduler_handoff_needs_explicit_approved_run_and_accepted_artifact(monkeypatch):
+    from sempervigil import event_source_reports as reports,event_source_report_publication as publication,storage
+    monkeypatch.setattr(reports,"enabled",lambda:True)
+    monkeypatch.setattr(storage,"get_setting",lambda c,key,default: ["esr_approved"] if key=="event.source_report.approved" else [])
+    monkeypatch.setattr(reports,"_load",lambda c,rid:{"status":"accepted","event_id":"evt_sample","predecessor":"old"})
+    monkeypatch.setattr(reports,"previous",lambda c,e:("old",None))
+    calls=[]
+    def publish(c,rid):calls.append(rid);return {"status":"queued","job_id":"guarded"}
+    monkeypatch.setattr(publication,"submit",publish)
+    assert reports.tick(object())==[{"status":"queued","job_id":"guarded"}] and calls==["esr_approved"]
+    calls.clear()
+    monkeypatch.setattr(reports,"_load",lambda c,rid:{"status":"held"})
+    assert reports.tick(object())==[] and not calls

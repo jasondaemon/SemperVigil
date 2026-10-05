@@ -32,8 +32,15 @@ secondary disagreement must remain attributed. Older newly incorporated sources
 are not later incident developments. Reviewer evaluation still covers the entire
 packet and report, including inference rationale and confidence.
 
-Local verification: full offline suite 1,259 passed, two skipped; actual disposable
+Local verification: full offline suite 1,260 passed, two skipped; actual disposable
 PostgreSQL tests cover public derivative baselines, legacy-version mismatch,
-cohort reservations, unknown transport, and debounce bursts. Deployment and a
-bounded two-call primary-evidence correction proof remain separate pending gates.
+cohort reservations, unknown transport, and debounce bursts (16 passed).
+Initial readiness image `b7b7481` is deployed to the four scoped workloads.
+Primary evidence ingestion/linking completed, but preflight exposed an incorrect
+assumption that all retained publication workflows hash their bare bundle. The
+local follow-up instead invokes each retained workflow's existing resolver and
+revision validator. The actual legacy bundle and all three original article
+versions passed read-only validation. That follow-up is not yet deployed.
+No hosted proof calls occurred and the public predecessor remains unchanged.
+A bounded two-call primary-evidence correction proof remains a pending gate.
 No autonomous living-report acceptance claim follows from these local tests.

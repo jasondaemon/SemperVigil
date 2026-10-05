@@ -222,6 +222,10 @@ def test_legacy_public_baseline_requires_exact_original_evidence_version(databas
     conn,_,_=database
     from sempervigil.article_evidence import source_for
     from sempervigil import storage
+    from sempervigil import event_render
+    # Isolate legacy source-version reconstruction; real workflow projections are
+    # independently exercised by the retained publication/render contract tests.
+    monkeypatch.setattr(event_render,"resolve",lambda b,**kw: ({},{}))
     article={"id":1,"title":"Acme incident","content_text":reports.snapshot(conn,"evt_test")["sources"][0]["text"]}
     monkeypatch.setattr(storage,"get_article_by_id",lambda c,aid:article)
     conn.execute("CREATE TABLE article_evidence_revisions(revision_id TEXT,article_id INTEGER,source_version TEXT)")
