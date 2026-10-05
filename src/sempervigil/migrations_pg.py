@@ -650,6 +650,14 @@ def apply_migrations_pg(conn) -> None:
                 )
                 conn.commit()
                 logger.info("migration_applied version=pg_event_web_validator_profile_062")
+        if "pg_event_composition_audit_budget_requeue_063" not in applied:
+            _migrate_event_composition_audit_budget_requeue(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_event_composition_audit_budget_requeue_063", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_event_composition_audit_budget_requeue_063")
         else:
             conn.commit()
         return
@@ -2072,6 +2080,17 @@ def _migrate_event_composition_audit_completion_requeue(conn) -> None:
               SET status='active',decision_reason=NULL,updated_at=%s
             WHERE status='held'
               AND decision_reason='composition audit failed: input_size'""",
+        (utc_now_iso(),),
+    )
+
+
+def _migrate_event_composition_audit_budget_requeue(conn) -> None:
+    """Reactivate only cases blocked by the corrected complete-audit size guard."""
+    conn.execute(
+        """UPDATE event_reassessment_cases
+              SET status='active',decision_reason=NULL,updated_at=%s
+            WHERE status='held'
+              AND decision_reason='event_composition_audit_input_over_budget'""",
         (utc_now_iso(),),
     )
 
