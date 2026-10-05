@@ -3079,6 +3079,17 @@ def api_event_curation(event_id: str) -> dict[str, object]:
         conn.close()
 
 
+@app.get("/admin/api/events/{event_id}/source-report-status", dependencies=[Depends(_require_admin_token)])
+def api_event_source_report_status(event_id: str) -> dict[str, object]:
+    from .event_source_report_pilot import status
+    conn = _get_conn()
+    try:
+        conn.execute('SET TRANSACTION READ ONLY')
+        return status(conn,event_id)
+    finally:
+        conn.close()
+
+
 class EventsRebuildRequest(BaseModel):
     limit: int | None = None
 

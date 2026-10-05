@@ -25,7 +25,7 @@ class JournaledExecutor:
         reservation=contract.tokens(contract.encode(payload))+512+payload["max_completion_tokens"]
         if sum(self.reservations)+reservation>self.ceiling:
             raise ValueError("event_source_report_executor_reservation_ceiling")
-        phase=self.phases[len(self.reservations)-1]
+        phase=self.phases[len(self.reservations)]
         key=_version(payload)
         path=self.root/self.run_id/(key+".json")
         if path.exists():

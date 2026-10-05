@@ -106,12 +106,15 @@ def qualification(record, run_id):
     return result
 
 
-def submit(conn, run_id, *, factory=None):
+def submit(conn, run_id, *, factory=None, automatic=False):
     from .event_source_reports import enabled,check_scope
     if not enabled():
         raise PermissionError("event_source_report_disabled")
     initial = current_material(conn,run_id)
     check_scope(initial["event_id"])
+    if automatic:
+        from .event_source_reports import _fresh
+        _fresh(conn,initial)
     factory = factory or connection_factory("SV_EVENT_APPROVAL_DB_URL")
     with factory() as authority:
         authority.execute("SET LOCAL statement_timeout='3s'")
@@ -125,6 +128,11 @@ def submit(conn, run_id, *, factory=None):
         q = qualification(record,run_id)
         approval = {"workflow":APPROVAL_WORKFLOW,"event_id":record["event_id"],"run_id":run_id,
                     "qualification":q,"predecessor":record["predecessor"]}
+        if automatic:
+            from .event_source_report_pilot import policy,check_run
+            p=policy()
+            if not p:raise ValueError('event_source_report_pilot_required')
+            approval['automatic_approval']=check_run(authority,record,run_id,p,publication=True)
         aid,qid = _version(approval),_version(q)
         prior = authority.execute("SELECT job_id FROM event_review_approvals WHERE approval_id=%s",(aid,)).fetchone()
         if prior:
@@ -205,6 +213,11 @@ def run_approval(approval, *, qualification_id, factory=None):
             raise ValueError("qualification_revocation_guard_required")
         conn.execute("SELECT id FROM events WHERE id=%s FOR UPDATE NOWAIT",(approval["event_id"],))
         record = current_material(conn,approval["run_id"],lock=True)
+        if 'automatic_approval' in approval:
+            from .event_source_report_pilot import policy,check_run
+            p=policy()
+            if not p or approval['automatic_approval']!=check_run(conn,record,approval['run_id'],p,publication=True):
+                raise ValueError('event_source_report_automatic_approval_changed')
         q = qualification(record,approval["run_id"])
         row = conn.execute("SELECT qualification_json,revoked_at FROM event_quote_qualifications WHERE event_id=%s AND qualification_id=%s",
                            (approval["event_id"],qualification_id)).fetchone()

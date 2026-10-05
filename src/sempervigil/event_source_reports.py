@@ -109,11 +109,13 @@ def phase_settings():
 
 
 def configuration(conn):
+    from .event_source_report_pilot import policy
+    pilot=policy()
     from .services.ai_service import get_model, get_provider
     row = conn.execute("""SELECT p.id,m.id FROM llm_providers p JOIN llm_models m ON m.provider_id=p.id
       WHERE lower(p.name)='openai' AND lower(p.type)='openai_compatible'
       AND p.is_enabled=1 AND m.is_enabled=1 AND m.model_name=%s ORDER BY m.id LIMIT 1""",
-      (os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL',MODEL),)).fetchone()
+      (os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL') or MODEL,)).fetchone()
     if not row:
         raise ValueError("event_source_report_model_missing")
     provider, model = get_provider(conn, row[0]), get_model(conn, row[1])
@@ -124,7 +126,8 @@ def configuration(conn):
         "tokenizer": "o200k_base", "context_tokens": 24000,
         "update_context": "published-evidence-delta-v3", "cohort_policy":"serialized-reservation-v1",
         "projection_policy":contract.PROJECTION_WORKFLOW,
-        "fixed_reviewer_model":MODEL,"review_schema":contract.review_schema({'items':[{'id':'P01'}]},['S1'])})
+        "fixed_reviewer_model":MODEL,"review_schema":contract.review_schema({'items':[{'id':'P01'}]},['S1']),
+        **({'pilot_policy':pilot} if pilot else {})})
     return model, provider, version
 
 
@@ -303,6 +306,17 @@ def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
     if not enabled():
         raise PermissionError("event_source_report_disabled")
     check_scope(event_id)
+    from .event_source_report_pilot import policy,admit
+    pilot=policy()
+    if pilot:
+        if allow_correction or analyst_question is not None:
+            raise ValueError('event_source_report_pilot_repair_disabled')
+        phases=phase_settings()
+        if (os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL')!='gpt-5.6-sol'
+            or phases['writer']!={'reasoning_effort':'none','max_completion_tokens':6000}
+            or phases['review']!={'reasoning_effort':'low','max_completion_tokens':2400}):
+            raise ValueError('event_source_report_pilot_models_invalid')
+        budget_tokens=pilot['run_tokens']
     if (trigger not in {"evidence_change", "generator_upgrade"} or not 1 <= budget_tokens <= 200000
             or type(allow_correction) is not bool):
         raise ValueError("event_source_report_admission_invalid")
@@ -317,6 +331,11 @@ def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
     snap['review_contract']=contract.REVIEW_CONTRACT
     predecessor, prior = previous(conn, event_id)
     old, prior_generation = published_baseline(conn,event_id,snap)
+    if pilot:
+        from .event_source_report_pilot import active
+        active(pilot)
+        if event_id not in pilot['events'] or trigger!='evidence_change' or not predecessor or old is None:
+            raise ValueError('event_source_report_pilot_successor_required')
     if old:
         if trigger == "evidence_change" and not meaningful_change(old, snap):
             conn.commit(); return {"status": "unchanged", "reason": "no_meaningful_evidence_change"}
@@ -340,6 +359,9 @@ def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
     if cohort:
         _reserve_cohort(conn,cohort,0)
         snap["cohort"] = cohort
+    if pilot:
+        admit(conn,pilot,event_id,predecessor,old,trigger)
+        snap['pilot']=pilot
     if old and prior:
         cited = {c["source_id"] for x in prior.get("items", []) for c in x.get("citations", [])}
         snap["previous_cited_article_ids"] = [s["article_id"] for s in old["sources"]
@@ -376,6 +398,11 @@ def _load(conn, run_id):
 
 
 def _fresh(conn, record):
+    from .event_source_report_pilot import policy,active
+    pilot=record['snapshot'].get('pilot')
+    if pilot:
+        if pilot!=policy():raise ValueError('event_source_report_pilot_policy_changed')
+        active(pilot)
     if snapshot(conn, record["event_id"])["source_version"] != record["source_version"]:
         raise ValueError("event_source_report_sources_changed")
     if previous(conn, record["event_id"])[0] != record["predecessor"]:
@@ -451,7 +478,11 @@ def call(conn, run_id, phase, system, data, response_schema, *, complete=None, c
     else:
         _reserve_cohort(conn,record['snapshot'].get('cohort'),reservation)
     ordinal = conn.execute("SELECT count(*) FROM event_source_report_calls WHERE run_id=%s", (run_id,)).fetchone()[0]+1
-    if ordinal > 4 or record["charged_tokens"]+record["reserved_tokens"]+reservation > record["budget_tokens"]:
+    if record['snapshot'].get('pilot'):
+        reserved_calls=conn.execute('SELECT COALESCE(SUM(reservation),0) FROM event_source_report_calls WHERE run_id=%s',(run_id,)).fetchone()[0]
+        if reserved_calls+reservation>record['budget_tokens']:
+            raise ValueError('event_source_report_pilot_reservation_exhausted')
+    if ordinal > (2 if record['snapshot'].get('pilot') else 4) or record["charged_tokens"]+record["reserved_tokens"]+reservation > record["budget_tokens"]:
         raise ValueError("event_source_report_budget_exhausted")
     conn.execute("UPDATE event_source_report_runs SET reserved_tokens=reserved_tokens+%s WHERE run_id=%s",
                  (reservation,run_id))
@@ -502,6 +533,7 @@ def recover_pretransport(conn, parent_run_id, *, legacy_proof=None, debounce_sec
     if not 0 <= debounce_seconds <= 86400:
         raise ValueError("event_source_report_debounce_invalid")
     parent = _load(conn,parent_run_id);check_scope(parent["event_id"])
+    if parent['snapshot'].get('pilot'):raise ValueError('event_source_report_pilot_repair_disabled')
     conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",("source-report:"+parent["event_id"],))
     prior = conn.execute("SELECT child_run_id,audit_json FROM event_source_report_recoveries WHERE parent_run_id=%s",
                          (parent_run_id,)).fetchone()
@@ -616,6 +648,7 @@ def grant_correction_allowance(conn, run_id, tokens, *, authority, manual_issues
     if not enabled() or not authority or type(tokens) is not int or not 1<=tokens<=200000:
         raise PermissionError('event_source_report_allowance_not_authorized')
     record=_load(conn,run_id);check_scope(record['event_id']);_fresh(conn,record)
+    if record['snapshot'].get('pilot'):raise ValueError('event_source_report_pilot_repair_disabled')
     conn.execute('SELECT run_id FROM event_source_report_runs WHERE run_id=%s FOR UPDATE',(run_id,))
     rows=conn.execute('SELECT phase,status FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal',(run_id,)).fetchall()
     if manual_issues:
@@ -735,7 +768,7 @@ def run(conn, job, *, complete=None):
         return {"run_id":run_id,"status":"held","reason":str(exc)[:300],"public_eligible":False}
 
 
-def tick(conn):
+def _legacy_tick(conn):
     """Explicitly enrolled Events only; one admission per scheduler tick."""
     if not enabled():
         return []
@@ -771,3 +804,48 @@ def tick(conn):
         result = submit(conn,event_id)
         if result["status"]=="queued": return [result]
     return []
+
+
+def tick(conn):
+    """Isolate report policy failures from core ingestion/build admission."""
+    from .event_source_report_pilot import policy,active,safe_reason
+    from .storage import set_setting
+    try:
+        if not enabled():return []
+        p=policy()
+        if not p:return _legacy_tick(conn)
+        active(p)
+        results=[]
+        from .event_source_report_publication import submit as publish
+        rows=conn.execute("""SELECT run_id,event_id FROM event_source_report_runs
+          WHERE status='accepted' AND snapshot_json::jsonb->'cohort'->>'id'=%s
+          ORDER BY created_at,run_id""",(p['id'],)).fetchall()
+        for rid,event_id in rows:
+            record=_load(conn,rid)
+            if previous(conn,event_id)[0]!=record['predecessor']:continue
+            try:
+                receipt=publish(conn,rid,automatic=True)
+                results.append(receipt)
+            except Exception as exc:
+                conn.rollback()
+                reason=safe_reason(exc)
+                conn.execute("UPDATE event_source_report_runs SET status='held',reason=%s WHERE run_id=%s",(reason,rid));conn.commit()
+                results.append({'status':'held','run_id':rid,'reason':reason})
+        for event_id in p['events']:
+            try:
+                receipt=submit(conn,event_id)
+                results.append({'event_id':event_id,**receipt})
+                if receipt['status']=='queued':break
+            except Exception as exc:
+                conn.rollback()
+                results.append({'event_id':event_id,'status':'held','reason':safe_reason(exc)})
+        set_setting(conn,'event.source_report.last_tick',{'checked_at':utc_now_iso(),'policy_id':p['id'],'results':results});conn.commit()
+        return results
+    except Exception as exc:
+        conn.rollback()
+        result={'status':'held','reason':safe_reason(exc)}
+        try:
+            set_setting(conn,'event.source_report.last_tick',{'checked_at':utc_now_iso(),'results':[result]});conn.commit()
+        except Exception:
+            conn.rollback()
+        return [result]

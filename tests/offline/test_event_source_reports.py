@@ -220,6 +220,10 @@ def test_executor_readiness_journal_and_bounded_reservations_end_to_end(monkeypa
     assert readiness==[True] and len(calls)==2
     receipts=[json.loads(p.read_text()) for p in (tmp_path/"esr_fixture").glob('*.json')]
     assert {r['phase'] for r in receipts}=={'writer','review'}
+    from sempervigil.investigation import _version
+    for phase,cap in [('writer',3200),('review',1600)]:
+        key=_version({'max_completion_tokens':cap,'messages':[]})
+        assert json.loads((tmp_path/'esr_fixture'/(key+'.json')).read_text())['phase']==phase
     assert all(r['status']=='completed' and r['response']['usage']['total_tokens']==7 for r in receipts)
     with pytest.raises(ValueError,match='call_limit'):executor({'max_completion_tokens':1600})
     replay=JournaledExecutor(object(),"esr_fixture",tmp_path,complete=fixture)
