@@ -88,6 +88,26 @@ def check_scope(event_id):
         raise PermissionError("event_source_report_event_outside_scope")
 
 
+def phase_settings():
+    """Explicit bounded per-phase request options; model selection stays separate."""
+    defaults={phase:{'reasoning_effort':'low','max_completion_tokens':3200 if phase in {'writer','correction'} else 1600}
+              for phase in ('writer','review','correction','verification')}
+    overrides=json.loads(os.environ.get('SV_EVENT_SOURCE_REPORT_PHASE_CONFIG','{}'))
+    if not isinstance(overrides,dict) or set(overrides)-set(defaults):
+        raise ValueError('event_source_report_phase_config_invalid')
+    for phase,values in overrides.items():
+        if not isinstance(values,dict) or set(values)-{'reasoning_effort','max_completion_tokens'}:
+            raise ValueError('event_source_report_phase_config_invalid')
+        defaults[phase].update(values)
+    for values in defaults.values():
+        if (not isinstance(values['reasoning_effort'],str)
+                or values['reasoning_effort'] not in {'none','low','medium','high','xhigh','max'}
+                or type(values['max_completion_tokens']) is not int
+                or not 1<=values['max_completion_tokens']<=128000):
+            raise ValueError('event_source_report_phase_config_invalid')
+    return defaults
+
+
 def configuration(conn):
     from .services.ai_service import get_model, get_provider
     row = conn.execute("""SELECT p.id,m.id FROM llm_providers p JOIN llm_models m ON m.provider_id=p.id
@@ -100,8 +120,8 @@ def configuration(conn):
     version = _version({"workflow": contract.WORKFLOW, "model": model["id"],
         "provider": provider["id"], "base_url": provider["base_url"],
         "writer": contract.WRITER, "reviewer": contract.REVIEWER,
-        "schema": contract.schema(["S1"]), "reasoning": "low",
-        "limits": [3200, 1600], "tokenizer": "o200k_base", "context_tokens": 24000,
+        "schema": contract.schema(["S1"]), "phase_settings":phase_settings(),
+        "tokenizer": "o200k_base", "context_tokens": 24000,
         "update_context": "published-evidence-delta-v3", "cohort_policy":"serialized-reservation-v1",
         "projection_policy":contract.PROJECTION_WORKFLOW,
         "fixed_reviewer_model":MODEL,"review_schema":contract.review_schema({'items':[{'id':'P01'}]},['S1'])})
@@ -412,8 +432,9 @@ def call(conn, run_id, phase, system, data, response_schema, *, complete=None, c
           AND p.is_enabled=1 AND m.is_enabled=1 AND m.model_name=%s ORDER BY m.id LIMIT 1""",(MODEL,)).fetchone()
         if not row:raise ValueError('event_source_report_reviewer_model_missing')
         model=get_model(conn,row[0])
-    payload = {"model": model["model_name"], "reasoning_effort": "low",
-        "max_completion_tokens": completion_cap or (3200 if phase in {"writer", "correction"} else 1600),
+    settings=phase_settings()[phase]
+    payload = {"model": model["model_name"], "reasoning_effort": settings['reasoning_effort'],
+        "max_completion_tokens": completion_cap or settings['max_completion_tokens'],
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": contract.encode(data)}],
         "response_format": {"type": "json_schema", "json_schema":

@@ -39,6 +39,7 @@ def test_writer_override_does_not_change_fixed_reviewer(monkeypatch):
     from sempervigil import event_source_reports as r
     from sempervigil.services import ai_service
     monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_WRITER_MODEL','gpt-5.6-sol')
+    monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_PHASE_CONFIG',json.dumps({'writer':{'reasoning_effort':'none','max_completion_tokens':6000},'review':{'reasoning_effort':'low','max_completion_tokens':2400}}))
     monkeypatch.setattr(r,'configuration',lambda _:({'model_name':'gpt-5.6-sol'},{},'version'))
     monkeypatch.setattr(r,'_fresh',lambda *_:None)
     monkeypatch.setattr(r,'_reserve_cohort',lambda *_:None)
@@ -52,9 +53,38 @@ def test_writer_override_does_not_change_fixed_reviewer(monkeypatch):
     conn=SimpleNamespace(execute=execute,commit=lambda:None)
     seen=[]
     def complete(payload):
-        seen.append(payload['model'])
+        seen.append((payload['model'],payload['reasoning_effort'],payload['max_completion_tokens']))
         return {'choices':[{'finish_reason':'stop','message':{'content':json.dumps({'value':1})}}],
                 'usage':{'total_tokens':1}}
     for phase in ('writer','review'):
         r.call(conn,'esr_test',phase,'system',{},x.object_schema({'value':{'type':'integer'}}),complete=complete)
-    assert seen==['gpt-5.6-sol','gpt-5.6-luna']
+    assert seen==[('gpt-5.6-sol','none',6000),('gpt-5.6-luna','low',2400)]
+    monkeypatch.setattr(r,'_load',lambda *_:{'snapshot':{},'charged_tokens':0,'reserved_tokens':0,'budget_tokens':1000})
+    with pytest.raises(ValueError,match='budget_exhausted'):
+        r.call(conn,'esr_budget','writer','system',{},x.object_schema({'value':{'type':'integer'}}),complete=complete)
+    assert len(seen)==2  # Explicit cap enters reservation before any HTTP call.
+
+
+@pytest.mark.parametrize('config',[
+ {'writer':{'reasoning_effort':'minimal'}}, {'writer':{'max_completion_tokens':True}},
+ {'writer':{'max_completion_tokens':0}}, {'writer':{'max_completion_tokens':128001}},
+ {'writer':{'model':'other'}}, {'unknown':{}}, [],
+])
+def test_invalid_phase_configuration_refuses(monkeypatch,config):
+    import json
+    from sempervigil import event_source_reports as r
+    monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_PHASE_CONFIG',json.dumps(config))
+    with pytest.raises(ValueError,match='phase_config_invalid'):r.phase_settings()
+
+
+def test_phase_configuration_changes_generator_identity(monkeypatch):
+    from types import SimpleNamespace
+    from sempervigil import event_source_reports as r
+    from sempervigil.services import ai_service
+    monkeypatch.setattr(ai_service,'get_provider',lambda *_:{'id':'p','base_url':'https://example.org'})
+    monkeypatch.setattr(ai_service,'get_model',lambda *_:{'id':'m','model_name':'configured'})
+    conn=SimpleNamespace(execute=lambda *_:SimpleNamespace(fetchone=lambda:('p','m')))
+    monkeypatch.delenv('SV_EVENT_SOURCE_REPORT_PHASE_CONFIG',raising=False)
+    before=r.configuration(conn)[2]
+    monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_PHASE_CONFIG','{"writer":{"reasoning_effort":"none","max_completion_tokens":6000}}')
+    assert r.configuration(conn)[2]!=before

@@ -188,3 +188,32 @@ and the immediately preceding daily-feed bytes/pointers remain unchanged.
 Verification: 1,283 offline tests passed/two skipped before the final model-selector
 fixture; 22 disposable PostgreSQL tests passed, including compact reconstruction,
 unchecked prose substitution refusal and legacy derivative span identity.
+
+## Explicit per-phase configuration / Sol-none pair
+
+`SV_EVENT_SOURCE_REPORT_PHASE_CONFIG` accepts bounded per-phase reasoning effort
+and total completion caps. Requests and exact token reservations use those values;
+generation identity includes all phase settings. Invalid effort/cap/unknown-field
+configurations refuse before transport. Writer model selection stays separate;
+the fixed reviewer is unchanged. Changing provider model defaults alone does not
+override this explicit report-path contract. No global enablement is introduced.
+
+The approved independent pair used Sol/none/6,000 and Luna/low/2,400 on the same
+archived complete source packet, prior report, actual delta and analyst question.
+Conservative preflight bound was 28,747 under 29,000. Exact reservations were
+13,107 writer and 11,877 reviewer (24,984 total); usage was 9,059 + 9,101 = 18,160
+tokens, zero outstanding. Writer returned 2,857 visible completion tokens with zero
+reasoning in 29,476 ms; reviewer completed in 5,835 ms, ready=true/no substantive
+issues, with one nonblocking locator warning about the subsidiary-identification
+sentence elsewhere in the same cited source. Public-rate cost estimate is $0.090899,
+including observed cache-write tokens; this is not an invoice.
+
+Independent manual quality review held the otherwise model-accepted candidate:
+P17 conflates spoofed caller-ID presentation with possession of a telephone number;
+P18 labels undated detection strictly before September 22 without a supported day
+bound. Raw output and ready reviewer verdict are preserved, not edited or cleared.
+No correction/retry, source deployment, push or publication followed. Both earlier
+Astrana holds remain intact; Microsoft/page/feed pointers and bytes are unchanged,
+runtime is 5b7cb42 and global generation remains 0. Pre-call verification was 1,292
+offline passed/two skipped and 22 disposable PostgreSQL tests passed; explicit
+per-phase model-selector, identity and budget-refusal tests also pass.
