@@ -228,8 +228,9 @@ def test_legacy_public_baseline_requires_exact_original_evidence_version(databas
     conn.execute("INSERT INTO article_evidence_revisions VALUES('aer_original',1,%s)",(source_for(article)["source_version"],))
     bundle={"workflow":"legacy","sources":[{"article_id":1,"evidence_revision_id":"aer_original"}]}
     revision=reports._version(bundle)
-    conn.execute("INSERT INTO event_quote_qualifications VALUES('evt_test','q','{}','now',NULL)")
-    conn.execute("INSERT INTO event_public_revisions VALUES('evt_test',%s,'q',NULL,%s,'now')",(revision,contract.encode(bundle)))
+    qid=reports._version({})
+    conn.execute("INSERT INTO event_quote_qualifications VALUES('evt_test',%s,'{}','now',NULL)",(qid,))
+    conn.execute("INSERT INTO event_public_revisions VALUES('evt_test',%s,%s,NULL,%s,'now')",(revision,qid,contract.encode(bundle)))
     conn.execute("INSERT INTO event_public_pointers VALUES('evt_test',%s,'now')",(revision,));conn.commit()
     baseline,_=reports.published_baseline(conn,"evt_test",reports.snapshot(conn,"evt_test"))
     assert baseline["sources"][0]["article_id"]==1
