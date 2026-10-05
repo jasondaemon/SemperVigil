@@ -264,3 +264,125 @@ monitoring policy and operational alerts remain. Public chrome's “Independent
 sources” counts supplied sources, not verified investigative independence;
 “Living incident report” does not demonstrate enabled automatic updates.
 Visible revision-history UX and passage inspection remain separate work.
+
+## Unattended readiness audit and bounded enablement proposal
+
+October 5 follow-up used no new hosted requests. Global admission remains 0;
+`event.source_report.enrolled` and `.approved` are empty; no cohort or per-phase
+model override is configured. The current runtime scope is Microsoft only.
+Existing unrelated daily research enrollment is unchanged. Do not describe this
+state as autonomous source-report publication.
+
+### Verified boundaries and blockers
+
+| Stage | Verified behavior | Remaining control before autonomous enrollment |
+| --- | --- | --- |
+| Intake/link | Existing ingestion and web-source validation feed linked raw articles; report snapshots freeze membership, metadata, bodies and suppression. Research is explicitly enrolled and interval-bounded (`event_living_research.py:21,79`). | Report cohort budget does not cover research validation or article-summary calls. Do not add fresh research in the first rollout. Existing web validation can use lexical fallback unless REQUIRE_LLM is set; verify incident-matching policy for enrolled routes (`worker.py:7212,7315,7418`). |
+| Novelty/debounce | Exact-body deduplication, conservative lexical addition filtering, existing-body corrections/removals and metadata changes. Snapshot admitted with default 300-second debounce (`event_source_reports.py:189,301`). | No semantic independence/novelty proof. Cited-body correction may intentionally withhold stale managed report at export; uncited additions retain prior valid report. Expose this distinction and keep the immutable fallback. |
+| Generation | Complete context or hold, saved prior/public baseline, per-phase model/config identity, exact pre-HTTP reservations, two-call default and max_attempts=1 (`event_source_reports.py:423,693`). | Scheduler currently calls submit with its hard-coded 24,000 default; the successful complete Astrana first pair reserved 24,984. Add validated per-run scheduler budget and explicit Sol-none/Luna-low settings before enrollment. |
+| Publication | Separate approval admission, promotion, current-source/predecessor checks, immutable response reconstruction and guarded manifest activation (`event_source_report_publication.py:109,192`; `event_activation.py:110`). | Accepted output is not automatically approved: tick only publishes IDs in `event.source_report.approved` (`event_source_reports.py:738`). Implement an explicit, bounded, audited automatic-approval policy for eligible successor runs; do not invent IDs in settings or bypass roles. |
+| Scheduler isolation | One admission per pass; per-event pending suppression and transaction/advisory locks. | Source-report tick errors are not isolated before build admission (`orchestrator.py:440,448`). A bad enrollment, unavailable source or exhausted cohort can abort the tick. Add per-event rollback/hold receipts and continue unrelated ingestion/build admission. |
+| Failure/accounting | Review, quote/schema, freshness, budget and uncertain-transport failures hold; no ordinary replay of identical held requests; immutable response and reservation retained. | A held report can be a succeeded worker job containing a held result, so failed-job counts alone miss it (`worker.py:5086`; `event_source_reports.py:733`). Add a read-only report-status view and bounded alert/receipt outbox integrated into existing daily review. No unlimited repair or automatic reservation release. |
+
+### First bounded operational policy (proposed, not enabled)
+
+Use exactly Microsoft `evt_8d136739e530` and Astrana `evt_eef963338f1a`, not all
+legacy Events or a 42-case backfill. Consume only newly linked evidence from
+existing intake. Do not trigger generator-only backfill, enroll new research,
+change article ingestion/summaries, or alter the daily feed pipeline.
+
+The first window is 48 hours, at most one successor run per Event and two runs
+total, one report job active globally, 300-second debounce. Require an immutable
+cohort ID with a lifetime 64,000-token ceiling, 32,000 reserved/actual tokens per
+run, Sol/none/6,000 writer and fixed Luna/low/2,400 independent review. Two calls
+maximum per run; no automatic correction or extra allowance. Unknown transport
+consumes its reservation. Complete context that cannot fit holds, never truncates.
+Window expiry, admitted-run count, queue concurrency and scheduler per-run budget
+are additional controls to implement, not capabilities implied by today's token
+cohort. Do not rotate cohort IDs to reset spending automatically.
+
+At the recorded public rates, 64,000 tokens at the maximum selected marginal
+rate ($20/million) bounds report-only nominal token cost at $1.28; choose a
+$1.50 report-only operator ceiling and reject provider/model/rate changes rather
+than silently widening it. This is a conservative rate estimate, not an invoice
+or bound on unrelated existing ingestion expenditure. Actual dollar enforcement
+needs a recorded rate snapshot and preflight/post-call accounting. Provider cache
+write accounting and uncertain usage remain visible. Do not claim an all-system
+budget until validation/search/summary stages have separate budget coverage.
+
+Automatic successor approval requires: explicit two-event policy and unexpired
+cohort; current complete source snapshot; exact raw-response/assembled-report
+identity; ready review with no substantive issues (initial policy also holds
+locator warnings); current public predecessor; immutable qualification receipt.
+Approval submits through the existing admission role, promotion job and normal
+dirty-state build. It never directly writes public pointers or activates a release.
+Source changes after approval hold at promotion/export/activation and cannot be
+overridden. Initial publication of newly discovered Events remains out of scope
+until separately evaluated: these two examples validate supervised updates only.
+
+Expose per-event last checked/enrollment expiry, run/status/reason, actual writer
+and reviewer models, phase/total usage, reserved unknown tokens, cohort remaining,
+estimated rate-based spend, approval/promotion/build/release IDs and last valid
+revision. Alert once per stable run/reason on held/incomplete/refused output,
+uncertain transport, budget or 80% cohort threshold, stale source/configuration,
+approval/promotion/build/activation failure and an accepted-but-unpublished run
+older than 15 minutes. Route receipts to the existing daily review; add no new
+external automation. Alert text excludes source bodies, credentials and raw HTTP
+logs. Never equate succeeded job, ready model verdict or domain count with quality,
+publication or source independence. Failure stops that report, not core ingestion.
+
+Rollback: stop admission to this cohort, drain active hosted/build jobs, disable
+the report flag/enrollment, preserve immutable attempts/reservations and return
+to the last validated revision through normal qualification/release gates. Do not
+delete holds, silently release unknown spend, revert unrelated historical feeds,
+or force a stale report over a corrected/suppressed cited source.
+
+### Deterministic acceptance evidence
+
+Full existing offline suite: 1,296 passed, two skipped (five existing warnings).
+Disposable PostgreSQL report suite: 34 passed, no hosted requests. Four kind
+fixtures (breach, compromise, law enforcement, vulnerability) now traverse saved
+fixture writer/review responses, restricted approval/promotion, public baseline,
+rendering and simulated manifest/index/page verification. Exact fragment tampering
+is refused. Qualified held derivatives retain original raw artifacts and baseline.
+Each non-derivative kind also incorporates an older primary-source correction with
+complete two-source context, prior report and exact known new-source delta, then
+normally promotes a successor; stale prior admission is refused.
+
+New PostgreSQL checks prove concurrent admission creates one run/job, concurrent
+runs serialize their shared cohort reservation before transport, stale
+generation reaches no provider, process death after saved writer/uncertain review
+does not replay on restart and keeps its reservation, and accepted scheduler output
+does not bypass the explicit approved list. Existing checks cover debounce bursts,
+budget refusal before transport, unknown transport/cohort exhaustion, immutable
+artifacts, terminal four-call repair and exact legacy evidence baselines. Existing
+offline checks cover article matching, footer/navigation-only additions, source
+corrections/removals, caller/source certainty contracts and configuration scope.
+These fixtures prove mechanical boundaries, not semantic incident quality,
+independent corroboration, real provider variance or an automatically scheduled
+end-to-end production flow. Real Microsoft/Astrana publication was supervised.
+
+The separate Hugo label change uses neutral “Source-backed incident report”,
+“Sources” and the actual report publication time, with no unverified automation
+or source-independence claim. Six isolated Hugo tests cover safe defaults,
+publication versus source date, absent metadata, present-only section navigation
+and unchanged body. Analyst assessment/what-changed navigation is included.
+
+An additional operator-helper audit found `JournaledExecutor.__call__` selects
+`self.phases[len(self.reservations)-1]` before appending the reservation, reversing
+the two phase labels in its journal (`event_source_report_executor.py:28`). The
+authoritative database call phases and request/response bodies are correct; normal
+unattended `run` does not use this optional helper. Preserve historical receipts;
+fix future helper phase attribution with explicit tests before reusing it. Do not
+rewrite old journals or replay paid requests to repair descriptive metadata.
+
+The label-only deployment completed after discovery/build drain, with admission
+restored, no image changes and scoped deployment diff0. Hugo commit `ab283dd9`
+is pushed; guarded normal build `job_5a4f1a5551574bf1ae08bde7f897b523` succeeded
+and activated release `20261005213346`. Both live pages have factual source and
+publication labels; Astrana assessment/update navigation targets exist. Both
+reviewed report fragment hashes and revision pointers are unchanged, including
+all 13 Astrana items. Microsoft whole-page bytes intentionally changed only with
+the generic presentation update. Historical feed bytes remain stable and all18
+public checks pass. No new model calls, report enrollment, cohort, credentials,
+external automation or changes to core ingestion were made.

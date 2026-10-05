@@ -196,9 +196,10 @@ def test_holds_preserve_old_pointer_and_responses(database,failure):
 
 
 @pytest.mark.parametrize("derivative",[False,True])
-def test_job_to_review_to_restricted_atomic_publication(database,derivative):
+@pytest.mark.parametrize("kind",["breach","compromise","law_enforcement","vulnerability"])
+def test_job_to_review_to_restricted_atomic_publication(database,derivative,kind,tmp_path):
     conn,factory,namespace=database
-    original=generated()
+    original=generated(kind)
     if derivative:
         original["items"].append({**original["items"][1],"id":"P03","section":"what_changed","text":"New evidence shows credential rotation."})
     submitted,result,_,_=execute(conn,[original,{"ready":True,"issues":[]}])
@@ -229,6 +230,25 @@ def test_job_to_review_to_restricted_atomic_publication(database,derivative):
         metadata,html=render(json.loads(raw),event_id="evt_test",expected_revision=result["revision_id"])
         assert "possible patient-record" in html and 'href="https://example.org/incident"' in html
         assert metadata["event_report_format"]==contract.PUBLIC_WORKFLOW
+        # Simulated build artifacts, not an actual Hugo build or production activation.
+        from sempervigil.event_release import fragment_identity,verify_release,INDEX_PATH
+        from sempervigil.event_source_report_render import index_entry
+        import hashlib
+        bundle=json.loads(raw)
+        published='2026-10-05T21:00:00+00:00'
+        history=[{'event_revision':result['revision_id'],'published_at':published}]
+        entry={**index_entry(bundle,event_id='evt_test',expected_revision=result['revision_id']),
+               'url':'/events/evt_test/','revision_published_at':published,'publication_history':history}
+        index=tmp_path/INDEX_PATH;index.parent.mkdir(parents=True);index.write_text(json.dumps([entry]))
+        page=tmp_path/'events/evt_test/index.html';page.parent.mkdir(parents=True);page.write_text(html)
+        manifest={'workflow':'event-release-authorization-v2','revisions':{'evt_test':result['revision_id']},
+                  'withdrawn':{},'pages':{'evt_test':'evt_test'},
+                  'index_sha256':hashlib.sha256(index.read_bytes()).hexdigest(),
+                  'fragments':{'evt_test':fragment_identity(html)}}
+        verify_release(tmp_path,manifest,{'evt_test':bundle},{'evt_test':history})
+        page.write_text(html.replace('possible patient-record','unchecked patient-record'))
+        with pytest.raises(ValueError,match='page_projection_mismatch'):
+            verify_release(tmp_path,manifest,{'evt_test':bundle},{'evt_test':history})
         if derivative:
             assert contract.GENERATOR_NOTICE in html and "New evidence shows" not in html
             assert '"raw_report_version"' in raw and '"removed_item_ids":["P03"]' in raw
@@ -241,6 +261,31 @@ def test_job_to_review_to_restricted_atomic_publication(database,derivative):
         assert baseline==reports._load(conn,submitted["run_id"])["snapshot"]
         assert generation==reports._load(conn,submitted["run_id"])["generator_version"]
         with pytest.raises(PermissionError):publication.submit(conn,submitted["run_id"],factory=lambda:factory(promotion))
+        if not derivative:
+            # Older newly incorporated primary correction: complete packet and
+            # accepted prior report travel to both fixture-provider phases.
+            conn.execute("INSERT INTO articles VALUES(2,'Acme primary clarification','https://acme.example/disclosure',%s,'2026-09-25','2026-10-05','{}')",
+                         ('Acme clarified that no patient exposure has been confirmed. The incident remains under investigation.',))
+            conn.execute("INSERT INTO event_articles VALUES('evt_test',2)");conn.commit()
+            revised=generated(kind)
+            revised['items'][0].update(text='Acme has not confirmed patient exposure.',
+                citations=[{'source_id':'S2','quote':'no patient exposure has been confirmed'}])
+            revised['items'].append({**revised['items'][0],'id':'P03','section':'what_changed',
+                'text':'An older primary disclosure is newly incorporated; it is not a new incident development.',
+                'date_label':'Evidence update October 5; disclosure September 25'})
+            next_run,outcome,requests,_=execute(conn,[revised,{'ready':True,'issues':[]}])
+            assert outcome['status']=='accepted' and len(requests)==2
+            packet=json.loads(requests[0]['messages'][1]['content'])
+            assert packet['evidence_delta']=={'baseline':'known','new':['S2'],'changed':[],'removed':[]}
+            assert packet['coverage']=={'mode':'complete','omitted_source_ids':[]}
+            assert packet['previous_report']==original
+            assert {s['id'] for s in packet['sources']}=={'S1','S2'}
+            receipt=publication.submit(conn,next_run['run_id'],factory=lambda:factory(admission))
+            second=run({'approval_id':receipt['approval_id']},factory=lambda:factory(promotion))
+            assert second['status']=='promoted' and second['revision_id']!=result['revision_id']
+            assert conn.execute('SELECT count(*) FROM event_public_revisions').fetchone()[0]==2
+            with pytest.raises(ValueError,match='sources_changed'):
+                publication.submit(conn,submitted['run_id'],factory=lambda:factory(admission))
         with pytest.raises(PermissionError):run({"approval_id":queued["approval_id"]},factory=lambda:factory(admission))
     finally:
         conn.rollback()
@@ -255,6 +300,93 @@ def test_completed_model_artifacts_are_immutable(database):
     with pytest.raises(psycopg.errors.CheckViolation,match="immutable"):
         conn.execute("UPDATE event_source_report_calls SET response_json='{}' WHERE run_id=%s",(submitted["run_id"],))
     conn.rollback()
+
+
+def test_stale_generation_holds_before_provider(database,monkeypatch):
+    conn,_,_=database
+    admitted=reports.submit(conn,'evt_test',debounce_seconds=0)
+    monkeypatch.setattr(reports,'configuration',lambda c:({'model_name':'changed-model'},{},'b'*64))
+    job=SimpleNamespace(job_type=reports.JOB_TYPE,queue_name='openai',status='running',max_attempts=1,payload={'run_id':admitted['run_id']})
+    result=reports.run(conn,job,complete=lambda _:pytest.fail('Stale generation reached provider'))
+    assert result['reason']=='event_source_report_configuration_changed'
+    assert reports._load(conn,admitted['run_id'])['charged_tokens']==0
+    assert conn.execute('SELECT count(*) FROM event_source_report_calls').fetchone()[0]==0
+
+
+def test_worker_restart_never_replays_completed_writer_or_uncertain_review(database):
+    conn,factory,_=database
+    admitted=reports.submit(conn,'evt_test',debounce_seconds=0)
+    job=SimpleNamespace(job_type=reports.JOB_TYPE,queue_name='openai',status='running',max_attempts=1,payload={'run_id':admitted['run_id']})
+    phases=[]
+    def provider(payload):
+        phases.append(payload)
+        if len(phases)==2:raise SystemExit('Simulated process crash during review transport')
+        return response(generated())
+    with pytest.raises(SystemExit):reports.run(conn,job,complete=provider)
+    before=conn.execute('SELECT phase,status,response_json,reservation FROM event_source_report_calls ORDER BY ordinal').fetchall()
+    assert [x[1] for x in before]==['completed','started']
+    with factory() as restarted:
+        assert reports.run(restarted,job,complete=lambda _:pytest.fail('Restart replayed provider'))['reused']
+        after=restarted.execute('SELECT phase,status,response_json,reservation FROM event_source_report_calls ORDER BY ordinal').fetchall()
+        assert before==after
+        record=reports._load(restarted,admitted['run_id'])
+        assert record['status']=='held' and record['reserved_tokens']>0
+
+
+def test_concurrent_admission_is_one_run_and_one_job(database):
+    conn,factory,_=database
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    barrier=Barrier(2)
+    def admit(_):
+        with factory() as other:
+            barrier.wait(timeout=5)
+            return reports.submit(other,'evt_test',debounce_seconds=0)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        receipts=list(pool.map(admit,range(2)))
+    assert receipts[0]['run_id']==receipts[1]['run_id']
+    assert sum(bool(x.get('reused')) for x in receipts)==1
+    assert conn.execute('SELECT count(*) FROM event_source_report_runs').fetchone()[0]==1
+    assert conn.execute('SELECT count(*) FROM jobs').fetchone()[0]==1
+
+
+def test_accepted_scheduler_run_is_not_automatically_approved(database,monkeypatch):
+    conn,_,_=database
+    from sempervigil import storage
+    submitted,result,_,_=execute(conn,[generated(),{'ready':True,'issues':[]}])
+    assert result['status']=='accepted'
+    monkeypatch.setattr(storage,'get_setting',lambda c,key,default: ['evt_test'] if key=='event.source_report.enrolled' else [])
+    monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_COHORT_ID','fixture-bounded')
+    monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_COHORT_TOKENS','48000')
+    monkeypatch.setattr(publication,'submit',lambda *a,**kw:pytest.fail('Unapproved run reached admission'))
+    assert reports.tick(conn)==[]
+    assert conn.execute('SELECT count(*) FROM event_review_approvals').fetchone()[0]==0
+    assert conn.execute('SELECT count(*) FROM event_public_pointers').fetchone()[0]==0
+
+
+def test_parallel_runs_share_cohort_reservation_before_transport(database,monkeypatch):
+    conn,factory,_=database
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier,Lock
+    monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_COHORT_ID','parallel-bounded')
+    monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_COHORT_TOKENS','6500')
+    conn.execute("INSERT INTO events VALUES('evt_second','Acme second incident','active','confirmed')")
+    conn.execute("INSERT INTO event_articles VALUES('evt_second',1)");conn.commit()
+    runs=[reports.submit(conn,event,debounce_seconds=0)['run_id'] for event in ('evt_test','evt_second')]
+    barrier=Barrier(2);lock=Lock();transport=[]
+    def run_one(rid):
+        with factory() as other:
+            job=SimpleNamespace(job_type=reports.JOB_TYPE,queue_name='openai',status='running',max_attempts=1,payload={'run_id':rid})
+            def uncertain(payload):
+                with lock:transport.append(rid)
+                raise TimeoutError('Fixture unknown transport')
+            barrier.wait(timeout=5)
+            return reports.run(other,job,complete=uncertain)
+    with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(run_one,runs))
+    assert len(transport)==1 and all(x['status']=='held' for x in results)
+    assert any(x['reason']=='event_source_report_cohort_exhausted' for x in results)
+    reserved=conn.execute('SELECT sum(reserved_tokens) FROM event_source_report_runs').fetchone()[0]
+    assert 0<reserved<=6500
 
 
 def test_cohort_reservations_survive_unknown_transport_and_block_other_runs(database,monkeypatch):
