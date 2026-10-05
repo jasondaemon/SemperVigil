@@ -386,3 +386,68 @@ all 13 Astrana items. Microsoft whole-page bytes intentionally changed only with
 the generic presentation update. Historical feed bytes remain stable and all18
 public checks pass. No new model calls, report enrollment, cohort, credentials,
 external automation or changes to core ingestion were made.
+
+## Implemented bounded automatic successor controls (not enabled at checkpoint)
+
+Source `e86c67e` implements the two-event pilot; `ed367b2` additionally refuses
+the new status endpoint unless admin authentication is configured. Both commits
+are pushed. Runtime is still the prior `b4cd117`; no pilot policy, cohort or
+enrollment is enabled yet. Parent requested a safe milestone before deployment.
+
+Pilot JSON freezes ID, exact events, UTC start/expiry (at most 48 hours), two total
+runs, one queued/running run at a time, 32,000 tokens per run and 64,000 cohort
+capacity. Admission locks the cohort and reserves each run's full lifetime
+capacity, including held/unknown attempts; each Event has at most one slot.
+Before transport, summed call reservations must fit the run ceiling. Two calls,
+no repair, recovery, extra allowance, automatic retry or generator backfill.
+Unknown transport remains reserved. Only genuine changes against a verified
+public predecessor may enter this policy; unchanged evidence is a no-op.
+
+Accepted pilot successors no longer need an approved-run list. The scheduler
+checks generation freshness then submits normal restricted approval with an
+audited policy/generation/source/report/review identity. Promotion reconstructs
+responses and independently rechecks current source/predecessor, policy/expiry,
+exact two successful model phases, review readiness, citations/types and budget.
+It binds the stored generation identity to the receipt without reading provider
+tables. Existing admission/promotion roles have no model/provider-table SELECT;
+no new role, grants, credentials, migration or publication-write authority needed.
+The normal worker marks the build dirty; manifest/export/activation remain guarded.
+
+Report-tick failures roll back and record sanitized bounded last-tick receipts
+without aborting core ingestion/build admission. Authenticated read-only
+`/admin/api/events/{event_id}/source-report-status` exposes policy/expiry, actual
+models, phase usage/call caps, charged/outstanding/admission capacity, conservative
+report-only cost bounds, stable alert keys, hold/promotion/build failures and
+accepted-unpublished age. Alerts are visible through existing operator access,
+not a new messaging/monitor service. The journal helper now records correct
+future phase labels; historical journals are preserved.
+
+Verification: 50 real disposable PostgreSQL tests across both report suites,
+including 16 new pilot tests. Fake provider only; real queue/response persistence,
+restricted-role autoapproval/promotion and worker dirty-build handoff. Cases include
+expiry, quota, concurrency, restarted unknown reservation, stale generation/source,
+source bursts, refusal/review holds, tampered report/budget/predecessor, generation
+receipt alteration and out-of-cohort/generator-backfill refusal. Promotion tests
+explicitly revoke provider/model-table read privileges. Full offline verification
+and final source/privacy check precede rollout; no paid calls were made here.
+
+Final source-only images are built on docker45 from verified retained bases:
+ingest `ed367b2` digest
+`002699c035672f2b438af48ad73618cfa2e2bfc4279fceeb37d201672e8682ca` (1000:1000),
+builder `ed367b2` digest
+`c2044552819c20e57c1a417c0e00456345420e57fe7477052a1b302593487c97` (retained root).
+Intermediate `e86c67e` images were imported on nodes42/46/47/52 but not deployed;
+import the final `ed367b2` images before rollout. Admin also needs the new source
+image to expose the authenticated status endpoint. Preserve all unrelated dirty
+site/platform files. ConfigMap report keys are chart-wired; ordinary environment
+updates require controlled pod recreation (do not assume envFrom hot reload).
+Do not use stale private four-workload/tag scripts without updating scope/hash.
+
+Enable only after final imports, source checks, drain and rollout verification.
+Record verified UTC enable/start and exactly +48-hour expiry in the immutable
+policy; configure exact Microsoft/Astrana scope, Sol/none/6,000 and Luna/low/2,400,
+cohort64,000/run32,000/max2/maxConcurrent1. Add no research enrollment. Verify
+unchanged evidence admits zero jobs/calls and last-tick/status/alerts are visible.
+Preserve both public revisions and fragments. A real new-source unattended cycle
+remains unobserved; never force one with synthetic production evidence or paid
+proof calls. This checkpoint is not a broad-production completion claim.
