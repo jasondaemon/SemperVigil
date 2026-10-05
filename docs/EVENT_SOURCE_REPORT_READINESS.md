@@ -233,4 +233,13 @@ P26's October 5 label is the assessment cutoff for supplied evidence, not a clai
 that the company investigation was independently verified still ongoing then.
 Manual source/integrity review passed; both Astrana candidate and the existing
 Microsoft immutable derivative passed the publication adapter read-only.
-Source/privacy review and guarded scoped deployment/publication are pending.
+Source/privacy review passed; source commit/image `b4cd117` was pushed and built
+from verified retained dependency bases. All four schedulable nodes received both
+image digests. The four-workload rollout drains admission and active work first;
+normal Astrana publication remains pending. No further model calls are authorized
+on this candidate. Full offline verification: 1,296 passed, two skipped; actual
+disposable PostgreSQL verification: 23 passed. Estimated public-rate cost of all
+four calls is $0.146544, including observed cache-write tokens, not an invoice.
+Existing separated approval/promotion/activation roles received only SELECT on
+the immutable allowance audit table; no new credentials or publication-write
+authority were added. Global report generation stays disabled.
