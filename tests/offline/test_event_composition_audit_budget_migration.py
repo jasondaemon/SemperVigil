@@ -38,3 +38,16 @@ def test_interrupted_requeue_requires_failed_started_job_without_output(monkeypa
     assert "j.result_json::jsonb->>'status'='started'" in sql
     assert "NOT (j.result_json::jsonb ?| ARRAY['raw','output_chars','composition_id'])" in sql
     assert params == ("2026-10-05T00:00:00+00:00",)
+
+
+def test_final_recovery_requires_exact_interruption_hold_and_no_output(monkeypatch):
+    monkeypatch.setattr(migrations_pg, "utc_now_iso", lambda: "2026-10-05T00:00:00+00:00")
+    conn = _RecordingConnection()
+
+    migrations_pg._migrate_event_composition_final_recovery(conn)
+
+    sql, params = conn.calls[0]
+    assert "decision_reason='composition failed: event_composition_interrupted_after_start'" in sql
+    assert "j.error='event_composition_interrupted_after_start'" in sql
+    assert "NOT (j.result_json::jsonb ?| ARRAY['raw','output_chars','composition_id'])" in sql
+    assert params == ("2026-10-05T00:00:00+00:00",)

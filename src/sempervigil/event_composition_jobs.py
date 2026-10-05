@@ -92,12 +92,34 @@ def submit(conn, revision_id: str) -> str:
         if existing[1] == "failed" and (existing[2] in TRANSIENT_BASELINE_ERRORS or interrupted):
             recovery_key = key + ":transient-recovery"
             recovery = conn.execute(
-                """SELECT id FROM jobs WHERE job_type=%s AND dedupe_key=%s
+                """SELECT id,status,COALESCE(error,''),result_json FROM jobs WHERE job_type=%s AND dedupe_key=%s
                     ORDER BY requested_at LIMIT 1""", (JOB_TYPE, recovery_key),
             ).fetchone()
             if recovery:
-                conn.commit()
-                return recovery[0]
+                final_key = recovery_key + ":interrupted-recovery"
+                recover_interrupted = (recovery[1] == "failed"
+                    and recovery[2] == INTERRUPTED_ERROR
+                    and _interrupted_result(recovery[3], revision_id=revision_id,
+                                            generation=generation,
+                                            request_version=req["request_version"]))
+                if not recover_interrupted:
+                    conn.commit()
+                    return recovery[0]
+                final = conn.execute(
+                    """SELECT id FROM jobs WHERE job_type=%s AND dedupe_key=%s
+                        ORDER BY requested_at LIMIT 1""", (JOB_TYPE, final_key),
+                ).fetchone()
+                if final:
+                    conn.commit()
+                    return final[0]
+                payload = {"workflow": composition.WORKFLOW,
+                           "ledger_revision_id": revision_id,
+                           "generation": generation,
+                           "request_version": req["request_version"]}
+                return enqueue_job(
+                    conn, JOB_TYPE, payload, priority=-10, queue_name="openai",
+                    max_attempts=1, parent_job_id=recovery[0], dedupe_key=final_key,
+                )
             payload = {"workflow": composition.WORKFLOW,
                        "ledger_revision_id": revision_id,
                        "generation": generation,

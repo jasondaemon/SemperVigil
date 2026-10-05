@@ -666,6 +666,14 @@ def apply_migrations_pg(conn) -> None:
             )
             conn.commit()
             logger.info("migration_applied version=pg_event_composition_interrupted_requeue_064")
+        if "pg_event_composition_final_recovery_065" not in applied:
+            _migrate_event_composition_final_recovery(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_event_composition_final_recovery_065", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_event_composition_final_recovery_065")
         else:
             conn.commit()
         return
@@ -2119,6 +2127,27 @@ def _migrate_event_composition_interrupted_requeue(conn) -> None:
                       WHERE r.ledger_id=c.ledger_id AND r.status='accepted')
                    AND j.result_json::jsonb->>'status'='started'
                    AND j.result_json::jsonb->>'attempts'='1'
+                   AND NOT (j.result_json::jsonb ?| ARRAY['raw','output_chars','composition_id'])
+              )""",
+        (utc_now_iso(),),
+    )
+
+
+def _migrate_event_composition_final_recovery(conn) -> None:
+    """Reactivate only the audited rollout-interruption terminal hold once."""
+    conn.execute(
+        """UPDATE event_reassessment_cases c
+              SET status='active',decision_reason=NULL,updated_at=%s
+            WHERE c.status='held'
+              AND c.decision_reason='composition failed: event_composition_interrupted_after_start'
+              AND EXISTS (
+                SELECT 1 FROM jobs j
+                 WHERE j.job_type='event_ledger_compose' AND j.status='failed'
+                   AND j.error='event_composition_interrupted_after_start'
+                   AND j.payload_json::jsonb->>'ledger_revision_id' IN (
+                     SELECT r.revision_id FROM event_ledger_revisions r
+                      WHERE r.ledger_id=c.ledger_id AND r.status='accepted')
+                   AND j.result_json::jsonb->>'status'='started'
                    AND NOT (j.result_json::jsonb ?| ARRAY['raw','output_chars','composition_id'])
               )""",
         (utc_now_iso(),),

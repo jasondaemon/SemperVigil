@@ -415,10 +415,10 @@ def test_submit_retries_transient_baseline_failure_once_and_keeps_parent(monkeyp
         def execute(self, sql, params=()):
             if "pg_advisory_xact_lock" in sql:
                 return Result(None)
-            if "COALESCE(error" in sql:
-                return Result(("job_failed", "failed", "event_composition_baseline_changed", None))
             if ":transient-recovery" in str(params):
                 return Result(None)
+            if "COALESCE(error" in sql:
+                return Result(("job_failed", "failed", "event_composition_baseline_changed", None))
             raise AssertionError(sql)
         def commit(self):
             self.commits += 1
