@@ -6,6 +6,24 @@ from sempervigil import event_composition_fallback as fallback
 pytestmark = pytest.mark.offline
 
 
+def test_overview_extractively_covers_every_required_dimension():
+    facts = [
+        {"fact_id": "f1", "statement": "Acme detected the intrusion.",
+         "sections": ["attack_vector"]},
+        {"fact_id": "f2", "statement": "The actor accessed customer records.",
+         "sections": ["impact"]},
+        {"fact_id": "f3", "statement": "Acme contained the affected systems.",
+         "sections": ["response_recovery"]},
+    ]
+    aliases = {f"F0{index}": fact for index, fact in enumerate(facts, 1)}
+
+    rows = fallback._overview(facts, aliases)
+
+    assert len(rows) == 3
+    assert {row["fact_refs"][0] for row in rows} == {"F01", "F02", "F03"}
+    assert all(row["claim_type"] == "sourced_finding" for row in rows)
+
+
 def material(event_kind="breach"):
     facts = [
         {"fact_id": "scope", "statement": "Acme reported a security event.",

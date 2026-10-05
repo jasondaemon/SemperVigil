@@ -43,6 +43,43 @@ def _candidates(item, reason, facts):
     return [{"destination": row[2], "fact": row[3]} for row in ranked[:1]]
 
 
+def _overview(facts, aliases, existing=()):
+    """Select a small deterministic extractive cover of every overview dimension."""
+    from .event_composition import _overview_requirements
+    requirements = _overview_requirements(facts)
+    alias_by_id = {fact["fact_id"]: alias for alias, fact in aliases.items()}
+    id_by_alias = {alias: fact_id for fact_id, alias in alias_by_id.items()}
+    cited = {id_by_alias[ref] for item in existing for ref in item.get("fact_refs", [])
+             if ref in id_by_alias}
+    uncovered = {row["dimension"]: set(row["fact_ids"]) for row in requirements
+                 if cited.isdisjoint(row["fact_ids"])}
+    selected = []
+    while uncovered:
+        ranked = []
+        for fact in facts:
+            if fact["fact_id"] in selected:
+                continue
+            covers = sum(fact["fact_id"] in fact_ids for fact_ids in uncovered.values())
+            if covers:
+                ranked.append((covers, fact["statement"], fact["fact_id"]))
+        if not ranked:
+            break
+        _, _, fact_id = max(ranked)
+        selected.append(fact_id)
+        uncovered = {name: fact_ids for name, fact_ids in uncovered.items()
+                     if fact_id not in fact_ids}
+    minimum = max(0, (2 if len(requirements) >= 3 else 1) - len(existing))
+    for fact in facts:
+        if len(selected) >= minimum:
+            break
+        if fact["fact_id"] not in selected:
+            selected.append(fact["fact_id"])
+    by_id = {fact["fact_id"]: fact for fact in facts}
+    return [{"text": by_id[fact_id]["statement"], "fact_refs": [alias_by_id[fact_id]],
+             "claim_type": "sourced_finding", "confidence": None}
+            for fact_id in selected[:8]]
+
+
 def build(composition_id, composition, ledger_revision, decision):
     from . import event_composition
     from .event_composition_repair import _items
@@ -82,6 +119,7 @@ def build(composition_id, composition, ledger_revision, decision):
                             "fact_ids": [fact["fact_id"]],
                             "offending_clause": item["text"],
                             "audit_reason": failure.get("reason", "")})
+    output["overview"].extend(_overview(active, aliases, output["overview"]))
     from .event_composition_repair import _deduplicate
     record = event_composition.validate(json.dumps(_deduplicate(output)).encode(), ledger_revision,
         composition["generation_version"], require_detail_coverage=False)
