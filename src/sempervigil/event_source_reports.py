@@ -517,6 +517,43 @@ def recover_pretransport(conn, parent_run_id, *, legacy_proof=None, debounce_sec
     return {"run_id":child,"job_id":job,"status":"queued","parent_run_id":parent_run_id,"released_tokens":call[7]}
 
 
+def review_preserved(conn, run_id, *, complete=None, review_focus=()):
+    """Operator-only single review of an immutable writer held on provenance.
+
+    No writer replay, terminal job reset, correction or publication. A resolved
+    source span grants provenance only; the full report still needs review.
+    """
+    if not enabled():
+        raise PermissionError("event_source_report_disabled")
+    record = _load(conn, run_id)
+    check_scope(record["event_id"])
+    _fresh(conn, record)
+    reason = conn.execute("SELECT reason FROM event_source_report_runs WHERE run_id=%s", (run_id,)).fetchone()[0]
+    rows = conn.execute("SELECT phase,status,response_json,reservation FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal", (run_id,)).fetchall()
+    if (record["status"] != "held" or reason != "event_report_quote_not_in_source"
+            or record["reserved_tokens"] or record["review"] is not None or record["report"] is not None
+            or len(rows) != 1 or rows[0][0:2] != ("writer", "completed")):
+        raise ValueError("event_source_report_preserved_review_not_eligible")
+    response = json.loads(rows[0][2])
+    choice = response["choices"][0]
+    if choice.get("finish_reason") != "stop" or choice["message"].get("refusal"):
+        raise ValueError("event_source_report_incomplete_response")
+    report = json.loads(choice["message"]["content"])
+    packet = contract.context(record["snapshot"])
+    spans = contract.validate(report, packet)
+    review = call(conn, run_id, "review", contract.REVIEWER,
+                  {"evidence": packet, "report": report, "citation_provenance": spans,
+                   "operator_review_focus": list(review_focus)},
+                  contract.review_schema(report, [s["id"] for s in packet["sources"]]), complete=complete)
+    contract.validate_review(review, report, packet)
+    # This diagnostic continuation never autonomously promotes a held candidate.
+    conn.execute("UPDATE event_source_report_runs SET report_json=%s,spans_json=%s,review_json=%s,reason=%s WHERE run_id=%s",
+                 (contract.encode(report), contract.encode(spans), contract.encode(review),
+                  "substantive_review_issues" if not review["ready"] else "operator_review_required", run_id))
+    conn.commit()
+    return {"status": "held", "report": report, "review": review, "spans": spans}
+
+
 def correct_and_verify(conn, run_id, packet, report, review, *, complete=None):
     """Exactly one scoped correction and one independent whole-report verification."""
     ids = [s["id"] for s in packet["sources"]]

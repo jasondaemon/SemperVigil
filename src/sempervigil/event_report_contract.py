@@ -146,6 +146,50 @@ def review_schema(report, source_ids):
         "issues": {"type": "array", "maxItems": 16, "items": issue}})
 
 
+def resolve_citation(source, quote):
+    """Resolve provenance, not claim truth; never modify model prose or quotations.
+
+    Only separator punctuation/whitespace may differ. Internal punctuation stays
+    significant (numbers, contractions, identifiers), as do case and all words.
+    A normalized match must name exactly one original source passage.
+    """
+    text = source["text"]
+    start = text.find(quote)
+    end = start + len(quote)
+    mapping = None
+    if start < 0:
+        # Preserve operators and internal punctuation rather than conflating
+        # negation, decimal/grouped numbers, contractions or entity identifiers.
+        pattern = r"\w+(?:[.,'’:\-]\w+)*|[^\w\s.,;:!?\"'“”‘’]"
+        original = list(re.finditer(pattern, text))
+        requested = [m.group() for m in re.finditer(pattern, quote)]
+        values = [m.group() for m in original]
+        matches = [i for i in range(len(values)-len(requested)+1)
+                   if requested and values[i:i+len(requested)] == requested]
+        if len(matches) != 1:
+            raise ValueError("event_report_quote_not_in_source")
+        first = matches[0]
+        start = original[first].start()
+        end = original[first+len(requested)-1].end()
+        # Include corresponding original edge punctuation, not generated marks.
+        punctuation = '.,;:!?"\'“”‘’'
+        if quote and quote[0] in punctuation:
+            while start and text[start-1] in punctuation:
+                start -= 1
+        if quote and quote[-1] in punctuation:
+            while end < len(text) and text[end] in punctuation:
+                end += 1
+        mapping = {"policy": "unique-separator-punctuation-whitespace-v1",
+                   "generated_quote": quote, "original_span": text[start:end],
+                   "meaning_validation": "not performed; whole-context review required"}
+    span = {"source_id": source["id"], "start": start, "end": end,
+            "quote": text[start:end],
+            "passage_anchor": digest(encode([source["id"], digest(text), start, end]))}
+    if mapping is not None:
+        span["normalization"] = mapping
+    return span
+
+
 def validate(report, packet):
     sources = {s["id"]: s for s in packet["sources"]}
     jsonschema.validate(report, schema(list(sources)))
@@ -160,12 +204,7 @@ def validate(report, packet):
         prose.add(normalized)
         spans[item["id"]] = []
         for cite in item["citations"]:
-            text = sources[cite["source_id"]]["text"]
-            start = text.find(cite["quote"])
-            if start < 0:
-                raise ValueError("event_report_quote_not_in_source")
-            spans[item["id"]].append({"source_id": cite["source_id"], "start": start,
-                                      "end": start + len(cite["quote"]), "quote": cite["quote"]})
+            spans[item["id"]].append(resolve_citation(sources[cite["source_id"]], cite["quote"]))
         if item["date_sort"] is not None:
             from datetime import date
             date.fromisoformat(item["date_sort"])

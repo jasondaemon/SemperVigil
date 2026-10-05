@@ -83,4 +83,43 @@ receipts, reservation/call ceilings, replay refusal and uncertainty classificati
 Actual PostgreSQL tests run recovery through generation, review, journal and
 immutable persistence using fixtures, including legacy attestation and refusal.
 Verification: 1,263 offline passed, two skipped; 20 PostgreSQL tests passed.
-Deployment and the recovered live proof remain pending.
+Recovery image `5b7cb42` is deployed to all four scoped workloads, migration 070
+is installed, and the fresh scoped rendered/live diff is zero. The immutable
+audit released the original proven-unused 10,115-token reservation and admitted
+one parent-linked child. Its one completed writer used 8,050 tokens, but exact
+quote validation held the candidate (`event_report_quote_not_in_source`) before
+review: a cited source comma was changed to a period. No reviewer, correction,
+approval or publication followed. The original terminal attempt remains intact;
+global admission is disabled and both event public predecessors are unchanged.
+This supersedes the pending recovery/reservation status above. The candidate is
+not an accepted analyst report, and no automatic retry is authorized.
+
+## Passage provenance, not model transcription
+
+Citation resolution now returns source ID, original offsets, canonical original
+passage and a stable content-bound passage anchor. Exact citations need no mapping.
+A unique whitespace/separator-punctuation-only match records the generated quote
+and original passage explicitly; generated report text and raw response remain
+unchanged. Case, lexical, negation, numeric and identifier differences, and
+ambiguous normalized matches still hold. Internal punctuation and operators are
+significant. This mapping is provenance, not a factual-support determination;
+whole-context review is still required. No prompt/schema expansion or writer
+replay is needed for the existing candidate.
+
+An operator-only preserved-review continuation permits one review of the exact
+completed writer body held on citation resolution, under existing freshness and
+budget gates. It refuses existing review attempts and leaves the original failed
+job and held run state intact; it neither corrects nor publishes. This helper and
+resolver were loaded ephemerally in the configured hosted worker for the scoped
+review, without a deployment or persistent runtime patch. Running images remain
+`5b7cb42`; the source changes are not yet deployed.
+
+The Astrana reviewer used the complete four-source packet, exact previous report,
+known single-source delta, unchanged writer body, provenance mappings and explicit
+manual review questions. Its 10,278 tokens plus the writer's 8,050 total 18,328;
+summed reservations were 22,015, below 24,000. It returned four substantive issues:
+independence inflation, filing-date errors in P116/P118, and incomplete current
+notification status. The run remains held with `substantive_review_issues` and
+zero outstanding reservation. No additional writer/correction call, approval,
+promotion, deployment or publication followed. Manual concerns not flagged by the
+reviewer (including financial-expectation coverage) are not thereby cleared.
