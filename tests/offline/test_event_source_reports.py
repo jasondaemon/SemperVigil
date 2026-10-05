@@ -59,6 +59,27 @@ def test_material_corrections_and_exact_duplicate_novelty():
     assert meaningful_change(old,new) is True
 
 
+def test_new_source_navigation_is_not_incident_novelty():
+    old = {**packet(),"evidence_version":"a"}
+    new = copy.deepcopy(old);new["evidence_version"]="b"
+    new["sources"].append({**old["sources"][0],"article_id":2,"content_hash":"second",
+        "text":old["sources"][0]["text"]+" Related: An unrelated new exploit. Daily Briefing Newsletter Sign up."})
+    assert meaningful_change(old,new) is False
+    new["sources"][-1]["text"] = old["sources"][0]["text"]+" Acme now confirms 200 affected patients. Related: Other news."
+    assert meaningful_change(old,new) is True
+
+
+def test_cohort_configuration_is_explicit_and_validated(monkeypatch):
+    from sempervigil.event_source_reports import cohort_configuration
+    monkeypatch.delenv("SV_EVENT_SOURCE_REPORT_COHORT_ID",raising=False)
+    monkeypatch.delenv("SV_EVENT_SOURCE_REPORT_COHORT_TOKENS",raising=False)
+    assert cohort_configuration() is None
+    monkeypatch.setenv("SV_EVENT_SOURCE_REPORT_COHORT_ID","proof-test")
+    with pytest.raises(ValueError,match="cohort_invalid"):cohort_configuration()
+    monkeypatch.setenv("SV_EVENT_SOURCE_REPORT_COHORT_TOKENS","24000")
+    assert cohort_configuration()=={"id":"proof-test","limit":24000}
+
+
 def test_large_context_holds_without_silent_truncation():
     value = packet()
     with pytest.raises(ValueError,match="context_over_budget"):contract.context(value,max_tokens=1)

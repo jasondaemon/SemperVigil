@@ -168,6 +168,9 @@ def test_job_to_review_to_restricted_atomic_publication(database,derivative):
             with pytest.raises(ValueError,match="revision_notice_invalid"):
                 publication.validate_bundle(tampered,event_id="evt_test")
         assert "fact_ids" not in raw and '"text":"Acme said certain' not in raw
+        baseline,generation=reports.published_baseline(conn,"evt_test",reports.snapshot(conn,"evt_test"))
+        assert baseline==reports._load(conn,submitted["run_id"])["snapshot"]
+        assert generation==reports._load(conn,submitted["run_id"])["generator_version"]
         with pytest.raises(PermissionError):publication.submit(conn,submitted["run_id"],factory=lambda:factory(promotion))
         with pytest.raises(PermissionError):run({"approval_id":queued["approval_id"]},factory=lambda:factory(admission))
     finally:
@@ -183,3 +186,52 @@ def test_completed_model_artifacts_are_immutable(database):
     with pytest.raises(psycopg.errors.CheckViolation,match="immutable"):
         conn.execute("UPDATE event_source_report_calls SET response_json='{}' WHERE run_id=%s",(submitted["run_id"],))
     conn.rollback()
+
+
+def test_cohort_reservations_survive_unknown_transport_and_block_other_runs(database,monkeypatch):
+    conn,_,_=database
+    monkeypatch.setenv("SV_EVENT_SOURCE_REPORT_COHORT_ID","small-test")
+    monkeypatch.setenv("SV_EVENT_SOURCE_REPORT_COHORT_TOKENS","6500")
+    submitted=reports.submit(conn,"evt_test",debounce_seconds=0)
+    job=SimpleNamespace(job_type=reports.JOB_TYPE,queue_name="openai",status="running",max_attempts=1,payload={"run_id":submitted["run_id"]})
+    def uncertain(_):raise TimeoutError("Unknown usage stays reserved")
+    assert reports.run(conn,job,complete=uncertain)["status"]=="held"
+    held=reports._load(conn,submitted["run_id"])
+    assert held["reserved_tokens"]>0
+    conn.execute("UPDATE articles SET content_text=content_text||' Additional material facts.' WHERE id=1");conn.commit()
+    submitted=reports.submit(conn,"evt_test",debounce_seconds=0)
+    job.payload={"run_id":submitted["run_id"]}
+    result=reports.run(conn,job,complete=lambda _:pytest.fail("Cohort cap must precede HTTP"))
+    assert result["status"]=="held" and result["reason"]=="event_source_report_cohort_exhausted"
+
+
+def test_debounce_source_burst_holds_before_any_http_and_readmits_latest(database):
+    conn,_,_=database
+    admitted=reports.submit(conn,"evt_test",debounce_seconds=300)
+    conn.execute("UPDATE articles SET content_text=content_text||' Acme confirms a new affected population.' WHERE id=1");conn.commit()
+    job=SimpleNamespace(job_type=reports.JOB_TYPE,queue_name="openai",status="running",max_attempts=1,payload={"run_id":admitted["run_id"]})
+    result=reports.run(conn,job,complete=lambda _:pytest.fail("Stale debounce spent tokens"))
+    assert result["reason"]=="event_source_report_sources_changed"
+    assert reports._load(conn,admitted["run_id"])["reserved_tokens"]==0
+    successor=reports.submit(conn,"evt_test",debounce_seconds=300)
+    assert successor["run_id"]!=admitted["run_id"]
+    assert "new affected population" in reports._load(conn,successor["run_id"])["snapshot"]["sources"][0]["text"]
+
+
+def test_legacy_public_baseline_requires_exact_original_evidence_version(database,monkeypatch):
+    conn,_,_=database
+    from sempervigil.article_evidence import source_for
+    from sempervigil import storage
+    article={"id":1,"title":"Acme incident","content_text":reports.snapshot(conn,"evt_test")["sources"][0]["text"]}
+    monkeypatch.setattr(storage,"get_article_by_id",lambda c,aid:article)
+    conn.execute("CREATE TABLE article_evidence_revisions(revision_id TEXT,article_id INTEGER,source_version TEXT)")
+    conn.execute("INSERT INTO article_evidence_revisions VALUES('aer_original',1,%s)",(source_for(article)["source_version"],))
+    bundle={"workflow":"legacy","sources":[{"article_id":1,"evidence_revision_id":"aer_original"}]}
+    revision=reports._version(bundle)
+    conn.execute("INSERT INTO event_quote_qualifications VALUES('evt_test','q','{}','now',NULL)")
+    conn.execute("INSERT INTO event_public_revisions VALUES('evt_test',%s,'q',NULL,%s,'now')",(revision,contract.encode(bundle)))
+    conn.execute("INSERT INTO event_public_pointers VALUES('evt_test',%s,'now')",(revision,));conn.commit()
+    baseline,_=reports.published_baseline(conn,"evt_test",reports.snapshot(conn,"evt_test"))
+    assert baseline["sources"][0]["article_id"]==1
+    article["content_text"]+=" A subsequent correction."
+    assert reports.published_baseline(conn,"evt_test",reports.snapshot(conn,"evt_test"))==(None,None)
