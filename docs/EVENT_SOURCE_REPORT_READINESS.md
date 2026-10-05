@@ -243,3 +243,24 @@ four calls is $0.146544, including observed cache-write tokens, not an invoice.
 Existing separated approval/promotion/activation roles received only SELECT on
 the immutable allowance audit table; no new credentials or publication-write
 authority were added. Global report generation stays disabled.
+
+## Astrana normal publication verified
+
+October 5 approval/promotion `job_293b94633c1f453eb2f33bb3969056ae` and
+scheduler-admitted build `job_fd04e01fc44f4008b4a94e973e8d92ec` succeeded.
+Guarded release `20261005212350` publishes Astrana revision
+`6d45e27d67c63152e2f9d3c72bd9c125725b7b742a2596a6ede68881cb773fb1`.
+All 13 item texts match the accepted report; the public fragment matches its
+activation manifest. Four source links include the SEC filing; update framing
+identifies it as older newly incorporated evidence, not a later development.
+Events JSON retains publication history; prior revision remains stored.
+Microsoft page/pointer and immediately preceding historical-feed bytes are
+unchanged. All 18 HTTP/markup/assets/sampled-feed checks passed. No new model
+calls were made, and global generation remains disabled.
+
+This supervised correction does not establish autonomous living-report readiness.
+Varied-case evaluation, semantic source independence/novelty, bounded enrollment,
+monitoring policy and operational alerts remain. Public chrome's “Independent
+sources” counts supplied sources, not verified investigative independence;
+“Living incident report” does not demonstrate enabled automatic updates.
+Visible revision-history UX and passage inspection remain separate work.
