@@ -33,3 +33,17 @@ def test_final_two_phase_adapter_journals_and_refuses_third(monkeypatch,tmp_path
     with pytest.raises(ValueError,match='not_replayed'):
         replay({'max_completion_tokens':1600,'messages':[{'content':'correction'}]})
     assert len(calls)==2
+
+
+def test_metadata_only_scope_cannot_change_body(monkeypatch):
+    report={'title':'Title','kind':'breach','items':[{'id':'P01','text':'Overview'},
+        {'id':'P02','text':'Body remains unchanged.','date_label':'Unknown','date_sort':None}]}
+    calls=[]
+    def call(*args,**kwargs):
+        calls.append(args[2])
+        return {'items':[{**report['items'][1],'text':'Unauthorized prose change.','date_label':'Undated'}]}
+    monkeypatch.setattr(r,'call',call)
+    with pytest.raises(ValueError,match='scope_changed'):
+        r.correct_and_verify(object(),'esr_test',{'sources':[{'id':'S1'}]},report,
+            {'issues':[{'item_id':'P02'}]},compact=True,field_scope={'P02':{'date_label','date_sort'}})
+    assert calls==['correction']  # No verification of an out-of-scope patch.

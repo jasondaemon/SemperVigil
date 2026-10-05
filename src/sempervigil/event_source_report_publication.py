@@ -50,6 +50,14 @@ def current_material(conn, run_id, *, lock=False, published=False, derivative=No
         if 'writer' not in responses or 'review' not in responses:
             raise ValueError('event_source_report_response_integrity')
         flagged={issue['item_id'] for issue in body('review')['issues']}
+        if not flagged and body('review')['ready']:
+            allowance=conn.execute('SELECT audit_json FROM event_source_report_allowances WHERE run_id=%s',(run_id,)).fetchone()
+            if not allowance:raise ValueError('event_source_report_response_integrity')
+            audit=json.loads(allowance[0]);manual=audit.get('manual_issues',[])
+            contract.validate_review({'ready':False,'issues':manual,'locator_warnings':[]},body('writer'),packet)
+            if audit.get('report_version')!=_version(body('writer')) or audit.get('review_version')!=_version(body('review')):
+                raise ValueError('event_source_report_response_integrity')
+            flagged={issue['item_id'] for issue in manual}
         reconstructed=contract.apply_correction(body('writer'),reconstructed,flagged)
     for phase,actual,expected in ((write_phase,reconstructed,record['report']),
                                   (review_phase,body(review_phase) if review_phase in responses else None,record['review'])):

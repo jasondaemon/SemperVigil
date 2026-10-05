@@ -433,6 +433,9 @@ def call(conn, run_id, phase, system, data, response_schema, *, complete=None, c
         if not row:raise ValueError('event_source_report_reviewer_model_missing')
         model=get_model(conn,row[0])
     settings=phase_settings()[phase]
+    allowance = conn.execute('SELECT tokens,audit_json FROM event_source_report_allowances WHERE run_id=%s',(run_id,)).fetchone()
+    if allowance and phase in {'correction','verification'}:
+        settings={**settings,**json.loads(allowance[1]).get('phase_options',{}).get(phase,{})}
     payload = {"model": model["model_name"], "reasoning_effort": settings['reasoning_effort'],
         "max_completion_tokens": completion_cap or settings['max_completion_tokens'],
         "messages": [{"role": "system", "content": system},
@@ -441,7 +444,6 @@ def call(conn, run_id, phase, system, data, response_schema, *, complete=None, c
             {"name": "event_source_report", "strict": True, "schema": response_schema}}}
     reservation = contract.tokens(contract.encode(payload)) + 512 + payload["max_completion_tokens"]
     conn.execute("SELECT run_id FROM event_source_report_runs WHERE run_id=%s FOR UPDATE", (run_id,))
-    allowance = conn.execute('SELECT tokens FROM event_source_report_allowances WHERE run_id=%s',(run_id,)).fetchone()
     if allowance and phase in {'correction','verification'}:
         spent = conn.execute("SELECT COALESCE(SUM(reservation),0) FROM event_source_report_calls WHERE run_id=%s AND phase IN ('correction','verification')",(run_id,)).fetchone()[0]
         if spent+reservation > allowance[0]:
@@ -609,22 +611,41 @@ def review_preserved(conn, run_id, *, complete=None, review_focus=()):
     return {"status": "held", "report": report, "review": review, "spans": spans}
 
 
-def grant_correction_allowance(conn, run_id, tokens, *, authority):
+def grant_correction_allowance(conn, run_id, tokens, *, authority, manual_issues=None, phase_options=None):
     """Audited operator grant only for the final two phases; never resets jobs."""
     if not enabled() or not authority or type(tokens) is not int or not 1<=tokens<=200000:
         raise PermissionError('event_source_report_allowance_not_authorized')
     record=_load(conn,run_id);check_scope(record['event_id']);_fresh(conn,record)
     conn.execute('SELECT run_id FROM event_source_report_runs WHERE run_id=%s FOR UPDATE',(run_id,))
     rows=conn.execute('SELECT phase,status FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal',(run_id,)).fetchall()
+    if manual_issues:
+        reason=conn.execute('SELECT reason FROM event_source_report_runs WHERE run_id=%s',(run_id,)).fetchone()[0]
+        if not record['review'] or not record['review']['ready'] or not isinstance(reason,str) or not reason.startswith('manual_quality_'):
+            raise ValueError('event_source_report_manual_correction_not_eligible')
+        contract.validate_review({'ready':False,'issues':manual_issues,'locator_warnings':[]},
+                                 record['report'],contract.context(record['snapshot']))
     if (record['status']!='held' or record['reserved_tokens'] or not record['review']
-            or record['review']['ready'] or rows!=[('writer','completed'),('review','completed')]):
+            or (record['review']['ready'] and not manual_issues) or rows!=[('writer','completed'),('review','completed')]):
         raise ValueError('event_source_report_correction_not_eligible')
+    phase_options=phase_options or {}
+    if not isinstance(phase_options,dict) or set(phase_options)-{'correction','verification'}:
+        raise ValueError('event_source_report_phase_config_invalid')
+    for values in phase_options.values():
+        if (not isinstance(values,dict) or set(values)!={'reasoning_effort','max_completion_tokens'}
+                or not isinstance(values['reasoning_effort'],str)
+                or values['reasoning_effort'] not in {'none','low','medium','high','xhigh','max'}
+                or type(values['max_completion_tokens']) is not int or not 1<=values['max_completion_tokens']<=128000):
+            raise ValueError('event_source_report_phase_config_invalid')
     audit={'authority':authority,'phases':['correction','verification'],'max_calls':4,
            'original_budget':record['budget_tokens'],'prior_charged_tokens':record['charged_tokens'],
            'report_version':_version(record['report']),'review_version':_version(record['review'])}
+    audit.update(manual_issues=manual_issues or [],phase_options=phase_options,
+                 final_generation_version=_version({'base_generator_version':record['generator_version'],'phase_options':phase_options}))
     prior=conn.execute('SELECT tokens,audit_json FROM event_source_report_allowances WHERE run_id=%s',(run_id,)).fetchone()
     if prior:
-        if prior[0]!=tokens or json.loads(prior[1])['authority']!=authority:
+        saved=json.loads(prior[1])
+        if (prior[0]!=tokens or saved['authority']!=authority
+                or saved.get('manual_issues',[])!=(manual_issues or []) or saved.get('phase_options',{})!=phase_options):
             raise ValueError('event_source_report_allowance_conflict')
         return
     conn.execute('INSERT INTO event_source_report_allowances(run_id,tokens,audit_json,recorded_at) VALUES(%s,%s,%s,%s)',
@@ -634,15 +655,17 @@ def grant_correction_allowance(conn, run_id, tokens, *, authority):
     conn.commit()
 
 
-def correct_and_verify(conn, run_id, packet, report, review, *, complete=None, compact=False):
+def correct_and_verify(conn, run_id, packet, report, review, *, complete=None, compact=False, field_scope=None):
     """Exactly one scoped correction and one independent whole-report verification."""
     ids = [s["id"] for s in packet["sources"]]
     flagged = {x["item_id"] for x in review["issues"]}
+    if field_scope and set(field_scope)-flagged:
+        raise ValueError('event_source_report_correction_scope_changed')
     if compact:
         patch = call(conn,run_id,'correction',contract.CORRECTOR,
             {'evidence':packet,'report':report,'substantive_issues':review['issues'],
              'instruction':'Correct only flagged items and associated rationale; retain all other items/title/kind exactly.'},
-            contract.correction_schema(report,ids,flagged),complete=complete,completion_cap=1600)
+            contract.correction_schema(report,ids,flagged),complete=complete)
         revised = contract.apply_correction(report,patch,flagged)
     else:
         revised = call(conn,run_id,"correction",contract.WRITER,
@@ -653,6 +676,10 @@ def correct_and_verify(conn, run_id, packet, report, review, *, complete=None, c
     if (set(before)!=set(after) or revised["title"]!=report["title"] or revised["kind"]!=report["kind"]
         or any(before[k]!=after[k] for k in before.keys()-flagged)):
         raise ValueError("event_source_report_correction_scope_changed")
+    for item,fields in (field_scope or {}).items():
+        if ({k:v for k,v in before[item].items() if k not in fields}
+                !={k:v for k,v in after[item].items() if k not in fields}):
+            raise ValueError('event_source_report_correction_scope_changed')
     spans = contract.validate(revised,packet)
     conn.execute("UPDATE event_source_report_runs SET report_json=%s,spans_json=%s WHERE run_id=%s",
                  (contract.encode(revised),contract.encode(spans),run_id));conn.commit()

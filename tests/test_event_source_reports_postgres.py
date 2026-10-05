@@ -98,6 +98,26 @@ def response(value):
                      "completion_tokens_details":{"reasoning_tokens":25}}}
 
 
+def test_manual_quality_correction_uses_immutable_scope_and_phase_options(database,monkeypatch,tmp_path):
+    conn,_,_=database
+    submitted,_,_,_=execute(conn,[generated(),{'ready':True,'issues':[]}]);rid=submitted['run_id']
+    conn.execute("UPDATE event_source_report_runs SET status='held',reason='manual_quality_fixture' WHERE run_id=%s",(rid,));conn.commit()
+    manual=[{'item_id':'P02','reason':'Preserve the source qualification in this response item.','source_ids':['S1']}]
+    options={'correction':{'reasoning_effort':'none','max_completion_tokens':1000},'verification':{'reasoning_effort':'low','max_completion_tokens':2400}}
+    reports.grant_correction_allowance(conn,rid,24000,authority='explicit-final-pair',manual_issues=manual,phase_options=options)
+    before=reports._load(conn,rid);monkeypatch.setattr(reports,'ready_client',lambda _:None)
+    from sempervigil.event_source_report_executor import JournaledExecutor
+    seen=[];values=[{'items':[generated()['items'][1]]},{'ready':True,'issues':[],'locator_warnings':[]}]
+    def fixture(payload):seen.append(payload);return response(values[len(seen)-1])
+    executor=JournaledExecutor(conn,rid,tmp_path,ceiling=24000,phases=('correction','verification'),complete=fixture)
+    revised,verified=reports.correct_and_verify(conn,rid,contract.context(before['snapshot']),before['report'],{'ready':False,'issues':manual,'locator_warnings':[]},complete=executor,compact=True)
+    assert [(q['reasoning_effort'],q['max_completion_tokens']) for q in seen]==[('none',1000),('low',2400)]
+    conn.execute("UPDATE event_source_report_runs SET status='accepted',review_json=%s WHERE run_id=%s",(contract.encode(verified),rid));conn.commit()
+    assert publication.current_material(conn,rid)['report']==revised
+    raw_review=conn.execute("SELECT response_json FROM event_source_report_calls WHERE run_id=%s AND phase='review'",(rid,)).fetchone()[0]
+    assert json.loads(json.loads(raw_review)['choices'][0]['message']['content'])['ready']
+
+
 def test_legacy_span_representation_keeps_immutable_derivative(database):
     conn,_,_=database
     original=generated()

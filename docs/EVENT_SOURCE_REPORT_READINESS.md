@@ -217,3 +217,20 @@ Astrana holds remain intact; Microsoft/page/feed pointers and bytes are unchange
 runtime is 5b7cb42 and global generation remains 0. Pre-call verification was 1,292
 offline passed/two skipped and 22 disposable PostgreSQL tests passed; explicit
 per-phase model-selector, identity and budget-refusal tests also pass.
+
+The specifically approved final pair used an immutable manual-issue allowance,
+Sol/none/1,000 correction and Luna/low/2,400 verification. This final-phase override
+has a separate generation identity tied to the original generator and does not
+rewrite either prior request/configuration or reviewer verdict. Correction scope
+can restrict metadata fields; P18's body, citations, type and rationale were unchanged.
+Preflight 23,504 was below the additional 24,000; exact final-pair reservations
+were 22,832 and actual usage 18,400. All four calls total 36,560 actual tokens,
+zero outstanding. Final review is ready with no issues or locator warnings.
+P17 now distinguishes fabricated identity/caller-ID signals from demonstrated
+employee authorization/control failure and labels independent verification as a
+defensive inference. P18 is undated. All unflagged items are exactly preserved.
+P26's October 5 label is the assessment cutoff for supplied evidence, not a claim
+that the company investigation was independently verified still ongoing then.
+Manual source/integrity review passed; both Astrana candidate and the existing
+Microsoft immutable derivative passed the publication adapter read-only.
+Source/privacy review and guarded scoped deployment/publication are pending.

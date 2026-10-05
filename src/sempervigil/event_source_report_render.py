@@ -43,7 +43,7 @@ def render(bundle, *, event_id, expected_revision):
         lines.append(f'<p class="event-revision-provenance">{escape(provenance["notice"])}</p>')
     names = {"overview":"Overview","attack_vector":"Attack vector","attack_path":"Attack path",
              "timeline":"Timeline","impact":"Impact","response_recovery":"Response and recovery",
-             "mitigations":"Mitigations","attribution":"Attribution","open_questions":"Open questions",
+             "mitigations":"Mitigations","attribution":"Attribution","analyst_assessment":"Analyst assessment","open_questions":"Open questions",
              "what_changed":"What changed"}
     for section in contract.SECTIONS:
         items = [x for x in bundle["report"]["items"] if x["section"]==section]
