@@ -242,3 +242,12 @@ def test_executor_distinguishes_local_failure_from_uncertain_transport(monkeypat
         with pytest.raises(type(error)):executor({'max_completion_tokens':3200})
         receipt=json.loads(next((tmp_path/executor.run_id).glob('*.json')).read_text())
         assert receipt['status']==('failed_pretransport' if index==0 else 'unknown_transport')
+
+
+def test_source_report_status_requires_configured_admin_auth(monkeypatch):
+    from sempervigil import admin
+    from fastapi import HTTPException
+    monkeypatch.delenv('SV_ADMIN_TOKEN',raising=False)
+    monkeypatch.setattr(admin,'_get_conn',lambda:pytest.fail('Unauthenticated status read reached DB'))
+    with pytest.raises(HTTPException) as denied:admin.api_event_source_report_status('evt_test')
+    assert denied.value.status_code==403

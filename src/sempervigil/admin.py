@@ -3081,6 +3081,8 @@ def api_event_curation(event_id: str) -> dict[str, object]:
 
 @app.get("/admin/api/events/{event_id}/source-report-status", dependencies=[Depends(_require_admin_token)])
 def api_event_source_report_status(event_id: str) -> dict[str, object]:
+    if not os.environ.get('SV_ADMIN_TOKEN'):
+        raise HTTPException(status_code=403,detail='source_report_status_requires_admin_auth')
     from .event_source_report_pilot import status
     conn = _get_conn()
     try:
