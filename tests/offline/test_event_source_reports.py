@@ -147,3 +147,12 @@ def test_source_report_scope_is_enforced(monkeypatch):
     check_scope("evt_sample")
     with pytest.raises(PermissionError,match="outside_scope"):
         check_scope("evt_other")
+
+
+def test_chart_renders_default_disabled_report_flag_and_scope():
+    from pathlib import Path
+    root=Path(__file__).resolve().parents[2]
+    template=(root/"deploy/helm/sempervigil/templates/configmap-env.yaml").read_text()
+    assert 'SV_EVENT_SOURCE_REPORT_ENABLED: {{ .Values.env.SV_EVENT_SOURCE_REPORT_ENABLED' in template
+    assert 'SV_EVENT_SOURCE_REPORT_EVENT_IDS: {{ .Values.env.SV_EVENT_SOURCE_REPORT_EVENT_IDS' in template
+    assert 'SV_EVENT_SOURCE_REPORT_ENABLED: "0"' in (root/"deploy/helm/sempervigil/values.yaml").read_text()
