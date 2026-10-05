@@ -1,5 +1,27 @@
 # Change Control Log
 
+## 2026-10-05: scoped whole-source analyst report published
+
+- Runtime `873426c` is deployed to orchestrator, hosted worker, promotion-capable
+  fetch workers and builder. Chart-only `f40fb4f` explicitly wires the globally
+  disabled report flag and single-Event admission scope. Unrelated workload images,
+  article summaries, ingestion settings and daily JSON contracts remain unchanged.
+- The Microsoft derivative preserved its seven reviewed body items and 17 exact
+  source spans while deterministically excluding invalid model-generated revision
+  metadata. Raw writer/reviewer artifacts and their original hold remain intact;
+  separate qualification records the projection lineage rather than approving the
+  omitted claim. One normal promotion job and scheduler-admitted guarded build
+  completed; public report/index revision and rendered fragment match activation.
+- Publication used no new hosted calls and no additional persistent permissions.
+  The prior immutable public revision remains available as fallback. Sampled
+  historical daily JSON and the comparison Event page remained byte-identical.
+  All 18 public release checks passed; local gates passed 1,257 offline tests
+  (two skipped) and 13 actual PostgreSQL integration tests.
+- Global generation remains disabled. This is one sparse-source incident, not
+  proof of standalone assessment quality, source independence, varied incident
+  acceptance or automatic incremental evidence-change updates. See
+  `ANALYST_EVENT_REPORTS.md` for the reader contract and explicit limitations.
+
 ## 2026-10-01: first newly discovered Event published autonomously
 
 - Application `f84daa4` and platform `e26ebe2` deploy a source-only curator

@@ -6,8 +6,9 @@ The default-disabled `SV_EVENT_SOURCE_REPORT_ENABLED=0` path uses one complete
 source-context writer and one independent whole-report reviewer. A configured
 optional correction changes only flagged item IDs, followed by one verification;
 four phases are the absolute maximum. Existing article summaries, feeds and
-published Event revisions are unchanged. The legacy contract below remains the
-deployed path until the scoped qualification and release gates below complete.
+existing published Event revisions retain their contracts. The legacy contract
+below remains the normal generation path. The source-report contract is deployed
+default-disabled; one explicitly approved derivative completed the scoped gates.
 
 Each material paragraph carries exact source quotes. Local checks bind those
 quotes to article text offsets, enforce finding/assessment confidence metadata,
@@ -71,6 +72,30 @@ plus false-notice rejection and completed-artifact immutability. No additional
 hosted calls are needed for the deterministic derivative. Deployment remains
 default-disabled, with a one-Event publication admission scope and no automatic
 cohort enrollment.
+
+### First scoped live publication
+
+The [Microsoft report](https://cybernews.jasondaemon.net/events/evt_8d136739e530/)
+completed normal separate-role approval/promotion and scheduler-admitted build,
+then guarded atomic activation on October 5. Its seven body items, 17 exact source
+spans, two publisher links and deterministic revision notice were verified on the
+public page and Events index. The public report fragment hash matched the active
+guarded release manifest; the scoped Helm/live diff was empty. Raw artifacts and
+their metadata hold remain intact. No additional hosted call or access expansion
+was used for publication. Historical daily JSON and the untouched comparison Event
+were byte-identical; 18 public HTTP/markup/asset/sample-JSON checks passed.
+
+This is one sparse-source synthesis, not a forensic reconstruction or varied-case
+acceptance. The two news articles rely on common reporting, so publisher count is
+not proof of independent investigation. Initial access, attribution and financial
+loss remain unresolved. Generic possible access routes are not incident findings;
+no missing exploit, IOC, mitigation or quantified impact was invented. The body
+has six findings and one intelligence gap, not a demonstrated standalone analyst
+assessment. Backend source spans do not yet provide an inline reader passage UI.
+Evidence-change narratives and automatic living-report updates still need varied
+validation. Global report generation stays disabled; comparison-case refreshes
+await review of this first public result. Local gates: 1,257 offline tests passed
+(two skipped) and 13 disposable PostgreSQL integration tests passed.
 
 The one new dependency is the MIT-licensed tokenizer `tiktoken` (GPL-compatible).
 Use the dependency-aware `SourceReport.Dockerfile` overlay with a verified runtime
