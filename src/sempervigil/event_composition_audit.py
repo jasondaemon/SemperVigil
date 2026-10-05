@@ -8,7 +8,9 @@ from .investigation import _version
 
 WORKFLOW = "event-composition-support-audit-v1"
 FILTER_WORKFLOW = "event-composition-support-filter-v1"
-MAX_INPUT_BYTES = 64000
+# The full identity preserves complete audit coverage and is never sent as one
+# provider request; batches retain the tighter per-call transport guardrail.
+MAX_INPUT_BYTES = 128000
 MAX_OUTPUT_BYTES = 20000
 MAX_BATCH_INPUT_BYTES = 32000
 MAX_BATCH_ITEMS = 6

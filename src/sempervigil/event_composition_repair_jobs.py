@@ -1,6 +1,9 @@
 """Single-attempt hosted corrective rewrites for audited Event compositions."""
+import json
 import os
 import time
+
+import jsonschema
 
 from . import event_composition_repair as repair
 from .investigation import _version
@@ -10,7 +13,7 @@ from .storage import enqueue_job, insert_llm_run, update_job_result
 JOB_TYPE = "event_composition_repair"
 MODEL_NAME = "gpt-5.6-sol"
 PARAMS = {"max_completion_tokens": 1800, "reasoning_effort": "low"}
-CONTRACT_VERSION = "evidence-rewrite-v4"
+CONTRACT_VERSION = "evidence-rewrite-v5"
 TRANSIENT_BASELINE_ERRORS = {
     "event_composition_repair_baseline_changed",
     "event_composition_repair_configuration_changed",
@@ -136,11 +139,19 @@ def run(conn, job, *, generate=None) -> dict:
               "status": "started", "public_eligible": False}
     if not update_job_result(conn, job.id, result):
         raise ValueError("event_composition_repair_job_not_running")
-    raw = (generate or (lambda request: complete(conn, job.id, request)))(req)
+    replacements = {}
+    raw_parts = []
+    for batch in repair.batches(req):
+        raw = (generate or (lambda request: complete(conn, job.id, request)))(batch)
+        value = repair._json(raw.encode(), repair.MAX_OUTPUT_BYTES)
+        jsonschema.validate(value, batch["schema"])
+        replacements.update(value["repairs"])
+        raw_parts.append(raw)
+    raw = json.dumps({"repairs": replacements}, ensure_ascii=True)
     record = repair.validate(raw.encode(), req, composition, ledger)
     from .event_composition import store_unreviewed
     result.update(status="review_required", repaired_composition_id=store_unreviewed(conn, record),
-                  raw=raw[:repair.MAX_OUTPUT_BYTES])
+                  raw=raw[:repair.MAX_OUTPUT_BYTES], batch_count=len(raw_parts))
     if not update_job_result(conn, job.id, result):
         raise ValueError("event_composition_repair_job_not_running")
     return result

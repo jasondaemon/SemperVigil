@@ -21,6 +21,7 @@ DETERMINISTIC_SECTION_POLICY = "deterministic-sections-v2"
 LEGACY_SECTION_POLICY = "stored-union-v1"
 MAX_INPUT_BYTES = 48000
 MAX_OUTPUT_BYTES = 24000
+MAX_DETAIL_ITEMS = 16
 SECTIONS = (
     "overview", "attack_vector", "attack_path", "timeline", "impact",
     "response_recovery", "mitigations", "attribution", "open_questions",
@@ -46,6 +47,11 @@ but each populated detail section must add technical, operational, temporal, imp
 response, attribution, or intelligence-gap detail rather than recycle overview prose.
 Do not repeat the same claim within or across sections, add unsupported claims or
 causal links, strengthen uncertain attribution, or omit material qualifications.
+Keep each Overview item atomic: express one material proposition, or a tightly coupled
+pair that the same cited facts directly support. Prefer several short items over one
+dense paragraph with a broad citation set. Preserve qualifiers on the specific people,
+data, systems, dates, and actions they modify. Never infer an absence, non-confirmation,
+or unresolved status merely because the supplied facts do not mention confirmation.
 
 Use each section only for its editorial purpose: attack_vector for initial access or
 delivery; attack_path for post-access actions and progression; impact for consequences;
@@ -244,8 +250,8 @@ def schema(fact_refs: dict[str, list[str]] | None = None,
            else {"type": "string", "pattern": "^F[0-9]{2}$"})
     item = {"type": "object", "additionalProperties": False,
             "required": ["text", "fact_refs", "claim_type", "confidence"], "properties": {
-                "text": {"type": "string", "minLength": 1, "maxLength": 4800},
-                "fact_refs": {"type": "array", "minItems": 1, "maxItems": 16,
+                "text": {"type": "string", "minLength": 1, "maxLength": 1600},
+                "fact_refs": {"type": "array", "minItems": 1, "maxItems": 8,
                               "items": ref},
                 "claim_type": {"type": "string",
                                "enum": ["sourced_finding", "analyst_assessment"]},
@@ -256,7 +262,7 @@ def schema(fact_refs: dict[str, list[str]] | None = None,
         properties[section] = {
             "type": "array",
             "minItems": overview_min_paragraphs if section == "overview" else 0,
-            "maxItems": 4 if section == "overview" else 8, "items": item,
+            "maxItems": 8 if section == "overview" else MAX_DETAIL_ITEMS, "items": item,
         }
     return {"type": "object", "additionalProperties": False,
             "required": list(GENERATED_SECTIONS), "properties": properties}

@@ -98,7 +98,7 @@ def test_audit_accepts_measured_size_but_retains_hard_input_bound():
 
     sections["overview"].extend(
         {"text": f"Supported item {index}", "fact_ids": ["f1"]}
-        for index in range(5, 7)
+        for index in range(5, 14)
     )
     with pytest.raises(ValueError, match="input_over_budget"):
         audit.request("elc_large_input", composition, ledger, GENERATION)

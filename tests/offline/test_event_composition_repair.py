@@ -9,6 +9,11 @@ from sempervigil import event_composition_repair_jobs as repair_jobs
 pytestmark = pytest.mark.offline
 
 
+def replacement(text, refs=("F01",)):
+    return {"text": text, "fact_refs": list(refs),
+            "claim_type": "sourced_finding", "confidence": None}
+
+
 def material():
     from sempervigil.event_composition import SECTIONS, WORKFLOW
     sections = {section: [] for section in SECTIONS}
@@ -36,8 +41,8 @@ def material():
 def test_repair_rewrites_only_rejected_text_and_revalidates_composition():
     composition, revision, decision = material()
     req = repair.request("elc_test", composition, revision, decision, "b" * 64)
-    record = repair.validate(json.dumps({"repairs": [{"id": "C01",
-        "text": "Acme said records may have been exposed."}]}).encode(),
+    record = repair.validate(json.dumps({"repairs": {"C01": [
+        replacement("Acme said records may have been exposed.")]}}).encode(),
         req, composition, revision)
     assert record["sections"]["overview"] == [{
         "text": "Acme said records may have been exposed.", "fact_ids": ["f1"],
@@ -55,6 +60,7 @@ def test_v9_repair_ids_match_generated_section_audit_ids():
     assert item["id"] == "C01"
     assert item["section"] == "overview"
     assert item["text"] == "Acme confirmed records were stolen."
+    assert req["schema"]["properties"]["repairs"]["properties"]["C01"]["maxItems"] == 2
 
 
 def test_v11_repair_rewrites_rejected_detail_and_preserves_required_coverage():
@@ -66,10 +72,10 @@ def test_v11_repair_rewrites_rejected_detail_and_preserves_required_coverage():
     ]}).encode(), audit_req)
     req = repair.request("elc_test", composition, revision, decision, "b" * 64)
     assert req["item_ids"] == ["C01", "C02"]
-    record = repair.validate(json.dumps({"repairs": [
-        {"id": "C01", "text": "Acme said records may have been exposed."},
-        {"id": "C02", "text": "The reported exposure may include Acme records."},
-    ]}).encode(),
+    record = repair.validate(json.dumps({"repairs": {
+        "C01": [replacement("Acme said records may have been exposed.")],
+        "C02": [replacement("The reported exposure may include Acme records.")],
+    }}).encode(),
         req, composition, revision)
     assert record["sections"]["impact"][0]["text"] == (
         "The reported exposure may include Acme records."
@@ -80,7 +86,90 @@ def test_repair_requires_every_rejected_item_exactly_once():
     composition, revision, decision = material()
     req = repair.request("elc_test", composition, revision, decision, "b" * 64)
     with pytest.raises(ValueError, match="invalid_shape|incomplete"):
-        repair.validate(json.dumps({"repairs": []}).encode(), req, composition, revision)
+        repair.validate(json.dumps({"repairs": {}}).encode(), req, composition, revision)
+
+
+def test_repair_can_split_dense_item_and_reselect_allowed_citations():
+    composition, revision, decision = material()
+    revision["ledger"]["facts"].append({
+        "fact_id": "f2", "statement": "Acme opened an investigation.",
+        "kind": "reported_fact", "date_text": None, "date_role": "none",
+        "sections": ["context"],
+    })
+    req = repair.request("elc_test", composition, revision, decision, "b" * 64)
+    item = json.loads(req["input"])["items"][0]
+    assert item["cited_facts"][0]["ref"] == "F01"
+    assert {row["ref"] for row in item["allowed_facts"]} == {"F02"}
+    record = repair.validate(json.dumps({"repairs": {"C01": [
+        replacement("Acme said records may have been exposed."),
+        replacement("Acme opened an investigation.", refs=("F02",)),
+    ]}}).encode(), req, composition, revision)
+    assert [row["fact_ids"] for row in record["sections"]["overview"]] == [["f1"], ["f2"]]
+
+
+def test_repair_schema_rejects_fact_reference_outside_section_allowlist():
+    composition, revision, _ = material()
+    revision["ledger"]["facts"].append({
+        "fact_id": "f2", "statement": "Users should rotate passwords.",
+        "kind": "guidance", "date_text": None, "date_role": "none",
+        "sections": ["mitigation"],
+    })
+    audit_req = audit.request("elc_test", composition, revision["ledger"], "a" * 64)
+    decision = audit.validate(json.dumps({"audits": [
+        {"id": "C01", "verdict": "supported", "reason": "Directly supported."},
+        {"id": "C02", "verdict": "unsupported", "reason": "Wrong section fact."},
+    ]}).encode(), audit_req)
+    req = repair.request("elc_test", composition, revision, decision, "b" * 64)
+    with pytest.raises(ValueError, match="invalid_shape"):
+        repair.validate(json.dumps({"repairs": {"C02": [
+            replacement("Users should rotate passwords.", refs=("F02",)),
+        ]}}).encode(), req, composition, revision)
+
+
+def test_repair_does_not_offer_legacy_section_ineligible_citation():
+    composition, revision, _ = material()
+    revision["ledger"]["facts"].append({
+        "fact_id": "f2", "statement": "Users should rotate passwords.",
+        "kind": "guidance", "date_text": None, "date_role": "none",
+        "sections": ["mitigation"],
+    })
+    composition["sections"]["impact"][0]["fact_ids"] = ["f2"]
+    audit_req = audit.request("elc_test", composition, revision["ledger"], "a" * 64)
+    decision = audit.validate(json.dumps({"audits": [
+        {"id": "C01", "verdict": "supported", "reason": "Directly supported."},
+        {"id": "C02", "verdict": "unsupported", "reason": "Wrong section fact."},
+    ]}).encode(), audit_req)
+    req = repair.request("elc_test", composition, revision, decision, "b" * 64)
+    item = json.loads(req["input"])["items"][0]
+    assert item["cited_facts"] == []
+    assert {row["ref"] for row in item["allowed_facts"]} == {"F01"}
+    assert req["allowed_refs"]["C02"] == ["F01"]
+
+
+def test_repair_normalizes_supported_legacy_item_with_too_many_citations():
+    composition, revision, _ = material()
+    for index in range(2, 10):
+        revision["ledger"]["facts"].append({
+            "fact_id": f"f{index}", "statement": f"Supported impact fact {index}.",
+            "kind": "reported_fact", "date_text": None, "date_role": "none",
+            "sections": ["impact"],
+        })
+    composition["sections"]["impact"][0]["fact_ids"] = [f"f{i}" for i in range(1, 10)]
+    audit_req = audit.request("elc_test", composition, revision["ledger"], "a" * 64)
+    decision = audit.validate(json.dumps({"audits": [
+        {"id": "C01", "verdict": "unsupported", "reason": "Certainty drift."},
+        {"id": "C02", "verdict": "supported", "reason": "Directly supported."},
+    ]}).encode(), audit_req)
+    req = repair.request("elc_test", composition, revision, decision, "b" * 64)
+    assert req["item_ids"] == ["C01", "C02"]
+    item = json.loads(req["input"])["items"][1]
+    assert "atomic content contract" in item["audit_reason"]
+
+
+def test_repair_deduplicates_cross_batch_narrative_before_validation():
+    row = replacement("Acme opened an investigation.")
+    result = repair._deduplicate({"overview": [row], "impact": [dict(row)]})
+    assert result == {"overview": [row], "impact": []}
 
 
 def test_submit_recovers_once_from_transient_baseline_failure(monkeypatch):

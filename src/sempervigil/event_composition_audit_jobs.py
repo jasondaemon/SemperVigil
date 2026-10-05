@@ -134,12 +134,33 @@ def run(conn, job, *, generate=None) -> dict:
         applied = review(conn, payload["composition_id"], "hold", reason=reason, reviewer=REVIEWER)
         remediation = None
         from .event_composition_jobs import configuration as composition_configuration
-        if composition.get("generation_version") == composition_configuration(conn)[2]:
+        if composition.get("fallback"):
+            remediation = {"status": "held", "reason": "extractive_fallback_nonconvergent",
+                           "workflow": composition["fallback"].get("workflow")}
+        elif composition.get("generation_version") == composition_configuration(conn)[2]:
             item_sections = {item["id"]: item["section"]
                              for item in json.loads(req["input"])["items"]}
             overview_failed = any(item_sections[row["id"]] == "overview"
                                   for row in failures)
-            if not overview_failed:
+            repaired_parent = conn.execute(
+                """SELECT 1 FROM jobs WHERE job_type='event_composition_repair'
+                     AND status='succeeded'
+                     AND result_json::jsonb->>'repaired_composition_id'=%s LIMIT 1""",
+                (payload["composition_id"],),
+            ).fetchone()
+            if repaired_parent:
+                from .event_composition_fallback import build
+                from .event_composition import store_unreviewed
+                fallback, lineage = build(
+                    payload["composition_id"], composition,
+                    {"revision_id": composition["ledger_revision_id"], "status": "accepted",
+                     "lineage_current": True, "ledger": ledger,
+                     "change": composition.get("change", {})}, decision)
+                fallback_id = store_unreviewed(conn, fallback)
+                remediation = {"status": "queued", "composition_id": fallback_id,
+                               "job_id": submit(conn, fallback_id),
+                               "workflow": lineage["workflow"], "lineage": lineage}
+            elif not overview_failed:
                 from .event_composition import store_unreviewed
                 filtered = audit.filtered_record(
                     payload["composition_id"], composition, ledger, decision)

@@ -69,9 +69,10 @@ def test_request_uses_only_active_exact_evidence_and_remains_private():
     assert payload["facts"][0]["suggested_sections"] == ["overview", "attack_vector", "attack_path", "timeline"]
     properties = req["schema"]["properties"]
     assert properties["overview"]["minItems"] == 1
-    assert properties["overview"]["maxItems"] == 4
-    assert properties["overview"]["items"]["properties"]["text"]["maxLength"] == 4800
-    assert properties["overview"]["items"]["properties"]["fact_refs"]["maxItems"] == 16
+    assert properties["overview"]["maxItems"] == 8
+    assert properties["overview"]["items"]["properties"]["text"]["maxLength"] == 1600
+    assert properties["overview"]["items"]["properties"]["fact_refs"]["maxItems"] == 8
+    assert properties["response_recovery"]["maxItems"] == composition.MAX_DETAIL_ITEMS
     assert set(properties) == set(composition.GENERATED_SECTIONS)
     record = composition.validate(json.dumps(valid_output()).encode(), ledger_revision(), GENERATION)
     assert record["public_eligible"] is False and record["status"] == "unreviewed"
