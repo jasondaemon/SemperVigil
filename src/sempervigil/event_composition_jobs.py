@@ -1,6 +1,7 @@
 """Single-attempt hosted composition jobs for accepted Event ledgers."""
 import os
 import time
+import json
 
 from . import event_composition as composition
 from .investigation import _version
@@ -15,6 +16,26 @@ TRANSIENT_BASELINE_ERRORS = {
     "event_composition_configuration_changed",
     "event_composition_overview_incomplete",
 }
+INTERRUPTED_ERROR = "event_composition_interrupted_after_start"
+
+
+def _interrupted_result(value, *, revision_id: str, generation: str,
+                        request_version: str) -> bool:
+    try:
+        result = json.loads(value) if isinstance(value, str) else value
+    except (TypeError, ValueError):
+        return False
+    return (isinstance(result, dict)
+            and set(result) == {"workflow", "ledger_revision_id", "generation",
+                                "request_version", "attempts", "status",
+                                "public_eligible"}
+            and result.get("workflow") == composition.WORKFLOW
+            and result.get("ledger_revision_id") == revision_id
+            and result.get("generation") == generation
+            and result.get("request_version") == request_version
+            and result.get("attempts") == 1
+            and result.get("status") == "started"
+            and result.get("public_eligible") is False)
 
 
 def require_enabled() -> None:
@@ -58,12 +79,17 @@ def submit(conn, revision_id: str) -> str:
                                                "request": req["request_version"]})
     conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (key,))
     existing = conn.execute(
-        """SELECT id,status,COALESCE(error,'') FROM jobs
+        """SELECT id,status,COALESCE(error,''),result_json FROM jobs
             WHERE job_type=%s AND dedupe_key=%s ORDER BY requested_at LIMIT 1""",
         (JOB_TYPE, key),
     ).fetchone()
     if existing:
-        if existing[1] == "failed" and existing[2] in TRANSIENT_BASELINE_ERRORS:
+        interrupted = (existing[1] == "failed"
+            and existing[2] in {INTERRUPTED_ERROR, "event_composition_invalid_or_replayed_job"}
+            and _interrupted_result(existing[3], revision_id=revision_id,
+                                    generation=generation,
+                                    request_version=req["request_version"]))
+        if existing[1] == "failed" and (existing[2] in TRANSIENT_BASELINE_ERRORS or interrupted):
             recovery_key = key + ":transient-recovery"
             recovery = conn.execute(
                 """SELECT id FROM jobs WHERE job_type=%s AND dedupe_key=%s
@@ -124,6 +150,15 @@ def complete(conn, job_id: str, req: dict) -> str:
 def run(conn, job, *, generate=None) -> dict:
     require_enabled()
     payload = job.payload or {}
+    if (job.job_type == JOB_TYPE and job.status == "running"
+            and job.queue_name == "openai" and job.attempt_count == 0
+            and job.max_attempts == 1 and getattr(job, "error", None) == "stale_lock_requeued"
+            and set(payload) == {"workflow", "ledger_revision_id", "generation", "request_version"}
+            and _interrupted_result(job.result,
+                revision_id=payload["ledger_revision_id"],
+                generation=payload["generation"],
+                request_version=payload["request_version"])):
+        raise ValueError(INTERRUPTED_ERROR)
     if (job.job_type != JOB_TYPE or job.result or job.attempt_count != 0 or job.max_attempts != 1
             or job.queue_name != "openai" or job.status != "running"
             or set(payload) != {"workflow", "ledger_revision_id", "generation", "request_version"}

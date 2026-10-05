@@ -416,7 +416,7 @@ def test_submit_retries_transient_baseline_failure_once_and_keeps_parent(monkeyp
             if "pg_advisory_xact_lock" in sql:
                 return Result(None)
             if "COALESCE(error" in sql:
-                return Result(("job_failed", "failed", "event_composition_baseline_changed"))
+                return Result(("job_failed", "failed", "event_composition_baseline_changed", None))
             if ":transient-recovery" in str(params):
                 return Result(None)
             raise AssertionError(sql)
@@ -439,6 +439,24 @@ def test_submit_retries_transient_baseline_failure_once_and_keeps_parent(monkeyp
     assert captured["kwargs"]["parent_job_id"] == "job_failed"
     assert captured["kwargs"]["dedupe_key"].endswith(":transient-recovery")
     assert captured["kwargs"]["max_attempts"] == 1
+
+
+def test_stale_started_job_is_classified_without_second_model_call(harness):
+    current = running_job()
+    current.error = "stale_lock_requeued"
+    current.result = {
+        "workflow": composition.WORKFLOW,
+        "ledger_revision_id": current.payload["ledger_revision_id"],
+        "generation": current.payload["generation"],
+        "request_version": current.payload["request_version"],
+        "attempts": 1,
+        "status": "started",
+        "public_eligible": False,
+    }
+
+    with pytest.raises(ValueError, match=jobs.INTERRUPTED_ERROR):
+        jobs.run(object(), current, generate=lambda request: pytest.fail("inference"))
+    assert not harness
 
 
 def test_worker_registry_and_queue_mapping():
