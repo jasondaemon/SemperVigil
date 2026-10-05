@@ -93,7 +93,7 @@ def configuration(conn):
     row = conn.execute("""SELECT p.id,m.id FROM llm_providers p JOIN llm_models m ON m.provider_id=p.id
       WHERE lower(p.name)='openai' AND lower(p.type)='openai_compatible'
       AND p.is_enabled=1 AND m.is_enabled=1 AND m.model_name=%s ORDER BY m.id LIMIT 1""",
-      (MODEL,)).fetchone()
+      (os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL',MODEL),)).fetchone()
     if not row:
         raise ValueError("event_source_report_model_missing")
     provider, model = get_provider(conn, row[0]), get_model(conn, row[1])
@@ -103,7 +103,8 @@ def configuration(conn):
         "schema": contract.schema(["S1"]), "reasoning": "low",
         "limits": [3200, 1600], "tokenizer": "o200k_base", "context_tokens": 24000,
         "update_context": "published-evidence-delta-v3", "cohort_policy":"serialized-reservation-v1",
-        "projection_policy":contract.PROJECTION_WORKFLOW})
+        "projection_policy":contract.PROJECTION_WORKFLOW,
+        "fixed_reviewer_model":MODEL,"review_schema":contract.review_schema({'items':[{'id':'P01'}]},['S1'])})
     return model, provider, version
 
 
@@ -293,6 +294,7 @@ def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
     _, _, generation = configuration(conn)
     conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("source-report:"+event_id,))
     snap = snapshot(conn, event_id)
+    snap['review_contract']=contract.REVIEW_CONTRACT
     predecessor, prior = previous(conn, event_id)
     old, prior_generation = published_baseline(conn,event_id,snap)
     if old:
@@ -403,6 +405,13 @@ def call(conn, run_id, phase, system, data, response_schema, *, complete=None, c
         raise ValueError('event_source_report_completion_cap_invalid')
     record = _load(conn, run_id); _fresh(conn, record)
     model, _, _ = configuration(conn)
+    if phase in {'review','verification'} and os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL'):
+        from .services.ai_service import get_model
+        row=conn.execute("""SELECT m.id FROM llm_models m JOIN llm_providers p ON p.id=m.provider_id
+          WHERE lower(p.name)='openai' AND lower(p.type)='openai_compatible'
+          AND p.is_enabled=1 AND m.is_enabled=1 AND m.model_name=%s ORDER BY m.id LIMIT 1""",(MODEL,)).fetchone()
+        if not row:raise ValueError('event_source_report_reviewer_model_missing')
+        model=get_model(conn,row[0])
     payload = {"model": model["model_name"], "reasoning_effort": "low",
         "max_completion_tokens": completion_cap or (3200 if phase in {"writer", "correction"} else 1600),
         "messages": [{"role": "system", "content": system},

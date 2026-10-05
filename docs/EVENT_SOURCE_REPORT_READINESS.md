@@ -148,3 +148,43 @@ notification premises, while explicitly recognizing support elsewhere in the ful
 primary source. No fifth call, new deployment or publication followed. Runtime
 remains 5b7cb42; migration 071 and its audit were applied for this bounded operation.
 Local tests: 1,278 offline passed/two skipped, 21 disposable PostgreSQL tests passed.
+
+## Source-level review contract and independent shadow
+
+New generation snapshots identify the whole-cited-source review contract. Factual
+support uses complete cited sources, while the entire packet is checked for
+contradictions and missing qualifications. Exact or canonically resolved passages
+remain provenance/navigation anchors, not exhaustive fact containers. Review returns
+blocking substantive `issues` separately from nonblocking `locator_warnings`;
+`ready` depends only on substantive issues. Stored legacy reviews retain their
+original interpretation and holds. No previous issue was retroactively reclassified.
+
+Writer guidance now explicitly preserves company beliefs, appropriately typed and
+placed assessments, unreported action dates, distinct detail sections and material
+financial/notification qualifications. Held-out breach, vulnerability, campaign and
+law-enforcement fixtures test warning/issue contract separation, not automated
+semantic truth detection. Publication reconstructs compact corrections from the
+immutable original writer plus flagged item patch and checks exact assembled equality
+against persisted report, then checks the immutable verification output. Legacy
+span storage preserves original offsets/quotes and bundle identity; only absence of
+new passage-anchor metadata is accepted. Actual Microsoft immutable publication
+material passed this updated adapter read-only.
+
+`SV_EVENT_SOURCE_REPORT_WRITER_MODEL` optionally selects an already-enabled OpenAI
+writer; review stays fixed to the configured baseline model. The generator version
+records writer and reviewer contract identity. Defaults/global admission do not
+change. The independently authorized archived Astrana shadow selected gpt-5.6-sol
+writer and gpt-5.6-luna reviewer, reasoning low, no correction and 24,000 summed
+reservation ceiling. Conservative preflight bound was 22,345. The writer alone
+reserved 10,306 and used 9,401 tokens (6,201 prompt plus 3,200 reasoning completion),
+returned empty content with finish_reason length after 36,438 ms, and held before
+review. No complete report exists; no reviewer, retry or repair was run. There is
+no valid quality comparison or isolated model-superiority result. No configured
+pricing columns were available, so no monetary cost was inferred.
+
+The prior Astrana four-call hold remains unchanged. No source deployment, publication
+or persistent generation enablement followed the failed shadow. Microsoft, Astrana
+and the immediately preceding daily-feed bytes/pointers remain unchanged.
+Verification: 1,283 offline tests passed/two skipped before the final model-selector
+fixture; 22 disposable PostgreSQL tests passed, including compact reconstruction,
+unchecked prose substitution refusal and legacy derivative span identity.

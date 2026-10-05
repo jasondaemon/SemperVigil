@@ -28,6 +28,11 @@ def current_material(conn, run_id, *, lock=False, published=False, derivative=No
         raise ValueError("event_source_report_sources_changed")
     packet = contract.context(record["snapshot"])
     spans = contract.validate(record["report"],packet)
+    # Preserve exact legacy span storage/bundle identity. Only the newly added
+    # anchor may be absent; offsets, source ID and original quote still must match.
+    if all(set(s)=={'source_id','start','end','quote'} for values in record['spans'].values() for s in values):
+        spans={k:[{key:value for key,value in s.items() if key!='passage_anchor'} for s in values]
+               for k,values in spans.items()}
     if spans != record["spans"]:
         raise ValueError("event_source_report_span_integrity")
     contract.validate_review(record["review"],record["report"],packet)
@@ -36,15 +41,27 @@ def current_material(conn, run_id, *, lock=False, published=False, derivative=No
     calls = conn.execute("""SELECT phase,response_json FROM event_source_report_calls
         WHERE run_id=%s AND status='completed' ORDER BY ordinal""",(run_id,)).fetchall()
     responses = {phase:json.loads(raw) for phase,raw in calls}
+    def body(phase):
+        return json.loads(responses[phase]['choices'][0]['message']['content'])
     write_phase = "correction" if "correction" in responses else "writer"
     review_phase = "verification" if "correction" in responses else "review"
-    for phase,expected in ((write_phase,record["report"]),(review_phase,record["review"])):
-        if phase not in responses or json.loads(responses[phase]["choices"][0]["message"]["content"])!=expected:
+    reconstructed = body(write_phase) if write_phase in responses else None
+    if write_phase=='correction' and reconstructed is not None and set(reconstructed)=={'items'}:
+        if 'writer' not in responses or 'review' not in responses:
+            raise ValueError('event_source_report_response_integrity')
+        flagged={issue['item_id'] for issue in body('review')['issues']}
+        reconstructed=contract.apply_correction(body('writer'),reconstructed,flagged)
+    for phase,actual,expected in ((write_phase,reconstructed,record['report']),
+                                  (review_phase,body(review_phase) if review_phase in responses else None,record['review'])):
+        if phase not in responses or actual!=expected:
             raise ValueError("event_source_report_response_integrity")
     saved = conn.execute("SELECT projection_json FROM event_source_report_derivatives WHERE run_id=%s",(run_id,)).fetchone()
     derivative = derivative if derivative is not None else (json.loads(saved[0]) if saved else None)
     if derivative is not None:
         expected = contract.publication_projection(record["report"],record["review"],packet)
+        if all(set(s)=={'source_id','start','end','quote'} for values in derivative.get('spans',{}).values() for s in values):
+            expected['spans']={k:[{key:value for key,value in s.items() if key!='passage_anchor'} for s in values]
+                               for k,values in expected['spans'].items()}
         if derivative != expected:
             raise ValueError("event_source_report_derivative_integrity")
         reason = conn.execute("SELECT reason FROM event_source_report_runs WHERE run_id=%s",(run_id,)).fetchone()[0]

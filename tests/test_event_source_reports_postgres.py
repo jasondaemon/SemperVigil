@@ -73,22 +73,47 @@ def test_audited_final_two_call_allowance(database,monkeypatch,tmp_path):
     conn.rollback()
     monkeypatch.setattr(reports,'ready_client',lambda _:None)
     from sempervigil.event_source_report_executor import JournaledExecutor
-    replies=[{'items':[generated()['items'][1]]},{'ready':True,'issues':[]}]
+    replies=[{'items':[generated()['items'][1]]},{'ready':True,'issues':[],'locator_warnings':[]}]
     calls=[]
     def complete(payload):calls.append(payload);return response(replies[len(calls)-1])
     executor=JournaledExecutor(conn,rid,tmp_path,ceiling=22000,phases=('correction','verification'),complete=complete)
     revised,verified=reports.correct_and_verify(conn,rid,contract.context(record['snapshot']),record['report'],record['review'],complete=executor,compact=True)
     assert revised==generated() and verified['ready'] and len(calls)==2
     assert [v[0] for v in conn.execute('SELECT phase FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal',(rid,)).fetchall()]==['writer','review','correction','verification']
+    conn.execute("UPDATE event_source_report_runs SET status='accepted',review_json=%s WHERE run_id=%s",(contract.encode(verified),rid));conn.commit()
+    assert publication.current_material(conn,rid)['report']==revised
+    tampered=copy.deepcopy(revised);tampered['items'][0]['text']='Unchecked replacement prose.'
+    conn.execute('UPDATE event_source_report_runs SET report_json=%s WHERE run_id=%s',(contract.encode(tampered),rid));conn.commit()
+    with pytest.raises(ValueError,match='response_integrity'):publication.current_material(conn,rid)
     with pytest.raises(ValueError,match='not_eligible'):
         reports.grant_correction_allowance(conn,rid,22000,authority='fixture-explicit-final-two')
     assert conn.execute('SELECT count(*) FROM event_source_report_allowances').fetchone()[0]==1
 
 
 def response(value):
+    if 'ready' in value and 'locator_warnings' not in value:
+        value={**value,'locator_warnings':[]}
     return {"choices":[{"finish_reason":"stop","message":{"content":json.dumps(value)}}],
             "usage":{"prompt_tokens":200,"completion_tokens":100,"total_tokens":300,
                      "completion_tokens_details":{"reasoning_tokens":25}}}
+
+
+def test_legacy_span_representation_keeps_immutable_derivative(database):
+    conn,_,_=database
+    original=generated()
+    original['items'].append({**original['items'][1],'id':'P03','section':'what_changed','text':'Newly added metadata.'})
+    submitted,_,_,_=execute(conn,[original,{'ready':True,'issues':[]}])
+    rid=submitted['run_id'];record=reports._load(conn,rid)
+    snap=contract.update_context(record['snapshot'],'generator_upgrade',record['snapshot'])
+    old_spans={k:[{key:value for key,value in s.items() if key!='passage_anchor'} for s in vs] for k,vs in record['spans'].items()}
+    conn.execute("UPDATE event_source_report_runs SET snapshot_json=%s,spans_json=%s,status='held',reason='manual_quality_revision_metadata' WHERE run_id=%s",(contract.encode(snap),contract.encode(old_spans),rid))
+    derivative=contract.publication_projection(record['report'],record['review'],contract.context(snap))
+    derivative['spans']={k:[{key:value for key,value in s.items() if key!='passage_anchor'} for s in vs] for k,vs in derivative['spans'].items()}
+    conn.execute('INSERT INTO event_source_report_derivatives VALUES(%s,%s,%s)',(rid,contract.encode(derivative),'fixture'));conn.commit()
+    assert publication.current_material(conn,rid)['spans']==derivative['spans']
+    altered=copy.deepcopy(derivative);altered['spans']['P01'][0]['start']+=1
+    with pytest.raises(ValueError,match='derivative_integrity'):
+        publication.current_material(conn,rid,derivative=altered)
 
 
 def execute(conn,values,*,allow_correction=False):
