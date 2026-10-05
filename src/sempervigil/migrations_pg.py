@@ -674,6 +674,14 @@ def apply_migrations_pg(conn) -> None:
             )
             conn.commit()
             logger.info("migration_applied version=pg_event_composition_final_recovery_065")
+        if "pg_event_composition_zero_output_recovery_066" not in applied:
+            _migrate_event_composition_zero_output_recovery(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                ("pg_event_composition_zero_output_recovery_066", utc_now_iso()),
+            )
+            conn.commit()
+            logger.info("migration_applied version=pg_event_composition_zero_output_recovery_066")
         else:
             conn.commit()
         return
@@ -2149,6 +2157,30 @@ def _migrate_event_composition_final_recovery(conn) -> None:
                       WHERE r.ledger_id=c.ledger_id AND r.status='accepted')
                    AND j.result_json::jsonb->>'status'='started'
                    AND NOT (j.result_json::jsonb ?| ARRAY['raw','output_chars','composition_id'])
+              )""",
+        (utc_now_iso(),),
+    )
+
+
+def _migrate_event_composition_zero_output_recovery(conn) -> None:
+    """Reactivate only a hosted repair that succeeded but returned no content."""
+    conn.execute(
+        """UPDATE event_reassessment_cases c
+              SET status='active',decision_reason=NULL,updated_at=%s
+            WHERE c.status='held'
+              AND c.decision_reason='composition repair failed: input_size'
+              AND EXISTS (
+                SELECT 1 FROM jobs j
+                JOIN event_ledger_compositions x
+                  ON x.composition_id=j.payload_json::jsonb->>'composition_id'
+                 AND x.ledger_id=c.ledger_id
+                 WHERE j.job_type='event_composition_repair' AND j.status='failed'
+                   AND j.error='input_size'
+                   AND j.result_json::jsonb->>'status'='started'
+                   AND NOT (j.result_json::jsonb ?| ARRAY['raw','output_chars','repaired_composition_id'])
+                   AND EXISTS (
+                     SELECT 1 FROM llm_runs l WHERE l.job_id=j.id
+                       AND l.ok=1 AND l.output_chars=0 AND l.error IS NULL)
               )""",
         (utc_now_iso(),),
     )

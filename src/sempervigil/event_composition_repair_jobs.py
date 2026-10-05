@@ -18,6 +18,7 @@ TRANSIENT_BASELINE_ERRORS = {
     "event_composition_repair_baseline_changed",
     "event_composition_repair_configuration_changed",
 }
+REASONING_LENGTH_ERROR = "event_composition_repair_reasoning_length"
 
 
 def require_enabled() -> None:
@@ -104,22 +105,30 @@ def complete(conn, job_id: str, req: dict) -> str:
                      {"role": "user", "content": req["input"]}],
         "response_format": {"type": "json_schema", "json_schema": {
             "name": "event_composition_repair", "strict": True, "schema": req["schema"]}}}
-    started, raw, error = time.monotonic(), "", None
+    started, raw, error, response_received = time.monotonic(), "", None, False
     try:
-        raw = _read_openai(_http_request("POST", _join_url(provider["base_url"], "/chat/completions"),
+        response = _http_request("POST", _join_url(provider["base_url"], "/chat/completions"),
             _auth_headers(provider["type"], load_provider_secret(conn, provider["id"])), payload,
-            provider, context={"stage": JOB_TYPE, "job_id": job_id}))
+            provider, context={"stage": JOB_TYPE, "job_id": job_id})
+        response_received = True
+        choices = response.get("choices") or []
+        choice = choices[0] if choices and isinstance(choices[0], dict) else {}
+        message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+        if (choice.get("finish_reason") == "length" and message.get("content") == ""
+                and message.get("refusal") is None):
+            raise ValueError(REASONING_LENGTH_ERROR)
+        raw = _read_openai(response)
         if configuration(conn)[2] != generation:
             raise ValueError("event_composition_repair_configuration_changed")
         return raw
     except Exception as exc:
-        error = type(exc).__name__
+        error = None if response_received else type(exc).__name__
         raise
     finally:
         insert_llm_run(conn, job_id=job_id, provider_id=provider["id"], model_id=model["id"],
             prompt_name="event-composition-repair", input_chars=len(req["input"]),
             output_chars=len(raw), latency_ms=int((time.monotonic()-started)*1000),
-            ok=error is None, error=error)
+            ok=response_received, error=error)
 
 
 def run(conn, job, *, generate=None) -> dict:

@@ -213,3 +213,42 @@ def test_submit_recovers_once_from_transient_baseline_failure(monkeypatch):
     assert repair_jobs.submit(Conn(), "elc_test", decision) == "job_recovery"
     assert captured["kwargs"]["parent_job_id"] == "job_failed"
     assert captured["kwargs"]["dedupe_key"].endswith(":transient-recovery")
+
+
+def test_complete_classifies_reasoning_length_zero_output(monkeypatch):
+    from sempervigil.llm import router
+    monkeypatch.setattr(repair_jobs, "configuration",
+                        lambda _conn: ({"id": "model", "model_name": "gpt-5.6-sol"},
+                                       {"id": "provider", "type": "openai_compatible",
+                                        "base_url": "https://example.invalid"}, "g"))
+    monkeypatch.setattr(repair_jobs, "load_provider_secret", lambda *_args: "secret")
+    monkeypatch.setattr(router, "_http_request", lambda *_args, **_kwargs: {
+        "choices": [{"finish_reason": "length",
+                     "message": {"content": "", "refusal": None}}]})
+    runs = []
+    monkeypatch.setattr(repair_jobs, "insert_llm_run",
+                        lambda *_args, **kwargs: runs.append(kwargs))
+
+    with pytest.raises(ValueError, match=repair_jobs.REASONING_LENGTH_ERROR):
+        repair_jobs.complete(object(), "job", {"generation": "g", "input": "x", "schema": {}})
+
+    assert runs[0]["ok"] is True
+    assert runs[0]["output_chars"] == 0
+    assert runs[0]["error"] is None
+
+
+def test_complete_does_not_classify_refusal_as_reasoning_length(monkeypatch):
+    from sempervigil.llm import router
+    monkeypatch.setattr(repair_jobs, "configuration",
+                        lambda _conn: ({"id": "model", "model_name": "gpt-5.6-sol"},
+                                       {"id": "provider", "type": "openai_compatible",
+                                        "base_url": "https://example.invalid"}, "g"))
+    monkeypatch.setattr(repair_jobs, "load_provider_secret", lambda *_args: "secret")
+    monkeypatch.setattr(router, "_http_request", lambda *_args, **_kwargs: {
+        "choices": [{"finish_reason": "length",
+                     "message": {"content": "", "refusal": "blocked"}}]})
+    monkeypatch.setattr(repair_jobs, "insert_llm_run", lambda *_args, **_kwargs: None)
+
+    assert repair_jobs.complete(
+        object(), "job", {"generation": "g", "input": "x", "schema": {}}
+    ) == ""

@@ -132,6 +132,38 @@ def test_repaired_derivative_resolves_successful_repair_result():
     assert automation._repaired_derivative(RepairConn(), "elc_original") == repaired
 
 
+def test_zero_output_repair_fallback_requires_successful_empty_run(monkeypatch):
+    class Conn:
+        def __init__(self, row):
+            self.row = row
+
+        def execute(self, sql, params=()):
+            assert "ok=1 AND output_chars=0 AND error IS NULL" in sql
+            assert params == ("job_repair",)
+            return _Result(self.row)
+
+    monkeypatch.setattr(event_composition, "store_unreviewed",
+                        lambda *_args: "elc_fallback")
+    monkeypatch.setattr(event_composition_audit, "submit",
+                        lambda *_args: "job_audit", raising=False)
+    from sempervigil import event_composition_fallback
+    from sempervigil import event_composition_audit_jobs
+    monkeypatch.setattr(event_composition_fallback, "build",
+                        lambda *_args: ({"status": "unreviewed"},
+                                       {"workflow": "extractive", "version": "v"}))
+    monkeypatch.setattr(event_composition_audit_jobs, "submit",
+                        lambda *_args: "job_audit")
+
+    assert automation._zero_output_repair_fallback(
+        Conn(None), "job_repair", "elc", {}, {}, {}
+    ) is None
+    assert automation._zero_output_repair_fallback(
+        Conn((1,)), "job_repair", "elc", {}, {}, {}
+    ) == {"status": "queued", "composition_id": "elc_fallback",
+          "job_id": "job_audit", "workflow": "extractive",
+          "lineage": {"workflow": "extractive", "version": "v"}}
+
+
 def test_tick_skips_waiting_case_but_stops_after_one_advancement(monkeypatch):
     class TickConn:
         def execute(self, sql, params=()):

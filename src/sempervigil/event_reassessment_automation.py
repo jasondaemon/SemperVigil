@@ -103,6 +103,28 @@ def _job_state(conn, job_id: str) -> tuple[str, str]:
     return (row[0], row[1]) if row else ("missing", "job unavailable")
 
 
+def _zero_output_repair_fallback(conn, job_id: str, composition_id: str,
+                                 composition: dict, ledger_revision: dict,
+                                 decision: dict) -> dict | None:
+    """Build an extractive derivative only for a successful zero-output model call."""
+    row = conn.execute(
+        """SELECT 1 FROM llm_runs
+            WHERE job_id=%s AND ok=1 AND output_chars=0 AND error IS NULL LIMIT 1""",
+        (job_id,),
+    ).fetchone()
+    if not row:
+        return None
+    from .event_composition_fallback import build
+    from .event_composition import store_unreviewed
+    from .event_composition_audit_jobs import submit
+    fallback, lineage = build(composition_id, composition, ledger_revision, decision)
+    fallback_id = store_unreviewed(conn, fallback)
+    audit_job_id = submit(conn, fallback_id)
+    return {"status": "queued", "composition_id": fallback_id,
+            "job_id": audit_job_id, "workflow": lineage["workflow"],
+            "lineage": lineage}
+
+
 def _repairable_composition(conn, ledger_revision_id: str, composition):
     """Return the current composer's audited composition, ignoring legacy derivatives."""
     if (composition[1] != "held"
@@ -545,6 +567,19 @@ def advance(conn, event_id: str) -> dict:
                 job_id = submit(conn, repairable[0], decision)
                 status, error = _job_state(conn, job_id)
                 if status == "failed":
+                    from .event_composition_repair_jobs import REASONING_LENGTH_ERROR
+                    if error in {"input_size", REASONING_LENGTH_ERROR}:
+                        composition_json = conn.execute(
+                            "SELECT composition_json FROM event_ledger_compositions WHERE composition_id=%s",
+                            (repairable[0],),
+                        ).fetchone()
+                        from .event_ledger import get_revision
+                        fallback = _zero_output_repair_fallback(
+                            conn, job_id, repairable[0], json.loads(composition_json[0]),
+                            get_revision(conn, latest[0], require_status="accepted"), decision)
+                        if fallback:
+                            return {"event_id": event_id, **fallback,
+                                    "action": "composition_repair_extractive_fallback"}
                     return _hold(conn, event_id, "composition repair failed: " + error)
                 return {"status": status, "event_id": event_id, "job_id": job_id,
                         "action": "composition_repair_queued"}
