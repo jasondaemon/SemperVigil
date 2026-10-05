@@ -168,3 +168,38 @@ def test_current_audit_uses_canonical_section_order():
     assert [(item["id"], item["section"]) for item in items] == [
         ("C01", "overview"), ("C02", "impact"),
     ]
+
+
+def test_detail_filter_requires_failed_facts_to_remain_in_supported_content():
+    from sempervigil.event_composition import WORKFLOW
+    composition, ledger = material()
+    composition.update({"workflow": WORKFLOW, "ledger_id": "eld_test",
+                        "generation_version": "c" * 64, "request_version": "d" * 64,
+                        "status": "held", "public_eligible": False,
+                        "section_policy": "curated-sections-v3", "change": {}})
+    composition["sections"]["response_recovery"] = [{
+        "text": "Acme repeated that customer records were exposed.", "fact_ids": ["f2"]}]
+    req = audit.request("elc_test", composition, ledger, GENERATION)
+    decision = audit.validate(json.dumps({"audits": [
+        {"id": "C01", "verdict": "supported", "reason": "Direct."},
+        {"id": "C02", "verdict": "supported", "reason": "Direct."},
+        {"id": "C03", "verdict": "unsupported", "reason": "Redundant wording."},
+    ]}).encode(), req)
+    assert audit.detail_filter_safe("elc_test", composition, ledger, decision) is True
+    decision["audits"][1]["verdict"] = "unsupported"
+    assert audit.detail_filter_safe("elc_test", composition, ledger, decision) is False
+
+
+def test_detail_filter_never_deletes_failed_overview():
+    from sempervigil.event_composition import WORKFLOW
+    composition, ledger = material()
+    composition.update({"workflow": WORKFLOW, "ledger_id": "eld_test",
+                        "generation_version": "c" * 64, "request_version": "d" * 64,
+                        "status": "held", "public_eligible": False,
+                        "section_policy": "curated-sections-v3", "change": {}})
+    req = audit.request("elc_test", composition, ledger, GENERATION)
+    decision = audit.validate(json.dumps({"audits": [
+        {"id": "C01", "verdict": "unsupported", "reason": "Unsupported."},
+        {"id": "C02", "verdict": "supported", "reason": "Direct."},
+    ]}).encode(), req)
+    assert audit.detail_filter_safe("elc_test", composition, ledger, decision) is False

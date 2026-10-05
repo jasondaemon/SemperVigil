@@ -14,6 +14,29 @@ PARAMS = {"max_completion_tokens": 4800, "reasoning_effort": "low"}
 REVIEWER = "policy:event-composition-audit-v1"
 
 
+def remediate_fallback(conn, composition_id, composition, ledger, decision):
+    """Project an audited fallback without weakening or repeating its audit."""
+    from .event_composition import review, store_unreviewed
+    if audit.detail_filter_safe(composition_id, composition, ledger, decision):
+        filtered = audit.filtered_record(composition_id, composition, ledger, decision)
+        filtered_id = store_unreviewed(conn, filtered)
+        accepted = review(conn, filtered_id, "accept", reason="", reviewer=REVIEWER)
+        return {"status": "accepted", "composition_id": filtered_id,
+                "application": accepted, "workflow": audit.FILTER_WORKFLOW}
+    if composition.get("refinement"):
+        return {"status": "held", "reason": "extractive_refinement_nonconvergent",
+                "workflow": composition["refinement"].get("workflow")}
+    from .event_ledger import get_revision
+    refined = audit.extractive_refinement(
+        composition_id, composition,
+        get_revision(conn, composition["ledger_revision_id"], require_status="accepted"),
+        decision)
+    refined_id = store_unreviewed(conn, refined)
+    return {"status": "queued", "composition_id": refined_id,
+            "job_id": submit(conn, refined_id),
+            "workflow": refined["refinement"]["workflow"]}
+
+
 def require_enabled() -> None:
     if os.environ.get("SV_EVENT_REASSESSMENT_AUTOMATION_ENABLED", "0") != "1":
         raise PermissionError("event_reassessment_automation_disabled")
@@ -135,8 +158,8 @@ def run(conn, job, *, generate=None) -> dict:
         remediation = None
         from .event_composition_jobs import configuration as composition_configuration
         if composition.get("fallback"):
-            remediation = {"status": "held", "reason": "extractive_fallback_nonconvergent",
-                           "workflow": composition["fallback"].get("workflow")}
+            remediation = remediate_fallback(
+                conn, payload["composition_id"], composition, ledger, decision)
         elif composition.get("generation_version") == composition_configuration(conn)[2]:
             item_sections = {item["id"]: item["section"]
                              for item in json.loads(req["input"])["items"]}

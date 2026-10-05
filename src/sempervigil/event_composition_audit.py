@@ -185,6 +185,91 @@ def filtered_record(composition_id: str, composition: dict, ledger: dict,
                                 "source_request": source_request,
                                 "audit_request": decision["request_version"],
                                 "supported_item_ids": supported_ids})
-    return {**composition, "generation_version": generation,
-            "request_version": request_version, "sections": sections,
-            "status": "unreviewed", "public_eligible": False}
+    record = {**composition, "generation_version": generation,
+              "request_version": request_version, "sections": sections,
+              "status": "unreviewed", "public_eligible": False}
+    if record.get("workflow") == event_composition.WORKFLOW:
+        return event_composition.derive(
+            record, composition_id, FILTER_WORKFLOW,
+            {"audit_request_version": decision["request_version"],
+             "supported_item_ids": supported_ids,
+             "removed_item_ids": sorted(set(req["item_ids"]) - set(supported_ids))})
+    return record
+
+
+def detail_filter_safe(composition_id: str, composition: dict, ledger: dict,
+                       decision: dict) -> bool:
+    """Allow deletion only when failed detail facts remain represented verbatim."""
+    req = request(composition_id, composition, ledger,
+                  decision.get("generation_version", ""))
+    if (decision.get("request_version") != req["request_version"]
+            or decision.get("ready") is not False):
+        return False
+    items = {item["id"]: item for item in json.loads(req["input"])["items"]}
+    verdicts = {row["id"]: row["verdict"] for row in decision.get("audits", [])}
+    failed = [items[item_id] for item_id in req["item_ids"]
+              if verdicts.get(item_id) != "supported"]
+    if not failed or any(item["section"] == "overview" for item in failed):
+        return False
+    retained = {fact["fact_id"] for item_id, item in items.items()
+                if verdicts.get(item_id) == "supported"
+                for fact in item["cited_facts"]}
+    retained.update(fact_id for row in composition.get("sections", {}).get("timeline", [])
+                    for fact_id in row.get("fact_ids", []))
+    removed = {fact["fact_id"] for item in failed for fact in item["cited_facts"]}
+    return removed <= retained
+
+
+def extractive_refinement(composition_id: str, composition: dict, ledger_revision: dict,
+                          decision: dict) -> dict:
+    """Replace one failed detail pass with exact accepted facts, once."""
+    if composition.get("refinement"):
+        raise ValueError("event_composition_refinement_nonconvergent")
+    ledger = ledger_revision["ledger"]
+    req = request(composition_id, composition, ledger,
+                  decision.get("generation_version", ""))
+    items = {item["id"]: item for item in json.loads(req["input"])["items"]}
+    verdicts = {row["id"]: row["verdict"] for row in decision.get("audits", [])}
+    if (decision.get("request_version") != req["request_version"]
+            or decision.get("ready") is not False
+            or any(items[item_id]["section"] == "overview" for item_id in req["item_ids"]
+                   if verdicts.get(item_id) != "supported")):
+        raise ValueError("event_composition_refinement_unsafe")
+    from .event_composition_repair import _deduplicate
+    output = {section: [] for section in event_composition.GENERATED_SECTIONS}
+    seen_facts = set()
+    for item_id in req["item_ids"]:
+        item = items[item_id]
+        if verdicts.get(item_id) == "supported":
+            source = next(row for row in composition["sections"][item["section"]]
+                          if row["text"] == item["text"])
+            output[item["section"]].append({"text": source["text"],
+                "fact_refs": [fact["fact_id"] for fact in item["cited_facts"]],
+                "claim_type": source.get("claim_type", "sourced_finding"),
+                "confidence": source.get("confidence")})
+            seen_facts.update(fact["fact_id"] for fact in item["cited_facts"])
+    for item_id in req["item_ids"]:
+        item = items[item_id]
+        if verdicts.get(item_id) == "supported":
+            continue
+        for fact in item["cited_facts"]:
+            if fact["fact_id"] in seen_facts:
+                continue
+            output[item["section"]].append({"text": fact["statement"],
+                "fact_refs": [fact["fact_id"]], "claim_type": "sourced_finding",
+                "confidence": None})
+            seen_facts.add(fact["fact_id"])
+    _, aliases = event_composition._active_facts(ledger)
+    alias_by_id = {fact["fact_id"]: alias for alias, fact in aliases.items()}
+    encoded = {section: [{**row, "fact_refs": [alias_by_id[x] for x in row["fact_refs"]]}
+                         for row in rows] for section, rows in _deduplicate(output).items()}
+    record = event_composition.validate(json.dumps(encoded).encode(), ledger_revision,
+                                        composition["generation_version"],
+                                        require_detail_coverage=False)
+    refinement = {"workflow": "event-composition-extractive-refinement-v1",
+                  "source_composition_id": composition_id,
+                  "source_audit_request_version": decision["request_version"]}
+    record["fallback"] = composition.get("fallback")
+    record["refinement"] = {**refinement, "version": _version(refinement)}
+    return event_composition.derive(record, composition_id, refinement["workflow"],
+                                    record["refinement"])

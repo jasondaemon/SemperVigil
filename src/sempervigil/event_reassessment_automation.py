@@ -65,6 +65,45 @@ def _resume_transient_composition_hold(conn) -> dict | None:
             "action": "composition_transient_recovery"}
 
 
+def _resume_audited_fallback(conn) -> dict | None:
+    """Finish one audited fallback once; an immutable child permanently closes it."""
+    row = conn.execute(
+        """SELECT c.event_id,x.composition_id,x.composition_json,j.result_json
+             FROM event_reassessment_cases c
+             JOIN event_ledger_compositions x ON x.ledger_id=c.ledger_id
+             JOIN LATERAL (
+                 SELECT result_json FROM jobs
+                  WHERE job_type='event_composition_audit' AND status='succeeded'
+                    AND payload_json::jsonb->>'composition_id'=x.composition_id
+                  ORDER BY finished_at DESC,id DESC LIMIT 1
+             ) j ON true
+            WHERE c.status IN ('active','held') AND x.status='held'
+              AND x.composition_json::jsonb ? 'fallback'
+              AND NOT EXISTS (
+                SELECT 1 FROM event_ledger_compositions child
+                 WHERE child.composition_json::jsonb #>> '{derivation,parent,composition_id}'
+                       = x.composition_id)
+            ORDER BY c.priority,c.updated_at,c.event_id LIMIT 1"""
+    ).fetchone()
+    if not row:
+        return None
+    composition = json.loads(row[2])
+    decision = json.loads(row[3]).get("audit")
+    if not decision:
+        return None
+    from .event_ledger import get_revision
+    ledger = get_revision(conn, composition["ledger_revision_id"], require_status="accepted")
+    from .event_composition_audit_jobs import remediate_fallback
+    remediation = remediate_fallback(conn, row[1], composition, ledger["ledger"], decision)
+    if remediation["status"] == "held":
+        return _hold(conn, row[0], remediation["reason"])
+    conn.execute(
+        """UPDATE event_reassessment_cases SET status='active',decision_reason=NULL,updated_at=%s
+            WHERE event_id=%s""", (utc_now_iso(), row[0]))
+    conn.commit()
+    return {"event_id": row[0], **remediation, "action": "audited_fallback_remediation"}
+
+
 def _resume_curator_version_hold(conn) -> dict | None:
     """Retry a new-contract candidate once after an unsafe old curation result."""
     from .event_fact_curation_jobs import configuration
@@ -604,6 +643,9 @@ def tick(conn) -> list[dict]:
         return [recovery]
     recovery = _resume_transient_composition_hold(conn)
     if recovery and recovery["status"] != "held":
+        return [recovery]
+    recovery = _resume_audited_fallback(conn)
+    if recovery:
         return [recovery]
     rows = conn.execute(
         """SELECT c.event_id FROM event_reassessment_cases c WHERE c.status='active'

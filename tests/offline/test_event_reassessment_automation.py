@@ -184,6 +184,7 @@ def test_tick_skips_waiting_case_but_stops_after_one_advancement(monkeypatch):
     monkeypatch.setattr(automation, "_resume_curator_version_hold", lambda _conn: None)
     monkeypatch.setattr(automation, "_resume_detail_filter_hold", lambda _conn: None)
     monkeypatch.setattr(automation, "_resume_transient_composition_hold", lambda _conn: None)
+    monkeypatch.setattr(automation, "_resume_audited_fallback", lambda _conn: None)
     monkeypatch.setattr(automation, "advance", advance)
 
     assert automation.tick(TickConn()) == [
@@ -201,6 +202,7 @@ def test_tick_prioritizes_one_viable_transient_composition_recovery(monkeypatch)
     monkeypatch.setattr(automation, "_resume_detail_filter_hold", lambda _conn: None)
     monkeypatch.setattr(automation, "_resume_transient_composition_hold",
                         lambda _conn: recovery)
+    monkeypatch.setattr(automation, "_resume_audited_fallback", lambda _conn: None)
     monkeypatch.setattr(automation, "advance",
                         lambda *_args: pytest.fail("active cases must wait"))
 
@@ -216,6 +218,7 @@ def test_tick_prioritizes_detail_filter_recovery(monkeypatch):
                         lambda _conn: recovery)
     monkeypatch.setattr(automation, "_resume_transient_composition_hold",
                         lambda _conn: pytest.fail("detail recovery must run first"))
+    monkeypatch.setattr(automation, "_resume_audited_fallback", lambda _conn: None)
 
     assert automation.tick(object()) == [recovery]
 
