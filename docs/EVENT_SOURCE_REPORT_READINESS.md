@@ -54,3 +54,33 @@ bounded two-call proof. Public predecessors and current page/feed hashes are
 unchanged; global admission remains disabled. This is an operator proof-routing
 failure, not an assertion that the ordinary hosted worker lacks credentials.
 No autonomous living-report acceptance claim follows from these local tests.
+
+## Explicit zero-HTTP recovery
+
+Migration 070 adds an immutable parent/child recovery audit. Operator-only
+`recover_pretransport` permits one retry of a first-writer local credential
+readiness failure, with unchanged source/configuration/public predecessor. It
+refuses completed or uncertain transport, paid output, unproven errors, stale
+inputs and descendants. The original terminal run, job, call and journal remain;
+only the proven unused token reservation is reconciled through the audited
+operation. The child has a normal parent-linked job, the original cohort ceiling
+and two-call/no-correction limit. Recovery is not a source or incident development.
+There is no automatic recovery scheduler or exposed public endpoint.
+
+New runtime readiness failures carry a structured pre-HTTP receipt. Older missing
+master-key failures require an explicitly authorized operator attestation backed
+by saved request/journal identity, original executor/loader code identities,
+missing-key observation and deterministic local reproduction. Exception text
+alone is insufficient. The operator must verify the evidence before admission.
+No new secret copying, role grants or credential expansion is needed.
+
+`JournaledExecutor` checks client readiness in the exact worker context, allows
+two calls under a summed reservation ceiling and writes atomic per-run journals.
+It distinguishes local pre-transport failure from uncertain transport and cannot
+replay an existing journal. Responses are committed before parsing/control return.
+Offline tests cover readiness reaching no HTTP, mixed router stdout, both complete
+receipts, reservation/call ceilings, replay refusal and uncertainty classification.
+Actual PostgreSQL tests run recovery through generation, review, journal and
+immutable persistence using fixtures, including legacy attestation and refusal.
+Verification: 1,263 offline passed, two skipped; 20 PostgreSQL tests passed.
+Deployment and the recovered live proof remain pending.

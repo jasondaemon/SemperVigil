@@ -240,3 +240,74 @@ def test_legacy_public_baseline_requires_exact_original_evidence_version(databas
     assert baseline["sources"][0]["article_id"]==1
     article["content_text"]+=" A subsequent correction."
     assert reports.published_baseline(conn,"evt_test",reports.snapshot(conn,"evt_test"))==(None,None)
+
+
+def pretransport_parent(conn,error):
+    admitted=reports.submit(conn,'evt_test',debounce_seconds=0)
+    job=SimpleNamespace(job_type=reports.JOB_TYPE,queue_name='openai',status='running',max_attempts=1,payload={'run_id':admitted['run_id']})
+    def failure(p):raise error
+    assert reports.run(conn,job,complete=failure)['status']=='held'
+    conn.execute("UPDATE jobs SET status='failed',error=%s WHERE id=%s",(str(error),admitted['job_id']));conn.commit()
+    return admitted
+
+
+def test_pretransport_recovery_is_parent_linked_idempotent_and_audited(database,monkeypatch):
+    conn,_,_=database
+    monkeypatch.setattr(reports,'ready_client',lambda c:({},{}))
+    parent=pretransport_parent(conn,reports.PreTransportFailure())
+    original=conn.execute('SELECT * FROM event_source_report_calls WHERE run_id=%s',(parent['run_id'],)).fetchone()
+    reservation=reports._load(conn,parent['run_id'])['reserved_tokens'];assert reservation>0
+    child=reports.recover_pretransport(conn,parent['run_id'],debounce_seconds=0)
+    assert child['released_tokens']==reservation
+    assert reports._load(conn,parent['run_id'])['status']=='held' and reports._load(conn,parent['run_id'])['reserved_tokens']==0
+    assert conn.execute('SELECT * FROM event_source_report_calls WHERE run_id=%s',(parent['run_id'],)).fetchone()==original
+    assert conn.execute('SELECT parent_job_id FROM jobs WHERE id=%s',(child['job_id'],)).fetchone()[0]==parent['job_id']
+    assert reports.recover_pretransport(conn,parent['run_id'])['reused']
+    journal=[]
+    def fixture(p):journal.append(p);return response(generated() if len(journal)==1 else {'ready':True,'issues':[]})
+    job=SimpleNamespace(job_type=reports.JOB_TYPE,queue_name='openai',status='running',max_attempts=1,payload={'run_id':child['run_id']})
+    assert reports.run(conn,job,complete=fixture)['status']=='accepted' and len(journal)==2
+    with pytest.raises(ValueError,match='already_used'):reports.recover_pretransport(conn,child['run_id'])
+    conn.rollback()
+    with pytest.raises(psycopg.errors.CheckViolation,match='immutable'):
+        conn.execute("UPDATE event_source_report_recoveries SET released_tokens=1")
+    conn.rollback()
+
+
+@pytest.mark.parametrize('error',[TimeoutError('Uncertain HTTP'),ValueError('Unclassified local or remote failure')])
+def test_recovery_refuses_unproven_transport_without_releasing_reservation(database,monkeypatch,error):
+    conn,_,_=database
+    monkeypatch.setattr(reports,'ready_client',lambda c:pytest.fail('Unknown outcome reached readiness'))
+    parent=pretransport_parent(conn,error);reserved=reports._load(conn,parent['run_id'])['reserved_tokens']
+    with pytest.raises(ValueError,match='proof_required'):reports.recover_pretransport(conn,parent['run_id'])
+    conn.rollback()
+    assert reports._load(conn,parent['run_id'])['reserved_tokens']==reserved
+    assert conn.execute('SELECT count(*) FROM event_source_report_recoveries').fetchone()[0]==0
+
+
+def test_legacy_proof_and_recovered_executor_journal_end_to_end(database,monkeypatch,tmp_path,capsys):
+    conn,_,_=database
+    from sempervigil.event_source_report_executor import JournaledExecutor
+    monkeypatch.setattr(reports,'ready_client',lambda c:({},{}))
+    message='Master key is not set. Set SEMPERVIGIL_MASTER_KEY (preferred) or legacy SEMPERIVGIL_MASTER_KEY.'
+    parent=pretransport_parent(conn,ValueError(message))
+    request=json.loads(conn.execute('SELECT request_json FROM event_source_report_calls WHERE run_id=%s',(parent['run_id'],)).fetchone()[0])
+    proof={'workflow':'event-source-report-pretransport-proof-v1','kind':'legacy_missing_master_key',
+     'http_attempted':False,'failure_stage':'provider_credentials','request_version':reports._version(request),
+     'master_key_present':False,'failure_reproduced':True,'reason_code':'missing_master_key',
+     'audit_reason':'Offline fixture verifies the authorized legacy pre-transport reconciliation contract.',
+     **{k:'a'*64 for k in ('complete_code_version','loader_code_version','executor_instance_version','journal_version')}}
+    bad={**proof,'http_attempted':True}
+    with pytest.raises(ValueError,match='proof_invalid'):reports.recover_pretransport(conn,parent['run_id'],legacy_proof=bad)
+    conn.rollback()
+    admitted=reports.recover_pretransport(conn,parent['run_id'],legacy_proof=proof,debounce_seconds=0)
+    values=iter([generated(),{'ready':True,'issues':[]}])
+    def fixture(p):print('Fixture router stdout cannot corrupt journal');return response(next(values))
+    executor=JournaledExecutor(conn,admitted['run_id'],tmp_path,complete=fixture)
+    job=SimpleNamespace(job_type=reports.JOB_TYPE,queue_name='openai',status='running',max_attempts=1,payload={'run_id':admitted['run_id']})
+    assert reports.run(conn,job,complete=executor)['status']=='accepted'
+    assert len(executor.reservations)==2 and sum(executor.reservations)<=24000
+    receipts=[json.loads(p.read_text()) for p in (tmp_path/admitted['run_id']).glob('*.json')]
+    saved=[json.loads(row[0]) for row in conn.execute('SELECT response_json FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal',(admitted['run_id'],)).fetchall()]
+    assert all(r['status']=='completed' and r['response'] in saved for r in receipts)
+    assert len(receipts)==2 and 'Fixture router stdout' in capsys.readouterr().out

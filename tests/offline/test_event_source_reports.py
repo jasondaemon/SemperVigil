@@ -192,3 +192,49 @@ def test_scheduler_handoff_needs_explicit_approved_run_and_accepted_artifact(mon
     calls.clear()
     monkeypatch.setattr(reports,"_load",lambda c,rid:{"status":"held"})
     assert reports.tick(object())==[] and not calls
+
+
+def test_readiness_failure_cannot_invoke_http(monkeypatch):
+    from sempervigil import event_source_reports as reports
+    from sempervigil.services import ai_service
+    from sempervigil.llm import router
+    monkeypatch.setattr(reports,"configuration",lambda c:({}, {"id":"p","type":"openai_compatible","base_url":"https://example.org"},"version"))
+    def unavailable(*args):raise ValueError("Fixture local credentials unavailable")
+    monkeypatch.setattr(ai_service,"load_provider_secret",unavailable)
+    monkeypatch.setattr(router,"_http_request",lambda *a,**kw:pytest.fail("Preflight reached HTTP"))
+    with pytest.raises(reports.PreTransportFailure) as error:reports._complete(object(),{})
+    assert error.value.proof["http_attempted"] is False
+
+
+def test_executor_readiness_journal_and_bounded_reservations_end_to_end(monkeypatch,tmp_path):
+    import json
+    from sempervigil import event_source_reports as reports
+    from sempervigil.event_source_report_executor import JournaledExecutor
+    calls=[];readiness=[]
+    monkeypatch.setattr(reports,"ready_client",lambda c:readiness.append(True))
+    def fixture(payload):calls.append(payload);return {"choices":[],"usage":{"total_tokens":7}}
+    executor=JournaledExecutor(object(),"esr_fixture",tmp_path,ceiling=24000,complete=fixture)
+    for cap in (3200,1600):
+        result=executor({"max_completion_tokens":cap,"messages":[]})
+        assert result["usage"]["total_tokens"]==7
+    assert readiness==[True] and len(calls)==2
+    receipts=[json.loads(p.read_text()) for p in (tmp_path/"esr_fixture").glob('*.json')]
+    assert {r['phase'] for r in receipts}=={'writer','review'}
+    assert all(r['status']=='completed' and r['response']['usage']['total_tokens']==7 for r in receipts)
+    with pytest.raises(ValueError,match='call_limit'):executor({'max_completion_tokens':1600})
+    replay=JournaledExecutor(object(),"esr_fixture",tmp_path,complete=fixture)
+    with pytest.raises(ValueError,match='not_replayed'):replay({'max_completion_tokens':3200,'messages':[]})
+    assert len(calls)==2
+
+
+def test_executor_distinguishes_local_failure_from_uncertain_transport(monkeypatch,tmp_path):
+    import json
+    from sempervigil import event_source_reports as reports
+    from sempervigil.event_source_report_executor import JournaledExecutor
+    monkeypatch.setattr(reports,'ready_client',lambda c:None)
+    for index,error in enumerate((reports.PreTransportFailure(),TimeoutError())):
+        def failure(p):raise error
+        executor=JournaledExecutor(object(),'esr_failure'+str(index),tmp_path,complete=failure)
+        with pytest.raises(type(error)):executor({'max_completion_tokens':3200})
+        receipt=json.loads(next((tmp_path/executor.run_id).glob('*.json')).read_text())
+        assert receipt['status']==('failed_pretransport' if index==0 else 'unknown_transport')

@@ -706,6 +706,12 @@ def apply_migrations_pg(conn) -> None:
             conn.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(%s,%s)",
                          ("pg_event_source_reports_069", utc_now_iso()))
             conn.commit()
+        if "pg_event_source_report_recovery_070" not in applied:
+            from .event_source_reports import SCHEMA as report_schema
+            conn.execute(report_schema)
+            conn.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(%s,%s)",
+                         ("pg_event_source_report_recovery_070",utc_now_iso()))
+            conn.commit()
         return
     _bootstrap_schema(conn)
     conn.execute(
@@ -1136,6 +1142,9 @@ def apply_migrations_pg(conn) -> None:
     conn.execute(report_schema)
     conn.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(%s,%s)",
                  ("pg_event_source_reports_069", utc_now_iso()))
+    conn.commit()
+    conn.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(%s,%s)",
+                 ("pg_event_source_report_recovery_070",utc_now_iso()))
     conn.commit()
 
 

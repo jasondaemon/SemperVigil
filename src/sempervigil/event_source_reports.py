@@ -39,9 +39,15 @@ CREATE TABLE IF NOT EXISTS event_source_report_derivatives (
  run_id TEXT PRIMARY KEY REFERENCES event_source_report_runs(run_id),
  projection_json TEXT NOT NULL, recorded_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS event_source_report_recoveries (
+ parent_run_id TEXT PRIMARY KEY REFERENCES event_source_report_runs(run_id),
+ child_run_id TEXT NOT NULL UNIQUE REFERENCES event_source_report_runs(run_id),
+ audit_json TEXT NOT NULL, released_tokens INTEGER NOT NULL CHECK(released_tokens>0),
+ recorded_at TEXT NOT NULL
+);
 CREATE OR REPLACE FUNCTION source_report_artifact_guard() RETURNS trigger AS $$
 BEGIN
- IF TG_TABLE_NAME='event_source_report_derivatives' THEN
+ IF TG_TABLE_NAME IN ('event_source_report_derivatives','event_source_report_recoveries') THEN
    RAISE EXCEPTION 'source report artifact is immutable' USING ERRCODE='23514';
  END IF;
  IF OLD.status='completed' THEN
@@ -54,6 +60,9 @@ CREATE TRIGGER source_report_call_guard BEFORE UPDATE OR DELETE ON event_source_
  FOR EACH ROW EXECUTE FUNCTION source_report_artifact_guard();
 DROP TRIGGER IF EXISTS source_report_derivative_guard ON event_source_report_derivatives;
 CREATE TRIGGER source_report_derivative_guard BEFORE UPDATE OR DELETE ON event_source_report_derivatives
+ FOR EACH ROW EXECUTE FUNCTION source_report_artifact_guard();
+DROP TRIGGER IF EXISTS source_report_recovery_guard ON event_source_report_recoveries;
+CREATE TRIGGER source_report_recovery_guard BEFORE UPDATE OR DELETE ON event_source_report_recoveries
  FOR EACH ROW EXECUTE FUNCTION source_report_artifact_guard();
 """
 
@@ -336,14 +345,37 @@ def _fresh(conn, record):
         raise ValueError("event_source_report_configuration_changed")
 
 
+class PreTransportFailure(ValueError):
+    """Only the local readiness boundary may assert that no HTTP was attempted."""
+    def __init__(self):
+        super().__init__("event_source_report_credentials_not_ready")
+        self.proof = {"workflow":"event-source-report-pretransport-proof-v1",
+                      "kind":"instrumented_readiness","http_attempted":False,
+                      "failure_stage":"provider_credentials"}
+
+
+def ready_client(conn):
+    """Resolve credentials before any paid request; never expose headers in receipts."""
+    from .services.ai_service import load_provider_secret
+    from .llm.router import _auth_headers
+    _, provider, _ = configuration(conn)
+    try:
+        secret = load_provider_secret(conn,provider["id"])
+        if not isinstance(secret,str) or not secret.strip():
+            raise ValueError("Missing provider secret")
+        headers = _auth_headers(provider["type"],secret)
+    except Exception as exc:
+        raise PreTransportFailure() from exc
+    return provider,headers
+
+
 def _complete(conn, payload):
     import time
-    from .services.ai_service import load_provider_secret
-    from .llm.router import _http_request, _auth_headers, _join_url
-    _, provider, _ = configuration(conn)
+    from .llm.router import _http_request, _join_url
+    provider,headers = ready_client(conn)
     started = time.monotonic()
     response = _http_request("POST", _join_url(provider["base_url"], "/chat/completions"),
-        _auth_headers(provider["type"], load_provider_secret(conn, provider["id"])),
+        headers,
         payload, provider, context={"stage": JOB_TYPE,"no_retry":True})
     response["transport_elapsed_ms"] = int((time.monotonic()-started)*1000)
     return response
@@ -373,8 +405,11 @@ def call(conn, run_id, phase, system, data, response_schema, *, complete=None):
     try:
         response = (complete or (lambda p: _complete(conn,p)))(payload)
     except Exception as exc:
+        error = type(exc).__name__
+        if isinstance(exc,PreTransportFailure):
+            error = contract.encode({"type":error,"proof":{**exc.proof,"request_version":_version(payload)}})
         conn.execute("UPDATE event_source_report_calls SET status='failed',error=%s WHERE run_id=%s AND ordinal=%s",
-                     (type(exc).__name__,run_id,ordinal)); conn.commit()
+                     (error,run_id,ordinal)); conn.commit()
         raise
     usage = response.get("usage") or {}
     actual = usage.get("total_tokens", reservation)
@@ -395,6 +430,91 @@ def call(conn, run_id, phase, system, data, response_schema, *, complete=None):
     if choice.get("finish_reason") != "stop" or choice.get("message", {}).get("refusal"):
         raise ValueError("event_source_report_incomplete_response")
     return json.loads(choice["message"]["content"])
+
+
+def recover_pretransport(conn, parent_run_id, *, legacy_proof=None, debounce_seconds=300):
+    """One explicitly requested, parent-linked retry of a proven zero-HTTP failure.
+
+    Completed/unknown transport, paid calls, descendants and stale snapshots are
+    ineligible. Original terminal run/job/call/journal remain intact. A separate
+    immutable audit reconciles the unused reservation and links one normal job.
+    No automatic scheduler or public endpoint invokes this operation.
+    """
+    if not enabled():
+        raise PermissionError("event_source_report_disabled")
+    if not 0 <= debounce_seconds <= 86400:
+        raise ValueError("event_source_report_debounce_invalid")
+    parent = _load(conn,parent_run_id);check_scope(parent["event_id"])
+    conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",("source-report:"+parent["event_id"],))
+    prior = conn.execute("SELECT child_run_id,audit_json FROM event_source_report_recoveries WHERE parent_run_id=%s",
+                         (parent_run_id,)).fetchone()
+    if prior:
+        child = _load(conn,prior[0])
+        job = conn.execute("SELECT id FROM jobs WHERE payload_json::jsonb->>'run_id'=%s AND job_type=%s",
+                           (prior[0],JOB_TYPE)).fetchone()
+        conn.commit()
+        return {"run_id":prior[0],"job_id":job[0],"status":child["status"],"reused":True}
+    if conn.execute("SELECT 1 FROM event_source_report_recoveries WHERE child_run_id=%s",(parent_run_id,)).fetchone():
+        raise ValueError("event_source_report_recovery_already_used")
+    conn.execute("SELECT run_id FROM event_source_report_runs WHERE run_id=%s FOR UPDATE",(parent_run_id,))
+    _fresh(conn,parent)
+    if parent["status"] != "held" or parent["charged_tokens"] != 0 or any(parent[k] is not None for k in ("report","review","spans")):
+        raise ValueError("event_source_report_recovery_ineligible")
+    calls = conn.execute("""SELECT ordinal,phase,status,error,request_json,response_json,usage_json,reservation
+       FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal""",(parent_run_id,)).fetchall()
+    if len(calls)!=1 or calls[0][:3]!=(1,"writer","failed") or calls[0][5:7]!=(None,None):
+        raise ValueError("event_source_report_transport_uncertain")
+    call=calls[0];payload=json.loads(call[4])
+    if legacy_proof is None:
+        try:
+            saved=json.loads(call[3]);proof=saved["proof"]
+            assert saved["type"]=="PreTransportFailure" and proof["kind"]=="instrumented_readiness"
+        except (ValueError,KeyError,TypeError,AssertionError):
+            raise ValueError("event_source_report_pretransport_proof_required") from None
+    else:
+        proof=legacy_proof
+        reason=conn.execute("SELECT reason FROM event_source_report_runs WHERE run_id=%s",(parent_run_id,)).fetchone()[0]
+        if (call[3]!="ValueError" or proof.get("kind")!="legacy_missing_master_key"
+                or proof.get("master_key_present") is not False or proof.get("failure_reproduced") is not True
+                or proof.get("reason_code")!="missing_master_key"
+                or reason!="Master key is not set. Set SEMPERVIGIL_MASTER_KEY (preferred) or legacy SEMPERIVGIL_MASTER_KEY."):
+            raise ValueError("event_source_report_pretransport_proof_invalid")
+        for key in ("complete_code_version","loader_code_version","executor_instance_version","journal_version"):
+            if not re.fullmatch(r"[a-f0-9]{64}",str(proof.get(key,""))):
+                raise ValueError("event_source_report_pretransport_proof_invalid")
+        if not isinstance(proof.get("audit_reason"),str) or not 30<=len(proof["audit_reason"])<=2000:
+            raise ValueError("event_source_report_pretransport_proof_invalid")
+    if (proof.get("workflow")!="event-source-report-pretransport-proof-v1"
+            or proof.get("http_attempted") is not False or proof.get("failure_stage")!="provider_credentials"
+            or proof.get("request_version")!=_version(payload) or parent["reserved_tokens"]!=call[7]):
+        raise ValueError("event_source_report_pretransport_proof_invalid")
+    jobs=conn.execute("SELECT id,status FROM jobs WHERE job_type=%s AND payload_json::jsonb->>'run_id'=%s",
+                      (JOB_TYPE,parent_run_id)).fetchall()
+    if len(jobs)!=1 or jobs[0][1]!="failed":
+        raise ValueError("event_source_report_recovery_job_ineligible")
+    # Correct executor must be ready BEFORE reconciling/admitting anything.
+    ready_client(conn)
+    key=_version({"workflow":"event-source-report-pretransport-retry-v1","parent_run_id":parent_run_id})
+    child="esr_"+key
+    trigger=conn.execute("SELECT trigger_kind FROM event_source_report_runs WHERE run_id=%s",(parent_run_id,)).fetchone()[0]
+    conn.execute("""INSERT INTO event_source_report_runs(run_id,event_id,request_key,trigger_kind,
+      snapshot_json,source_version,generator_version,predecessor,status,budget_tokens,created_at)
+      VALUES(%s,%s,%s,%s,%s,%s,%s,%s,'queued',%s,%s)""",
+      (child,parent["event_id"],key,trigger,contract.encode(parent["snapshot"]),parent["source_version"],
+       parent["generator_version"],parent["predecessor"],parent["budget_tokens"],utc_now_iso()))
+    # No correction is admitted in a two-call recovery.
+    from datetime import datetime,timezone,timedelta
+    available=(datetime.now(timezone.utc)+timedelta(seconds=debounce_seconds)).isoformat()
+    job=enqueue_job(conn,JOB_TYPE,{"run_id":child},queue_name="openai",priority=-10,max_attempts=1,
+                    available_at=available,parent_job_id=jobs[0][0],dedupe_key="source-report:"+key,commit=False)
+    audit={"workflow":"event-source-report-pretransport-recovery-v1","parent_run_id":parent_run_id,
+           "child_run_id":child,"proof":proof,"released_tokens":call[7],"confirmed_provider_tokens":0,
+           "parent_job_id":jobs[0][0],"child_job_id":job,"reason":"Confirmed local credential failure before HTTP; one explicit retry, not new evidence."}
+    conn.execute("INSERT INTO event_source_report_recoveries VALUES(%s,%s,%s,%s,%s)",
+                 (parent_run_id,child,contract.encode(audit),call[7],utc_now_iso()))
+    conn.execute("UPDATE event_source_report_runs SET reserved_tokens=reserved_tokens-%s WHERE run_id=%s",(call[7],parent_run_id))
+    conn.commit()
+    return {"run_id":child,"job_id":job,"status":"queued","parent_run_id":parent_run_id,"released_tokens":call[7]}
 
 
 def correct_and_verify(conn, run_id, packet, report, review, *, complete=None):
