@@ -203,3 +203,33 @@ def test_detail_filter_never_deletes_failed_overview():
         {"id": "C02", "verdict": "supported", "reason": "Direct."},
     ]}).encode(), req)
     assert audit.detail_filter_safe("elc_test", composition, ledger, decision) is False
+
+
+def test_extractive_refinement_preserves_unique_failed_fact_once():
+    from sempervigil.event_composition import WORKFLOW
+    composition, ledger = material()
+    ledger["facts"][0]["sections"] = ["context"]
+    ledger["facts"][1]["sections"] = ["open_question"]
+    ledger.update({"public_eligible": False, "title": "Acme incident", "kind": "breach",
+                   "superseded_fact_ids": [], "conflict_fact_ids": []})
+    composition.update({"workflow": WORKFLOW, "ledger_id": "eld_test",
+                        "generation_version": "c" * 64, "request_version": "d" * 64,
+                        "status": "held", "public_eligible": False,
+                        "section_policy": "curated-sections-v3", "change": {},
+                        "fallback": {"workflow": "fallback", "version": "v"}})
+    revision = {"revision_id": "elr_test", "ledger_id": "eld_test",
+                "status": "accepted", "lineage_current": True,
+                "ledger": ledger, "change": {}}
+    req = audit.request("elc_test", composition, ledger, GENERATION)
+    decision = audit.validate(json.dumps({"audits": [
+        {"id": "C01", "verdict": "supported", "reason": "Direct."},
+        {"id": "C02", "verdict": "unsupported", "reason": "Overstated."},
+    ]}).encode(), req)
+
+    refined = audit.extractive_refinement("elc_test", composition, revision, decision)
+
+    assert refined["sections"]["impact"][0]["text"] == ledger["facts"][1]["statement"]
+    assert refined["sections"]["impact"][0]["fact_ids"] == ["f2"]
+    assert refined["refinement"]["source_composition_id"] == "elc_test"
+    with pytest.raises(ValueError, match="nonconvergent"):
+        audit.extractive_refinement("elc_child", refined, revision, decision)

@@ -223,6 +223,7 @@ def detail_filter_safe(composition_id: str, composition: dict, ledger: dict,
 def extractive_refinement(composition_id: str, composition: dict, ledger_revision: dict,
                           decision: dict) -> dict:
     """Replace one failed detail pass with exact accepted facts, once."""
+    from . import event_composition
     if composition.get("refinement"):
         raise ValueError("event_composition_refinement_nonconvergent")
     ledger = ledger_revision["ledger"]
