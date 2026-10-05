@@ -45,9 +45,14 @@ CREATE TABLE IF NOT EXISTS event_source_report_recoveries (
  audit_json TEXT NOT NULL, released_tokens INTEGER NOT NULL CHECK(released_tokens>0),
  recorded_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS event_source_report_allowances (
+ run_id TEXT PRIMARY KEY REFERENCES event_source_report_runs(run_id),
+ tokens INTEGER NOT NULL CHECK(tokens BETWEEN 1 AND 200000),
+ audit_json TEXT NOT NULL, recorded_at TEXT NOT NULL
+);
 CREATE OR REPLACE FUNCTION source_report_artifact_guard() RETURNS trigger AS $$
 BEGIN
- IF TG_TABLE_NAME IN ('event_source_report_derivatives','event_source_report_recoveries') THEN
+ IF TG_TABLE_NAME IN ('event_source_report_derivatives','event_source_report_recoveries','event_source_report_allowances') THEN
    RAISE EXCEPTION 'source report artifact is immutable' USING ERRCODE='23514';
  END IF;
  IF OLD.status='completed' THEN
@@ -63,6 +68,9 @@ CREATE TRIGGER source_report_derivative_guard BEFORE UPDATE OR DELETE ON event_s
  FOR EACH ROW EXECUTE FUNCTION source_report_artifact_guard();
 DROP TRIGGER IF EXISTS source_report_recovery_guard ON event_source_report_recoveries;
 CREATE TRIGGER source_report_recovery_guard BEFORE UPDATE OR DELETE ON event_source_report_recoveries
+ FOR EACH ROW EXECUTE FUNCTION source_report_artifact_guard();
+DROP TRIGGER IF EXISTS source_report_allowance_guard ON event_source_report_allowances;
+CREATE TRIGGER source_report_allowance_guard BEFORE UPDATE OR DELETE ON event_source_report_allowances
  FOR EACH ROW EXECUTE FUNCTION source_report_artifact_guard();
 """
 
@@ -256,7 +264,16 @@ def _reserve_cohort(conn, cohort, reservation):
        FROM event_source_report_runs WHERE snapshot_json::jsonb->'cohort'->>'id'=%s""",(cohort["id"],)).fetchall()
     if any(int(row[2]) != cohort["limit"] for row in rows):
         raise ValueError("event_source_report_cohort_limit_conflict")
-    if sum(row[0]+row[1] for row in rows)+reservation > cohort["limit"]:
+    # Separately authorized correction/verification spending is not charged
+    # against the immutable original writer/reviewer cohort allowance.
+    extra = conn.execute("""SELECT COALESCE(SUM(CASE WHEN c.status='completed'
+       AND (c.usage_json::jsonb->>'total_tokens') ~ '^[0-9]+$'
+       THEN LEAST((c.usage_json::jsonb->>'total_tokens')::bigint,c.reservation) ELSE c.reservation END),0)
+       FROM event_source_report_calls c JOIN event_source_report_allowances a USING(run_id)
+       JOIN event_source_report_runs r USING(run_id)
+       WHERE c.phase IN ('correction','verification') AND r.snapshot_json::jsonb->'cohort'->>'id'=%s""",
+       (cohort["id"],)).fetchone()[0]
+    if sum(row[0]+row[1] for row in rows)-extra+reservation > cohort["limit"]:
         raise ValueError("event_source_report_cohort_exhausted")
 
 
@@ -381,18 +398,26 @@ def _complete(conn, payload):
     return response
 
 
-def call(conn, run_id, phase, system, data, response_schema, *, complete=None):
+def call(conn, run_id, phase, system, data, response_schema, *, complete=None, completion_cap=None):
+    if completion_cap is not None and (phase!='correction' or type(completion_cap) is not int or not 1<=completion_cap<=3200):
+        raise ValueError('event_source_report_completion_cap_invalid')
     record = _load(conn, run_id); _fresh(conn, record)
     model, _, _ = configuration(conn)
     payload = {"model": model["model_name"], "reasoning_effort": "low",
-        "max_completion_tokens": 3200 if phase in {"writer", "correction"} else 1600,
+        "max_completion_tokens": completion_cap or (3200 if phase in {"writer", "correction"} else 1600),
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": contract.encode(data)}],
         "response_format": {"type": "json_schema", "json_schema":
             {"name": "event_source_report", "strict": True, "schema": response_schema}}}
     reservation = contract.tokens(contract.encode(payload)) + 512 + payload["max_completion_tokens"]
-    _reserve_cohort(conn,record["snapshot"].get("cohort"),reservation)
     conn.execute("SELECT run_id FROM event_source_report_runs WHERE run_id=%s FOR UPDATE", (run_id,))
+    allowance = conn.execute('SELECT tokens FROM event_source_report_allowances WHERE run_id=%s',(run_id,)).fetchone()
+    if allowance and phase in {'correction','verification'}:
+        spent = conn.execute("SELECT COALESCE(SUM(reservation),0) FROM event_source_report_calls WHERE run_id=%s AND phase IN ('correction','verification')",(run_id,)).fetchone()[0]
+        if spent+reservation > allowance[0]:
+            raise ValueError('event_source_report_additional_allowance_exhausted')
+    else:
+        _reserve_cohort(conn,record['snapshot'].get('cohort'),reservation)
     ordinal = conn.execute("SELECT count(*) FROM event_source_report_calls WHERE run_id=%s", (run_id,)).fetchone()[0]+1
     if ordinal > 4 or record["charged_tokens"]+record["reserved_tokens"]+reservation > record["budget_tokens"]:
         raise ValueError("event_source_report_budget_exhausted")
@@ -554,14 +579,46 @@ def review_preserved(conn, run_id, *, complete=None, review_focus=()):
     return {"status": "held", "report": report, "review": review, "spans": spans}
 
 
-def correct_and_verify(conn, run_id, packet, report, review, *, complete=None):
+def grant_correction_allowance(conn, run_id, tokens, *, authority):
+    """Audited operator grant only for the final two phases; never resets jobs."""
+    if not enabled() or not authority or type(tokens) is not int or not 1<=tokens<=200000:
+        raise PermissionError('event_source_report_allowance_not_authorized')
+    record=_load(conn,run_id);check_scope(record['event_id']);_fresh(conn,record)
+    conn.execute('SELECT run_id FROM event_source_report_runs WHERE run_id=%s FOR UPDATE',(run_id,))
+    rows=conn.execute('SELECT phase,status FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal',(run_id,)).fetchall()
+    if (record['status']!='held' or record['reserved_tokens'] or not record['review']
+            or record['review']['ready'] or rows!=[('writer','completed'),('review','completed')]):
+        raise ValueError('event_source_report_correction_not_eligible')
+    audit={'authority':authority,'phases':['correction','verification'],'max_calls':4,
+           'original_budget':record['budget_tokens'],'prior_charged_tokens':record['charged_tokens'],
+           'report_version':_version(record['report']),'review_version':_version(record['review'])}
+    prior=conn.execute('SELECT tokens,audit_json FROM event_source_report_allowances WHERE run_id=%s',(run_id,)).fetchone()
+    if prior:
+        if prior[0]!=tokens or json.loads(prior[1])['authority']!=authority:
+            raise ValueError('event_source_report_allowance_conflict')
+        return
+    conn.execute('INSERT INTO event_source_report_allowances(run_id,tokens,audit_json,recorded_at) VALUES(%s,%s,%s,%s)',
+                 (run_id,tokens,contract.encode(audit),utc_now_iso()))
+    conn.execute('UPDATE event_source_report_runs SET budget_tokens=%s WHERE run_id=%s',
+                 (max(record['budget_tokens'],record['charged_tokens']+tokens),run_id))
+    conn.commit()
+
+
+def correct_and_verify(conn, run_id, packet, report, review, *, complete=None, compact=False):
     """Exactly one scoped correction and one independent whole-report verification."""
     ids = [s["id"] for s in packet["sources"]]
     flagged = {x["item_id"] for x in review["issues"]}
-    revised = call(conn,run_id,"correction",contract.WRITER,
-        {"evidence":packet,"report":report,"substantive_issues":review["issues"],
-         "instruction":"Change only flagged item IDs. Preserve title, kind and all other items exactly."},
-        contract.generation_schema(ids,packet),complete=complete)
+    if compact:
+        patch = call(conn,run_id,'correction',contract.CORRECTOR,
+            {'evidence':packet,'report':report,'substantive_issues':review['issues'],
+             'instruction':'Correct only flagged items and associated rationale; retain all other items/title/kind exactly.'},
+            contract.correction_schema(report,ids,flagged),complete=complete,completion_cap=1600)
+        revised = contract.apply_correction(report,patch,flagged)
+    else:
+        revised = call(conn,run_id,"correction",contract.WRITER,
+            {"evidence":packet,"report":report,"substantive_issues":review["issues"],
+             "instruction":"Change only flagged item IDs. Preserve title, kind and all other items exactly."},
+            contract.generation_schema(ids,packet),complete=complete)
     before, after = {x["id"]:x for x in report["items"]},{x["id"]:x for x in revised["items"]}
     if (set(before)!=set(after) or revised["title"]!=report["title"] or revised["kind"]!=report["kind"]
         or any(before[k]!=after[k] for k in before.keys()-flagged)):

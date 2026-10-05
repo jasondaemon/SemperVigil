@@ -61,6 +61,30 @@ def generated(kind="breach"):
          "citations":[{"source_id":"S1","quote":"The company rotated credentials."}]}]}
 
 
+def test_audited_final_two_call_allowance(database,monkeypatch,tmp_path):
+    conn,_,_=database
+    issues={'ready':False,'issues':[{'item_id':'P02','reason':'Response needs qualified wording.','source_ids':['S1']}]}
+    submitted,result,_,_=execute(conn,[generated(),issues])
+    rid=submitted['run_id'];record=reports._load(conn,rid)
+    reports.grant_correction_allowance(conn,rid,22000,authority='fixture-explicit-final-two')
+    reports.grant_correction_allowance(conn,rid,22000,authority='fixture-explicit-final-two')
+    with pytest.raises(psycopg.errors.CheckViolation):
+        conn.execute('UPDATE event_source_report_allowances SET tokens=1 WHERE run_id=%s',(rid,))
+    conn.rollback()
+    monkeypatch.setattr(reports,'ready_client',lambda _:None)
+    from sempervigil.event_source_report_executor import JournaledExecutor
+    replies=[{'items':[generated()['items'][1]]},{'ready':True,'issues':[]}]
+    calls=[]
+    def complete(payload):calls.append(payload);return response(replies[len(calls)-1])
+    executor=JournaledExecutor(conn,rid,tmp_path,ceiling=22000,phases=('correction','verification'),complete=complete)
+    revised,verified=reports.correct_and_verify(conn,rid,contract.context(record['snapshot']),record['report'],record['review'],complete=executor,compact=True)
+    assert revised==generated() and verified['ready'] and len(calls)==2
+    assert [v[0] for v in conn.execute('SELECT phase FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal',(rid,)).fetchall()]==['writer','review','correction','verification']
+    with pytest.raises(ValueError,match='not_eligible'):
+        reports.grant_correction_allowance(conn,rid,22000,authority='fixture-explicit-final-two')
+    assert conn.execute('SELECT count(*) FROM event_source_report_allowances').fetchone()[0]==1
+
+
 def response(value):
     return {"choices":[{"finish_reason":"stop","message":{"content":json.dumps(value)}}],
             "usage":{"prompt_tokens":200,"completion_tokens":100,"total_tokens":300,

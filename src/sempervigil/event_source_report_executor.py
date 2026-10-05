@@ -7,13 +7,16 @@ from .utils import atomic_write_json
 
 
 class JournaledExecutor:
-    def __init__(self, conn, run_id, root, *, ceiling=24000, complete=None):
+    def __init__(self, conn, run_id, root, *, ceiling=24000, complete=None, phases=("writer","review")):
         if not 1 <= ceiling <= 200000 or not run_id.startswith("esr_"):
             raise ValueError("event_source_report_executor_invalid")
         # Resolve client readiness in this exact execution context before calls.
         reports.ready_client(conn)
         self.conn,self.run_id,self.root = conn,run_id,Path(root)
         self.ceiling,self.complete = ceiling,complete
+        if tuple(phases) not in (("writer","review"),("correction","verification")):
+            raise ValueError("event_source_report_executor_invalid_phases")
+        self.phases=tuple(phases)
         self.reservations=[]
 
     def __call__(self,payload):
@@ -22,7 +25,7 @@ class JournaledExecutor:
         reservation=contract.tokens(contract.encode(payload))+512+payload["max_completion_tokens"]
         if sum(self.reservations)+reservation>self.ceiling:
             raise ValueError("event_source_report_executor_reservation_ceiling")
-        phase="writer" if not self.reservations else "review"
+        phase=self.phases[len(self.reservations)-1]
         key=_version(payload)
         path=self.root/self.run_id/(key+".json")
         if path.exists():

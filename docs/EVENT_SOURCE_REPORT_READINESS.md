@@ -123,3 +123,28 @@ notification status. The run remains held with `substantive_review_issues` and
 zero outstanding reservation. No additional writer/correction call, approval,
 promotion, deployment or publication followed. Manual concerns not flagged by the
 reviewer (including financial-expectation coverage) are not thereby cleared.
+
+## Explicit final-two-phase allowance
+
+Migration 071 adds an immutable operator allowance for correction/verification
+only. The original cohort limit and snapshot remain unchanged; final-phase costs
+are separately capped by summed reservations and audited with original budget,
+prior usage and report/review identities. The run budget is extended only through
+that audited grant, not a status/job reset. The four-call database ordinal limit,
+unique phase constraints, freshness checks and durable journal prevent a fifth
+attempt. Compact correction returns only flagged item objects; application-owned
+assembly preserves all other items, title and kind. Generic instructions preserve
+primary/derivative attribution, materiality versus filing dates and completed
+versus ongoing/intended response actions. Final verification reads all sources
+and the entire assembled candidate.
+
+The explicitly authorized Astrana final pair preflight reserved at most 21,390
+tokens including a growth margin, below the additional 22,000 allowance. Actual
+summed reservations were 20,827; usage was 9,188 correction + 8,507 verification =
+17,695, bringing all four calls to 36,023 actual tokens with zero outstanding
+reservation. P112/P113/P115/P117 and title/kind were preserved unchanged. The final
+review held P118 because selected passages omit the materiality-date and
+notification premises, while explicitly recognizing support elsewhere in the full
+primary source. No fifth call, new deployment or publication followed. Runtime
+remains 5b7cb42; migration 071 and its audit were applied for this bounded operation.
+Local tests: 1,278 offline passed/two skipped, 21 disposable PostgreSQL tests passed.
