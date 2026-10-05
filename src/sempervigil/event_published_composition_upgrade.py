@@ -76,14 +76,18 @@ def candidates(conn, *, limit: int = 25) -> list[dict]:
             ORDER BY p.updated_at,p.event_id
             LIMIT 200"""
     ).fetchall()
+    from .event_composition_jobs import configuration as composition_configuration
+    current_generation = composition_configuration(conn)[2]
     result = []
     for event_id, revision_id, updated_at, raw in rows:
         bundle = _decode(raw)
         composition = bundle.get("composition") if bundle else None
         if (not bundle or bundle.get("workflow") != PUBLIC_WORKFLOW
                 or not isinstance(composition, dict)
-                or composition.get("workflow") == event_composition.WORKFLOW
-                or composition.get("workflow") not in event_composition.LEGACY_WORKFLOWS):
+                or (composition.get("workflow") not in event_composition.LEGACY_WORKFLOWS
+                    and composition.get("workflow") != event_composition.WORKFLOW)
+                or (composition.get("workflow") == event_composition.WORKFLOW
+                    and composition.get("generation_version") == current_generation)):
             continue
         ledger_revision_id = bundle.get("ledger_revision_id")
         composition_id = bundle.get("composition_id")
@@ -159,9 +163,12 @@ def advance(conn, candidate: dict) -> dict:
         return {"status": "pending", "event_id": event_id,
                 "job_id": active[0], "job_type": active[1]}
 
+    from .event_composition_jobs import configuration as composition_configuration
+    current_generation = composition_configuration(conn)[2]
     accepted = next((row for row in compositions
                      if row[1] == "accepted"
-                     and row[2] == "policy:event-composition-audit-v1"), None)
+                     and row[2] == "policy:event-composition-audit-v1"
+                     and row[3] == current_generation), None)
     if accepted:
         from .event_composition_publication import submit_automated
         result = submit_automated(conn, accepted[0])

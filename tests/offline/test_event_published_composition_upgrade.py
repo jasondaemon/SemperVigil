@@ -17,24 +17,35 @@ class _Rows:
         return self.rows
 
 
-def _bundle(workflow: str, *, composition_id: str = "elc_old") -> str:
+def _bundle(workflow: str, *, composition_id: str = "elc_old",
+            generation_version: str | None = None) -> str:
     return json.dumps({
         "workflow": upgrade.PUBLIC_WORKFLOW,
         "event_id": "evt_test",
         "ledger_revision_id": "elr_revision",
         "composition_id": composition_id,
-        "composition": {"workflow": workflow},
+        "composition": {"workflow": workflow,
+                        "generation_version": generation_version},
     })
 
 
-def test_candidates_select_only_published_legacy_compositions():
+def test_candidates_select_legacy_and_stale_current_compositions(monkeypatch):
+    monkeypatch.setattr(
+        "sempervigil.event_composition_jobs.configuration",
+        lambda _conn: (None, None, "generation-current"),
+    )
     class Conn:
         def execute(self, sql, params=()):
             assert "FROM event_public_pointers" in sql
             assert "l.status='accepted'" in sql
             return _Rows([
                 ("evt_old", "a" * 64, "2026-09-20", _bundle("event-ledger-composition-v4")),
-                ("evt_current", "b" * 64, "2026-09-21", _bundle(event_composition.WORKFLOW)),
+                ("evt_stale", "b" * 64, "2026-09-21",
+                 _bundle(event_composition.WORKFLOW,
+                         generation_version="generation-old")),
+                ("evt_current", "d" * 64, "2026-09-22",
+                 _bundle(event_composition.WORKFLOW,
+                         generation_version="generation-current")),
                 ("evt_legacy", "c" * 64, "2026-09-19", json.dumps({"workflow": "other"})),
             ])
 
@@ -45,7 +56,69 @@ def test_candidates_select_only_published_legacy_compositions():
         "ledger_revision_id": "elr_revision",
         "published_composition_id": "elc_old",
         "published_workflow": "event-ledger-composition-v4",
+    }, {
+        "event_id": "evt_stale",
+        "revision_id": "b" * 64,
+        "updated_at": "2026-09-21",
+        "ledger_revision_id": "elr_revision",
+        "published_composition_id": "elc_old",
+        "published_workflow": event_composition.WORKFLOW,
     }]
+
+
+def test_advance_does_not_publish_accepted_stale_generation(monkeypatch):
+    candidate = {
+        "event_id": "evt_test", "revision_id": "r" * 64,
+        "ledger_revision_id": "elr_revision",
+    }
+    conn = Mock()
+    conn.execute.return_value.fetchone.return_value = (candidate["revision_id"],)
+    monkeypatch.setattr(upgrade, "_compositions", lambda *_: [
+        ("elc_stale", "accepted", "policy:event-composition-audit-v1",
+         "generation-old", "{}", "2026-09-20"),
+    ])
+    monkeypatch.setattr(upgrade, "_active_job", lambda *_: None)
+    monkeypatch.setattr(
+        "sempervigil.event_composition_jobs.configuration",
+        lambda _conn: (None, None, "generation-current"),
+    )
+    submit = Mock(return_value="job_new")
+    monkeypatch.setattr("sempervigil.event_composition_jobs.submit", submit)
+    monkeypatch.setattr(upgrade, "_job_state", lambda *_: ("queued", ""))
+
+    result = upgrade.advance(conn, candidate)
+
+    assert result["job_id"] == "job_new"
+    submit.assert_called_once_with(conn, "elr_revision")
+
+
+def test_advance_publishes_only_accepted_current_generation(monkeypatch):
+    candidate = {
+        "event_id": "evt_test", "revision_id": "r" * 64,
+        "ledger_revision_id": "elr_revision",
+    }
+    conn = Mock()
+    conn.execute.return_value.fetchone.return_value = (candidate["revision_id"],)
+    monkeypatch.setattr(upgrade, "_compositions", lambda *_: [
+        ("elc_stale", "accepted", "policy:event-composition-audit-v1",
+         "generation-old", "{}", "2026-09-20"),
+        ("elc_current", "accepted", "policy:event-composition-audit-v1",
+         "generation-current", "{}", "2026-09-21"),
+    ])
+    monkeypatch.setattr(upgrade, "_active_job", lambda *_: None)
+    monkeypatch.setattr(
+        "sempervigil.event_composition_jobs.configuration",
+        lambda _conn: (None, None, "generation-current"),
+    )
+    submit = Mock(return_value={"job_id": "job_publish", "status": "queued"})
+    monkeypatch.setattr(
+        "sempervigil.event_composition_publication.submit_automated", submit)
+    monkeypatch.setattr(upgrade, "_job_state", lambda *_: ("queued", ""))
+
+    result = upgrade.advance(conn, candidate)
+
+    assert result["job_id"] == "job_publish"
+    submit.assert_called_once_with(conn, "elc_current")
 
 
 def test_tick_stops_after_one_material_upgrade(monkeypatch):
