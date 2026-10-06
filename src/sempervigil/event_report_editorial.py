@@ -10,6 +10,7 @@ from . import event_report_contract_v2 as contract
 from .attack_catalog import validate_report
 
 WORKFLOW = 'event-report-editorial-split-v1'
+REMOVAL_WORKFLOW = 'event-report-editorial-removal-v1'
 CHECKS = {'complete_sources', 'all_findings_supported', 'inference_premises_and_limits',
           'correct_epistemic_types', 'no_added_facts', 'provenance_preserved',
           'whole_derivative_reviewed', 'source_conflicts_resolved_or_qualified',
@@ -30,13 +31,32 @@ def prepare(report, evidence, review, operations, *, editor, catalog):
     original_ids = {item['id'] for item in report['items']}
     used_ids = set(original_ids)
     changed = set()
-    for operation in operations:
-        if set(operation) != {'item_id', 'parts'} or operation['item_id'] in changed:
+    removed = []
+    parent_report = None
+    parent_proposal_version = None
+    for ordinal, operation in enumerate(operations):
+        dropping = set(operation) == {'item_id','drop_reason','reason_code'}
+        if (not dropping and set(operation) != {'item_id', 'parts'}) or operation['item_id'] in changed:
             raise ValueError('editorial_operation_invalid')
         matches = [i for i in result['items'] if i['id'] == operation['item_id']]
         if len(matches) != 1:
             raise ValueError('editorial_item_missing')
         original = matches[0]
+        if dropping:
+            if (original['claim_type'] not in {'assessment','intelligence_gap'} or original.get('attack_mappings')
+                    or operation['reason_code'] not in {'unsupported_assessment','ambiguous_reference','unsupported_intelligence_gap'}
+                    or not isinstance(operation['drop_reason'],str) or not 12<=len(operation['drop_reason'])<=1600):
+                raise ValueError('editorial_optional_removal_invalid')
+            if parent_report is None:
+                parent_report=copy.deepcopy(result)
+                if ordinal:
+                    parent_proposal_version=_version(prepare(report,evidence,review,operations[:ordinal],
+                                                             editor=editor,catalog=catalog))
+            removed.append({'item':copy.deepcopy(original),'reason_code':operation['reason_code'],
+                            'reason':operation['drop_reason']})
+            result['items'].remove(original)
+            changed.add(original['id'])
+            continue
         parts = copy.deepcopy(operation['parts'])
         if not isinstance(parts, list) or len(parts) < 2:
             raise ValueError('editorial_split_required')
@@ -70,6 +90,10 @@ def prepare(report, evidence, review, operations, *, editor, catalog):
                 'resolved_mappings': resolved,
                 'automated_review_scope': 'original_report_only',
                 'editorial_review_status': 'pending_independent_review'}
+    if removed:
+        artifact.update(workflow=REMOVAL_WORKFLOW,removed_items=removed,
+                        parent_report_version=_version(parent_report),
+                        parent_proposal_version=parent_proposal_version)
     return artifact
 
 

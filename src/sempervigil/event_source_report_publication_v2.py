@@ -11,6 +11,7 @@ from .utils import utc_now_iso
 APPROVAL_WORKFLOW = "event-source-report-approval-v2"
 EDITORIAL_CONFIRMATION = "APPROVE_EDITORIAL_DERIVATIVE"
 EDITORIAL_LINEAGE = "independently-reviewed-editorial-split-v1"
+EDITORIAL_REMOVAL_LINEAGE = "independently-reviewed-editorial-derivative-v1"
 
 
 def current_material(conn, run_id, *, lock=False, published=False, derivative=None, editorial=None):
@@ -100,6 +101,12 @@ def apply_editorial(material, editorial, evidence):
                'independent_review_version':receipt['review_version'],
                'evidence_version':proposal['evidence_version'],
                'automated_review_scope':'original_report_only'}
+    if proposal.get('removed_items'):
+        lineage.update(workflow=EDITORIAL_REMOVAL_LINEAGE,
+                       parent_report_version=proposal['parent_report_version'],
+                       parent_proposal_version=proposal['parent_proposal_version'],
+                       removed_items=[{'item_id':v['item']['id'],'reason_code':v['reason_code']}
+                                      for v in proposal['removed_items']])
     return {**material, 'report':proposal['report'], 'spans':proposal['spans'],
             'resolved_mappings':proposal['resolved_mappings'], 'derivation':lineage}
 
@@ -109,7 +116,7 @@ def published_material(conn, bundle, *, lock=False):
     q = bundle['qualification']
     lineage = q.get('derivation') or {}
     editorial = None
-    if lineage.get('workflow') == EDITORIAL_LINEAGE:
+    if lineage.get('workflow') in {EDITORIAL_LINEAGE,EDITORIAL_REMOVAL_LINEAGE}:
         rows = conn.execute('SELECT approval_id,approval_json FROM event_review_approvals '
                             'WHERE event_id=%s AND qualification_id=%s',
                             (bundle['event_id'],_version(q))).fetchall()

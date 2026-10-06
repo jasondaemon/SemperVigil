@@ -79,3 +79,27 @@ def test_artifact_or_complete_evidence_tampering_holds():
     with pytest.raises(ValueError, match='derivative_integrity'):verify(a, evidence, catalog=cat)
     cat, evidence, a = proposal();evidence['sources'][0]['text'] += ' New fact.'
     with pytest.raises(ValueError, match='derivative_integrity'):verify(a, evidence, catalog=cat)
+
+
+def test_optional_assessment_removal_keeps_parent_and_all_other_items():
+    cat, report, evidence, review, ops = fixture()
+    parent=prepare(report,evidence,review,ops,editor='editor',catalog=cat)
+    ops.append({'item_id':'P99','reason_code':'ambiguous_reference',
+                'drop_reason':'The assessment reference is ambiguous; remove the optional statement without adding replacement prose.'})
+    a=prepare(report,evidence,review,ops,editor='editor',catalog=cat)
+    from sempervigil.investigation import _version
+    assert a['workflow']=='event-report-editorial-removal-v1'
+    assert a['parent_report_version']==parent['report_version']
+    assert a['parent_proposal_version']==_version(parent)
+    assert a['report']['items']==[i for i in parent['report']['items'] if i['id']!='P99']
+    assert a['removed_items'][0]['item']==parent['report']['items'][1]
+    assert verify(a,evidence,catalog=cat)==a
+    assert validate_manual_review(a,receipt(a),evidence,catalog=cat)
+
+
+def test_finding_cannot_be_removed_as_optional():
+    cat,report,evidence,review,ops=fixture()
+    drop={'item_id':report['items'][0]['id'],'reason_code':'unsupported_assessment',
+          'drop_reason':'A finding must not be silently removed by an optional assessment policy.'}
+    with pytest.raises(ValueError,match='optional_removal_invalid'):
+        prepare(report,evidence,review,[drop],editor='editor',catalog=cat)
