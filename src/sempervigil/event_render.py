@@ -69,6 +69,8 @@ def resolve(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dic
     entity = next(f["quote"] for f in bundle["scope"]["focus"] if f["role"] == "entity")
     metadata = {"title": entity + " | Incident coverage", "event_revision": expected_revision,
                 "event_report_format": projection["workflow"]}
+    from .event_report_presentation import quotation_report_metadata
+    metadata.update(quotation_report_metadata(projection))
     return metadata, projection
 
 

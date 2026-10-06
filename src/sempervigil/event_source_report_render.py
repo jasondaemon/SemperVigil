@@ -16,6 +16,8 @@ def resolve(bundle, *, event_id, expected_revision):
         "event_has_open_questions":any(x["section"]=="open_questions" for x in report["items"]),
         "event_change_kind":"update" if bundle["predecessor"] else "initial",
         "first_seen_at":dates[0] if dates else None,"last_seen_at":dates[-1] if dates else None}
+    from .event_report_presentation import source_report_metadata
+    metadata.update(source_report_metadata(bundle))
     return metadata,projection
 
 
