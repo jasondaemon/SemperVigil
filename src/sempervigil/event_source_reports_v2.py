@@ -123,7 +123,8 @@ def configuration(conn):
     code_identity={name:hashlib.sha256((Path(__file__).parent/name).read_bytes()).hexdigest()
                    for name in ('event_source_reports_v2.py','event_report_contract_v2.py',
                                 'attack_catalog.py','attack_catalog_runtime.py',
-                                'event_source_report_publication_v2.py','event_report_continuation_import.py')}
+                                'event_source_report_publication_v2.py','event_report_continuation_import.py',
+                                'event_report_editorial.py')}
     version = _version({"attack":settings(),"code_identity":code_identity,"workflow": contract.WORKFLOW, "model": model["id"],
         "provider": provider["id"], "base_url": provider["base_url"],
         "writer": contract.WRITER+contract.ATTACK_WRITER, "reviewer": contract.REVIEWER+contract.ATTACK_REVIEWER,

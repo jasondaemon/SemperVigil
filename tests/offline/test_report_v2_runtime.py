@@ -60,6 +60,10 @@ def test_v2_identity_covers_mapping_prompts_schema_and_pinned_catalog(monkeypatc
  monkeypatch.setattr(ai_service,'get_provider',lambda *a:{'id':'provider','base_url':'https://example.org/v1'})
  monkeypatch.setattr(ai_service,'get_model',lambda *a:{'id':'model'})
  first=reports.configuration(Connection())[2]
+ original_read=Path.read_bytes
+ with monkeypatch.context() as changes:
+  changes.setattr(Path,'read_bytes',lambda path:original_read(path)+(b' editorial policy change' if path.name=='event_report_editorial.py' else b''))
+  assert reports.configuration(Connection())[2]!=first
  monkeypatch.setattr(contract,'ATTACK_WRITER',contract.ATTACK_WRITER+' Changed mapping semantics.')
  second=reports.configuration(Connection())[2];assert first!=second
  monkeypatch.setenv('SV_EVENT_REPORT_V2_ATTACK_DOMAIN','mobile')
