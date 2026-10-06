@@ -67,6 +67,9 @@ findings from analyst assessments. Place assessments where their subject belongs
 including mitigations for analyst guidance; use attribution only for actor analysis.
 Use unknown/undated labels and null date_sort when an action date is unreported;
 source publication, materiality and signature dates are not incident/action dates.
+Use date_sort only for a supported individual day in YYYY-MM-DD form. For month-
+or year-only dates, preserve that precision in date_label and visible prose and
+set date_sort to null; do not invent a day to satisfy the format.
 Cover material financial expectations with their
 uncertainty and notification progress (completed, ongoing, intended) when reported.
 State intelligence limits once, specifically, rather than repeating generic gaps."""
@@ -170,7 +173,9 @@ def schema(source_ids):
         "section": {"type": "string", "enum": list(SECTIONS)},
         "text": {"type": "string", "minLength": 1, "maxLength": 2400,
                  "description": "A developed coherent paragraph, potentially several sentences, whose conclusion has the declared epistemic role. Preserve attribution and qualifications."},
-        "date_label": string, "date_sort": {"type": ["string", "null"]},
+        "date_label": string, "date_sort": {"type": ["string", "null"],
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "description": "Supported individual calendar day in YYYY-MM-DD form, otherwise null. Preserve month/year-only precision in date_label and prose; never invent a day."},
         "citations": {"type": "array", "minItems": 1, "maxItems": 6, "items": citation}}
     # Enforce valid metadata combinations in the provider schema as well as locally.
     finding = object_schema({**common,
