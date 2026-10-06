@@ -156,6 +156,7 @@ def runtime_code_identity():
                          'event_source_report_publication_v2.py', 'event_report_continuation_import.py',
                          'event_report_final_editor.py', 'event_report_transport.py', 'llm/router.py',
                          'event_report_generation_identity.py', 'event_report_final_editor_import.py',
+                         'event_report_presentation.py', 'event_source_report_render_v2.py', 'event_report_value.py',
                          'data/event_report_v2_prompt_history.json',
                          'event_report_editorial.py', 'event_report_v2_policy.py', 'event_report_v2_integrity.py')}
 
@@ -1124,6 +1125,7 @@ def tick(conn):
     from .event_report_v2_policy import policy, active, locked_rows
     from .storage import set_setting
     results = []
+    p = None
     try:
         p = policy()
         if not p:
@@ -1161,8 +1163,17 @@ def tick(conn):
     except Exception as exc:
         conn.rollback()
         results.append({'status': 'held', 'reason': safe_reason(exc)})
+    metric_error = None
+    if p:
+        try:
+            from .event_report_value import record_cohort
+            record_cohort(conn, p)
+        except Exception as exc:
+            conn.rollback()
+            metric_error = type(exc).__name__
     try:
-        set_setting(conn, 'event.report_v2.last_tick', {'checked_at': utc_now_iso(), 'results': results})
+        set_setting(conn, 'event.report_v2.last_tick', {'checked_at': utc_now_iso(), 'results': results,
+                    **({'value_metrics_error': metric_error} if metric_error else {})})
         conn.commit()
     except Exception:
         conn.rollback()

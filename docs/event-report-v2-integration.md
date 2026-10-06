@@ -87,3 +87,37 @@ admission/promotion role lacks those table privileges. Publication writes stay
 on the restricted connection; unavailable configuration access fails closed.
 Regression tests exercise both restricted roles, reject reader writes, preserve
 their existing model-table denial and hold publication when the reader is absent.
+
+### Complete runtime packaging and bounded narrative value receipts
+
+`scripts/build_runtime_overlay.py` copies every committed tracked package file,
+not a baseline-relative Git diff. Both ingest and builder images receive the same
+source manifest, including transitive presentation helpers. The exact images
+must match every manifest hash, import all publication/renderer modules and read
+real qualified CEVA/Zammad predecessors through temporary read-only probes.
+Original pilot/contract bytes and generator remain protected; no role grant is
+added. This fixes a presentation helper missing only from inherited ingest bases.
+
+A narrative cohort can use the observed capable Sol high final editor in a small
+explicit scope, without claiming broad reliability from one approved case.
+Empty/length/invalid output is terminal for that event; failed cost remains in the
+ledger, lifetime capacity stays consumed and the old public report is preserved.
+Use one event, one lifetime run, two calls maximum, one concurrent run and a finite
+expiry. Admission requires a qualified predecessor and meaningful evidence delta;
+unchanged-source generator upgrades and backfill are not autonomous triggers.
+Writer/editor hard deadlines are180/240seconds, with a600second episode window.
+Every serialized request gets an exact token reservation before HTTP. Evidence is
+never omitted to fit a budget; a later budget hold includes any writer cost.
+
+`event_report_value.record_cohort` writes durable per-run/cohort receipts into the
+existing settings store, backed by immutable native calls and publication records.
+Receipts include actual tokens, outstanding unknown reservations, lifetime budget,
+models/caps, measured transport/job duration, source delta, report size/citations,
+review readiness and separate promoted-versus-guarded-activation evidence. Only a
+successful guarded builder records activation; later ticks preserve that historic
+receipt. Draft size is not counted as accepted report value. Failed calls count.
+No verified pricing has been supplied, so rates and monetary estimates stay null,
+never zero. Retained imports/private R&D are excluded from the ongoing cohort.
+The authenticated read-only `narrative-status` endpoint exposes this separate
+cohort, expiry, last tick and per-update receipts. Metrics failures do not block
+publication or ingestion and are exposed in the tick/build log.

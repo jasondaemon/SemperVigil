@@ -3092,6 +3092,34 @@ def api_event_source_report_status(event_id: str) -> dict[str, object]:
         conn.close()
 
 
+@app.get("/admin/api/events/{event_id}/narrative-status", dependencies=[Depends(_require_admin_token)])
+def api_event_narrative_status(event_id: str) -> dict[str, object]:
+    if not os.environ.get('SV_ADMIN_TOKEN'):
+        raise HTTPException(status_code=403, detail='narrative_status_requires_admin_auth')
+    from .event_report_v2_policy import policy, active
+    from .storage import get_setting
+    p = policy()
+    if not p or event_id not in p['events']:
+        raise HTTPException(status_code=404, detail='narrative_cohort_not_enrolled')
+    running = True
+    try:
+        active(p)
+    except ValueError:
+        running = False
+    conn = _get_conn()
+    try:
+        conn.execute('SET TRANSACTION READ ONLY')
+        rows = conn.execute("SELECT run_id FROM event_source_report_runs WHERE event_id=%s AND snapshot_json::jsonb->'cohort'->>'id'=%s ORDER BY created_at", (event_id, p['id'])).fetchall()
+        return {'active': running, 'policy': p,
+                'last_tick': get_setting(conn, 'event.report_v2.last_tick', {}),
+                'value': get_setting(conn, 'event.report_v2.value.cohort.'+p['id'], {}),
+                'updates': [get_setting(conn, 'event.report_v2.value.'+row[0], {}) for row in rows],
+                'cost_scope': 'ongoing narrative cohort only; historical R&D is excluded',
+                'rates': None, 'estimated_usd': None}
+    finally:
+        conn.close()
+
+
 class EventsRebuildRequest(BaseModel):
     limit: int | None = None
 

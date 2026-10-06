@@ -693,6 +693,15 @@ def run_once(builder_id: str) -> int:
     if complete_job(conn, job.id, result=result_payload):
         clear_build_dirty(conn, finished_at=datetime.now(tz=timezone.utc).isoformat(), build_job_id=job.id)
         log_event(logger, logging.INFO, "build_succeeded", job_id=job.id)
+        try:
+            from .event_report_v2_policy import policy
+            from .event_report_value import record_cohort
+            cohort = policy()
+            if cohort:
+                record_cohort(conn, cohort, release=Path(os.environ.get('SV_HUGO_OUTPUT_DIR', '/site')) / 'current')
+        except Exception as exc:
+            conn.rollback()
+            log_event(logger, logging.ERROR, "event_report_value_record_failed", error=type(exc).__name__)
     else:
         log_event(logger, logging.ERROR, "build_complete_failed", job_id=job.id)
     return 0
