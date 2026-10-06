@@ -1,0 +1,91 @@
+[
+  {
+    "item": {
+      "attack_mappings": [],
+      "citations": [
+        {
+          "quote": "We urge everyone using any version of Zammad to update to version 7 or take it offline as soon as possible.",
+          "source_id": "S36617"
+        },
+        {
+          "quote": "The first is a session hijacking vulnerability that leads to remote code execution as the zammad user. It affects Zammad versions 6.3.0 through 6.5.4 in an exploitable state; it is present in versions 7.0.0 through 7.1.3 but not exploitable due to environment conditions.",
+          "source_id": "S36518"
+        },
+        {
+          "quote": "The second is a local privilege escalation that enables the zammad user to escalate to root. This flaw affects all Zammad versions, including the latest alpha.",
+          "source_id": "S36518"
+        }
+      ],
+      "claim_type": "finding",
+      "confidence": null,
+      "date_label": "September 30, 2026 guidance",
+      "date_sort": "2026-09-30",
+      "id": "P110",
+      "rationale": "",
+      "section": "mitigations",
+      "text": "DIVD urged operators of any Zammad version to update to version 7 or take the instance offline immediately. The reporting also says CVE-2026-102490 affects all versions, while version-specific environment conditions limited exploitability of CVE-2026-102489 in 7.0.0 through 7.1.3. Because those statements concern different flaws and exploitability conditions, operators should not interpret the reported limitation on the first flaw as evidence that every version 7 deployment is unaffected by the second."
+    },
+    "expected_ready": false,
+    "expected_issue": "Mixed epistemic item: attributed mitigation findings and reasoned operator guidance must be split and separately typed.",
+    "original_evidence_version": "3247130120e37dbd7ad33cd1f9c2ff44c8fead15d19131fa9f9b1d44497993c8",
+    "scope": "Real report negative example; fixture expectations and simulated reviewer decision, not demonstrated model detection."
+  },
+  {
+    "item": {
+      "attack_mappings": [],
+      "citations": [
+        {
+          "quote": "all actions performed in a matter of seconds, thanks to AI automation.",
+          "source_id": "S36444"
+        },
+        {
+          "quote": "Thanks to proper network segmentation and the actions of our IT and incident response team after detection, we were able to stop the attackers from going deeper into our systems and network",
+          "source_id": "S36617"
+        },
+        {
+          "quote": "Network segmentation and incident response limited the depth of lateral movement.",
+          "source_id": "S36518"
+        }
+      ],
+      "claim_type": "assessment",
+      "confidence": "moderate",
+      "date_label": "Assessment based on reporting through October 2, 2026",
+      "date_sort": "2026-10-02",
+      "id": "P113",
+      "rationale": "Sources report machine-speed exploitation and post-exploitation alongside successful containment through segmentation and rapid response. This supports an assessment that control boundaries reduced scope even though they did not prevent initial compromise or data theft. Confidence is moderate because no detailed network architecture, dwell-time data or complete forensic chronology is available.",
+      "section": "analyst_assessment",
+      "text": "The incident indicates that segmentation and rapid containment can materially restrict the scope of machine-speed intrusions, but cannot by themselves prevent damage after a privileged application server is compromised. In this case, data access and exfiltration occurred before deeper movement was stopped."
+    },
+    "expected_ready": false,
+    "expected_issue": "Unsupported rapid containment and categorical claim that controls cannot prevent damage; sources establish limited deeper movement, not that generalization.",
+    "original_evidence_version": "3247130120e37dbd7ad33cd1f9c2ff44c8fead15d19131fa9f9b1d44497993c8",
+    "scope": "Real report negative example; fixture expectations and simulated reviewer decision, not demonstrated model detection."
+  },
+  {
+    "item": {
+      "attack_mappings": [],
+      "citations": [
+        {
+          "quote": "The first is a session hijacking vulnerability that leads to remote code execution as the zammad user. It affects Zammad versions 6.3.0 through 6.5.4 in an exploitable state; it is present in versions 7.0.0 through 7.1.3 but not exploitable due to environment conditions.",
+          "source_id": "S36518"
+        },
+        {
+          "quote": "The second is a local privilege escalation that enables the zammad user to escalate to root. This flaw affects all Zammad versions, including the latest alpha.",
+          "source_id": "S36518"
+        }
+      ],
+      "claim_type": "assessment",
+      "confidence": "moderate",
+      "date_label": "Undated analyst assessment",
+      "date_sort": null,
+      "id": "P115",
+      "rationale": "The cited reporting describes separate session-hijacking and privilege-escalation flaws with different reported version conditions. This assessment cautions against transferring a limitation from one flaw to the other. It does not independently establish patch completeness, configuration-specific exploitability, or the safety of any deployment.",
+      "section": "analyst_assessment",
+      "text": "Because those statements concern different flaws and exploitability conditions, operators should not interpret the reported limitation on the first flaw as evidence that every version 7 deployment is unaffected by the second."
+    },
+    "expected_ready": false,
+    "expected_issue": "Ambiguous first/second flaw references reverse against preceding CVE mention order; no blanket version-7 safety conclusion is supported.",
+    "original_evidence_version": "3247130120e37dbd7ad33cd1f9c2ff44c8fead15d19131fa9f9b1d44497993c8",
+    "scope": "Real report negative example; fixture expectations and simulated reviewer decision, not demonstrated model detection."
+  }
+]

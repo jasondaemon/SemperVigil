@@ -118,13 +118,7 @@ def configuration(conn):
     provider, model = get_provider(conn, row[0]), get_model(conn, row[1])
     from .attack_catalog_runtime import settings
     from .attack_catalog import generation_schema
-    from pathlib import Path
-    import hashlib
-    code_identity={name:hashlib.sha256((Path(__file__).parent/name).read_bytes()).hexdigest()
-                   for name in ('event_source_reports_v2.py','event_report_contract_v2.py',
-                                'attack_catalog.py','attack_catalog_runtime.py',
-                                'event_source_report_publication_v2.py','event_report_continuation_import.py',
-                                'event_report_editorial.py')}
+    code_identity = runtime_code_identity()
     version = _version({"attack":settings(),"code_identity":code_identity,"workflow": contract.WORKFLOW, "model": model["id"],
         "provider": provider["id"], "base_url": provider["base_url"],
         "writer": contract.WRITER+contract.ATTACK_WRITER, "reviewer": contract.REVIEWER+contract.ATTACK_REVIEWER,
@@ -135,6 +129,25 @@ def configuration(conn):
         "fixed_reviewer_model":MODEL,"review_schema":contract.review_schema({'items':[{'id':'P01'}]},['S1']),
         **({'pilot_policy':pilot} if pilot else {})})
     return model, provider, version
+
+
+def runtime_code_identity():
+    from pathlib import Path
+    import hashlib
+    return {name: hashlib.sha256((Path(__file__).parent/name).read_bytes()).hexdigest()
+            for name in ('event_source_reports_v2.py', 'event_report_contract_v2.py',
+                         'attack_catalog.py', 'attack_catalog_runtime.py',
+                         'event_source_report_publication_v2.py', 'event_report_continuation_import.py',
+                         'event_report_editorial.py', 'event_report_v2_policy.py')}
+
+
+def runtime_identity():
+    """Code/catalog/options proof readable by the separate publication role."""
+    from .attack_catalog_runtime import settings
+    return _version({'code': runtime_code_identity(), 'attack': settings(),
+                     'phase_settings': phase_settings(),
+                     'writer_model': os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL') or MODEL,
+                     'reviewer_model': MODEL})
 
 
 def snapshot(conn, event_id, *, lock=False):
@@ -363,6 +376,13 @@ def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
     if allow_correction:raise ValueError("event_report_v2_correction_disabled")
     from .event_source_report_pilot import policy,admit
     pilot=None
+    from .event_report_v2_policy import policy as autonomous_policy, admit as autonomous_admit
+    autonomous = autonomous_policy()
+    if autonomous:
+        if trigger != "evidence_change" or analyst_question is not None:
+            raise ValueError("event_report_v2_successor_required")
+        budget_tokens = autonomous["run_tokens"]
+        debounce_seconds = autonomous["debounce_seconds"]
     if pilot:
         if allow_correction or analyst_question is not None:
             raise ValueError('event_source_report_pilot_repair_disabled')
@@ -380,7 +400,15 @@ def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
     if analyst_question is not None and (not isinstance(analyst_question,str)
             or not 1 <= len(analyst_question.strip()) <= 800):
         raise ValueError("event_source_report_analyst_question_invalid")
-    _, _, generation = configuration(conn)
+    model, _, generation = configuration(conn)
+    if autonomous:
+        if not os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL') or model['model_name'] == MODEL:
+            raise ValueError('event_report_v2_independent_models_required')
+        reviewer = conn.execute('''SELECT m.id FROM llm_models m JOIN llm_providers p ON p.id=m.provider_id
+            WHERE lower(p.name)='openai' AND lower(p.type)='openai_compatible'
+              AND p.is_enabled=1 AND m.is_enabled=1 AND m.model_name=%s ORDER BY m.id LIMIT 1''', (MODEL,)).fetchone()
+        if not reviewer:
+            raise ValueError('event_source_report_reviewer_model_missing')
     conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("source-report:"+event_id,))
     snap = snapshot(conn, event_id)
     snap['review_contract']=contract.REVIEW_CONTRACT
@@ -400,7 +428,8 @@ def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
     # Identical snapshot/config requests, including held attempts, never regenerate.
     key = _version({"event_id": event_id, "evidence": snap["evidence_version"],
                     "source_version": snap["source_version"], "generator": generation,
-                    "analyst_question":analyst_question})
+                    "analyst_question":analyst_question,
+                    **({"autonomous_policy": _version(autonomous)} if autonomous else {})})
     run_id = "esr_"+key
     existing = conn.execute("SELECT status FROM event_source_report_runs WHERE run_id=%s", (run_id,)).fetchone()
     if existing:
@@ -413,7 +442,11 @@ def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
         snap["analyst_question"] = analyst_question.strip()
     from .attack_catalog_runtime import reference
     snap["attack_reference"]=reference(snap["sources"])
-    cohort = None
+    if autonomous:
+        autonomous_admit(conn, autonomous, event_id, generation, predecessor, old)
+        snap["autonomous_policy"] = autonomous
+        snap["autonomous_runtime_version"] = runtime_identity()
+    cohort = ({"id": autonomous["id"], "limit": autonomous["limit"]} if autonomous else None)
     if cohort:
         _reserve_cohort(conn,cohort,0)
         snap["cohort"] = cohort
@@ -449,13 +482,19 @@ def _load(conn, run_id):
         raise ValueError("event_source_report_missing")
     names = ("snapshot", "source_version", "generator_version", "status", "budget_tokens",
              "charged_tokens", "reserved_tokens", "event_id", "predecessor", "report", "review", "spans")
-    result = dict(zip(names, row))
+    result = {"run_id": run_id, **dict(zip(names, row))}
     for name in ("snapshot", "report", "review", "spans"):
         result[name] = json.loads(result[name]) if isinstance(result[name], str) else result[name]
     return result
 
 
 def _fresh(conn, record):
+    if record["snapshot"].get("autonomous_policy"):
+        from .event_report_v2_policy import check_run
+        check_run(conn, record, record["run_id"])
+        from .attack_catalog_runtime import settings
+        if settings()['catalog'] != record['snapshot']['attack_reference']['catalog']:
+            raise ValueError('event_report_v2_catalog_changed')
     from .event_source_report_pilot import policy,active
     pilot=record['snapshot'].get('pilot')
     if pilot:
@@ -509,6 +548,13 @@ def call(conn, run_id, phase, system, data, response_schema, *, complete=None, c
     if completion_cap is not None and (phase!='correction' or type(completion_cap) is not int or not 1<=completion_cap<=3200):
         raise ValueError('event_source_report_completion_cap_invalid')
     record = _load(conn, run_id); _fresh(conn, record)
+    if record['snapshot'].get('autonomous_policy'):
+        prior_phases = [row[0] for row in conn.execute(
+            'SELECT phase FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal', (run_id,)).fetchall()]
+        if (phase not in {'writer', 'review'} or len(prior_phases) >= 2
+            or phase != ('writer' if not prior_phases else 'review')
+            or prior_phases not in ([], ['writer'])):
+            raise ValueError('event_report_v2_two_call_limit')
     model, _, _ = configuration(conn)
     if phase in {'review','verification'} and os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL'):
         from .services.ai_service import get_model
@@ -594,7 +640,7 @@ def recover_pretransport(conn, parent_run_id, *, legacy_proof=None, debounce_sec
     if not 0 <= debounce_seconds <= 86400:
         raise ValueError("event_source_report_debounce_invalid")
     parent = _load(conn,parent_run_id);check_scope(parent["event_id"])
-    if parent['snapshot'].get('pilot'):raise ValueError('event_source_report_pilot_repair_disabled')
+    if parent['snapshot'].get('pilot') or parent['snapshot'].get('autonomous_policy'):raise ValueError('event_source_report_pilot_repair_disabled')
     conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",("source-report:"+parent["event_id"],))
     prior = conn.execute("SELECT child_run_id,audit_json FROM event_source_report_recoveries WHERE parent_run_id=%s",
                          (parent_run_id,)).fetchone()
@@ -709,7 +755,7 @@ def grant_correction_allowance(conn, run_id, tokens, *, authority, manual_issues
     if not enabled() or not authority or type(tokens) is not int or not 1<=tokens<=200000:
         raise PermissionError('event_source_report_allowance_not_authorized')
     record=_load(conn,run_id);check_scope(record['event_id']);_fresh(conn,record)
-    if record['snapshot'].get('pilot'):raise ValueError('event_source_report_pilot_repair_disabled')
+    if record['snapshot'].get('pilot') or record['snapshot'].get('autonomous_policy'):raise ValueError('event_source_report_pilot_repair_disabled')
     conn.execute('SELECT run_id FROM event_source_report_runs WHERE run_id=%s FOR UPDATE',(run_id,))
     rows=conn.execute('SELECT phase,status FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal',(run_id,)).fetchall()
     if manual_issues:
@@ -876,45 +922,53 @@ def _legacy_tick(conn):
 
 
 def tick(conn):
-    """Isolate report policy failures from core ingestion/build admission."""
-    from .event_source_report_pilot import policy,active,safe_reason
+    """Bounded v2 scheduling, isolated from ingestion and the legacy pilot."""
+    from .event_report_v2_policy import policy, active, locked_rows
     from .storage import set_setting
+    results = []
     try:
-        if not enabled():return []
-        p=policy()
-        if not p:return _legacy_tick(conn)
+        p = policy()
+        if not p:
+            return []
         active(p)
-        results=[]
+        locked_rows(conn, p, lock=False)
         from .event_source_report_publication_v2 import submit as publish
-        rows=conn.execute("""SELECT run_id,event_id FROM event_source_report_runs
-          WHERE status='accepted' AND snapshot_json::jsonb->'cohort'->>'id'=%s
-          ORDER BY created_at,run_id""",(p['id'],)).fetchall()
-        for rid,event_id in rows:
-            record=_load(conn,rid)
-            if previous(conn,event_id)[0]!=record['predecessor']:continue
+        rows = conn.execute("""SELECT run_id,event_id FROM event_source_report_runs
+            WHERE status='accepted' AND snapshot_json::jsonb->'cohort'->>'id'=%s
+              AND snapshot_json::jsonb->>'report_contract'=%s AND event_id=ANY(%s)
+            ORDER BY created_at,run_id""", (p['id'], contract.WORKFLOW, p['events'])).fetchall()
+        for rid, event_id in rows:
+            record = _load(conn, rid)
+            if previous(conn, event_id)[0] != record['predecessor']:
+                continue
             try:
-                receipt=publish(conn,rid,automatic=True)
-                results.append(receipt)
+                results.append(publish(conn, rid, automatic=True))
             except Exception as exc:
                 conn.rollback()
-                reason=safe_reason(exc)
-                conn.execute("UPDATE event_source_report_runs SET status='held',reason=%s WHERE run_id=%s",(reason,rid));conn.commit()
-                results.append({'status':'held','run_id':rid,'reason':reason})
+                reason = safe_reason(exc)
+                conn.execute("UPDATE event_source_report_runs SET status='held',reason=%s WHERE run_id=%s", (reason, rid))
+                conn.commit()
+                results.append({'run_id': rid, 'status': 'held', 'reason': reason})
         for event_id in p['events']:
             try:
-                receipt=submit(conn,event_id)
-                results.append({'event_id':event_id,**receipt})
-                if receipt['status']=='queued':break
+                receipt = submit(conn, event_id)
+                results.append({'event_id': event_id, **receipt})
+                if receipt['status'] == 'queued':
+                    break
             except Exception as exc:
                 conn.rollback()
-                results.append({'event_id':event_id,'status':'held','reason':safe_reason(exc)})
-        set_setting(conn,'event.source_report.last_tick',{'checked_at':utc_now_iso(),'policy_id':p['id'],'results':results});conn.commit()
-        return results
+                results.append({'event_id': event_id, 'status': 'held', 'reason': safe_reason(exc)})
     except Exception as exc:
         conn.rollback()
-        result={'status':'held','reason':safe_reason(exc)}
-        try:
-            set_setting(conn,'event.source_report.last_tick',{'checked_at':utc_now_iso(),'results':[result]});conn.commit()
-        except Exception:
-            conn.rollback()
-        return [result]
+        results.append({'status': 'held', 'reason': safe_reason(exc)})
+    try:
+        set_setting(conn, 'event.report_v2.last_tick', {'checked_at': utc_now_iso(), 'results': results})
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    return results
+
+
+def safe_reason(value):
+    match = re.match(r'event_(?:source_report|report_v2)_[a-z_]+', str(value or ''))
+    return match.group(0) if match else 'unclassified_failure'

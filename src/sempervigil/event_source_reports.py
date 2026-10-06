@@ -803,6 +803,10 @@ def _legacy_tick(conn):
     for event_id in enrolled:
         if not isinstance(event_id,str):
             raise ValueError("event_source_report_enrollment_invalid")
+        from .attack_catalog_runtime import selected
+        if selected(event_id):
+            # Scoped v2 events belong only to the independently bounded v2 tick.
+            continue
         # Suppress concurrent evidence/config requests even when articles arrive
         # during debounce. A stale queued snapshot holds before spending any tokens.
         pending = conn.execute("SELECT 1 FROM event_source_report_runs WHERE event_id=%s AND status IN ('queued','running') LIMIT 1",
@@ -813,7 +817,7 @@ def _legacy_tick(conn):
     return []
 
 
-def tick(conn):
+def _v1_tick(conn):
     """Isolate report policy failures from core ingestion/build admission."""
     from .event_source_report_pilot import policy,active,safe_reason
     from .storage import set_setting
@@ -856,3 +860,10 @@ def tick(conn):
         except Exception:
             conn.rollback()
         return [result]
+
+
+def tick(conn):
+    results = _v1_tick(conn)
+    # V2 scheduler is independently default-off; no enrollment or policy mutation.
+    from .event_source_reports_v2 import tick as v2_tick
+    return results + v2_tick(conn)

@@ -193,10 +193,8 @@ def submit(conn, run_id, *, factory=None, automatic=False, editorial=None):
         if editorial is not None:
             approval['editorial']=editorial
         if automatic:
-            from .event_source_report_pilot import policy,check_run
-            p=policy()
-            if not p:raise ValueError('event_source_report_pilot_required')
-            approval['automatic_approval']=check_run(authority,record,run_id,p,publication=True)
+            from .event_report_v2_policy import check_run
+            approval['automatic_approval']=check_run(authority,record,run_id,publication=True)
         from .event_approval import MAX_APPROVAL_BYTES
         if len(contract.encode(approval).encode()) > MAX_APPROVAL_BYTES:
             raise ValueError('event_approval_too_large')
@@ -301,9 +299,8 @@ def run_approval(approval, *, qualification_id, factory=None):
             raise ValueError('event_source_report_editorial_automatic_approval_forbidden')
         record = current_material(conn,approval["run_id"],lock=True,editorial=approval.get('editorial'))
         if 'automatic_approval' in approval:
-            from .event_source_report_pilot import policy,check_run
-            p=policy()
-            if not p or approval['automatic_approval']!=check_run(conn,record,approval['run_id'],p,publication=True):
+            from .event_report_v2_policy import check_run
+            if approval['automatic_approval']!=check_run(conn,record,approval['run_id'],publication=True):
                 raise ValueError('event_source_report_automatic_approval_changed')
         q = qualification(record,approval["run_id"])
         row = conn.execute("SELECT qualification_json,revoked_at FROM event_quote_qualifications WHERE event_id=%s AND qualification_id=%s",

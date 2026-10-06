@@ -425,3 +425,21 @@ movement, a public-facing deployment, or a particular interpreter. No mappings
 is acceptable for irrelevant/sparse evidence. Return mapping issues under the
 owning item ID in the existing review schema; do not add repair calls or rewrite.
 """
+
+
+SEMANTIC_REGRESSION_EXPECTATIONS = """
+Mandatory whole-source review examples (expectations, not automated semantic proof):
+P110: A paragraph that combines attributed Zammad version advice and a reasoned
+operator caution must not be typed entirely as a finding. Separate source findings
+from analyst assessment, each with its own cited premises and bounded rationale.
+P113: Reporting that an attacker stopped does not establish rapid containment or
+that ordinary controls categorically cannot prevent damage from autonomous agents.
+Hold unsupported causal certainty, universal control-limit claims, and implied
+verified containment; an exact quote somewhere in the source is not entailment.
+P115: 'first flaw'/'second flaw' references can reverse when preceding sentences
+mention CVE-2026-102490 and CVE-2026-102489 in reverse order. Hold ambiguous CVE
+references; require unambiguous explicit identifiers and supported version scope.
+Version-7 upgrade advice does not establish every version-7 deployment is safe.
+"""
+WRITER += SEMANTIC_REGRESSION_EXPECTATIONS
+REVIEWER += SEMANTIC_REGRESSION_EXPECTATIONS
