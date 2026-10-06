@@ -42,7 +42,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-sempervigil = ["templates/**/*.html", "static/**/*"]
+sempervigil = ["templates/**/*.html", "static/**/*", "data/attack/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -176,8 +176,11 @@ This snapshot is not a lease: build activation still needs revocation coordinati
             if _version(qualification) != qid or bundle.get("qualification") != qualification:
                 raise ValueError("qualification_integrity_failure")
             _, projection = resolve(bundle, event_id=event_id, expected_revision=revision)
-            if bundle.get("workflow") == "event-source-report-public-v1":
-                from .event_source_report_publication import current_material, bundle_for
+            if bundle.get("workflow") in {"event-source-report-public-v1","event-source-report-public-v2"}:
+                if bundle["workflow"]=="event-source-report-public-v2":
+                    from .event_source_report_publication_v2 import current_material, bundle_for
+                else:
+                    from .event_source_report_publication import current_material, bundle_for
                 try:
                     current = current_material(conn,bundle["run_id"],published=True)
                     if bundle_for(current,bundle["run_id"],qualification,bundle["predecessor"])!=bundle:

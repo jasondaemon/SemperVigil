@@ -37,6 +37,9 @@ def literal(value: str) -> str:
 
 
 def resolve(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict, dict]:
+    if bundle.get("workflow") == "event-source-report-public-v2":
+        from .event_source_report_render_v2 import resolve as source_resolve
+        return source_resolve(bundle,event_id=event_id,expected_revision=expected_revision)
     if bundle.get("workflow") == "event-source-report-public-v1":
         from .event_source_report_render import resolve as source_resolve
         return source_resolve(bundle,event_id=event_id,expected_revision=expected_revision)
@@ -75,6 +78,9 @@ def resolve(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dic
 
 
 def index_entry(bundle: dict, *, event_id: str, expected_revision: str) -> dict:
+    if bundle.get("workflow") == "event-source-report-public-v2":
+        from .event_source_report_render_v2 import index_entry as source_index
+        return source_index(bundle,event_id=event_id,expected_revision=expected_revision)
     if bundle.get("workflow") == "event-source-report-public-v1":
         from .event_source_report_render import index_entry as source_index
         return source_index(bundle,event_id=event_id,expected_revision=expected_revision)
@@ -105,6 +111,9 @@ def index_entry(bundle: dict, *, event_id: str, expected_revision: str) -> dict:
 
 
 def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict, str]:
+    if bundle.get("workflow") == "event-source-report-public-v2":
+        from .event_source_report_render_v2 import render as source_render
+        return source_render(bundle,event_id=event_id,expected_revision=expected_revision)
     if bundle.get("workflow") == "event-source-report-public-v1":
         from .event_source_report_render import render as source_render
         return source_render(bundle,event_id=event_id,expected_revision=expected_revision)

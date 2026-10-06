@@ -3,7 +3,7 @@ import json
 import os
 import re
 
-from . import event_report_contract as contract
+from . import event_report_contract_v2 as contract
 from .investigation import _version
 from .storage import enqueue_job
 from .utils import utc_now_iso
@@ -76,16 +76,13 @@ CREATE TRIGGER source_report_allowance_guard BEFORE UPDATE OR DELETE ON event_so
 
 
 def enabled():
-    value = os.environ.get("SV_EVENT_SOURCE_REPORT_ENABLED", "0")
-    if value not in {"0", "1"}:
-        raise ValueError("event_source_report_enablement_invalid")
-    return value == "1"
+    from .attack_catalog_runtime import scope
+    return bool(scope())
 
 
 def check_scope(event_id):
-    scope = os.environ.get("SV_EVENT_SOURCE_REPORT_EVENT_IDS", "").strip()
-    if scope and event_id not in {s.strip() for s in scope.split(",") if s.strip()}:
-        raise PermissionError("event_source_report_event_outside_scope")
+    from .attack_catalog_runtime import selected
+    if not selected(event_id):raise PermissionError('event_report_v2_outside_scope')
 
 
 def phase_settings():
@@ -110,7 +107,7 @@ def phase_settings():
 
 def configuration(conn):
     from .event_source_report_pilot import policy
-    pilot=policy()
+    pilot=None
     from .services.ai_service import get_model, get_provider
     row = conn.execute("""SELECT p.id,m.id FROM llm_providers p JOIN llm_models m ON m.provider_id=p.id
       WHERE lower(p.name)='openai' AND lower(p.type)='openai_compatible'
@@ -119,12 +116,13 @@ def configuration(conn):
     if not row:
         raise ValueError("event_source_report_model_missing")
     provider, model = get_provider(conn, row[0]), get_model(conn, row[1])
-    version = _version({"workflow": contract.WORKFLOW, "model": model["id"],
+    from .attack_catalog_runtime import settings
+    version = _version({"attack":settings(),"workflow": contract.WORKFLOW, "model": model["id"],
         "provider": provider["id"], "base_url": provider["base_url"],
         "writer": contract.WRITER, "reviewer": contract.REVIEWER,
         "schema": contract.schema(["S1"]), "phase_settings":phase_settings(),
         "tokenizer": "o200k_base", "context_tokens": 24000,
-        "update_context": "published-evidence-delta-v3", "cohort_policy":"serialized-reservation-v1",
+        "update_context": "published-evidence-delta-v4-membership-baseline", "cohort_policy":"serialized-reservation-v1",
         "projection_policy":contract.PROJECTION_WORKFLOW,
         "fixed_reviewer_model":MODEL,"review_schema":contract.review_schema({'items':[{'id':'P01'}]},['S1']),
         **({'pilot_policy':pilot} if pilot else {})})
@@ -144,11 +142,20 @@ def snapshot(conn, event_id, *, lock=False):
     ids = [r[0] for r in links]
     articles = conn.execute("""SELECT id,title,original_url,content_text,published_at,ingested_at,meta_json
       FROM articles WHERE id=ANY(%s) ORDER BY id"""+suffix, (ids,)).fetchall()
+    return _source_material(event_id, row[1], articles, ids)
+
+
+def _source_material(event_id, title, articles, ids):
+    """Freeze every membership; deduplicate only the bodies packed for the model."""
+    if len(ids) != len(set(ids)) or {r[0] for r in articles} != set(ids):
+        raise ValueError("event_source_report_sources_missing")
     sources, excluded, membership, bodies = [], [], [], {}
-    for aid, title, url, text, published, retrieved, rawmeta in articles:
+    for aid, article_title, url, text, published, retrieved, rawmeta in sorted(articles, key=lambda r: r[0]):
         meta = json.loads(rawmeta) if isinstance(rawmeta, str) and rawmeta else (rawmeta or {})
-        membership.append({"article_id": aid, "title": title, "url": url,
-                           "text_hash": contract.digest(text or ""), "suppressed": bool(meta.get("suppressed"))})
+        membership.append({"article_id": aid, "title": article_title, "url": url,
+                           "text_hash": contract.digest(text or ""), "suppressed": bool(meta.get("suppressed")),
+                           "published_at": str(published) if published else None,
+                           "retrieved_at": str(retrieved) if retrieved else None})
         if meta.get("suppressed") or not text or not url:
             excluded.append(aid)
             continue
@@ -157,16 +164,16 @@ def snapshot(conn, event_id, *, lock=False):
             raise ValueError("event_source_report_url_invalid")
         content_hash = contract.digest(" ".join(text.split()))
         if content_hash in bodies:
-            bodies[content_hash]["duplicates"].append({"article_id": aid, "url": url})
+            bodies[content_hash]["duplicates"].append(dict(membership[-1]))
             continue
-        source = {"id": "S"+str(aid), "article_id": aid, "title": title or "Source article",
+        source = {"id": "S"+str(aid), "article_id": aid, "title": article_title or "Source article",
                   "url": url, "text": text, "content_hash": content_hash,
                   "published_at": str(published) if published else None,
                   "retrieved_at": str(retrieved) if retrieved else None, "duplicates": []}
         sources.append(source); bodies[content_hash] = source
     if not sources or len(articles) != len(ids):
         raise ValueError("event_source_report_sources_missing")
-    material = {"event_id": event_id, "title": row[1], "sources": sources,
+    material = {"event_id": event_id, "title": title, "sources": sources,
                 "membership": membership, "excluded_article_ids": excluded}
     return {**material, "source_version": _version(material),
             "evidence_version": _version(sorted(bodies))}
@@ -190,6 +197,16 @@ def previous(conn, event_id):
 
 
 def meaningful_change(old, new):
+    if "membership" in old and "membership" in new:
+        prior_members = {m["article_id"]: m for m in old["membership"]}
+        current_members = {m["article_id"]: m for m in new["membership"]}
+        if prior_members.keys() - current_members.keys():
+            return True
+        for aid in prior_members.keys() & current_members.keys():
+            before, after = prior_members[aid], current_members[aid]
+            if any(before[k] != after.get(k) for k in
+                   ("title", "url", "text_hash", "suppressed", "published_at") if k in before):
+                return True
     prior = {s["article_id"]:s for s in old["sources"]}
     if any(s["article_id"] in prior and any(s.get(k)!=prior[s["article_id"]].get(k)
            for k in ("title","url","published_at")) for s in new["sources"]):
@@ -243,28 +260,55 @@ def published_baseline(conn, event_id, current):
         # Legacy compositions hash a workflow envelope, not the bare bundle.
         from .event_render import resolve
         resolve(bundle,event_id=event_id,expected_revision=row[0])
-        if bundle.get("workflow") == contract.PUBLIC_WORKFLOW:
-            from .event_source_report_publication import validate_bundle
+        if bundle.get("workflow") in {contract.PUBLIC_WORKFLOW,"event-source-report-public-v1"}:
+            from .event_source_report_publication_v2 import validate_bundle
+            if bundle["workflow"]=="event-source-report-public-v1":
+                from .event_source_report_publication import validate_bundle
             validate_bundle(bundle,event_id=event_id,expected_revision=row[0])
             raw = _load(conn,bundle["run_id"])
             if raw["event_id"] != event_id or raw["source_version"] != bundle["qualification"]["source_version"]:
                 raise ValueError("event_source_report_baseline_integrity")
             return raw["snapshot"], raw["generator_version"]
         from .article_evidence import source_for
-        from .storage import get_article_by_id
-        ids = []
-        for source in bundle.get("sources", []):
-            aid = source["article_id"]
-            evidence = conn.execute("SELECT article_id,source_version FROM article_evidence_revisions WHERE revision_id=%s",
-                                    (source.get("evidence_revision_id"),)).fetchone()
-            article = get_article_by_id(conn,aid)
-            if not article or not evidence or evidence != (aid,source_for(article)["source_version"]):
-                return None, None
-            ids.append(aid)
-        retained = [s for s in current["sources"] if s["article_id"] in ids]
-        if not ids or len(retained) != len(ids):
+        bindings = bundle.get("sources", [])
+        if type(bindings) is not list or any(type(source) is not dict for source in bindings):
             return None, None
-        return {"sources":retained,"evidence_version":_version(sorted(s["content_hash"] for s in retained))}, None
+        ids = [source.get("article_id") for source in bindings]
+        if (not ids or any(type(aid) is not int or aid <= 0 for aid in ids)
+                or len(ids) != len(set(ids))):
+            return None, None
+        # A canonical packed body is not a source membership. In particular, an
+        # original member may now be an alias of a newly linked lower-ID source.
+        available = {m["article_id"] for m in current["membership"]}
+        if not set(ids) <= available or set(ids) & set(current["excluded_article_ids"]):
+            return None, None
+        articles = conn.execute("""SELECT id,title,original_url,content_text,published_at,ingested_at,meta_json
+          FROM articles WHERE id=ANY(%s) ORDER BY id""", (ids,)).fetchall()
+        by_id = {a[0]: a for a in articles}
+        retained_evidence = []
+        for binding in bindings:
+            aid = binding["article_id"]
+            evidence = conn.execute("SELECT article_id,source_version FROM article_evidence_revisions WHERE revision_id=%s",
+                                    (binding.get("evidence_revision_id"),)).fetchone()
+            article = by_id.get(aid)
+            if (not article or not evidence
+                    or any(binding[k] != article[i] for k, i in (("title", 1), ("url", 2)) if k in binding)):
+                return None, None
+            try:
+                version = source_for({"id": aid, "title": article[1], "content_text": article[3]})["source_version"]
+            except ValueError:
+                return None, None
+            if evidence != (aid, version):
+                return None, None
+            retained_evidence.append({**binding, "source_version": version})
+        try:
+            baseline = _source_material(event_id, current["title"], articles, ids)
+        except ValueError:
+            return None, None
+        if baseline["excluded_article_ids"]:
+            return None, None
+        # Keep immutable identities for all original members, even body aliases.
+        return {**baseline, "legacy_evidence": sorted(retained_evidence, key=lambda b: b["article_id"])}, None
     latest = conn.execute("""SELECT snapshot_json,generator_version FROM event_source_report_runs
         WHERE event_id=%s AND status='accepted' ORDER BY created_at DESC LIMIT 1""", (event_id,)).fetchone()
     return (json.loads(latest[0]),latest[1]) if latest else (None,None)
@@ -303,15 +347,14 @@ def _reserve_cohort(conn, cohort, reservation):
 
 def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
            debounce_seconds=300, allow_correction=False, analyst_question=None):
-    from .attack_catalog_runtime import selected
-    if selected(event_id):
-        from .event_source_reports_v2 import submit as successor_submit
-        return successor_submit(conn,event_id,trigger=trigger,budget_tokens=budget_tokens,debounce_seconds=debounce_seconds,allow_correction=allow_correction,analyst_question=analyst_question)
     if not enabled():
         raise PermissionError("event_source_report_disabled")
     check_scope(event_id)
+    if os.environ.get("SV_EVENT_REPORT_V2_GENERATION_ENABLED","0")!="1":
+        raise PermissionError("event_report_v2_generation_disabled")
+    if allow_correction:raise ValueError("event_report_v2_correction_disabled")
     from .event_source_report_pilot import policy,admit
-    pilot=policy()
+    pilot=None
     if pilot:
         if allow_correction or analyst_question is not None:
             raise ValueError('event_source_report_pilot_repair_disabled')
@@ -333,6 +376,7 @@ def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
     conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("source-report:"+event_id,))
     snap = snapshot(conn, event_id)
     snap['review_contract']=contract.REVIEW_CONTRACT
+    snap['report_contract']=contract.WORKFLOW
     predecessor, prior = previous(conn, event_id)
     old, prior_generation = published_baseline(conn,event_id,snap)
     if pilot:
@@ -359,7 +403,9 @@ def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
     snap = contract.update_context(snap,trigger,old)
     if analyst_question:
         snap["analyst_question"] = analyst_question.strip()
-    cohort = cohort_configuration()
+    from .attack_catalog_runtime import reference
+    snap["attack_reference"]=reference(snap["sources"])
+    cohort = None
     if cohort:
         _reserve_cohort(conn,cohort,0)
         snap["cohort"] = cohort
@@ -407,11 +453,11 @@ def _fresh(conn, record):
     if pilot:
         if pilot!=policy():raise ValueError('event_source_report_pilot_policy_changed')
         active(pilot)
-    if snapshot(conn, record["event_id"])["source_version"] != record["source_version"]:
+    if snapshot(conn, record["event_id"])["source_version"] != record["snapshot"].get("publication_freshness_source_version",record["source_version"]):
         raise ValueError("event_source_report_sources_changed")
     if previous(conn, record["event_id"])[0] != record["predecessor"]:
         raise ValueError("event_source_report_predecessor_changed")
-    if configuration(conn)[2] != record["generator_version"]:
+    if configuration(conn)[2] != record["snapshot"].get("runtime_generation_at_import",record["generator_version"]):
         raise ValueError("event_source_report_configuration_changed")
 
 
@@ -481,12 +527,15 @@ def call(conn, run_id, phase, system, data, response_schema, *, complete=None, c
             raise ValueError('event_source_report_additional_allowance_exhausted')
     else:
         _reserve_cohort(conn,record['snapshot'].get('cohort'),reservation)
+    if record["snapshot"].get("report_contract")==contract.WORKFLOW:
+        reserved_calls=conn.execute("SELECT COALESCE(SUM(reservation),0) FROM event_source_report_calls WHERE run_id=%s",(run_id,)).fetchone()[0]
+        if reserved_calls+reservation>record["budget_tokens"]:raise ValueError("event_report_v2_reservation_exhausted")
     ordinal = conn.execute("SELECT count(*) FROM event_source_report_calls WHERE run_id=%s", (run_id,)).fetchone()[0]+1
     if record['snapshot'].get('pilot'):
         reserved_calls=conn.execute('SELECT COALESCE(SUM(reservation),0) FROM event_source_report_calls WHERE run_id=%s',(run_id,)).fetchone()[0]
         if reserved_calls+reservation>record['budget_tokens']:
             raise ValueError('event_source_report_pilot_reservation_exhausted')
-    if ordinal > (2 if record['snapshot'].get('pilot') else 4) or record["charged_tokens"]+record["reserved_tokens"]+reservation > record["budget_tokens"]:
+    if ordinal > 2 or record["charged_tokens"]+record["reserved_tokens"]+reservation > record["budget_tokens"]:
         raise ValueError("event_source_report_budget_exhausted")
     conn.execute("UPDATE event_source_report_runs SET reserved_tokens=reserved_tokens+%s WHERE run_id=%s",
                  (reservation,run_id))
@@ -735,9 +784,6 @@ def run(conn, job, *, complete=None):
     run_id = job.payload["run_id"]
     conn.execute("SELECT run_id FROM event_source_report_runs WHERE run_id=%s FOR UPDATE",(run_id,))
     record = _load(conn,run_id)
-    if record["snapshot"].get("report_contract")=="event-source-report-v2":
-        from .event_source_reports_v2 import run as successor_run
-        return successor_run(conn,job,complete=complete)
     check_scope(record["event_id"])
     if record["status"] != "queued":
         if record["status"] == "running":
@@ -750,11 +796,19 @@ def run(conn, job, *, complete=None):
         conn.execute("UPDATE event_source_report_runs SET status='running' WHERE run_id=%s",(run_id,));conn.commit()
         packet = contract.context(record["snapshot"])
         ids = [s["id"] for s in packet["sources"]]
-        report = call(conn,run_id,"writer",contract.WRITER,packet,contract.generation_schema(ids,packet),complete=complete)
-        spans = contract.validate(report,packet)
+        from .attack_catalog_runtime import catalog
+        from .attack_catalog import generation_schema,project_optional_mappings
+        cat=catalog(packet['attack_reference']['catalog']['domain'])
+        raw = call(conn,run_id,"writer",contract.WRITER+contract.ATTACK_WRITER,packet,
+                   generation_schema(ids,[t['id'] for t in packet['attack_reference']['candidates']],packet),complete=complete)
+        report,review_packet,spans,resolved,removed=project_optional_mappings(raw,packet,cat,contract_override=contract)
+        projection={'workflow':'optional-mapping-projection-v1','input_version':_version(raw),'snapshot_version':_version(record['snapshot']),
+                    'projection':{'report':report,'evidence':review_packet,'spans':spans,'removed':removed}}
+        conn.execute("INSERT INTO event_source_report_derivatives VALUES(%s,%s,%s)",
+                     (run_id,contract.encode(projection),utc_now_iso()))
         conn.execute("UPDATE event_source_report_runs SET report_json=%s,spans_json=%s WHERE run_id=%s",
                      (contract.encode(report),contract.encode(spans),run_id));conn.commit()
-        review = call(conn,run_id,"review",contract.REVIEWER,{"evidence":packet,"report":report},
+        review = call(conn,run_id,"review",contract.REVIEWER+contract.ATTACK_REVIEWER,{"evidence":review_packet,"report":report,"citation_provenance":spans},
                       contract.review_schema(report,ids),complete=complete)
         contract.validate_review(review,report,packet)
         conn.execute("UPDATE event_source_report_runs SET review_json=%s WHERE run_id=%s",
@@ -789,7 +843,7 @@ def _legacy_tick(conn):
             continue
         # Explicit approval is still subjected to immutable artifact, freshness,
         # separate admission/promotion authority and predecessor gates.
-        from .event_source_report_publication import submit as publish
+        from .event_source_report_publication_v2 import submit as publish
         if previous(conn,record["event_id"])[0] != record["predecessor"]:
             continue
         receipt = publish(conn,run_id)
@@ -823,7 +877,7 @@ def tick(conn):
         if not p:return _legacy_tick(conn)
         active(p)
         results=[]
-        from .event_source_report_publication import submit as publish
+        from .event_source_report_publication_v2 import submit as publish
         rows=conn.execute("""SELECT run_id,event_id FROM event_source_report_runs
           WHERE status='accepted' AND snapshot_json::jsonb->'cohort'->>'id'=%s
           ORDER BY created_at,run_id""",(p['id'],)).fetchall()

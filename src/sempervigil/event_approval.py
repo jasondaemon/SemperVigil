@@ -182,6 +182,10 @@ def run(payload: dict, *, factory=None) -> dict:
                 or approval["qualification"]["event_id"] != row[1]
                 or _version(approval["qualification"]) != row[2]):
             raise ValueError("event_approval_integrity_failure")
+    if approval.get("workflow") == "event-source-report-approval-v2":
+        from .event_source_report_publication_v2 import run_approval
+        return {**run_approval(approval,qualification_id=row[2],factory=factory),
+                "approval_id":payload["approval_id"]}
     if approval.get("workflow") == "event-source-report-approval-v1":
         from .event_source_report_publication import run_approval
         return {**run_approval(approval,qualification_id=row[2],factory=factory),
