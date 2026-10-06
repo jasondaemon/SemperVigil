@@ -59,8 +59,8 @@ not a required conclusion; answer it only with defensible cited premises and lim
 WRITER += """
 Keep company beliefs, preliminary assessments and qualified expectations attributed;
 never upgrade 'believes' to 'confirms'. Each item has one epistemic type: separate
-findings from analyst assessments, and put assessments under analyst_assessment or
-the appropriate attack-mechanics section, not attribution unless assessing actors.
+findings from analyst assessments. Place assessments where their subject belongs,
+including mitigations for analyst guidance; use attribution only for actor analysis.
 Use unknown/undated labels and null date_sort when an action date is unreported;
 source publication, materiality and signature dates are not incident/action dates.
 Cover material financial expectations with their
