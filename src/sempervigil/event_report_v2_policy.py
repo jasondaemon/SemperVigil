@@ -135,9 +135,11 @@ def check_run(conn, record, run_id, *, publication=False):
             raise ValueError('event_report_v2_not_independently_ready')
         from . import event_report_contract_v2 as contract
         contract.validate_review(record['review'], record['report'], contract.context(record['snapshot']))
-        from .event_source_reports_v2 import MODEL, phase_settings
-        models = [os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL'), MODEL]
-        prompts = [contract.WRITER + contract.ATTACK_WRITER, contract.REVIEWER + contract.ATTACK_REVIEWER]
+        from .event_source_reports_v2 import reviewer_model, phase_settings
+        from .event_report_final_editor import PROMPT
+        models = [os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL'), reviewer_model()]
+        prompts = [contract.WRITER if record['snapshot'].get('final_editor') else contract.WRITER + contract.ATTACK_WRITER,
+                   PROMPT if record['snapshot'].get('final_editor') else contract.REVIEWER + contract.ATTACK_REVIEWER]
         for request, model, prompt, phase in zip(requests, models, prompts, ['writer', 'review']):
             options = phase_settings()[phase]
             if (request['model'] != model or request['messages'][0] != {'role': 'system', 'content': prompt}

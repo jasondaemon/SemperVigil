@@ -348,11 +348,18 @@ def validate_review(value, report, packet):
     return value
 
 
-def context(packet, *, max_tokens=24000):
+def context(packet, *, max_tokens=None):
     """Complete sources normally; explicit delta mode for large Event histories."""
+    if max_tokens is None:
+        profile = packet.get('final_editor')
+        max_tokens = 24000 if not profile else profile['context_overrides'].get(packet['event_id'], 24000)
+    if type(max_tokens) is not int or not 1 <= max_tokens <= 200000:
+        raise ValueError('event_report_context_limit_invalid')
     result = {**packet, "coverage": {"mode": "complete", "omitted_source_ids": []}}
     if tokens(encode(result)) <= max_tokens:
         return result
+    if packet.get('final_editor'):
+        raise ValueError('event_report_context_over_budget')
     # Include every changed article, plus original articles cited by the prior report.
     # Never cut an article or silently drop evidence; if this set is too large, hold.
     prior_hashes = set(packet.get("previous_evidence_hashes", []))

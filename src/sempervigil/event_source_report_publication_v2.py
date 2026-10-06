@@ -42,6 +42,19 @@ def current_material(conn, run_id, *, lock=False, published=False, derivative=No
     raw=body(writer_response);input_packet=json.loads(writer_request['messages'][1]['content'])
     if input_packet['sources']!=record['snapshot']['sources']:
         raise ValueError('event_source_report_input_integrity')
+    if record['snapshot'].get('final_editor'):
+        from . import event_report_final_editor as editor
+        if derivative is not None or editorial is not None:
+            raise ValueError('event_final_editor_manual_derivative_forbidden')
+        final = editor.derive(writer_request, writer_response, review_request, review_response, record['snapshot'])
+        saved = conn.execute('SELECT projection_json FROM event_source_report_derivatives WHERE run_id=%s', (run_id,)).fetchone()
+        if not saved or json.loads(saved[0]) != {'workflow': editor.WORKFLOW, 'final': final}:
+            raise ValueError('event_final_editor_derivative_integrity')
+        if (not final['review']['ready'] or record['report'] != final['report']
+            or record['review'] != final['review'] or record['spans'] != final['spans']):
+            raise ValueError('event_final_editor_response_integrity')
+        return {**record, 'resolved_mappings': final['resolved_mappings'],
+                'mapping_derivation': final['lineage'], 'derivation': final['lineage']}
     from .attack_catalog_runtime import catalog_for
     from .attack_catalog import project_optional_mappings
     cat=catalog_for(input_packet['attack_reference']['catalog'])
@@ -231,7 +244,7 @@ def bundle_for(record,run_id,q,predecessor):
                        for s in contract.context(record["snapshot"])["sources"]],
             "coverage":contract.context(record["snapshot"])["coverage"],
             "qualification":q,"predecessor":predecessor,"revision_provenance":provenance,
-            "attack":{"catalog":packet["attack_reference"]["catalog"],"mappings":record["resolved_mappings"],"derivation":record["mapping_derivation"]}}
+            "attack":{"catalog":None if packet.get("final_editor") else packet["attack_reference"]["catalog"],"mappings":record["resolved_mappings"],"derivation":record["mapping_derivation"]}}
 
 
 def validate_bundle(bundle, *, event_id, expected_revision=None):
@@ -242,23 +255,30 @@ def validate_bundle(bundle, *, event_id, expected_revision=None):
     if q["event_id"]!=event_id or q["run_id"]!=bundle["run_id"] or q["report_version"]!=_version(bundle["report"]):
         raise ValueError("event_source_report_qualification_invalid")
     import jsonschema
-    from .attack_catalog_runtime import catalog_for
-    from .attack_catalog import generation_schema
-    cat=catalog_for(bundle['attack']['catalog'])
-    if bundle['attack']['catalog']!=cat.identity:raise ValueError('event_source_report_catalog_identity_mismatch')
-    tids=[m['technique_id'] for i in bundle['report']['items'] for m in i['attack_mappings']]
-    jsonschema.validate(bundle["report"],generation_schema([s["id"] for s in bundle["sources"]],tids,{}))
-    resolved={}
-    for item in bundle['report']['items']:
-        resolved[item['id']]=[]
-        if item['attack_mappings'] and item['section']!='attack_path':
-            raise ValueError('attack_mapping_outside_attack_path')
-        for mapping in item['attack_mappings']:
-            # Public bundles omit full bodies. Original ID attribution is checked
-            # against the immutable full input in current_material, not here.
-            structural={**mapping,'origin':'analyst_applied'}
-            value=cat.validate_mapping(structural,item=item,sources={s['id']:{'text':''} for s in bundle['sources']},allowed_ids=tids)
-            value['origin']=mapping['origin'];resolved[item['id']].append(value)
+    if bundle['attack']['catalog'] is None:
+        from .event_report_final_editor import WORKFLOW, narrative
+        if q.get('derivation', {}).get('workflow') != WORKFLOW:
+            raise ValueError('event_final_editor_qualification_required')
+        if any(item.get('attack_mappings') != [] for item in bundle['report']['items']):
+            raise ValueError('event_final_editor_taxonomy_disabled')
+        jsonschema.validate(narrative(bundle['report']), contract.schema([s['id'] for s in bundle['sources']]))
+        resolved = {item['id']: [] for item in bundle['report']['items']}
+    else:
+        from .attack_catalog_runtime import catalog_for
+        from .attack_catalog import generation_schema
+        cat=catalog_for(bundle['attack']['catalog'])
+        if bundle['attack']['catalog']!=cat.identity:raise ValueError('event_source_report_catalog_identity_mismatch')
+        tids=[m['technique_id'] for i in bundle['report']['items'] for m in i['attack_mappings']]
+        jsonschema.validate(bundle["report"],generation_schema([s["id"] for s in bundle["sources"]],tids,{}))
+        resolved={}
+        for item in bundle['report']['items']:
+            resolved[item['id']]=[]
+            if item['attack_mappings'] and item['section']!='attack_path':
+                raise ValueError('attack_mapping_outside_attack_path')
+            for mapping in item['attack_mappings']:
+                structural={**mapping,'origin':'analyst_applied'}
+                value=cat.validate_mapping(structural,item=item,sources={s['id']:{'text':''} for s in bundle['sources']},allowed_ids=tids)
+                value['origin']=mapping['origin'];resolved[item['id']].append(value)
     if resolved!=bundle['attack']['mappings']:raise ValueError('event_source_report_mapping_metadata_invalid')
     if set(bundle["spans"])!={x["id"] for x in bundle["report"]["items"]}:
         raise ValueError("event_source_report_spans_invalid")

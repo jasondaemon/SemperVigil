@@ -102,7 +102,17 @@ def phase_settings():
                 or type(values['max_completion_tokens']) is not int
                 or not 1<=values['max_completion_tokens']<=128000):
             raise ValueError('event_source_report_phase_config_invalid')
+    from .event_report_final_editor import configuration as editor_configuration
+    editor = editor_configuration()
+    if editor:
+        defaults['review'] = {k: editor[k] for k in ('reasoning_effort', 'max_completion_tokens')}
     return defaults
+
+
+def reviewer_model():
+    from .event_report_final_editor import configuration as editor_configuration
+    editor = editor_configuration()
+    return editor['model'] if editor else MODEL
 
 
 def configuration(conn):
@@ -118,16 +128,20 @@ def configuration(conn):
     provider, model = get_provider(conn, row[0]), get_model(conn, row[1])
     from .attack_catalog_runtime import settings
     from .attack_catalog import generation_schema
+    from .event_report_final_editor import configuration as editor_configuration, PROMPT as editor_prompt
+    editor = editor_configuration()
     code_identity = runtime_code_identity()
-    version = _version({"attack":settings(),"code_identity":code_identity,"workflow": contract.WORKFLOW, "model": model["id"],
+    version = _version({"attack": {'enabled': False} if editor else settings(),"code_identity":code_identity,"workflow": contract.WORKFLOW, "model": model["id"],
         "provider": provider["id"], "base_url": provider["base_url"],
-        "writer": contract.WRITER+contract.ATTACK_WRITER, "reviewer": contract.REVIEWER+contract.ATTACK_REVIEWER,
-        "schema": generation_schema(["S1"],["T1110.003"],{},contract_override=contract), "phase_settings":phase_settings(),
+        "writer": contract.WRITER if editor else contract.WRITER+contract.ATTACK_WRITER,
+        "reviewer": editor_prompt if editor else contract.REVIEWER+contract.ATTACK_REVIEWER,
+        "schema": contract.generation_schema(['S1'], {}) if editor else generation_schema(["S1"],["T1110.003"],{},contract_override=contract), "phase_settings":phase_settings(),
         "tokenizer": "o200k_base", "context_tokens": 24000,
         "update_context": "published-evidence-delta-v4-membership-baseline", "cohort_policy":"serialized-reservation-v1",
         "projection_policy":contract.PROJECTION_WORKFLOW,
-        "fixed_reviewer_model":MODEL,"review_schema":contract.review_schema({'items':[{'id':'P01'}]},['S1']),
-        **({'pilot_policy':pilot} if pilot else {})})
+        "fixed_reviewer_model":reviewer_model(),"review_schema":contract.review_schema({'items':[{'id':'P01'}]},['S1']),
+        **({'pilot_policy':pilot} if pilot else {}),
+        **({'final_editor': editor} if editor else {})})
     return model, provider, version
 
 
@@ -138,16 +152,19 @@ def runtime_code_identity():
             for name in ('event_source_reports_v2.py', 'event_report_contract_v2.py',
                          'attack_catalog.py', 'attack_catalog_runtime.py',
                          'event_source_report_publication_v2.py', 'event_report_continuation_import.py',
+                         'event_report_final_editor.py',
                          'event_report_editorial.py', 'event_report_v2_policy.py', 'event_report_v2_integrity.py')}
 
 
 def runtime_identity():
     """Code/catalog/options proof readable by the separate publication role."""
     from .attack_catalog_runtime import settings
-    return _version({'code': runtime_code_identity(), 'attack': settings(),
+    from .event_report_final_editor import configuration as editor_configuration
+    return _version({'code': runtime_code_identity(), 'attack': {'enabled': False} if editor_configuration() else settings(),
                      'phase_settings': phase_settings(),
                      'writer_model': os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL') or MODEL,
-                     'reviewer_model': MODEL})
+                     'reviewer_model': reviewer_model(),
+                     **({'final_editor': editor_configuration()} if editor_configuration() else {})})
 
 
 def snapshot(conn, event_id, *, lock=False):
@@ -442,18 +459,32 @@ def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
             or not 1 <= len(analyst_question.strip()) <= 800):
         raise ValueError("event_source_report_analyst_question_invalid")
     model, _, generation = configuration(conn)
+    from .event_report_final_editor import configuration as editor_configuration
+    editor = editor_configuration()
+    if editor:
+        if pilot or allow_correction:
+            raise ValueError('event_final_editor_legacy_repair_incompatible')
+        if model['model_name'] == editor['model']:
+            raise ValueError('event_report_v2_independent_models_required')
+        row = conn.execute('''SELECT m.id FROM llm_models m JOIN llm_providers p ON p.id=m.provider_id
+            WHERE lower(p.name)='openai' AND lower(p.type)='openai_compatible'
+              AND p.is_enabled=1 AND m.is_enabled=1 AND m.model_name=%s ORDER BY m.id LIMIT 1''', (editor['model'],)).fetchone()
+        if not row:
+            raise ValueError('event_source_report_reviewer_model_missing')
     if autonomous:
-        if not os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL') or model['model_name'] == MODEL:
+        if not os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL') or model['model_name'] == reviewer_model():
             raise ValueError('event_report_v2_independent_models_required')
         reviewer = conn.execute('''SELECT m.id FROM llm_models m JOIN llm_providers p ON p.id=m.provider_id
             WHERE lower(p.name)='openai' AND lower(p.type)='openai_compatible'
-              AND p.is_enabled=1 AND m.is_enabled=1 AND m.model_name=%s ORDER BY m.id LIMIT 1''', (MODEL,)).fetchone()
+              AND p.is_enabled=1 AND m.is_enabled=1 AND m.model_name=%s ORDER BY m.id LIMIT 1''', (reviewer_model(),)).fetchone()
         if not reviewer:
             raise ValueError('event_source_report_reviewer_model_missing')
     conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("source-report:"+event_id,))
     snap = snapshot(conn, event_id)
     snap['review_contract']=contract.REVIEW_CONTRACT
     snap['report_contract']=contract.WORKFLOW
+    if editor:
+        snap['final_editor'] = editor
     predecessor, prior = previous(conn, event_id)
     old, prior_generation = published_baseline(conn,event_id,snap)
     if pilot:
@@ -478,11 +509,15 @@ def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
     snap.update(previous_report=prior, previous_evidence_hashes=[] if not old else
                 [s["content_hash"] for s in old["sources"]],
                 previous_cited_article_ids=[])
+    if editor and prior:
+        from .event_report_final_editor import narrative
+        snap['previous_report'] = narrative(prior)
     snap = contract.update_context(snap,trigger,old)
     if analyst_question:
         snap["analyst_question"] = analyst_question.strip()
     from .attack_catalog_runtime import reference
-    snap["attack_reference"]=reference(snap["sources"])
+    if not editor:
+        snap["attack_reference"]=reference(snap["sources"])
     if autonomous:
         autonomous_admit(conn, autonomous, event_id, generation, predecessor, old)
         snap["autonomous_policy"] = autonomous
@@ -534,7 +569,7 @@ def _fresh(conn, record):
         from .event_report_v2_policy import check_run
         check_run(conn, record, record["run_id"])
         from .attack_catalog_runtime import settings
-        if settings()['catalog'] != record['snapshot']['attack_reference']['catalog']:
+        if not record['snapshot'].get('final_editor') and settings()['catalog'] != record['snapshot']['attack_reference']['catalog']:
             raise ValueError('event_report_v2_catalog_changed')
     from .event_source_report_pilot import policy,active
     pilot=record['snapshot'].get('pilot')
@@ -601,11 +636,11 @@ def call(conn, run_id, phase, system, data, response_schema, *, complete=None, c
             or prior_phases not in ([], ['writer'])):
             raise ValueError('event_report_v2_two_call_limit')
     model, _, _ = configuration(conn)
-    if phase in {'review','verification'} and os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL'):
+    if phase in {'review','verification'} and (os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL') or record['snapshot'].get('final_editor')):
         from .services.ai_service import get_model
         row=conn.execute("""SELECT m.id FROM llm_models m JOIN llm_providers p ON p.id=m.provider_id
           WHERE lower(p.name)='openai' AND lower(p.type)='openai_compatible'
-          AND p.is_enabled=1 AND m.is_enabled=1 AND m.model_name=%s ORDER BY m.id LIMIT 1""",(MODEL,)).fetchone()
+          AND p.is_enabled=1 AND m.is_enabled=1 AND m.model_name=%s ORDER BY m.id LIMIT 1""",(reviewer_model(),)).fetchone()
         if not row:raise ValueError('event_source_report_reviewer_model_missing')
         model=get_model(conn,row[0])
     settings=phase_settings()[phase]
@@ -619,6 +654,9 @@ def call(conn, run_id, phase, system, data, response_schema, *, complete=None, c
         "response_format": {"type": "json_schema", "json_schema":
             {"name": "event_source_report", "strict": True, "schema": response_schema}}}
     reservation = contract.tokens(contract.encode(payload)) + 512 + payload["max_completion_tokens"]
+    if record['snapshot'].get('final_editor'):
+        if (type(model.get('max_context')) is not int or reservation > model['max_context']):
+            raise ValueError('event_final_editor_model_context_exceeded')
     conn.execute("SELECT run_id FROM event_source_report_runs WHERE run_id=%s FOR UPDATE", (run_id,))
     if allowance and phase in {'correction','verification'}:
         spent = conn.execute("SELECT COALESCE(SUM(reservation),0) FROM event_source_report_calls WHERE run_id=%s AND phase IN ('correction','verification')",(run_id,)).fetchone()[0]
@@ -928,20 +966,39 @@ def run(conn, job, *, complete=None):
         conn.execute("UPDATE event_source_report_runs SET status='running' WHERE run_id=%s",(run_id,));conn.commit()
         packet = contract.context(record["snapshot"])
         ids = [s["id"] for s in packet["sources"]]
-        from .attack_catalog_runtime import catalog
-        from .attack_catalog import generation_schema,project_optional_mappings
-        cat=catalog(packet['attack_reference']['catalog']['domain'])
-        raw = call(conn,run_id,"writer",contract.WRITER+contract.ATTACK_WRITER,packet,
-                   generation_schema(ids,[t['id'] for t in packet['attack_reference']['candidates']],packet,contract_override=contract),complete=complete)
-        report,review_packet,spans,resolved,removed=project_optional_mappings(raw,packet,cat,contract_override=contract)
-        projection={'workflow':'optional-mapping-projection-v1','input_version':_version(raw),'snapshot_version':_version(record['snapshot']),
-                    'projection':{'report':report,'evidence':review_packet,'spans':spans,'removed':removed}}
-        conn.execute("INSERT INTO event_source_report_derivatives VALUES(%s,%s,%s)",
-                     (run_id,contract.encode(projection),utc_now_iso()))
+        if record['snapshot'].get('final_editor'):
+            from . import event_report_final_editor as editor
+            raw = call(conn, run_id, 'writer', contract.WRITER, packet,
+                       contract.generation_schema(ids, packet), complete=complete)
+            spans = contract.validate(raw, packet)
+            report = editor.empty_mappings(raw)
+        else:
+            from .attack_catalog_runtime import catalog
+            from .attack_catalog import generation_schema,project_optional_mappings
+            cat=catalog(packet['attack_reference']['catalog']['domain'])
+            raw = call(conn,run_id,"writer",contract.WRITER+contract.ATTACK_WRITER,packet,
+                       generation_schema(ids,[t['id'] for t in packet['attack_reference']['candidates']],packet,contract_override=contract),complete=complete)
+            report,review_packet,spans,resolved,removed=project_optional_mappings(raw,packet,cat,contract_override=contract)
+            projection={'workflow':'optional-mapping-projection-v1','input_version':_version(raw),'snapshot_version':_version(record['snapshot']),
+                        'projection':{'report':report,'evidence':review_packet,'spans':spans,'removed':removed}}
+        if not record['snapshot'].get('final_editor'):
+            conn.execute("INSERT INTO event_source_report_derivatives VALUES(%s,%s,%s)",
+                         (run_id,contract.encode(projection),utc_now_iso()))
         conn.execute("UPDATE event_source_report_runs SET report_json=%s,spans_json=%s WHERE run_id=%s",
                      (contract.encode(report),contract.encode(spans),run_id));conn.commit()
-        review = call(conn,run_id,"review",contract.REVIEWER+contract.ATTACK_REVIEWER,{"evidence":review_packet,"report":report,"citation_provenance":spans},
-                      contract.review_schema(report,ids),complete=complete)
+        if record['snapshot'].get('final_editor'):
+            from . import event_report_final_editor as editor
+            call(conn, run_id, 'review', editor.PROMPT, editor.editor_input(packet, report, spans),
+                 editor.schema(packet), complete=complete)
+            rows = conn.execute('SELECT request_json,response_json FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal', (run_id,)).fetchall()
+            final = editor.derive(*(json.loads(v) for row in rows for v in row), record['snapshot'])
+            report, review, spans = final['report'], final['review'], final['spans']
+            projection = {'workflow': editor.WORKFLOW, 'final': final}
+            conn.execute('INSERT INTO event_source_report_derivatives VALUES(%s,%s,%s)', (run_id, contract.encode(projection), utc_now_iso()))
+            conn.execute('UPDATE event_source_report_runs SET report_json=%s,spans_json=%s WHERE run_id=%s', (contract.encode(report), contract.encode(spans), run_id))
+        else:
+            review = call(conn,run_id,"review",contract.REVIEWER+contract.ATTACK_REVIEWER,{"evidence":review_packet,"report":report,"citation_provenance":spans},
+                          contract.review_schema(report,ids),complete=complete)
         contract.validate_review(review,report,packet)
         conn.execute("UPDATE event_source_report_runs SET review_json=%s WHERE run_id=%s",
                      (contract.encode(review),run_id));conn.commit()
