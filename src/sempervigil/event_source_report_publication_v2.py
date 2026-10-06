@@ -46,9 +46,29 @@ def current_material(conn, run_id, *, lock=False, published=False, derivative=No
         from . import event_report_final_editor as editor
         if derivative is not None or editorial is not None:
             raise ValueError('event_final_editor_manual_derivative_forbidden')
-        final = editor.derive(writer_request, writer_response, review_request, review_response, record['snapshot'])
         saved = conn.execute('SELECT projection_json FROM event_source_report_derivatives WHERE run_id=%s', (run_id,)).fetchone()
-        if not saved or json.loads(saved[0]) != {'workflow': editor.WORKFLOW, 'final': final}:
+        artifact = json.loads(saved[0]) if saved else None
+        if record['snapshot'].get('retained_final_editor'):
+            from .event_report_final_editor_import import derive, validate
+            audit = artifact.get('retained_final_editor') if artifact else None
+            if (not audit or audit['writer_journal']['request'] != writer_request
+                or audit['writer_journal']['response'] != writer_response
+                or audit['editor_journal']['request'] != review_request
+                or audit['editor_journal']['response'] != review_response
+                or validate(audit)['generator_version'] != record['generator_version']
+                or record['predecessor'] != audit['predecessor']
+                or record['source_version'] != validate(audit)['packet']['source_version']):
+                raise ValueError('event_final_editor_retained_receipt_integrity')
+            if not published:
+                from .event_source_reports_v2 import configuration
+                if configuration(conn)[2] != record['snapshot']['runtime_generation_at_import']:
+                    raise ValueError('event_source_report_configuration_changed')
+            final = derive(audit, record['snapshot'])
+            expected = {'workflow': editor.WORKFLOW, 'final': final, 'retained_final_editor': audit}
+        else:
+            final = editor.derive(writer_request, writer_response, review_request, review_response, record['snapshot'])
+            expected = {'workflow': editor.WORKFLOW, 'final': final}
+        if artifact != expected:
             raise ValueError('event_final_editor_derivative_integrity')
         if (not final['review']['ready'] or record['report'] != final['report']
             or record['review'] != final['review'] or record['spans'] != final['spans']):

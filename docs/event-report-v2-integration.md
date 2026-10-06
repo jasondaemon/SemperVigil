@@ -67,3 +67,16 @@ General `event-report-editorial-removal-v1` proposals support auditable removal 
 The separately identified reviewer `/root/review_zammad_source_evidence` held the 14-item proposal: P115 ordinal-CVE references were ambiguous/reversed relative to P110, and P113 asserted unsupported rapid containment and a categorical control-limit generalization. The parent supplied that result; full held receipt is awaited. A new proposal removes only P113/P115. Remaining 12 items/39 citations/canonical spans are byte-identical to the held parent, and all four full source bodies are unchanged. New report hash `6c9d4a244c4a57eb0d3928fb097daa31ba7a6a543075aa3f60ff1603d1e465fc`; proposal hash `03830a4ee5a524de2087ad3ed58f1fc6bc3de1d9a70d337939edba20ca12b77b`; complete evidence hash unchanged `3247130120e37dbd7ad33cd1f9c2ff44c8fead15d19131fa9f9b1d44497993c8`. No independent approval of this new proposal is fabricated.
 
 A new private complete Library packet `libfile_9078fff0426081919a7a3523322aec9f` / `file_000000000a8c81f59f42695332b2b6b3` contains exact new/parent/original reports, sources, citation mapping, removal reasons and unapproved same-reviewer receipt template. No credentials/internal infrastructure. Offline suite1401passed/2skipped. Actual retained removal replay passed normal restricted-role import/promotion/export/activation/rendering in disposable PostgreSQL with an explicitly SIMULATED receipt, zero new model calls, zero mappings and hidden public confidence/rationale. Production remains unchanged and held for the same independent reviewer's final approval.
+
+### Retained final editor intake
+
+`event_report_final_editor_import.import_reviewed` is an operator-only intake for
+already completed, immutable whole-source final editing. It verifies both exact
+historical journals/manifests, full source text, final structured output and an
+independent content approval bound to the new narrative/evidence/raw response.
+It cannot call a model, transfer the older draft's approval, or publish directly.
+An unchanged-source report is recorded as a generator upgrade. Current qualified
+predecessor, sources and runtime identity must still match before separate
+approval, promotion, export and guarded activation. Historical usage is imported
+with its authentic response IDs; it is not new spending. Global generation and
+v2 autonomy remain disabled. Same-model source checking claims no model diversity.

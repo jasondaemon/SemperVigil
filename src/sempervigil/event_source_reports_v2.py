@@ -155,7 +155,8 @@ def runtime_code_identity():
                          'attack_catalog.py', 'attack_catalog_runtime.py',
                          'event_source_report_publication_v2.py', 'event_report_continuation_import.py',
                          'event_report_final_editor.py', 'event_report_transport.py', 'llm/router.py',
-                         'event_report_generation_identity.py', 'data/event_report_v2_prompt_history.json',
+                         'event_report_generation_identity.py', 'event_report_final_editor_import.py',
+                         'data/event_report_v2_prompt_history.json',
                          'event_report_editorial.py', 'event_report_v2_policy.py', 'event_report_v2_integrity.py')}
 
 
