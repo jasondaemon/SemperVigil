@@ -80,3 +80,10 @@ predecessor, sources and runtime identity must still match before separate
 approval, promotion, export and guarded activation. Historical usage is imported
 with its authentic response IDs; it is not new spending. Global generation and
 v2 autonomy remain disabled. Same-model source checking claims no model diversity.
+
+Retained publication checks provider/model configuration through the normal
+application connection in an explicitly read-only transaction when the separate
+admission/promotion role lacks those table privileges. Publication writes stay
+on the restricted connection; unavailable configuration access fails closed.
+Regression tests exercise both restricted roles, reject reader writes, preserve
+their existing model-table denial and hold publication when the reader is absent.

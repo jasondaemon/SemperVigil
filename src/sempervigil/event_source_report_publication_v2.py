@@ -14,6 +14,20 @@ EDITORIAL_LINEAGE = "independently-reviewed-editorial-split-v1"
 EDITORIAL_REMOVAL_LINEAGE = "independently-reviewed-editorial-derivative-v1"
 
 
+def retained_runtime_generation(conn):
+    """Read configuration without adding model-table privileges to publishers."""
+    from .event_source_reports_v2 import configuration
+    readable = conn.execute("""SELECT has_table_privilege(current_user,'llm_providers','SELECT')
+      AND has_table_privilege(current_user,'llm_models','SELECT')""").fetchone()[0]
+    if readable:
+        return configuration(conn)[2]
+    # The normal application connection supplies only a read-only freshness
+    # check; the caller's restricted connection still owns every mutation.
+    with connection_factory('SV_DB_URL')() as reader:
+        reader.execute('SET TRANSACTION READ ONLY')
+        return configuration(reader)[2]
+
+
 def current_material(conn, run_id, *, lock=False, published=False, derivative=None, editorial=None):
     if lock:
         conn.execute('SELECT run_id FROM event_source_report_runs WHERE run_id=%s FOR SHARE NOWAIT',(run_id,))
@@ -60,8 +74,7 @@ def current_material(conn, run_id, *, lock=False, published=False, derivative=No
                 or record['source_version'] != validate(audit)['packet']['source_version']):
                 raise ValueError('event_final_editor_retained_receipt_integrity')
             if not published:
-                from .event_source_reports_v2 import configuration
-                if configuration(conn)[2] != record['snapshot']['runtime_generation_at_import']:
+                if retained_runtime_generation(conn) != record['snapshot']['runtime_generation_at_import']:
                     raise ValueError('event_source_report_configuration_changed')
             final = derive(audit, record['snapshot'])
             expected = {'workflow': editor.WORKFLOW, 'final': final, 'retained_final_editor': audit}

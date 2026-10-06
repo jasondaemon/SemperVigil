@@ -14,6 +14,7 @@ from sempervigil.investigation import _version
 @pytest.fixture
 def retained(setup, monkeypatch):
     s=setup
+    monkeypatch.setattr(publication, 'connection_factory', lambda name: (lambda: s.factory()))
     s.conn.execute("DELETE FROM event_articles WHERE article_id=2; DELETE FROM articles WHERE id=2")
     s.conn.commit()
     monkeypatch.setenv('SV_EVENT_REPORT_V2_AUTONOMOUS','0')
@@ -96,4 +97,32 @@ def test_retained_publication_rechecks_fresh_state(retained,monkeypatch,change):
     elif change=='predecessor':s.conn.execute("DELETE FROM event_public_pointers WHERE event_id='evt_test'");s.conn.commit()
     else:monkeypatch.setattr(reports,'configuration',lambda _:({'id':'m'},{'id':'p'},'c'*64))
     with pytest.raises(Exception):s.publish(rid)
+    assert not s.calls
+
+
+def test_retained_restricted_roles_use_read_only_configuration_connection(retained,monkeypatch):
+    s=retained;rid=intake.import_reviewed(s.conn,s.audit)['run_id'];checks=[]
+    def configuration(conn):
+        conn.execute('SELECT id FROM llm_providers').fetchall()
+        state=conn.execute('SHOW transaction_read_only').fetchone()[0]
+        checks.append(state)
+        if state=='on':
+            with pytest.raises(Exception):
+                conn.execute("UPDATE llm_providers SET name='forbidden'")
+            conn.rollback()
+        return {'id':'m'},{'id':'p'},'b'*64
+    monkeypatch.setattr(reports,'configuration',configuration)
+    s.publish(rid)
+    assert checks.count('on')>=2 and not s.calls
+    for role in (s.admission,s.promotion):
+        with s.factory(role) as conn:
+            assert not conn.execute("SELECT has_table_privilege(current_user,'llm_providers','SELECT')").fetchone()[0]
+
+
+def test_retained_freshness_reader_unavailable_fails_closed(retained,monkeypatch):
+    s=retained;rid=intake.import_reviewed(s.conn,s.audit)['run_id']
+    def unavailable(name):raise PermissionError('fixture_read_only_config_unavailable')
+    monkeypatch.setattr(publication,'connection_factory',unavailable)
+    with pytest.raises(PermissionError):s.publish(rid)
+    assert s.conn.execute("SELECT revision_id FROM event_public_pointers WHERE event_id='evt_test'").fetchone()[0]==s.old
     assert not s.calls
