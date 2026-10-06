@@ -122,7 +122,7 @@ def configuration(conn):
     version = _version({"attack":settings(),"code_identity":code_identity,"workflow": contract.WORKFLOW, "model": model["id"],
         "provider": provider["id"], "base_url": provider["base_url"],
         "writer": contract.WRITER+contract.ATTACK_WRITER, "reviewer": contract.REVIEWER+contract.ATTACK_REVIEWER,
-        "schema": generation_schema(["S1"],["T1110.003"],{}), "phase_settings":phase_settings(),
+        "schema": generation_schema(["S1"],["T1110.003"],{},contract_override=contract), "phase_settings":phase_settings(),
         "tokenizer": "o200k_base", "context_tokens": 24000,
         "update_context": "published-evidence-delta-v4-membership-baseline", "cohort_policy":"serialized-reservation-v1",
         "projection_policy":contract.PROJECTION_WORKFLOW,
@@ -888,7 +888,7 @@ def run(conn, job, *, complete=None):
         from .attack_catalog import generation_schema,project_optional_mappings
         cat=catalog(packet['attack_reference']['catalog']['domain'])
         raw = call(conn,run_id,"writer",contract.WRITER+contract.ATTACK_WRITER,packet,
-                   generation_schema(ids,[t['id'] for t in packet['attack_reference']['candidates']],packet),complete=complete)
+                   generation_schema(ids,[t['id'] for t in packet['attack_reference']['candidates']],packet,contract_override=contract),complete=complete)
         report,review_packet,spans,resolved,removed=project_optional_mappings(raw,packet,cat,contract_override=contract)
         projection={'workflow':'optional-mapping-projection-v1','input_version':_version(raw),'snapshot_version':_version(record['snapshot']),
                     'projection':{'report':report,'evidence':review_packet,'spans':spans,'removed':removed}}

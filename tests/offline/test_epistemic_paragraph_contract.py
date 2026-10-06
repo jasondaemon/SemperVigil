@@ -53,3 +53,15 @@ def test_retained_actual_response_replay_preserves_known_false_ready():
  assert actual=={'C1':True,'C2':False,'C3':True,'C4':True}
  assert [c for c in actual if actual[c]!=retained['expected_ready'][c]]==['C1','C3']
  assert retained['usage']['total_tokens']==9843
+
+
+
+def test_optional_mapping_schema_uses_explicit_v2_contract_without_changing_legacy():
+ from sempervigil.attack_catalog import generation_schema
+ from sempervigil import event_report_contract as legacy
+ legacy_schema=generation_schema(['S1'],[],{})
+ v2_schema=generation_schema(['S1'],[],{},contract_override=contract)
+ branches=v2_schema['properties']['items']['items']['anyOf']
+ assert branches[0]['properties']['text']['description']==contract.schema(['S1'])['properties']['items']['items']['anyOf'][0]['properties']['text']['description']
+ assert 'description' not in legacy_schema['properties']['items']['items']['anyOf'][0]['properties']['text']
+ assert branches[1]['properties']['claim_type']['enum']==['assessment','intelligence_gap']

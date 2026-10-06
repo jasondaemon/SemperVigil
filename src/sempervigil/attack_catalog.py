@@ -137,10 +137,11 @@ class Catalog:
         return {**mapping, **{k:technique[k] for k in ('name','url','parent_id','tactics')}, 'catalog':self.identity}
 
 
-def generation_schema(source_ids, technique_ids, packet):
+def generation_schema(source_ids, technique_ids, packet, *, contract_override=None):
     """Structured mapping stays inside the existing writer response and review."""
     import copy
     from . import event_report_contract as contract
+    contract = contract_override or contract
     result = copy.deepcopy(contract.generation_schema(source_ids, packet))
     mapping = contract.object_schema({
         'technique_id': {'type':'string', 'enum':list(technique_ids) or ['__unmapped__']},
@@ -171,7 +172,7 @@ def validate_report(report, packet, catalog, *, contract_override=None):
         value=catalog.lookup(candidate['id'])
         if candidate != {k:value[k] for k in ('id','name','url','parent_id','tactics','definition','object_version')}:
             raise ValueError('attack_report_definition_mismatch')
-    jsonschema.validate(report,generation_schema(ids,allowed,packet))
+    jsonschema.validate(report,generation_schema(ids,allowed,packet,contract_override=contract))
     base=copy.deepcopy(report)
     for item in base['items']:item.pop('attack_mappings')
     spans=contract.validate(base,packet)
@@ -202,7 +203,7 @@ def project_optional_mappings(report, packet, catalog, *, contract_override=None
         if candidate != {k: value[k] for k in ('id', 'name', 'url', 'parent_id', 'tactics', 'definition', 'object_version')}:
             raise ValueError('attack_report_definition_mismatch')
     # Malformed reports cannot be salvaged by this narrowly scoped projection.
-    jsonschema.validate(report, generation_schema(ids, allowed, packet))
+    jsonschema.validate(report, generation_schema(ids, allowed, packet,contract_override=contract))
     sources = {s['id']: s for s in packet['sources']}
     removed = []
     for item in projected['items']:

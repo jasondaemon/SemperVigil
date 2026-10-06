@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 from test_event_source_reports_postgres import database,generated,response
 from sempervigil import event_source_reports as legacy,event_source_reports_v2 as reports
+from sempervigil import event_report_contract_v2 as contract
 from sempervigil import event_source_report_publication_v2 as publication,event_report_v2_policy as policy
 
 
@@ -69,6 +70,8 @@ def test_bounded_whole_report_lifecycle_and_abstention(setup,monkeypatch,tmp_pat
  delay=s.conn.execute('SELECT available_at,requested_at FROM jobs WHERE payload_json::jsonb->>\'run_id\'=%s',(rid,)).fetchone()
  assert (datetime.fromisoformat(delay[0])-datetime.fromisoformat(delay[1])).total_seconds()>=299
  assert s.execute(rid)['status']=='accepted' and len(s.calls)==2
+ writer_branch=s.calls[0]['response_format']['json_schema']['schema']['properties']['items']['items']['anyOf'][0]
+ assert writer_branch['properties']['text']['description']==contract.schema(['S1'])['properties']['items']['items']['anyOf'][0]['properties']['text']['description']
  monkeypatch.setattr(publication,'connection_factory',lambda _:lambda:s.factory(s.admission))
  receipts=reports.tick(s.conn);q=next(x for x in receipts if x.get('approval_id'))
  assert publication.submit(s.conn,rid,automatic=True,factory=lambda:s.factory(s.admission))['status']=='reused'
