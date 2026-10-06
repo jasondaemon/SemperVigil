@@ -1,0 +1,166 @@
+{
+  "workflow": "whole-report-epistemic-fixture-proposal-v1",
+  "status": "offline_proposal_pending_independent_review",
+  "paid_calls": 0,
+  "not_authorization_to_execute": true,
+  "baseline_commit": "c91bcecb927fa079b1725d6e743134b8145f76c0",
+  "proposed_contract_source_sha256": "0b2ee3bec568289eb2860f4db59713c5d14e98c54b89d170dbeae4714ef3dd95",
+  "fixtures": {
+    "N13-original-projected": {
+      "synthetic": false,
+      "source_artifact": "continuation-projection.json",
+      "source_artifact_sha256": "795597b05972d03756032a54b348621db747ba0debf10bc2c346ab8209b7b77b",
+      "report_sha256": "9241d62e7b713f34b1321babed784d08baf9679a0a16736be9dab5050cd2782c",
+      "model_data_sha256": "4ae9a1b57be8c03d6c37f4c0f99b08128e593829c0abe88205da8b65cf5be6d5",
+      "item_count": 13,
+      "item_ids": [
+        "P102",
+        "P103",
+        "P104",
+        "P105",
+        "P106",
+        "P107",
+        "P108",
+        "P109",
+        "P110",
+        "P111",
+        "P112",
+        "P113",
+        "P114"
+      ],
+      "expected_ready": false,
+      "expected_issues": {
+        "P110": "Mixed finding/analyst-guidance paragraph classified entirely as finding.",
+        "P113": "Unreported rapid containment and unsupported universal control-limit claim."
+      },
+      "file": "tests/fixtures/whole_report_epistemic/N13-original-projected.json",
+      "file_sha256": "ae5054865cf67e6ce2071a47e13898521e1d79ebac681992c95d5c7841146cb7",
+      "bytes": 60592
+    },
+    "N14-editorial-split": {
+      "synthetic": false,
+      "source_artifact": "editorial-split-proposal.json",
+      "source_artifact_sha256": "e445712f871109672d2180bfc3912baa65bc8f956368848b875a4f4e5077fb59",
+      "report_sha256": "10343c65da4b15e4c01a8c7abc5441425ac08c910a6a4ace417668db99ea96b4",
+      "model_data_sha256": "c600f8287b9459f919ab0a5bf043409529a343ffd070aa388cf47ca918b9031c",
+      "item_count": 14,
+      "item_ids": [
+        "P102",
+        "P103",
+        "P104",
+        "P105",
+        "P106",
+        "P107",
+        "P108",
+        "P109",
+        "P110",
+        "P115",
+        "P111",
+        "P112",
+        "P113",
+        "P114"
+      ],
+      "expected_ready": false,
+      "expected_issues": {
+        "P113": "Unreported rapid containment and unsupported universal control-limit claim.",
+        "P115": "Context-dependent relative-reference ambiguity; independent prelabel adjudication required before any scored use."
+      },
+      "file": "tests/fixtures/whole_report_epistemic/N14-editorial-split.json",
+      "file_sha256": "a171b57d87e348c04a888c67ab0a14c6d1c2d44cfcb9d3d73a9c20787cf27ac0",
+      "bytes": 62855
+    },
+    "C12-approved-clean": {
+      "synthetic": false,
+      "source_artifact": "editorial-removal-proposal.json",
+      "source_artifact_sha256": "f7230614a61b26f02119537813dc79a21ca3d7304828f34d4b20e8a730ca92f1",
+      "report_sha256": "6c9d4a244c4a57eb0d3928fb097daa31ba7a6a543075aa3f60ff1603d1e465fc",
+      "model_data_sha256": "fb13fc0ba88e5a7537cc22f307e22d6f94b880276054f77d282bbbc79d3097ec",
+      "item_count": 12,
+      "item_ids": [
+        "P102",
+        "P103",
+        "P104",
+        "P105",
+        "P106",
+        "P107",
+        "P108",
+        "P109",
+        "P110",
+        "P111",
+        "P112",
+        "P114"
+      ],
+      "expected_ready": true,
+      "expected_issues": {},
+      "file": "tests/fixtures/whole_report_epistemic/C12-approved-clean.json",
+      "file_sha256": "e0abbb0d925cdd65b1b462a81464f52a23887f954867b575ce2894f3c7571683",
+      "bytes": 57429
+    }
+  },
+  "proposed_comparison": [
+    {
+      "step": "baseline_N13",
+      "fixture_id": "N13-original-projected",
+      "request_sha256": "fe1c734202b0d28b9369a77a264a8449db61cbcab7549a60f0454d21a48f4707",
+      "request_file_sha256": "ea5300661df04248f48d9a9e207f2f64f8d654cbabb66bb5d437d1953e20b95a",
+      "system_sha256": "fdbbef37afd02f89a9301582aa7fc55297017031004901ecc0254256c2b17d1e",
+      "reservation": 16548,
+      "response_schema_sha256": "234690390e8c69f3babcc14ee482d768e9462e357487fa5592bb0693a4d6585b",
+      "item_count": 13,
+      "complete_source_ids": [
+        "S36444",
+        "S36517",
+        "S36518",
+        "S36617"
+      ]
+    },
+    {
+      "step": "revised_N13",
+      "fixture_id": "N13-original-projected",
+      "request_sha256": "6297f7115aa689bf61239e0a974dd4d3953314948f8a0d8ada341d9d548b3b5a",
+      "request_file_sha256": "29631438ef4ffe28374c055d014c336be4984d6ded33dc07f6167f630a8260ab",
+      "system_sha256": "caa42f8d761e6153b346bc10d20e56fbaa0987c523507fc485ce4cbd5b768f01",
+      "reservation": 16946,
+      "response_schema_sha256": "234690390e8c69f3babcc14ee482d768e9462e357487fa5592bb0693a4d6585b",
+      "item_count": 13,
+      "complete_source_ids": [
+        "S36444",
+        "S36517",
+        "S36518",
+        "S36617"
+      ]
+    },
+    {
+      "step": "revised_C12",
+      "fixture_id": "C12-approved-clean",
+      "request_sha256": "ec49bb2bb3e10b025eb078661bb79a9b36a51f8cf6145c2d8ac5f650308b1ac8",
+      "request_file_sha256": "0c8527946ec010caf4304485cc5f2464ddb27c61c72e0be801dddd0161aede6e",
+      "system_sha256": "caa42f8d761e6153b346bc10d20e56fbaa0987c523507fc485ce4cbd5b768f01",
+      "reservation": 16373,
+      "response_schema_sha256": "1099f147cc74ad0e2cb2b09e2af0d552a5985aed7e43853f2728da68d2288271",
+      "item_count": 12,
+      "complete_source_ids": [
+        "S36444",
+        "S36517",
+        "S36518",
+        "S36617"
+      ]
+    }
+  ],
+  "max_calls": 3,
+  "per_call_reservation_cap": 20000,
+  "aggregate_reservation_cap": 60000,
+  "total_exact_proposed_reservation": 49867,
+  "comparison_scope": "Baseline/revised identical N13 whole report containing P110/P113, and revised complete C12 control. N14/P115 is not in these three calls. No synthetic all-three negative was constructed.",
+  "semantic_failure_rule": "Record failed semantic gate/release status but complete only the predeclared bounded three-call comparison to measure improvement. Baseline failure is not a transport-stop; no new calls or changes may be added. This diagnostic protocol never grants release or feature enablement.",
+  "immediate_transport_stop_rule": "Budget/reservation or provider usage overrun; integrity/hash/catalog/profile drift; refusal, empty/truncated/malformed output; unknown transport; expired window. All later transport stops; no retries or repair.",
+  "stopped_previous_ledger": "semantic_9aeb0df20a42415049f84c8a remains failed/stopped; no remaining allocation reused or reset.",
+  "defect_specific_scoring": {
+    "P110": "Recognize that the analyst normative conclusion is packaged as a finding; cite exact P110 and supporting source IDs. No score for unrelated stylistic rejection.",
+    "P113": "Recognize unsupported response speed and categorical control-limit inference, bound to exact P113. Ready=false from a different defect does not count.",
+    "false_positives": "Independently adjudicate every additional issue against complete sources; supported C12 must have no substantive issues, though valid nonblocking locator warnings are allowed.",
+    "comparison": "Compare per-defect recognition and false positives for identical N13 envelopes; do not reduce the comparison to ready flags.",
+    "provenance": "P110/P113 labels derive from retained independent editorial review plus full-source assistant adjudication; broad synthetic labels are assistant-authored and await independent adjudication."
+  },
+  "N14_future_rule": "Preserved authentic derivative for separate context/label adjudication. Any later comparison on N14 needs its own expressly predeclared protocol; it is not silently added to the three-call comparison."
+}

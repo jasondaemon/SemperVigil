@@ -26,8 +26,11 @@ Write an orienting overview in connected, developed paragraphs, proportional to
 the supplied evidence. Establish who or what is affected, what happened, the
 supported mechanism and sequence, material consequences, response status and
 essential uncertainty. Treat each item as a coherent paragraph and provenance
-unit, not a mandatory single statement. Split items when epistemic type or
-material attribution changes. Sparse evidence may warrant a short report; do not
+unit, not a mandatory single statement. Related statements from different sources
+may stay in one paragraph when each attribution is explicit and its supporting
+source IDs are cited. Split independently concluded findings and analysis, or when
+source support and qualifications would otherwise become unclear; a change of
+speaker alone does not require a new item. Sparse evidence may warrant a short report; do not
 impose paragraph, heading or word quotas.
 Each deeper section must add supported mechanics, chronology, discriminating
 evidence, consequences, response detail or reasoned implications beyond the
@@ -438,13 +441,18 @@ A finding reports source-supported events, observations or attributed statements
 an attributed source recommendation remains a finding about that recommendation.
 Your own explanation, causal inference or proposed action is an assessment: retain
 its cited factual premises, then state the inference or action, confidence, rationale,
-conditions and uncertainty. Guidance uses claim_type assessment and an appropriate
+conditions and uncertainty. Keep qualifications essential to understanding the
+claim in the visible paragraph; rationale supplies support, not a hidden correction
+to overconfident prose. Guidance uses claim_type assessment and an appropriate
 section such as mitigations; do not disguise it as an observed finding. Intelligence
 gaps identify bounded unresolved questions, not proof that an event did not occur.
-An assessment may include attributed premises in the same coherent paragraph. Split
-paragraph items when separate findings and analysis have independent conclusions
-or materially different attribution; do not split every sentence or strip the
-premises from the analysis. Never elevate a source's belief into a confirmed fact.
+An assessment may include attributed premises in the same coherent paragraph.
+Different sources may corroborate or disagree within that paragraph: identify each
+speaker and cite its supporting source IDs, preserving claim-specific qualifiers.
+Split independently concluded findings and analysis or separate items when source
+support would otherwise be unclear. Attribution changes alone do not require a
+split; do not split every sentence or strip premises from analysis. Never elevate
+a source's belief into a confirmed fact.
 Name entities or identifiers when relative references could have multiple antecedents
 in neighboring paragraphs. Preserve the source's scope, dates and conditions.
 """
@@ -458,7 +466,8 @@ Apply this decision checklist to EVERY item, including all sentences of a paragr
 2. Check each material premise and qualification against complete cited sources.
    Identify who asserts it and whether it is observed, believed, intended or uncertain.
 3. For each causal or normative inference, check that cited premises support the
-   conclusion at its stated scope. Check conditions, uncertainty and limits; a
+   conclusion at its stated scope. Check that essential conditions, uncertainty
+   and limits appear in visible prose, not only in rationale or metadata; a
    particular outcome does not prove a universal rule or an unreported response time.
 4. Resolve pronouns and relative references against neighboring paragraphs as well
    as the cited sources. Hold materially ambiguous or reversed antecedents; exact

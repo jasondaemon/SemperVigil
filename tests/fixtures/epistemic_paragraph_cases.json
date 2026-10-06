@@ -58,7 +58,12 @@
       "expected_ready": false,
       "expected_issue": "Own guidance is appended to a finding without rationale, applicability or uncertainty."
     },
-    "scope": "Human-authored semantic expectation fixture. Offline schema/ID tests cannot establish model detection."
+    "scope": "Assistant-authored synthetic semantic expectation; offline structural tests do not establish detection. Labels await independent full-context adjudication.",
+    "label_provenance": {
+      "author": "Codex assistant, offline construction",
+      "independently_adjudicated": false,
+      "basis": "The complete synthetic sources and neighboring context stored in this fixture, plus the declared epistemic contract. No observed model prediction."
+    }
   },
   {
     "case_id": "ransomware",
@@ -83,7 +88,7 @@
         "section": "analyst_assessment",
         "claim_type": "assessment",
         "confidence": "moderate",
-        "rationale": "The cited report supplies the stated premises. Scope and unreported mechanisms or outcomes limit this inference and any proposed action.",
+        "rationale": "The source places stopped spread after network isolation, which supports a bounded possible contribution. It gives no containment duration and cannot establish a guarantee in another environment.",
         "text": "Isolation may have reduced the observed spread in this incident. The report describes stopped spread after isolation, but does not establish how quickly it occurred or whether isolation guarantees containment elsewhere.",
         "date_label": "Undated",
         "date_sort": null,
@@ -104,7 +109,7 @@
         "section": "analyst_assessment",
         "claim_type": "assessment",
         "confidence": "moderate",
-        "rationale": "The cited report supplies the stated premises. Scope and unreported mechanisms or outcomes limit this inference and any proposed action.",
+        "rationale": "The stated conclusion exceeds the supplied observation: Unreported response speed and universal preventive guarantee.",
         "text": "Rapid isolation guarantees that ransomware cannot damage critical systems.",
         "date_label": "Undated",
         "date_sort": null,
@@ -119,7 +124,12 @@
       "expected_ready": false,
       "expected_issue": "Unreported response speed and universal preventive guarantee."
     },
-    "scope": "Human-authored semantic expectation fixture. Offline schema/ID tests cannot establish model detection."
+    "scope": "Assistant-authored synthetic semantic expectation; offline structural tests do not establish detection. Labels await independent full-context adjudication.",
+    "label_provenance": {
+      "author": "Codex assistant, offline construction",
+      "independently_adjudicated": false,
+      "basis": "The complete synthetic sources and neighboring context stored in this fixture, plus the declared epistemic contract. No observed model prediction."
+    }
   },
   {
     "case_id": "advisory",
@@ -144,7 +154,7 @@
         "section": "analyst_assessment",
         "claim_type": "assessment",
         "confidence": "moderate",
-        "rationale": "The cited report supplies the stated premises. Scope and unreported mechanisms or outcomes limit this inference and any proposed action.",
+        "rationale": "The advisory names a fixed release only for Flaw Alpha while assigning the privilege-escalation risk to Flaw Beta. Separate remediation verification follows from that distinct scope; no fix for Flaw Beta is established.",
         "text": "The published fix for Flaw Alpha does not establish remediation of Flaw Beta. Operators assessing component Blue should verify remediation for Flaw Beta separately; the source does not name a fixed release for it.",
         "date_label": "Undated",
         "date_sort": null,
@@ -165,7 +175,7 @@
         "section": "analyst_assessment",
         "claim_type": "assessment",
         "confidence": "moderate",
-        "rationale": "The cited report supplies the stated premises. Scope and unreported mechanisms or outcomes limit this inference and any proposed action.",
+        "rationale": "The stated conclusion exceeds the supplied observation: Ambiguous referents transfer remediation scope between distinct flaws.",
         "text": "The second flaw is safe after applying the first fix.",
         "date_label": "Undated",
         "date_sort": null,
@@ -180,7 +190,12 @@
       "expected_ready": false,
       "expected_issue": "Ambiguous referents transfer remediation scope between distinct flaws."
     },
-    "scope": "Human-authored semantic expectation fixture. Offline schema/ID tests cannot establish model detection."
+    "scope": "Assistant-authored synthetic semantic expectation; offline structural tests do not establish detection. Labels await independent full-context adjudication.",
+    "label_provenance": {
+      "author": "Codex assistant, offline construction",
+      "independently_adjudicated": false,
+      "basis": "The complete synthetic sources and neighboring context stored in this fixture, plus the declared epistemic contract. No observed model prediction."
+    }
   },
   {
     "case_id": "cloud_identity",
@@ -205,7 +220,7 @@
         "section": "analyst_assessment",
         "claim_type": "assessment",
         "confidence": "moderate",
-        "rationale": "The cited report supplies the stated premises. Scope and unreported mechanisms or outcomes limit this inference and any proposed action.",
+        "rationale": "The disclosure confines established access to one token and bucket. Reviewing those permissions addresses that observed scope without presuming that every tenant identity was affected.",
         "text": "The reported token theft creates a reason to review that account and bucket permissions. Wider tenant compromise remains unestablished, so this guidance does not assume that every account must be replaced.",
         "date_label": "Undated",
         "date_sort": null,
@@ -241,7 +256,12 @@
       "expected_ready": false,
       "expected_issue": "A scoped finding becomes unsupported universal attribution and analyst guidance."
     },
-    "scope": "Human-authored semantic expectation fixture. Offline schema/ID tests cannot establish model detection."
+    "scope": "Assistant-authored synthetic semantic expectation; offline structural tests do not establish detection. Labels await independent full-context adjudication.",
+    "label_provenance": {
+      "author": "Codex assistant, offline construction",
+      "independently_adjudicated": false,
+      "basis": "The complete synthetic sources and neighboring context stored in this fixture, plus the declared epistemic contract. No observed model prediction."
+    }
   },
   {
     "case_id": "fraud",
@@ -266,7 +286,7 @@
         "section": "analyst_assessment",
         "claim_type": "assessment",
         "confidence": "moderate",
-        "rationale": "The cited report supplies the stated premises. Scope and unreported mechanisms or outcomes limit this inference and any proposed action.",
+        "rationale": "The reported changed-bank-detail approval provides the premise for independent contact verification. An undisclosed contact mechanism limits attribution to email or any particular phishing channel.",
         "text": "Verification through an independently obtained contact channel may reduce exposure to unauthorized banking changes. This recommendation rests on the reported approval sequence; it does not establish email phishing as the incident mechanism.",
         "date_label": "Undated",
         "date_sort": null,
@@ -302,7 +322,12 @@
       "expected_ready": false,
       "expected_issue": "An unknown contact mechanism is promoted to a confirmed causal finding."
     },
-    "scope": "Human-authored semantic expectation fixture. Offline schema/ID tests cannot establish model detection."
+    "scope": "Assistant-authored synthetic semantic expectation; offline structural tests do not establish detection. Labels await independent full-context adjudication.",
+    "label_provenance": {
+      "author": "Codex assistant, offline construction",
+      "independently_adjudicated": false,
+      "basis": "The complete synthetic sources and neighboring context stored in this fixture, plus the declared epistemic contract. No observed model prediction."
+    }
   },
   {
     "case_id": "supply_chain",
@@ -363,7 +388,12 @@
       "expected_ready": false,
       "expected_issue": "Analyst action has invented premises, expanded scope and unjustified permanence."
     },
-    "scope": "Human-authored semantic expectation fixture. Offline schema/ID tests cannot establish model detection."
+    "scope": "Assistant-authored synthetic semantic expectation; offline structural tests do not establish detection. Labels await independent full-context adjudication.",
+    "label_provenance": {
+      "author": "Codex assistant, offline construction",
+      "independently_adjudicated": false,
+      "basis": "The complete synthetic sources and neighboring context stored in this fixture, plus the declared epistemic contract. No observed model prediction."
+    }
   },
   {
     "case_id": "notification",
@@ -424,7 +454,12 @@
       "expected_ready": false,
       "expected_issue": "Belief and possible access become confirmed theft; planned action becomes completed."
     },
-    "scope": "Human-authored semantic expectation fixture. Offline schema/ID tests cannot establish model detection."
+    "scope": "Assistant-authored synthetic semantic expectation; offline structural tests do not establish detection. Labels await independent full-context adjudication.",
+    "label_provenance": {
+      "author": "Codex assistant, offline construction",
+      "independently_adjudicated": false,
+      "basis": "The complete synthetic sources and neighboring context stored in this fixture, plus the declared epistemic contract. No observed model prediction."
+    }
   },
   {
     "case_id": "law_enforcement",
@@ -449,7 +484,7 @@
         "section": "analyst_assessment",
         "claim_type": "assessment",
         "confidence": "moderate",
-        "rationale": "The cited report supplies the stated premises. Scope and unreported mechanisms or outcomes limit this inference and any proposed action.",
+        "rationale": "Seizure affects the two named domains, giving a limited disruption premise. Unknown operators and remaining infrastructure prevent an assessment of complete campaign elimination.",
         "text": "The seizures may interrupt activity through those domains. They do not establish that all infrastructure is disabled or identify every operator, so continued activity remains a specific unresolved question.",
         "date_label": "Undated",
         "date_sort": null,
@@ -470,7 +505,7 @@
         "section": "analyst_assessment",
         "claim_type": "assessment",
         "confidence": "moderate",
-        "rationale": "The cited report supplies the stated premises. Scope and unreported mechanisms or outcomes limit this inference and any proposed action.",
+        "rationale": "The stated conclusion exceeds the supplied observation: Scoped action is overstated as complete disruption and certain attribution.",
         "text": "The seizures eliminated the campaign and identified all operators.",
         "date_label": "Undated",
         "date_sort": null,
@@ -485,6 +520,218 @@
       "expected_ready": false,
       "expected_issue": "Scoped action is overstated as complete disruption and certain attribution."
     },
-    "scope": "Human-authored semantic expectation fixture. Offline schema/ID tests cannot establish model detection."
+    "scope": "Assistant-authored synthetic semantic expectation; offline structural tests do not establish detection. Labels await independent full-context adjudication.",
+    "label_provenance": {
+      "author": "Codex assistant, offline construction",
+      "independently_adjudicated": false,
+      "basis": "The complete synthetic sources and neighboring context stored in this fixture, plus the declared epistemic contract. No observed model prediction."
+    }
+  },
+  {
+    "case_id": "multi_source_qualified_attribution",
+    "kind": "breach",
+    "sources": [
+      {
+        "id": "S1",
+        "text": "The company believes certain records may have been accessed. It has not confirmed theft.",
+        "title": "Synthetic company disclosure",
+        "url": "https://example.org/company"
+      },
+      {
+        "id": "S2",
+        "text": "The regulator confirmed three affected accounts. Its statement does not establish theft of every record.",
+        "title": "Synthetic regulator statement",
+        "url": "https://example.org/regulator"
+      }
+    ],
+    "neighboring_context": [],
+    "positive": {
+      "item": {
+        "id": "P02",
+        "section": "impact",
+        "claim_type": "finding",
+        "confidence": null,
+        "rationale": "",
+        "text": "The company said that certain records may have been accessed and did not confirm theft. The regulator separately confirmed three affected accounts; its statement did not establish theft of every record.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "The company believes certain records may have been accessed. It has not confirmed theft."
+          },
+          {
+            "source_id": "S2",
+            "quote": "The regulator confirmed three affected accounts. Its statement does not establish theft of every record."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": true,
+      "why": "Related claims retain each speaker and claim-specific source support in one developed finding paragraph."
+    },
+    "negative": {
+      "item": {
+        "id": "P02",
+        "section": "impact",
+        "claim_type": "finding",
+        "confidence": null,
+        "rationale": "",
+        "text": "The company and regulator confirmed that every record was stolen.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "The company believes certain records may have been accessed. It has not confirmed theft."
+          },
+          {
+            "source_id": "S2",
+            "quote": "The regulator confirmed three affected accounts. Its statement does not establish theft of every record."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": false,
+      "expected_issue": "Different attributed statements are merged into unsupported universal theft confirmation."
+    },
+    "scope": "Assistant-authored synthetic semantic expectation; offline structural tests do not establish detection. Labels await independent full-context adjudication.",
+    "label_provenance": {
+      "author": "Codex assistant, offline construction",
+      "independently_adjudicated": false,
+      "basis": "The complete synthetic sources and neighboring context stored in this fixture, plus the declared epistemic contract. No observed model prediction."
+    }
+  },
+  {
+    "case_id": "subtle_action_completion",
+    "kind": "compromise",
+    "sources": [
+      {
+        "id": "S1",
+        "text": "The vendor announced plans to isolate connector Echo after completing a maintenance window. The report does not establish that isolation has occurred.",
+        "title": "Synthetic subtle_action_completion",
+        "url": "https://example.org/subtle_action_completion"
+      }
+    ],
+    "neighboring_context": [
+      {
+        "id": "P01",
+        "text": "The vendor announced plans to isolate connector Echo after completing a maintenance window. The report does not establish that isolation has occurred."
+      }
+    ],
+    "positive": {
+      "item": {
+        "id": "P02",
+        "section": "response_recovery",
+        "claim_type": "finding",
+        "confidence": null,
+        "rationale": "",
+        "text": "The vendor announced plans to isolate connector Echo after a maintenance window. The report does not establish completed isolation.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "The vendor announced plans to isolate connector Echo after completing a maintenance window. The report does not establish that isolation has occurred."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": true,
+      "why": "The visible paragraph preserves the source status or causal uncertainty."
+    },
+    "negative": {
+      "item": {
+        "id": "P02",
+        "section": "response_recovery",
+        "claim_type": "finding",
+        "confidence": null,
+        "rationale": "",
+        "text": "The vendor isolated connector Echo after the maintenance window.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "The vendor announced plans to isolate connector Echo after completing a maintenance window. The report does not establish that isolation has occurred."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": false,
+      "expected_issue": "A planned action becomes a completed action without evidence; the known actor and connector name do not establish completion."
+    },
+    "scope": "Assistant-authored synthetic semantic expectation; not demonstrated model detection.",
+    "label_provenance": {
+      "author": "Codex assistant, offline construction",
+      "independently_adjudicated": false,
+      "basis": "Stored complete synthetic source/context; the completion or causal distinction is visible in that source."
+    }
+  },
+  {
+    "case_id": "visible_causal_uncertainty",
+    "kind": "compromise",
+    "sources": [
+      {
+        "id": "S1",
+        "text": "The provider detected unauthorized access, rotated one token, and later observed no further access. The chronology does not establish which action caused access to stop.",
+        "title": "Synthetic visible_causal_uncertainty",
+        "url": "https://example.org/visible_causal_uncertainty"
+      }
+    ],
+    "neighboring_context": [
+      {
+        "id": "P01",
+        "text": "The provider detected unauthorized access, rotated one token, and later observed no further access. The chronology does not establish which action caused access to stop."
+      }
+    ],
+    "positive": {
+      "item": {
+        "id": "P02",
+        "section": "analyst_assessment",
+        "claim_type": "assessment",
+        "confidence": "moderate",
+        "rationale": "Detection, rotation and cessation occur in that order in the report. Without an identified causal link, the contribution of rotation remains uncertain and must be qualified in visible prose.",
+        "text": "Token rotation may have contributed to stopping the observed access. The source reports that sequence but does not establish which action caused access to stop.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "The provider detected unauthorized access, rotated one token, and later observed no further access. The chronology does not establish which action caused access to stop."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": true,
+      "why": "The visible paragraph preserves the source status or causal uncertainty."
+    },
+    "negative": {
+      "item": {
+        "id": "P02",
+        "section": "analyst_assessment",
+        "claim_type": "assessment",
+        "confidence": "moderate",
+        "rationale": "Detection, rotation and cessation occur in that order in the report. Without an identified causal link, the contribution of rotation remains uncertain and must be qualified in visible prose.",
+        "text": "Token rotation stopped the unauthorized access.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "The provider detected unauthorized access, rotated one token, and later observed no further access. The chronology does not establish which action caused access to stop."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": false,
+      "expected_issue": "Visible prose asserts a causal conclusion that neither the source nor the uncertain rationale establishes."
+    },
+    "scope": "Assistant-authored synthetic semantic expectation; not demonstrated model detection.",
+    "label_provenance": {
+      "author": "Codex assistant, offline construction",
+      "independently_adjudicated": false,
+      "basis": "Stored complete synthetic source/context; the completion or causal distinction is visible in that source."
+    }
   }
 ]
