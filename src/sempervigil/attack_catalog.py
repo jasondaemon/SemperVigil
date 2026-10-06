@@ -151,10 +151,11 @@ def generation_schema(source_ids, technique_ids, packet):
     return result
 
 
-def validate_report(report, packet, catalog):
+def validate_report(report, packet, catalog, *, contract_override=None):
     import copy
     import jsonschema
     from . import event_report_contract as contract
+    contract = contract_override or contract
     reference=packet['attack_reference']
     if reference['catalog'] != catalog.identity:
         raise ValueError('attack_report_catalog_identity_mismatch')
@@ -178,6 +179,48 @@ def validate_report(report, packet, catalog):
             raise ValueError('attack_mapping_duplicate')
         resolved[item['id']]=[catalog.validate_mapping(m,item=item,sources=sources,allowed_ids=allowed) for m in mappings]
     return spans,resolved
+
+
+def project_optional_mappings(report, packet, catalog, *, contract_override=None):
+    """Drop invalid optional taxonomy only; never edit claims or their citations."""
+    import copy
+    import jsonschema
+    from . import event_report_contract as contract
+    contract = contract_override or contract
+    projected = copy.deepcopy(report)
+    ids = [s['id'] for s in packet['sources']]
+    allowed = [t['id'] for t in packet['attack_reference']['candidates']]
+    if packet['attack_reference']['catalog'] != catalog.identity:
+        raise ValueError('attack_report_catalog_identity_mismatch')
+    for candidate in packet['attack_reference']['candidates']:
+        value = catalog.lookup(candidate['id'])
+        if candidate != {k: value[k] for k in ('id', 'name', 'url', 'parent_id', 'tactics', 'definition', 'object_version')}:
+            raise ValueError('attack_report_definition_mismatch')
+    # Malformed reports cannot be salvaged by this narrowly scoped projection.
+    jsonschema.validate(report, generation_schema(ids, allowed, packet))
+    sources = {s['id']: s for s in packet['sources']}
+    removed = []
+    for item in projected['items']:
+        kept = []
+        for mapping in item['attack_mappings']:
+            try:
+                if item['section'] != 'attack_path':
+                    raise ValueError('attack_mapping_outside_attack_path')
+                if mapping['technique_id'] in {m['technique_id'] for m in kept}:
+                    raise ValueError('attack_mapping_duplicate')
+                catalog.validate_mapping(mapping, item=item, sources=sources, allowed_ids=allowed)
+            except ValueError as exc:
+                removed.append({'item_id': item['id'], 'mapping': copy.deepcopy(mapping),
+                                'reason': str(exc)})
+            else:
+                kept.append(mapping)
+        item['attack_mappings'] = kept
+    # Only unused taxonomy definitions can be omitted, never article evidence.
+    evidence = copy.deepcopy(packet)
+    used = {m['technique_id'] for i in projected['items'] for m in i['attack_mappings']}
+    evidence['attack_reference']['candidates'] = [t for t in packet['attack_reference']['candidates'] if t['id'] in used]
+    spans, resolved = validate_report(projected, evidence, catalog, contract_override=contract)
+    return projected, evidence, spans, resolved, removed
 
 
 def render_mapping(mapping):
