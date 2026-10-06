@@ -1,0 +1,337 @@
+[
+  {
+    "name": "sparse_incident",
+    "packet": {
+      "sources": [
+        {
+          "id": "S1",
+          "article_id": 1,
+          "text": "Acme believes some patient records may have been accessed. The company notified law enforcement. The access route and scope are not reported.",
+          "content_hash": "sparse_incident"
+        }
+      ],
+      "review_contract": "whole-cited-source-review-with-locator-warnings-v1"
+    },
+    "report": {
+      "title": "Sparse Incident",
+      "kind": "breach",
+      "items": [
+        {
+          "id": "P01",
+          "section": "overview",
+          "text": "Acme believes some patient records may have been accessed; the scope remains unconfirmed. Law enforcement was notified, but the access route is unreported.",
+          "claim_type": "finding",
+          "confidence": null,
+          "rationale": "",
+          "date_label": "",
+          "date_sort": null,
+          "citations": [
+            {
+              "source_id": "S1",
+              "quote": "Acme believes some patient records may have been accessed."
+            }
+          ]
+        },
+        {
+          "id": "P02",
+          "section": "open_questions",
+          "text": "The access route is unreported, limiting assessment of whether exposure remains possible.",
+          "claim_type": "intelligence_gap",
+          "confidence": "moderate",
+          "rationale": "The supplied article omits access mechanics; this limits assessment, not proof of absence.",
+          "date_label": "",
+          "date_sort": null,
+          "citations": [
+            {
+              "source_id": "S1",
+              "quote": "The access route and scope are not reported."
+            }
+          ]
+        }
+      ]
+    },
+    "redundant_text": "Acme reported possible access to an uncertain number of patient records.",
+    "expected_substantive_issue": {
+      "item_id": "P02",
+      "reason": "This section only paraphrases the overview and contributes no supported detail or analysis.",
+      "source_ids": [
+        "S1"
+      ]
+    }
+  },
+  {
+    "name": "documented_intrusion",
+    "packet": {
+      "sources": [
+        {
+          "id": "S1",
+          "article_id": 1,
+          "text": "Acme reported an intrusion through a stolen VPN credential. On September 22, 2026, the intruder reached the build server. The VPN accepted the credential without a second factor. Acme isolated the server and revoked VPN sessions.",
+          "content_hash": "documented_intrusion"
+        }
+      ],
+      "review_contract": "whole-cited-source-review-with-locator-warnings-v1"
+    },
+    "report": {
+      "title": "Documented Intrusion",
+      "kind": "compromise",
+      "items": [
+        {
+          "id": "P01",
+          "section": "overview",
+          "text": "Acme reported an intrusion through a stolen VPN credential that reached its build server. The company isolated that server and revoked VPN sessions.",
+          "claim_type": "finding",
+          "confidence": null,
+          "rationale": "",
+          "date_label": "",
+          "date_sort": null,
+          "citations": [
+            {
+              "source_id": "S1",
+              "quote": "Acme reported an intrusion through a stolen VPN credential."
+            }
+          ]
+        },
+        {
+          "id": "P03",
+          "section": "overview",
+          "text": "The reported path raises an access-control concern: acceptance without a second factor could permit use of a stolen credential. This does not establish the credential theft method.",
+          "claim_type": "assessment",
+          "confidence": "moderate",
+          "rationale": "Reported credential acceptance supports this defensive inference; the theft route is unknown.",
+          "date_label": "",
+          "date_sort": null,
+          "citations": [
+            {
+              "source_id": "S1",
+              "quote": "The VPN accepted the credential without a second factor."
+            }
+          ]
+        },
+        {
+          "id": "P02",
+          "section": "attack_path",
+          "text": "The intrusion used a stolen VPN credential. The VPN accepted it without a second factor, providing the reported route to the build server.",
+          "claim_type": "finding",
+          "confidence": null,
+          "rationale": "",
+          "date_label": "",
+          "date_sort": null,
+          "citations": [
+            {
+              "source_id": "S1",
+              "quote": "The VPN accepted the credential without a second factor."
+            }
+          ]
+        }
+      ]
+    },
+    "redundant_text": "The intruder used stolen VPN credentials to intrude on Acme and access its build server.",
+    "expected_substantive_issue": {
+      "item_id": "P02",
+      "reason": "This section only paraphrases the overview and contributes no supported detail or analysis.",
+      "source_ids": [
+        "S1"
+      ]
+    }
+  },
+  {
+    "name": "vulnerability_disclosure",
+    "packet": {
+      "sources": [
+        {
+          "id": "S1",
+          "article_id": 1,
+          "text": "The vendor disclosed an authenticated file-upload vulnerability. Exploitation requires an administrator account and an enabled plugin. Version 7.2 removes executable uploads. No incident was described in the advisory.",
+          "content_hash": "vulnerability_disclosure"
+        }
+      ],
+      "review_contract": "whole-cited-source-review-with-locator-warnings-v1"
+    },
+    "report": {
+      "title": "Vulnerability Disclosure",
+      "kind": "vulnerability",
+      "items": [
+        {
+          "id": "P01",
+          "section": "overview",
+          "text": "The vendor disclosed an authenticated file-upload vulnerability and released version 7.2 to remove executable uploads. The advisory describes a vulnerability rather than a confirmed intrusion.",
+          "claim_type": "finding",
+          "confidence": null,
+          "rationale": "",
+          "date_label": "",
+          "date_sort": null,
+          "citations": [
+            {
+              "source_id": "S1",
+              "quote": "The vendor disclosed an authenticated file-upload vulnerability."
+            }
+          ]
+        },
+        {
+          "id": "P02",
+          "section": "attack_vector",
+          "text": "The disclosed flaw concerns file uploads. Exploitation requires both an administrator account and an enabled plugin, narrowing the relevant exposure conditions.",
+          "claim_type": "finding",
+          "confidence": null,
+          "rationale": "",
+          "date_label": "",
+          "date_sort": null,
+          "citations": [
+            {
+              "source_id": "S1",
+              "quote": "Exploitation requires an administrator account and an enabled plugin."
+            }
+          ]
+        }
+      ]
+    },
+    "redundant_text": "The vendor disclosed a file-upload flaw and supplied version 7.2 as a fix.",
+    "expected_substantive_issue": {
+      "item_id": "P02",
+      "reason": "This section only paraphrases the overview and contributes no supported detail or analysis.",
+      "source_ids": [
+        "S1"
+      ]
+    }
+  },
+  {
+    "name": "law_enforcement_report",
+    "packet": {
+      "sources": [
+        {
+          "id": "S1",
+          "article_id": 1,
+          "text": "Prosecutors charged two defendants with operating a credential market. The allegations have not been adjudicated. Agents seized two servers under a warrant; the indictment does not establish a conviction.",
+          "content_hash": "law_enforcement_report"
+        }
+      ],
+      "review_contract": "whole-cited-source-review-with-locator-warnings-v1"
+    },
+    "report": {
+      "title": "Law Enforcement Report",
+      "kind": "law_enforcement",
+      "items": [
+        {
+          "id": "P01",
+          "section": "overview",
+          "text": "Prosecutors charged two defendants with allegedly operating a credential market. The allegations have not been adjudicated and do not establish guilt.",
+          "claim_type": "finding",
+          "confidence": null,
+          "rationale": "",
+          "date_label": "",
+          "date_sort": null,
+          "citations": [
+            {
+              "source_id": "S1",
+              "quote": "Prosecutors charged two defendants with operating a credential market."
+            }
+          ]
+        },
+        {
+          "id": "P02",
+          "section": "response_recovery",
+          "text": "The credential-market case includes a reported seizure: agents seized two servers under a warrant. This describes an investigative action, not a conviction.",
+          "claim_type": "finding",
+          "confidence": null,
+          "rationale": "",
+          "date_label": "",
+          "date_sort": null,
+          "citations": [
+            {
+              "source_id": "S1",
+              "quote": "Agents seized two servers under a warrant; the indictment does not establish a conviction."
+            }
+          ]
+        }
+      ]
+    },
+    "redundant_text": "Two people face allegations of operating a market for credentials, with guilt unestablished.",
+    "expected_substantive_issue": {
+      "item_id": "P02",
+      "reason": "This section only paraphrases the overview and contributes no supported detail or analysis.",
+      "source_ids": [
+        "S1"
+      ]
+    }
+  },
+  {
+    "name": "multi_source_evolving_event",
+    "packet": {
+      "sources": [
+        {
+          "id": "S1",
+          "article_id": 1,
+          "text": "Acme initially reported possible record access. Its earlier notification said investigation was ongoing.",
+          "content_hash": "multi_source_evolving_event"
+        },
+        {
+          "id": "S2",
+          "article_id": 2,
+          "text": "A primary notice published September 23, 2026 confirms 200 affected people. Required notifications were completed on September 22, 2026.",
+          "content_hash": "new-primary"
+        }
+      ],
+      "review_contract": "whole-cited-source-review-with-locator-warnings-v1",
+      "update_reason": "evidence_change",
+      "evidence_delta": {
+        "baseline": "known",
+        "new": [
+          "S2"
+        ],
+        "changed": [],
+        "removed": []
+      }
+    },
+    "report": {
+      "title": "Multi Source Evolving Event",
+      "kind": "breach",
+      "items": [
+        {
+          "id": "P01",
+          "section": "overview",
+          "text": "Acme initially reported possible record access. A newly incorporated primary notice confirms 200 affected people while an earlier notification described an ongoing investigation.",
+          "claim_type": "finding",
+          "confidence": null,
+          "rationale": "",
+          "date_label": "",
+          "date_sort": null,
+          "citations": [
+            {
+              "source_id": "S1",
+              "quote": "Acme initially reported possible record access."
+            },
+            {
+              "source_id": "S2",
+              "quote": "confirms 200 affected people"
+            }
+          ]
+        },
+        {
+          "id": "P02",
+          "section": "what_changed",
+          "text": "The new primary notice confirms 200 affected people, resolving the prior scope uncertainty. Its September 23 publication predates this report revision; incorporating it is not a later incident development.",
+          "claim_type": "finding",
+          "confidence": null,
+          "rationale": "",
+          "date_label": "",
+          "date_sort": null,
+          "citations": [
+            {
+              "source_id": "S2",
+              "quote": "A primary notice published September 23, 2026 confirms 200 affected people."
+            }
+          ]
+        }
+      ]
+    },
+    "redundant_text": "Acme has reported record access affecting people, with a primary notice confirming the scope.",
+    "expected_substantive_issue": {
+      "item_id": "P02",
+      "reason": "This section only paraphrases the overview and contributes no supported detail or analysis.",
+      "source_ids": [
+        "S1"
+      ]
+    }
+  }
+]

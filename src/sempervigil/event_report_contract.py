@@ -22,10 +22,20 @@ uncertainty, affected populations, and dates. Do not infer missing facts or asse
 absence merely because reporting omits it. Label reasoned analyst assessments and
 intelligence gaps explicitly, with confidence, rationale, cited premises and limits.
 Reasonable analysis is encouraged; do not present an inference as a sourced fact.
-Give a concise executive overview. The remaining sections must add substantive
-mechanics, progression, consequences, response, attribution or intelligence gaps,
-not recycle overview sentences. Avoid repeating claims across detail sections.
-Omit unsupported sections. Order dated milestones chronologically; preserve date
+Write an orienting overview in connected, developed paragraphs, proportional to
+the supplied evidence. Establish who or what is affected, what happened, the
+supported mechanism and sequence, material consequences, response status and
+essential uncertainty. Treat each item as a coherent paragraph and provenance
+unit, not a mandatory single statement. Split items when epistemic type or
+material attribution changes. Sparse evidence may warrant a short report; do not
+impose paragraph, heading or word quotas.
+Each deeper section must add supported mechanics, chronology, discriminating
+evidence, consequences, response detail or reasoned implications beyond the
+overview. A brief recap is useful only when it anchors additional detail;
+paraphrase alone is not substantive coverage. Omit sections that cannot add
+distinct supported value. Do not invent specifics or repeat generic intelligence
+gaps to fill space. Preserve assessments, qualifications, source attribution and
+date precision. Order dated milestones chronologically; preserve date
 precision and qualify relative dates instead of inventing calendar anchors. Do not
 infer source independence from different domains. What changed must compare the
 previous report with new evidence, distinguishing corrections from new developments.
@@ -50,8 +60,7 @@ findings from analyst assessments, and put assessments under analyst_assessment 
 the appropriate attack-mechanics section, not attribution unless assessing actors.
 Use unknown/undated labels and null date_sort when an action date is unreported;
 source publication, materiality and signature dates are not incident/action dates.
-The overview is concise; each detailed section adds different information rather
-than restating the mechanism. Cover material financial expectations with their
+Cover material financial expectations with their
 uncertainty and notification progress (completed, ongoing, intended) when reported.
 State intelligence limits once, specifically, rather than repeating generic gaps."""
 REVIEWER = """Independently review the entire Event report against the complete supplied
@@ -77,6 +86,17 @@ REVIEWER += """
 Check report-level analyst usefulness as well as facts: preserve beliefs versus
 confirmation, typed/appropriately placed assessments, evidence-backed action dates,
 nonrepetitive detail sections, and material financial/notification qualifications.
+Evaluate analyst usefulness across the whole report. The overview must orient
+the reader, and each deeper section must contribute supported information,
+explanation or warranted analysis beyond it. Flag substantive redundancy when a
+section merely rephrases the overview or another section without adding that
+value. Permit brief repetition that anchors additional detail or chronology;
+lexical similarity alone is not grounds for rejection.
+Judge completeness against the supplied evidence, not a heading count or word
+target. Sparse reports may legitimately be short. Reject invented detail, lost
+qualifications and repeated generic gaps. Identify affected item IDs and source
+IDs for material redundancy or omissions. Keep stylistic preferences separate
+from substantive issues.
 Return ready iff substantive issues is empty. Locator warnings never determine ready.
 Do not clear a material qualification, omission or readability failure as stylistic."""
 
