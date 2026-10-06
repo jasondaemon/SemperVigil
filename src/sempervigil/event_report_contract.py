@@ -63,6 +63,13 @@ source publication, materiality and signature dates are not incident/action date
 Cover material financial expectations with their
 uncertainty and notification progress (completed, ongoing, intended) when reported.
 State intelligence limits once, specifically, rather than repeating generic gaps."""
+WRITER += """
+Use commas, parentheses, colons or separate sentences instead of em dashes in
+newly authored narrative, titles and explanations. Preserve verbatim source
+quotations, citation passage quotes, genuine names, identifiers and URLs exactly;
+never normalize or replace punctuation in evidence. Keep the prose natural and
+avoid repeated report-cutoff labels: the application owns the page updated date.
+Retain essential incident dates and claim-specific source-status qualifications."""
 REVIEWER = """Independently review the entire Event report against the complete supplied
 articles. Assess factual support against each item's COMPLETE CITED SOURCES;
 inspect the whole packet for contradictions and missing qualifications. Citation
@@ -341,3 +348,37 @@ def update_context(packet, reason, baseline=None):
                      removed=[s["id"] for aid,s in old.items() if aid not in current])
     return {**packet, "update_reason": reason, "evidence_delta": delta,
             "previous_report_coverage": "Continuity, not evidence; added coverage is not new event facts."}
+
+
+ATTACK_WRITER = """
+In attack_path items, include attack_mappings only for defensible behavior matches
+against the supplied official attack_reference definitions. The catalog is trusted
+TAXONOMY, not incident evidence. Choose technique_id, origin, behavior_status,
+rationale, limitations and supporting source_ids; the application owns names,
+URLs, parents and possible tactics. Use origin source_supplied only if cited
+article text explicitly supplies that ID, otherwise analyst_applied. Distinguish
+reported, attempted and inferred behavior; an attempted phone call is not proof
+that a victim granted access. Inferred behavior belongs in an assessment item
+with explicit premises and limits. Catalog tactic membership does not establish
+that an objective occurred. Do not infer technical actions from defensive resets,
+tool restrictions, hypothetical routes or a vulnerability description alone.
+Map the minimum supported specificity, omit unsupported mechanisms, and abstain
+with an empty array when none fits. Empty arrays also apply to all non-attack_path
+items. Do not force ATT&CK onto legal outcomes, sparse records or unknown paths.
+The mapping rationale should explain the fit without repeating the entire item.
+No separate inventory, invented stages or reconstructed sequence. Behavior order
+is unknown unless established by event evidence. Preserve disputed/source-qualified
+accounts; an analyst taxonomy classification is not MITRE confirmation of the case.
+"""
+ATTACK_REVIEWER = """
+Also review every attack_mappings entry using the supplied official definitions
+and full cited articles. Names/URLs/relationships are application-resolved.
+An ID match establishes taxonomy validity, not event support. Check semantic fit,
+source_supplied versus analyst_applied origin, attempted versus successful behavior,
+inferred premises/limits, unsupported stage ordering and excessive specificity.
+Reject a remote-service-session technique for an ordinary web session unless its
+required remote-service context is supported; RCE alone does not prove lateral
+movement, a public-facing deployment, or a particular interpreter. No mappings
+is acceptable for irrelevant/sparse evidence. Return mapping issues under the
+owning item ID in the existing review schema; do not add repair calls or rewrite.
+"""
