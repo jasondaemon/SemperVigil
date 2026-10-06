@@ -30,3 +30,23 @@ def test_default_disabled_and_scoped_configuration(monkeypatch):
     monkeypatch.delenv(editor.CONFIG_ENV,raising=False);assert editor.configuration() is None
     monkeypatch.setenv(editor.CONFIG_ENV,json.dumps(profile()));assert editor.configuration()==profile()
     assert editor.configuration()['context_overrides'].get('evt_other',24000)==24000
+
+
+def test_same_model_authority_is_explicit_and_workflow_scoped(monkeypatch):
+    monkeypatch.setenv(editor.CONFIG_ENV,json.dumps(profile()))
+    monkeypatch.delenv(editor.MODEL_POLICY_ENV,raising=False)
+    assert editor.invocation_policy()==editor.DISTINCT_MODELS
+    assert not editor.same_model_allowed({'final_editor':profile()})
+    monkeypatch.setenv(editor.MODEL_POLICY_ENV,editor.SOURCE_CHECKING_PASSES)
+    assert editor.invocation_policy()==editor.SOURCE_CHECKING_PASSES
+    snap={'final_editor':profile(),'final_editor_model_policy':editor.SOURCE_CHECKING_PASSES}
+    assert editor.same_model_allowed(snap)
+    assert not editor.same_model_allowed({'final_editor_model_policy':editor.SOURCE_CHECKING_PASSES})
+    assert not editor.same_model_allowed({**snap,'final_editor':{**profile(),'workflow':'legacy'}})
+    monkeypatch.delenv(editor.CONFIG_ENV)
+    with pytest.raises(ValueError,match='workflow_required'):editor.invocation_policy()
+
+
+def test_invalid_model_policy_fails_closed(monkeypatch):
+    monkeypatch.setenv(editor.MODEL_POLICY_ENV,'guess-an-independent-review')
+    with pytest.raises(ValueError,match='model_policy_invalid'):editor.invocation_policy()

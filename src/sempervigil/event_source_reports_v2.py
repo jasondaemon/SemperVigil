@@ -128,7 +128,7 @@ def configuration(conn):
     provider, model = get_provider(conn, row[0]), get_model(conn, row[1])
     from .attack_catalog_runtime import settings
     from .attack_catalog import generation_schema
-    from .event_report_final_editor import configuration as editor_configuration, PROMPT as editor_prompt
+    from .event_report_final_editor import configuration as editor_configuration, PROMPT as editor_prompt, invocation_policy
     editor = editor_configuration()
     code_identity = runtime_code_identity()
     version = _version({"attack": {'enabled': False} if editor else settings(),"code_identity":code_identity,"workflow": contract.WORKFLOW, "model": model["id"],
@@ -141,7 +141,7 @@ def configuration(conn):
         "projection_policy":contract.PROJECTION_WORKFLOW,
         "fixed_reviewer_model":reviewer_model(),"review_schema":contract.review_schema({'items':[{'id':'P01'}]},['S1']),
         **({'pilot_policy':pilot} if pilot else {}),
-        **({'final_editor': editor} if editor else {})})
+        **({'final_editor': editor, 'final_editor_model_policy': invocation_policy()} if editor else {})})
     return model, provider, version
 
 
@@ -159,12 +159,13 @@ def runtime_code_identity():
 def runtime_identity():
     """Code/catalog/options proof readable by the separate publication role."""
     from .attack_catalog_runtime import settings
-    from .event_report_final_editor import configuration as editor_configuration
+    from .event_report_final_editor import configuration as editor_configuration, invocation_policy
     return _version({'code': runtime_code_identity(), 'attack': {'enabled': False} if editor_configuration() else settings(),
                      'phase_settings': phase_settings(),
                      'writer_model': os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL') or MODEL,
                      'reviewer_model': reviewer_model(),
-                     **({'final_editor': editor_configuration()} if editor_configuration() else {})})
+                     **({'final_editor': editor_configuration(), 'final_editor_model_policy': invocation_policy()}
+                        if editor_configuration() else {})})
 
 
 def snapshot(conn, event_id, *, lock=False):
@@ -459,12 +460,12 @@ def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
             or not 1 <= len(analyst_question.strip()) <= 800):
         raise ValueError("event_source_report_analyst_question_invalid")
     model, _, generation = configuration(conn)
-    from .event_report_final_editor import configuration as editor_configuration
+    from .event_report_final_editor import configuration as editor_configuration, invocation_policy, SOURCE_CHECKING_PASSES
     editor = editor_configuration()
     if editor:
         if pilot or allow_correction:
             raise ValueError('event_final_editor_legacy_repair_incompatible')
-        if model['model_name'] == editor['model']:
+        if model['model_name'] == editor['model'] and invocation_policy() != SOURCE_CHECKING_PASSES:
             raise ValueError('event_report_v2_independent_models_required')
         row = conn.execute('''SELECT m.id FROM llm_models m JOIN llm_providers p ON p.id=m.provider_id
             WHERE lower(p.name)='openai' AND lower(p.type)='openai_compatible'
@@ -472,7 +473,8 @@ def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
         if not row:
             raise ValueError('event_source_report_reviewer_model_missing')
     if autonomous:
-        if not os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL') or model['model_name'] == reviewer_model():
+        if (not os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL')
+            or (model['model_name'] == reviewer_model() and not (editor and invocation_policy() == SOURCE_CHECKING_PASSES))):
             raise ValueError('event_report_v2_independent_models_required')
         reviewer = conn.execute('''SELECT m.id FROM llm_models m JOIN llm_providers p ON p.id=m.provider_id
             WHERE lower(p.name)='openai' AND lower(p.type)='openai_compatible'
@@ -485,6 +487,7 @@ def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
     snap['report_contract']=contract.WORKFLOW
     if editor:
         snap['final_editor'] = editor
+        snap['final_editor_model_policy'] = invocation_policy()
     predecessor, prior = previous(conn, event_id)
     old, prior_generation = published_baseline(conn,event_id,snap)
     if pilot:

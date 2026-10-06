@@ -151,3 +151,27 @@ def test_unresolved_issue_binds_to_new_final_item_not_input_ids(setup):
     rid,result,_=s.execute({'report':final,'review':{'ready':False,'issues':[{'item_id':'P03','reason':'An unresolved material issue is attached to this newly returned paragraph.','source_ids':['S1']}],'locator_warnings':[],'editorial_warnings':[]}})
     assert result['status']=='held' and result.get('reason') is None
     assert reports._load(s.conn,rid)['review']['issues'][0]['item_id']=='P03'
+
+
+def test_authorized_same_model_separate_invocations_reconstruct_with_honest_lineage(setup,monkeypatch):
+    s=setup
+    monkeypatch.setenv(editor.MODEL_POLICY_ENV,editor.SOURCE_CHECKING_PASSES)
+    monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_WRITER_MODEL','fixture-editor')
+    monkeypatch.setattr(reports,'configuration',lambda _:({'id':'e','model_name':'fixture-editor','max_context':128000},{'id':'p'},'b'*64))
+    rid,result,_=s.execute()
+    assert result['status']=='accepted' and len(s.calls)==2,result
+    assert s.calls[0]['model']==s.calls[1]['model']=='fixture-editor'
+    material=publication.current_material(s.conn,rid)
+    assert material['derivation']['independence']=='none; same-model separate source-checking invocations'
+    assert material['derivation']['invocation_policy']==editor.SOURCE_CHECKING_PASSES
+    assert material['derivation']['writer_response_version']!=material['derivation']['editor_response_version']
+
+
+def test_missing_scoped_authority_cannot_reconstruct_same_model_material(setup,monkeypatch):
+    s=setup;monkeypatch.setenv(editor.MODEL_POLICY_ENV,editor.SOURCE_CHECKING_PASSES)
+    monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_WRITER_MODEL','fixture-editor')
+    monkeypatch.setattr(reports,'configuration',lambda _:({'id':'e','model_name':'fixture-editor','max_context':128000},{'id':'p'},'b'*64))
+    rid,result,_=s.execute();assert result['status']=='accepted'
+    record=reports._load(s.conn,rid);record['snapshot'].pop('final_editor_model_policy')
+    rows=s.conn.execute('SELECT request_json,response_json FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal',(rid,)).fetchall()
+    with pytest.raises(ValueError):editor.derive(*(json.loads(v) for row in rows for v in row),record['snapshot'])

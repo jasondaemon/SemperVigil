@@ -1,5 +1,6 @@
 """A genuine new source follows final editing through normal successor gates."""
 import copy,json
+import pytest
 from types import SimpleNamespace
 from test_event_report_v2_policy_postgres import setup
 from test_event_source_reports_postgres import database,response
@@ -7,14 +8,19 @@ from sempervigil import event_report_final_editor as editor,event_source_reports
 from sempervigil import event_source_report_publication_v2 as publication
 
 
-def test_genuine_successor_final_editor_uses_fresh_qualification_and_same_event(setup,monkeypatch):
+@pytest.mark.parametrize("same_model",[False,True])
+def test_genuine_successor_final_editor_uses_fresh_qualification_and_same_event(setup,monkeypatch,same_model):
     s=setup
     profile={'workflow':editor.WORKFLOW,'model':'fixture-editor','reasoning_effort':'high','max_completion_tokens':12000,'context_overrides':{}}
     monkeypatch.setenv(editor.CONFIG_ENV,json.dumps(profile))
     s.conn.execute("INSERT INTO llm_models VALUES('e','p','fixture-editor',1)");s.conn.commit()
     from sempervigil.services import ai_service
     monkeypatch.setattr(ai_service,'get_model',lambda *a:{'id':'e','model_name':'fixture-editor','max_context':128000})
-    monkeypatch.setattr(reports,'configuration',lambda _:({'id':'w','model_name':'fixture-writer','max_context':128000},{'id':'p'},'b'*64))
+    writer_model='fixture-editor' if same_model else 'fixture-writer'
+    if same_model:
+        monkeypatch.setenv(editor.MODEL_POLICY_ENV,editor.SOURCE_CHECKING_PASSES)
+        monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_WRITER_MODEL',writer_model)
+    monkeypatch.setattr(reports,'configuration',lambda _:({'id':'w','model_name':writer_model,'max_context':128000},{'id':'p'},'b'*64))
     rid=next(x['run_id'] for x in reports.tick(s.conn) if x['status']=='queued')
     final=copy.deepcopy(s.value)
     final['items'][0]['text']='Acme reported possible patient-record exposure. The investigation continued in the newly supplied reporting.'
@@ -36,3 +42,13 @@ def test_genuine_successor_final_editor_uses_fresh_qualification_and_same_event(
     qualification=publication.qualification(material,rid)
     assert qualification['derivation']['editor_response_version']
     assert reports._load(s.conn,rid)['charged_tokens']==600
+
+
+def test_new_same_model_policy_does_not_relax_legacy_autonomous_guard(setup,monkeypatch):
+    s=setup
+    monkeypatch.delenv(editor.CONFIG_ENV,raising=False)
+    monkeypatch.setenv(editor.MODEL_POLICY_ENV,editor.SOURCE_CHECKING_PASSES)
+    monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_WRITER_MODEL',reports.MODEL)
+    monkeypatch.setattr(reports,'configuration',lambda _:({'id':'r','model_name':reports.MODEL,'max_context':128000},{'id':'p'},'b'*64))
+    with pytest.raises(ValueError,match='independent_models_required'):reports.submit(s.conn,'evt_test',trigger='evidence_change')
+    assert not s.calls

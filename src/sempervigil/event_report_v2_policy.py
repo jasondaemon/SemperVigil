@@ -128,10 +128,11 @@ def check_run(conn, record, run_id, *, publication=False):
         require_qualified_predecessor(conn,record['event_id'],record['predecessor'])
         calls = conn.execute('SELECT phase,status,request_json FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal', (run_id,)).fetchall()
         requests = [json.loads(r[2]) for r in calls]
+        from .event_report_final_editor import same_model_allowed
         if (record['status'] != 'accepted' or record['reserved_tokens'] != 0
             or not record['review'] or record['review'].get('ready') is not True or record['review'].get('issues') != []
             or [(r[0], r[1]) for r in calls] != [('writer', 'completed'), ('review', 'completed')]
-            or requests[0]['model'] == requests[1]['model']):
+            or (requests[0]['model'] == requests[1]['model'] and not same_model_allowed(record['snapshot']))):
             raise ValueError('event_report_v2_not_independently_ready')
         from . import event_report_contract_v2 as contract
         contract.validate_review(record['review'], record['report'], contract.context(record['snapshot']))
