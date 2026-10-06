@@ -93,6 +93,8 @@ def admit(conn, p, event_id, generation, predecessor, baseline):
     # Initial enrollments/backfill and generator-only upgrades are deliberately absent.
     if not predecessor or baseline is None:
         raise ValueError('event_report_v2_successor_required')
+    from .event_source_reports_v2 import require_qualified_predecessor
+    require_qualified_predecessor(conn,event_id,predecessor)
     rows = locked_rows(conn, p)
     if len(rows) >= p['max_runs']:
         raise ValueError('event_report_v2_run_limit')
@@ -122,6 +124,8 @@ def check_run(conn, record, run_id, *, publication=False):
         or record['charged_tokens'] + record['reserved_tokens'] > p['run_tokens']):
         raise ValueError('event_report_v2_policy_changed')
     if publication:
+        from .event_source_reports_v2 import require_qualified_predecessor
+        require_qualified_predecessor(conn,record['event_id'],record['predecessor'])
         calls = conn.execute('SELECT phase,status,request_json FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal', (run_id,)).fetchall()
         requests = [json.loads(r[2]) for r in calls]
         if (record['status'] != 'accepted' or record['reserved_tokens'] != 0

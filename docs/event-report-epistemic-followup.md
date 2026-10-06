@@ -1,4 +1,8 @@
-# Epistemic review follow-up: offline proposal
+# Epistemic review follow-up and materiality calibration
+
+October 6 current outcome: the new frozen whole-report triplet completed once (49,867 reserved, 41,318 actual tokens). Baseline N13 held P113's universal control-limit assertion; revised N13 held its unreported response speed. Revised C12 incorrectly held an urgency paraphrase. Independent full-source adjudication confirms C12 is supported; its actual hosted ready=false remains recorded. P110's visible attributed premises and conditional analyst caution are not invented incident facts merely because classification is mixed. The historical strict labels below are protocol history, not the current material-correctness gate.
+
+The general calibration separates materially misleading unsupported assertions from nonblocking editorial fidelity, style and classification feedback. New native v2 review JSON adds `editorial_warnings`; warnings do not determine ready. No event-specific whitelist, keyword factual validator, silent issue deletion or reinterpretation of saved reviews is introduced. Unsupported response speed, categorical causal limits, changed advice/action/conditions and unsupported ATT&CK behavior remain blocking. New generation identity covers prompt/schema changes; historical native schemas are reconstructed from the immutable packet review-contract version for publication validation.
 
 Cleanup and developed report prose are live. Autonomous ATT&CK remains disabled following the observed candidate batch-review miss and the absence of a validated real positive mapping. This is a quality checkpoint, not an access or permission blocker. The existing Microsoft/Astrana v1 successor pilot is separately scoped and unchanged. No hosted retry, rollout, publication or new cohort enablement accompanies this proposal.
 

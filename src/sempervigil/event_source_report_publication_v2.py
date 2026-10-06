@@ -54,7 +54,8 @@ def current_material(conn, run_id, *, lock=False, published=False, derivative=No
         raise ValueError('event_source_report_derivative_integrity')
     if json.loads(review_request['messages'][1]['content'])!={'evidence':evidence,'report':report,'citation_provenance':spans}:
         raise ValueError('event_source_report_review_input_integrity')
-    schema={'type':'json_schema','json_schema':{'name':'event_source_report','strict':True,'schema':contract.review_schema(report,[s['id'] for s in evidence['sources']])}}
+    # Reconstruct the schema used at generation, not today's warning fields.
+    schema={'type':'json_schema','json_schema':{'name':'event_source_report','strict':True,'schema':contract.review_schema(report,[s['id'] for s in evidence['sources']], editorial=input_packet.get('review_contract') == contract.REVIEW_CONTRACT)}}
     if review_request['response_format']!=schema:
         raise ValueError('event_source_report_review_schema_changed')
     review=body(review_response);contract.validate_review(review,report,evidence)

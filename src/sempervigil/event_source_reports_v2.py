@@ -217,6 +217,46 @@ def previous(conn, event_id):
     return row[0], report
 
 
+def require_qualified_predecessor(conn, event_id, expected):
+    """A source baseline is not permission to revive withdrawn publication.
+
+    Use the same native material checks as export for supported report workflows.
+    No held run, old fact ledger, or continuity prose becomes fresh evidence.
+    """
+    row = conn.execute("""SELECT p.revision_id,r.bundle_json,r.qualification_id,
+        q.qualification_json,q.revoked_at FROM event_public_pointers p
+        JOIN event_public_revisions r USING(event_id,revision_id)
+        JOIN event_quote_qualifications q USING(event_id,qualification_id)
+        WHERE p.event_id=%s""", (event_id,)).fetchone()
+    if not row or row[0] != expected or row[4] is not None:
+        raise ValueError('event_report_v2_qualified_predecessor_required')
+    bundle=json.loads(row[1]) if isinstance(row[1],str) else row[1]
+    qualification=json.loads(row[3]) if isinstance(row[3],str) else row[3]
+    if _version(qualification)!=row[2] or bundle.get('qualification')!=qualification:
+        raise ValueError('event_report_v2_predecessor_integrity')
+    from .event_render import resolve
+    resolve(bundle,event_id=event_id,expected_revision=expected)
+    try:
+        if bundle.get('workflow')=='event-source-report-public-v2':
+            from .event_source_report_publication_v2 import published_material,bundle_for
+            material=published_material(conn,bundle)
+            valid=bundle_for(material,bundle['run_id'],qualification,bundle['predecessor'])==bundle
+        elif bundle.get('workflow')=='event-source-report-public-v1':
+            from .event_source_report_publication import current_material,bundle_for
+            material=current_material(conn,bundle['run_id'],published=True)
+            valid=bundle_for(material,bundle['run_id'],qualification,bundle['predecessor'])==bundle
+        elif bundle.get('workflow')=='event-composition-public-revision-v1':
+            from .event_composition_publication import current_material
+            material=current_material(conn,bundle['composition_id'],event_id=event_id,allow_current_public_superseded=True)
+            valid=all(material[k]==bundle[k] for k in ('ledger_revision_id','ledger_record','composition','sources'))
+        else:
+            valid=False
+    except ValueError as exc:
+        raise ValueError('event_report_v2_qualified_predecessor_required') from exc
+    if not valid:
+        raise ValueError('event_report_v2_qualified_predecessor_required')
+
+
 def meaningful_change(old, new):
     if "membership" in old and "membership" in new:
         prior_members = {m["article_id"]: m for m in old["membership"]}
@@ -336,12 +376,13 @@ def published_baseline(conn, event_id, current):
 
 
 def cohort_configuration():
-    cohort = os.environ.get("SV_EVENT_SOURCE_REPORT_COHORT_ID", "").strip()
-    limit = os.environ.get("SV_EVENT_SOURCE_REPORT_COHORT_TOKENS", "").strip()
+    # Never inherit the legacy pilot's allowance or reconfigure its live policy.
+    cohort = os.environ.get("SV_EVENT_REPORT_V2_COHORT_ID", "").strip()
+    limit = os.environ.get("SV_EVENT_REPORT_V2_COHORT_TOKENS", "").strip()
     if not cohort and not limit:
         return None
     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}",cohort) or not limit.isdecimal() or not 1 <= int(limit) <= 2000000:
-        raise ValueError("event_source_report_cohort_invalid")
+        raise ValueError("event_report_v2_cohort_invalid")
     return {"id":cohort,"limit":int(limit)}
 
 
@@ -504,6 +545,8 @@ def _fresh(conn, record):
         raise ValueError("event_source_report_sources_changed")
     if previous(conn, record["event_id"])[0] != record["predecessor"]:
         raise ValueError("event_source_report_predecessor_changed")
+    if "autonomous_policy" in record["snapshot"]:
+        require_qualified_predecessor(conn,record["event_id"],record["predecessor"])
     if configuration(conn)[2] != record["snapshot"].get("runtime_generation_at_import",record["generator_version"]):
         raise ValueError("event_source_report_configuration_changed")
 
@@ -796,7 +839,8 @@ def grant_correction_allowance(conn, run_id, tokens, *, authority, manual_issues
         reason=conn.execute('SELECT reason FROM event_source_report_runs WHERE run_id=%s',(run_id,)).fetchone()[0]
         if not record['review'] or not record['review']['ready'] or not isinstance(reason,str) or not reason.startswith('manual_quality_'):
             raise ValueError('event_source_report_manual_correction_not_eligible')
-        contract.validate_review({'ready':False,'issues':manual_issues,'locator_warnings':[]},
+        contract.validate_review({'ready':False,'issues':manual_issues,'locator_warnings':[],
+                                  **({'editorial_warnings':[]} if record['snapshot'].get('review_contract')==contract.REVIEW_CONTRACT else {})},
                                  record['report'],contract.context(record['snapshot']))
     if (record['status']!='held' or record['reserved_tokens'] or not record['review']
             or (record['review']['ready'] and not manual_issues) or rows!=[('writer','completed'),('review','completed')]):

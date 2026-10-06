@@ -38,7 +38,8 @@ def setup(database,monkeypatch):
   def complete(payload):
    local.append(payload);calls.append(payload)
    if transport:raise transport
-   return response(replies[len(local)-1])
+   value=replies[len(local)-1]
+   return response({**value,'editorial_warnings':value.get('editorial_warnings',[])} if 'ready' in value else value)
   job=SimpleNamespace(job_type=reports.JOB_TYPE,queue_name='openai',status='running',max_attempts=1,payload={'run_id':rid})
   return reports.run(conn,job,complete=complete)
  def publish(rid,automatic=False):
@@ -52,8 +53,8 @@ def setup(database,monkeypatch):
  calls.clear()
  now=datetime.now(timezone.utc)
  p={'starts_at':(now-timedelta(minutes=1)).isoformat(),'expires_at':(now+timedelta(hours=1)).isoformat(),'max_runs':2,'max_concurrent':1,'run_tokens':32000,'debounce_seconds':300,'generator_version':'b'*64}
- monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_COHORT_ID','v2-fixture');monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_COHORT_TOKENS','64000');monkeypatch.setenv('SV_EVENT_REPORT_V2_POLICY',json.dumps(p));monkeypatch.setenv('SV_EVENT_REPORT_V2_AUTONOMOUS','1')
- conn.execute("UPDATE articles SET content_text=content_text||' The investigation continued.' WHERE id=1");conn.commit()
+ monkeypatch.setenv('SV_EVENT_REPORT_V2_COHORT_ID','v2-fixture');monkeypatch.setenv('SV_EVENT_REPORT_V2_COHORT_TOKENS','64000');monkeypatch.setenv('SV_EVENT_REPORT_V2_POLICY',json.dumps(p));monkeypatch.setenv('SV_EVENT_REPORT_V2_AUTONOMOUS','1')
+ conn.execute("INSERT INTO articles SELECT 2,'New incident reporting','https://example.org/new-report',content_text||' The investigation continued.','2026-10-02','2026-10-02','{}' FROM articles WHERE id=1; INSERT INTO event_articles VALUES('evt_test',2)");conn.commit()
  yield SimpleNamespace(conn=conn,factory=factory,namespace=namespace,execute=execute,publish=publish,calls=calls,value=value,old=old,p=p,admission=admission,promotion=promotion)
  conn.rollback()
  for role in (admission,promotion):conn.execute(f'DROP OWNED BY "{role}"');conn.execute(f'DROP ROLE "{role}"')
@@ -119,7 +120,7 @@ def test_bounded_whole_report_lifecycle_and_abstention(setup,monkeypatch,tmp_pat
 @pytest.mark.parametrize('change',['sources','predecessor','expiry','rollback','generation','catalog'])
 def test_queued_staleness_never_calls_or_changes_publication(setup,monkeypatch,change):
  s=setup;rid=reports.submit(s.conn,'evt_test')['run_id']
- if change=='sources':s.conn.execute("UPDATE articles SET content_text=content_text||' A correction.' WHERE id=1");s.conn.commit()
+ if change=='sources':s.conn.execute("UPDATE articles SET content_text=content_text||' A correction.' WHERE id=2");s.conn.commit()
  if change=='predecessor':s.conn.execute("DELETE FROM event_public_pointers WHERE event_id='evt_test'");s.conn.commit()
  if change=='expiry':p=copy.deepcopy(s.p);p['expires_at']=(datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat();monkeypatch.setenv('SV_EVENT_REPORT_V2_POLICY',json.dumps(p))
  if change=='rollback':monkeypatch.setenv('SV_EVENT_REPORT_V2_AUTONOMOUS','0')
@@ -152,11 +153,11 @@ def test_failure_old_publication_and_no_retry_spend(setup,monkeypatch,failure):
 def test_lifetime_capacity_and_concurrency(setup,monkeypatch,limit):
  s=setup
  if limit=='runs':p=copy.deepcopy(s.p);p['max_runs']=1;monkeypatch.setenv('SV_EVENT_REPORT_V2_POLICY',json.dumps(p))
- if limit=='capacity':monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_COHORT_TOKENS','32000')
+ if limit=='capacity':monkeypatch.setenv('SV_EVENT_REPORT_V2_COHORT_TOKENS','32000')
  first=reports.submit(s.conn,'evt_test')['run_id']
  if limit!='busy':s.conn.execute("UPDATE event_source_report_runs SET status='held' WHERE run_id=%s",(first,));s.conn.commit()
  if limit=='policy_conflict':p=copy.deepcopy(s.p);p['debounce_seconds']=301;monkeypatch.setenv('SV_EVENT_REPORT_V2_POLICY',json.dumps(p))
- s.conn.execute("UPDATE articles SET content_text=content_text||' Further changed evidence.' WHERE id=1");s.conn.commit()
+ s.conn.execute("UPDATE articles SET content_text=content_text||' Further changed evidence.' WHERE id=2");s.conn.commit()
  with pytest.raises(ValueError,match={'runs':'run_limit','capacity':'capacity_exhausted','busy':'busy','policy_conflict':'policy_conflict'}[limit]):reports.submit(s.conn,'evt_test')
  s.conn.rollback();assert not s.calls and pointer(s)==s.old
 
@@ -178,12 +179,12 @@ def test_real_negative_examples_hold_when_reviewer_identifies_issue(setup,identi
  item=copy.deepcopy(case['item'])
  # Preserve exact reported prose and citation strings; combine cited fixture
  # passages only for persistence/gate testing. Later real evaluation uses full bodies.
- for citation in item['citations']:citation['source_id']='S1'
+ for citation in item['citations']:citation['source_id']='S2'
  extra=' '.join(c['quote'] for c in item['citations'])
- s.conn.execute('UPDATE articles SET content_text=content_text||%s WHERE id=1',(' '+extra,));s.conn.commit()
+ s.conn.execute('UPDATE articles SET content_text=content_text||%s WHERE id=2',(' '+extra,));s.conn.commit()
  s.value['items'].append(item)
  rid=reports.submit(s.conn,'evt_test')['run_id']
- review={'ready':False,'issues':[{'item_id':identifier,'reason':case['expected_issue'],'source_ids':['S1']}],'locator_warnings':[]}
+ review={'ready':False,'issues':[{'item_id':identifier,'reason':case['expected_issue'],'source_ids':['S2']}],'locator_warnings':[]}
  assert s.execute(rid,review=review)['status']=='held'
  assert len(s.calls)==2 and pointer(s)==s.old
  with pytest.raises(ValueError):s.publish(rid,automatic=True)
@@ -199,7 +200,7 @@ def test_parallel_event_admission_serializes_cohort_capacity(setup,monkeypatch):
  s.conn.execute("INSERT INTO events VALUES('evt_other','Acme incident','active','confirmed'); INSERT INTO event_articles VALUES('evt_other',1)");s.conn.commit()
  other=reports.submit(s.conn,'evt_other')['run_id'];assert s.execute(other)['status']=='accepted';s.publish(other)
  s.calls.clear();monkeypatch.setenv('SV_EVENT_REPORT_V2_AUTONOMOUS','1')
- s.conn.execute("UPDATE articles SET content_text=content_text||' New evidence for concurrent admission.' WHERE id=1");s.conn.commit()
+ s.conn.execute("INSERT INTO articles SELECT 3,'Concurrent new reporting','https://example.org/concurrent',content_text||' New evidence for concurrent admission.','2026-10-03','2026-10-03','{}' FROM articles WHERE id=1; INSERT INTO event_articles VALUES('evt_test',3),('evt_other',3)");s.conn.commit()
  barrier=Barrier(2)
  def request(event):
   with s.factory() as conn:
@@ -251,7 +252,7 @@ def test_provider_overrun_closes_remaining_cohort(setup,monkeypatch):
  monkeypatch.setattr(sys.modules[__name__],'response',overrun)
  rid=reports.submit(s.conn,'evt_test')['run_id']
  assert s.execute(rid)['status']=='held' and len(s.calls)==1 and pointer(s)==s.old
- s.conn.execute("UPDATE articles SET content_text=content_text||' Additional evidence.' WHERE id=1");s.conn.commit()
+ s.conn.execute("UPDATE articles SET content_text=content_text||' Additional evidence.' WHERE id=2");s.conn.commit()
  with pytest.raises(ValueError,match='provider_budget_overrun'):reports.submit(s.conn,'evt_test')
  s.conn.rollback();assert pointer(s)==s.old and len(s.calls)==1
 
@@ -272,7 +273,7 @@ def test_midrun_change_stops_before_reviewer_transport(setup,monkeypatch,change)
  def changed(value):
   seen.append(True)
   if len(seen)==1:
-   if change=='source':s.conn.execute("UPDATE articles SET content_text=content_text||' Midrun correction.' WHERE id=1");s.conn.commit()
+   if change=='source':s.conn.execute("UPDATE articles SET content_text=content_text||' Midrun correction.' WHERE id=2");s.conn.commit()
    if change=='expiry':p=copy.deepcopy(s.p);p['expires_at']=(datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat();monkeypatch.setenv('SV_EVENT_REPORT_V2_POLICY',json.dumps(p))
    if change=='rollback':monkeypatch.setenv('SV_EVENT_REPORT_V2_GENERATION_ENABLED','0')
   return real(value)
@@ -287,8 +288,8 @@ def test_false_ready_semantic_fixture_is_not_claimed_as_detected(setup):
  from pathlib import Path
  case=next(c for c in json.loads((Path(__file__).parent/'fixtures/zammad_semantic_negatives.json').read_text()) if c['item']['id']=='P113')
  item=copy.deepcopy(case['item'])
- for citation in item['citations']:citation['source_id']='S1'
- s.conn.execute('UPDATE articles SET content_text=content_text||%s WHERE id=1',(' '+' '.join(c['quote'] for c in item['citations']),));s.conn.commit()
+ for citation in item['citations']:citation['source_id']='S2'
+ s.conn.execute('UPDATE articles SET content_text=content_text||%s WHERE id=2',(' '+' '.join(c['quote'] for c in item['citations']),));s.conn.commit()
  s.value['items'].append(item);rid=reports.submit(s.conn,'evt_test')['run_id']
  assert s.execute(rid)['status']=='accepted'
  # A simulated false-ready review demonstrates the unresolved semantic gap.
@@ -309,6 +310,96 @@ def test_legacy_enrollment_cannot_bypass_dormant_autonomous_policy(setup,monkeyp
  s.conn.execute('CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT,updated_at TEXT)')
  s.conn.execute("INSERT INTO settings VALUES('event.source_report.enrolled','[\"evt_test\"]','2026-10-06')");s.conn.commit()
  monkeypatch.setenv('SV_EVENT_REPORT_V2_AUTONOMOUS','0')
+ monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_COHORT_ID','legacy-enrollment')
+ monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_COHORT_TOKENS','64000')
  assert legacy.tick(s.conn)==[]
  assert not s.calls and pointer(s)==s.old
  assert s.conn.execute("SELECT count(*) FROM event_source_report_runs WHERE snapshot_json::jsonb->'cohort'->>'id'='v2-fixture'").fetchone()[0]==0
+
+
+def test_live_legacy_and_v2_successors_have_independent_capacity_and_transport(setup,monkeypatch):
+ from sempervigil import event_source_report_pilot as pilot,event_source_report_publication as v1_publication
+ from test_event_source_reports_postgres import generated as v1_generated
+ s=setup
+ monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_WRITER_MODEL','gpt-5.6-sol')
+ monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_PHASE_CONFIG',json.dumps({'writer':{'reasoning_effort':'none','max_completion_tokens':6000},'review':{'reasoning_effort':'low','max_completion_tokens':2400}}))
+ monkeypatch.setattr(legacy,'configuration',lambda _:({'id':'m','model_name':'gpt-5.6-sol'},{'id':'p'},'a'*64))
+ s.conn.execute("INSERT INTO events VALUES('evt_ms','Synthetic Microsoft','active','confirmed'),('evt_ast','Synthetic Astrana','active','confirmed'); INSERT INTO event_articles VALUES('evt_ms',1),('evt_ast',1)");s.conn.commit()
+ def execute_legacy(rid):
+  replies=iter([v1_generated(),{'ready':True,'issues':[],'locator_warnings':[]}])
+  job=SimpleNamespace(job_type=legacy.JOB_TYPE,queue_name='openai',status='running',max_attempts=1,payload={'run_id':rid})
+  return legacy.run(s.conn,job,complete=lambda _:response(next(replies)))
+ for event in ('evt_ms','evt_ast'):
+  rid=legacy.submit(s.conn,event,debounce_seconds=0)['run_id'];assert execute_legacy(rid)['status']=='accepted'
+  record=legacy._load(s.conn,rid);qualification=v1_publication.qualification(record,rid)
+  bundle=v1_publication.bundle_for(record,rid,qualification,None);qid=legacy._version(qualification);revision=legacy._version(bundle)
+  s.conn.execute('INSERT INTO event_quote_qualifications VALUES(%s,%s,%s,%s,NULL)',(event,qid,json.dumps(qualification),'now'))
+  s.conn.execute('INSERT INTO event_public_revisions VALUES(%s,%s,%s,NULL,%s,%s)',(event,revision,qid,json.dumps(bundle),'now'))
+  s.conn.execute('INSERT INTO event_public_pointers VALUES(%s,%s,%s)',(event,revision,'now'));s.conn.commit()
+ now=datetime.now(timezone.utc)
+ old={'id':'legacy-live','limit':32000,'events':['evt_ms','evt_ast'],'starts_at':(now-timedelta(minutes=1)).isoformat(),'expires_at':(now+timedelta(hours=1)).isoformat(),'max_runs':1,'max_concurrent':1,'run_tokens':32000}
+ monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_PILOT_POLICY',json.dumps(old))
+ monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_COHORT_ID',old['id']);monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_COHORT_TOKENS',str(old['limit']))
+ monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_EVENT_IDS','evt_ms,evt_ast')
+ v2_policy=policy.policy();old=pilot.policy();policy.active(v2_policy);pilot.active(old)
+ s.conn.execute("INSERT INTO articles SELECT 3,'Genuine synthetic new source','https://example.org/successor',content_text||' Genuine synthetic successor change.','2026-10-03','2026-10-03','{}' FROM articles WHERE id=1; INSERT INTO event_articles VALUES('evt_ms',3),('evt_ast',3),('evt_test',3)");s.conn.commit()
+ old_rid=legacy.submit(s.conn,'evt_ms')['run_id'];assert execute_legacy(old_rid)['status']=='accepted'
+ new_rid=reports.submit(s.conn,'evt_test')['run_id'];assert s.execute(new_rid)['status']=='accepted'
+ assert pilot.locked_rows(s.conn,old)[0][0]==old_rid
+ assert policy.locked_rows(s.conn,v2_policy)[0][0]==new_rid
+ for rid,identity,marker in [(old_rid,'legacy-live','pilot'),(new_rid,'v2-fixture','autonomous_policy')]:
+  record=reports._load(s.conn,rid)
+  assert record['snapshot']['cohort']['id']==identity
+  assert marker in record['snapshot'] and record['budget_tokens']==32000
+  assert record['charged_tokens']==600 and record['reserved_tokens']==0
+  assert s.conn.execute('SELECT count(*) FROM event_source_report_calls WHERE run_id=%s',(rid,)).fetchone()[0]==2
+  assert ('autonomous_policy' if marker=='pilot' else 'pilot') not in record['snapshot']
+ assert sum(r[3] for r in pilot.locked_rows(s.conn,old))==32000
+ assert sum(r[3] for r in policy.locked_rows(s.conn,v2_policy))==32000
+ s.conn.execute("UPDATE articles SET content_text=content_text||' Another material change.' WHERE id=3");s.conn.commit()
+ with pytest.raises(ValueError,match='pilot_run_limit'):legacy.submit(s.conn,'evt_ast')
+ s.conn.rollback()
+ # Exhausting legacy's lifetime slot does not consume v2's second admission.
+ second=reports.submit(s.conn,'evt_test')['run_id']
+ assert second!=new_rid and len(policy.locked_rows(s.conn,v2_policy))==2
+ assert len(pilot.locked_rows(s.conn,old))==1 and pilot.policy()==old
+ s.conn.commit()
+
+
+def test_editorial_warning_is_nonblocking_in_native_publication(setup):
+ s=setup;rid=reports.submit(s.conn,'evt_test')['run_id']
+ warning={'item_id':'P01','reason':'Nonmaterial classification preference; visible prose preserves the source qualification.','source_ids':['S1']}
+ review={'ready':True,'issues':[],'locator_warnings':[],'editorial_warnings':[warning]}
+ assert s.execute(rid,review=review)['status']=='accepted'
+ _,result=s.publish(rid,automatic=True)
+ assert pointer(s)==result['revision_id']
+ assert reports._load(s.conn,rid)['review']['editorial_warnings']==[warning]
+
+
+def test_v2_cohort_identity_changes_stop_queued_transport_without_affecting_legacy(setup,monkeypatch):
+ s=setup;rid=reports.submit(s.conn,'evt_test')['run_id']
+ captured=reports._load(s.conn,rid)['snapshot']['autonomous_policy']
+ monkeypatch.setenv('SV_EVENT_REPORT_V2_COHORT_ID','fresh-other')
+ assert s.execute(rid)['status']=='held' and not s.calls and pointer(s)==s.old
+ assert reports._load(s.conn,rid)['snapshot']['autonomous_policy']==captured
+
+
+@pytest.mark.parametrize('stage',['admission','queued','promotion'])
+@pytest.mark.parametrize('reason',['revoked','terminal_held'])
+def test_unqualified_predecessor_never_revived_by_novel_sources(setup,stage,reason):
+ s=setup;rid=None
+ if stage!='admission':rid=reports.submit(s.conn,'evt_test')['run_id']
+ if stage=='promotion':assert s.execute(rid)['status']=='accepted'
+ baseline,_=reports.published_baseline(s.conn,'evt_test',reports.snapshot(s.conn,'evt_test'))
+ assert baseline is not None and reports.meaningful_change(baseline,reports.snapshot(s.conn,'evt_test'))
+ if reason=='revoked':s.conn.execute("UPDATE event_quote_qualifications SET revoked_at='now' WHERE event_id='evt_test'")
+ else:s.conn.execute("UPDATE event_source_report_runs SET status='held' WHERE run_id=(SELECT bundle_json::jsonb->>'run_id' FROM event_public_revisions WHERE event_id='evt_test' AND revision_id=%s)",(s.old,))
+ s.conn.commit()
+ if stage=='admission':
+  with pytest.raises(ValueError,match='qualified_predecessor_required'):reports.submit(s.conn,'evt_test')
+  s.conn.rollback();assert not s.calls
+ elif stage=='queued':assert s.execute(rid)['status']=='held' and not s.calls
+ else:
+  with pytest.raises(ValueError,match='qualified_predecessor_required'):s.publish(rid,automatic=True)
+  assert len(s.calls)==2
+ assert pointer(s)==s.old

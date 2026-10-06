@@ -9,7 +9,8 @@ from .investigation import _version
 
 WORKFLOW = "event-source-report-v2"
 PUBLIC_WORKFLOW = "event-source-report-public-v2"
-REVIEW_CONTRACT = "whole-cited-source-review-with-locator-warnings-v1"
+REVIEW_CONTRACT = "whole-cited-source-materiality-review-v2"
+PRIOR_REVIEW_CONTRACT = "whole-cited-source-review-with-locator-warnings-v1"
 SECTIONS = ("overview", "attack_vector", "attack_path", "timeline", "impact",
             "response_recovery", "mitigations", "attribution", "analyst_assessment", "open_questions", "what_changed")
 WRITER = """Write a living cyber threat intelligence Event report from the complete supplied
@@ -207,8 +208,9 @@ def publication_projection(report, review, packet):
     retained = {x["id"] for x in projected["items"]}
     issues = [x for x in review["issues"] if x["item_id"] in retained]
     projected_review = {"ready":not issues,"issues":issues}
-    if 'locator_warnings' in review:
-        projected_review['locator_warnings']=[v for v in review['locator_warnings'] if v['item_id'] in retained]
+    for field in ('locator_warnings', 'editorial_warnings'):
+        if field in review:
+            projected_review[field]=[v for v in review[field] if v['item_id'] in retained]
     validate_review(projected_review,projected,packet)
     if not projected_review["ready"]:
         raise ValueError("event_report_projection_retained_review_issues")
@@ -228,15 +230,19 @@ def generation_schema(source_ids, packet):
     return value
 
 
-def review_schema(report, source_ids, *, legacy=False):
+def review_schema(report, source_ids, *, legacy=False, editorial=True):
     issue = object_schema({"item_id": {"type": "string", "enum": [x["id"] for x in report["items"]]},
         "reason": {"type": "string", "minLength": 10, "maxLength": 1600},
         "source_ids": {"type": "array", "minItems": 1,
                        "items": {"type": "string", "enum": source_ids}}})
     properties = {"ready": {"type": "boolean"},
-        "issues": {"type": "array", "maxItems": 16, "items": issue}}
+        "issues": {"type": "array", "maxItems": 16, "items": issue,
+                   **({'description':'Blocking material errors: explain the unsupported or misleading change in belief, action, scope, timing, certainty or behavior against complete cited context.'} if editorial else {})}}
     if not legacy:
         properties['locator_warnings'] = {'type':'array','maxItems':16,'items':issue}
+    if editorial:
+        properties['editorial_warnings'] = {'type':'array','maxItems':16,'items':issue,
+            'description':'Nonblocking fidelity, style or classification feedback that does not materially mislead; never put unsupported material claims here.'}
     return object_schema(properties)
 
 
@@ -328,8 +334,10 @@ def validate(report, packet):
 def validate_review(value, report, packet):
     # Stored legacy reviews keep their original meaning; no issue is reclassified.
     jsonschema.validate(value, review_schema(report, [s["id"] for s in packet["sources"]],
-                                            legacy=(packet.get('review_contract')!=REVIEW_CONTRACT
-                                                    and 'locator_warnings' not in value)))
+                                            legacy=(packet.get('review_contract') not in {REVIEW_CONTRACT, PRIOR_REVIEW_CONTRACT}
+                                                    and 'locator_warnings' not in value),
+                                            editorial=(packet.get('review_contract') == REVIEW_CONTRACT
+                                                       or 'editorial_warnings' in value)))
     if value["ready"] != (not value["issues"]):
         raise ValueError("event_report_review_inconsistent")
     return value
@@ -472,11 +480,38 @@ Apply this decision checklist to EVERY item, including all sentences of a paragr
 4. Resolve pronouns and relative references against neighboring paragraphs as well
    as the cited sources. Hold materially ambiguous or reversed antecedents; exact
    source quotes cannot fix an unclear referent in the report narrative.
-5. Return each substantive failure under the exact offending item ID and supporting
+5. Return each materially misleading failure under the exact offending item ID and supporting
    source IDs. If a relationship spans items, identify the affected items without
-   demanding that every sentence become its own item. Keep locator improvements
-   nonblocking; ready is true only when no substantive issues remain.
+   demanding that every sentence become its own item. Apply the materiality test
+   below; typed paragraph mixing is not automatically a factual error. Keep locator
+   improvements and harmless editorial feedback nonblocking; ready is true only
+   when no material issues remain.
 Do not output this checklist or rewrite prose; return only the requested review JSON.
 """
 WRITER += EPISTEMIC_PARAGRAPH_RULES
 REVIEWER += EPISTEMIC_PARAGRAPH_RULES + REVIEW_DECISION_CHECKLIST
+
+REVIEW_MATERIALITY_RULES = """
+Material correctness determines readiness. For each potential issue, identify
+what the report asks the reader to believe or do and what materially changes
+against the complete cited context. Blocking issues include invented incident
+facts, unsupported mechanism or response speed, unjustified universal or causal
+limits, changed action or affected scope, invented deadlines, lost feasibility
+conditions, completed-versus-planned inflation, unsupported ATT&CK behavior,
+and attribution or certainty changes that materially alter the conclusion.
+Record these in issues with the affected item/source IDs and explain the change.
+Reasonable paraphrase need not match source wording verbatim outside quotations.
+If the source and prose convey the same action, urgency and qualifications,
+without adding a deadline or changing applicability, a fidelity edit is
+editorial_warnings feedback, not a blocking factual issue. Judge context, not
+synonyms alone. Do not use this rule to erase a real time, condition or limit.
+Classification or placement preferences are likewise editorial_warnings when
+attribution, conditional analyst reasoning and uncertainty are transparent in
+the visible prose. A mixed paragraph is blocking only if it disguises inference
+as observation or otherwise materially misleads; a metadata mismatch alone is
+not enough. Hidden rationale cannot rescue materially overconfident prose.
+Keep citation-navigation improvements in locator_warnings. Neither warning
+array affects readiness. Return ready iff issues is empty. Do not silently clear
+an existing saved issue or treat a previous model decision as evidence.
+"""
+REVIEWER += REVIEW_MATERIALITY_RULES

@@ -75,7 +75,7 @@ def test_real_lock_wait_drift_has_no_transport(setup,monkeypatch,lock_kind,chang
     while datetime.now(timezone.utc)<=expires:time.sleep(.02)
    else:
     with s.factory() as drift:
-     if change=='sources':drift.execute("UPDATE articles SET content_text=content_text||' New correction.' WHERE id=1")
+     if change=='sources':drift.execute("UPDATE articles SET content_text=content_text||' New correction.' WHERE id=2")
      else:drift.execute("DELETE FROM event_public_pointers WHERE event_id='evt_test'")
   finally:holder.commit();holder.close()
   result=f.result(timeout=10)

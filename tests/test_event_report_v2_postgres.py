@@ -19,7 +19,7 @@ def test_v2_two_call_mapping_and_restricted_publication(database,monkeypatch,map
  for i in value['items']:i['attack_mappings']=[]
  item=value['items'][1];item.update(section='attack_path',text='Acme reported password spraying against several accounts.',citations=[{'source_id':'S1','quote':'Acme reported password spraying against several accounts.'}])
  item['attack_mappings']=[{'technique_id':'T1110.003','origin':'analyst_applied','behavior_status':'reported','rationale':'The supplied synthetic account names password spraying across multiple accounts.','limitations':'Successful authentication is not established.','source_ids':['S2' if mapping_case=='binding_invalid' else 'S1']}]
- review={'ready':mapping_case!='semantic_issue','issues':[],'locator_warnings':[]}
+ review={'ready':mapping_case!='semantic_issue','issues':[],'locator_warnings':[],'editorial_warnings':[]}
  if mapping_case=='semantic_issue':
   item['text']='Acme confirmed the attacker escalated to root by exploiting software.'
   item['citations']=[{'source_id':'S1','quote':'Acme explicitly denied successful privilege escalation.'}]
@@ -69,7 +69,7 @@ def test_editorial_derivative_keeps_model_review_original_and_normal_gates(datab
  value=generated()
  for item in value['items']:item['attack_mappings']=[]
  value['items'][0]['text']='Acme reported possible patient-record exposure. This does not establish that all patient records were exposed.'
- ready={'ready':True,'issues':[],'locator_warnings':[]};calls=[]
+ ready={'ready':True,'issues':[],'locator_warnings':[],'editorial_warnings':[]};calls=[]
  admitted=reports.submit(conn,'evt_test',debounce_seconds=0)
  def complete(payload):calls.append(payload);return response(value if len(calls)==1 else ready)
  job=SimpleNamespace(job_type=reports.JOB_TYPE,queue_name='openai',status='running',max_attempts=1,payload={'run_id':admitted['run_id']})
