@@ -611,7 +611,16 @@ def call(conn, run_id, phase, system, data, response_schema, *, complete=None, c
     conn.commit()  # Reserve attempt BEFORE sending; interrupted requests cannot replay.
     def before_transport():
         try:
-            _fresh(conn, _load(conn, run_id))
+            current = _load(conn, run_id)
+            _fresh(conn, current)
+            if 'autonomous_policy' in current['snapshot']:
+                # Full freshness includes queries/hashing that can cross expiry.
+                # Recheck cheap authority last, after all potentially slow work.
+                from .event_report_v2_policy import policy, active
+                final_policy = policy()
+                if final_policy != current['snapshot']['autonomous_policy']:
+                    raise ValueError('event_report_v2_policy_changed')
+                active(final_policy)
         except Exception as cause:
             failure = PreTransportFailure()
             failure.proof.update(kind='instrumented_authority', failure_stage='authority_recheck')

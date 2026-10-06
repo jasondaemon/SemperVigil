@@ -192,3 +192,36 @@ def test_publication_failure_preserves_unpublished_accepted_content(setup,monkey
  assert any(x.get('status')=='publication_held' for x in reports.tick(s.conn))
  assert reports._load(s.conn,rid)['status']=='accepted'
  assert pointer(s)==s.old and len(s.calls)==2
+
+
+@pytest.mark.parametrize('change',['expiry','autonomous_disabled','generation_disabled'])
+def test_native_final_freshness_query_cannot_cross_authority_boundary(setup,monkeypatch,change):
+ s=setup;p=copy.deepcopy(s.p);expires=datetime.now(timezone.utc)+timedelta(seconds=2)
+ if change=='expiry':p['expires_at']=expires.isoformat();monkeypatch.setenv('SV_EVENT_REPORT_V2_POLICY',json.dumps(p))
+ rid=reports.submit(s.conn,'evt_test')['run_id'];sent=[];native_guard=[]
+ original=reports.configuration
+ def ready(conn):
+  native_guard.append(True)
+  return {'base_url':'https://invalid.example'},{}
+ monkeypatch.setattr(reports,'ready_client',ready)
+ def configuration(conn):
+  result=original(conn)
+  if native_guard:
+   if change=='expiry':
+    assert datetime.now(timezone.utc)<expires
+    # Real PostgreSQL work, after check_run's initial active() check, crosses
+    # actual expiry during _fresh's final configuration query.
+    conn.execute('SELECT pg_sleep(%s)',(max(0,(expires-datetime.now(timezone.utc)).total_seconds())+.05,))
+   elif change=='autonomous_disabled':monkeypatch.setenv('SV_EVENT_REPORT_V2_AUTONOMOUS','0')
+   else:monkeypatch.setenv('SV_EVENT_REPORT_V2_GENERATION_ENABLED','0')
+  return result
+ monkeypatch.setattr(reports,'configuration',configuration)
+ from sempervigil.llm import router
+ monkeypatch.setattr(router,'_http_request',lambda *a,**k:sent.append(a))
+ with pytest.raises(reports.PreTransportFailure):reports.call(s.conn,rid,'writer','fixture',{}, {})
+ assert native_guard and not sent
+ row=s.conn.execute('SELECT status,error,reservation FROM event_source_report_calls WHERE run_id=%s',(rid,)).fetchone()
+ assert row[0]=='failed' and json.loads(row[1])['proof']['http_attempted'] is False
+ assert row[2]>0 and reports._load(s.conn,rid)['reserved_tokens']==0
+ assert reports._load(s.conn,rid)['budget_tokens']==32000
+ if change=='expiry':assert datetime.now(timezone.utc)>expires
