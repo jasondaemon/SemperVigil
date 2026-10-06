@@ -61,3 +61,23 @@ worker thread without retry; clip transport to the remaining overall window;
 hold expired windows before HTTP; retain unknown transport reservations;
 preserve historical exports and same-model workflow restrictions. No production
 enablement or paid evaluation is implied by these tests.
+
+
+Authority rechecks run after the overall-window query as the final parent guard.
+The child also receives an absolute authorized HTTP-start deadline bounded by
+both the run window and autonomous policy expiry. The native router checks it
+immediately before `urlopen`, after imports, serialization, token estimation and
+logging. Its local `PreHTTPDeadlineExpired` exception yields instrumented zero-HTTP
+proof; provider errors and killed processes remain unknown. Request metadata is
+serialized before spawning, so serialization failures leave no waiting child.
+Regression tests expire or disable policy inside the new query at both parent
+guard boundaries, and delay child startup across its authorization deadline.
+
+The child environment is an allowlist of locale, TLS certificate and tokenizer
+cache settings plus its exact module path and UTF-8 settings. Database URLs,
+master keys, proxies, unrelated secrets and logging targets are excluded. The
+absolute completion-window end is passed separately from HTTP-start authority:
+policy expiry rejects a late start, while an already authorized in-flight call
+may complete within its per-call/overall completion deadline. The parent clips
+the completion timeout again at the subprocess boundary so startup preparation
+cannot extend the overall completion window.

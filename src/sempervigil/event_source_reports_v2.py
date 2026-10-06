@@ -154,7 +154,7 @@ def runtime_code_identity():
             for name in ('event_source_reports_v2.py', 'event_report_contract_v2.py',
                          'attack_catalog.py', 'attack_catalog_runtime.py',
                          'event_source_report_publication_v2.py', 'event_report_continuation_import.py',
-                         'event_report_final_editor.py', 'event_report_transport.py',
+                         'event_report_final_editor.py', 'event_report_transport.py', 'llm/router.py',
                          'event_report_generation_identity.py', 'data/event_report_v2_prompt_history.json',
                          'event_report_editorial.py', 'event_report_v2_policy.py', 'event_report_v2_integrity.py')}
 
@@ -629,15 +629,20 @@ def _complete(conn, payload, *, before_transport=None, transport_seconds=None):
     import time
     from .llm.router import _http_request, _join_url
     provider,headers = ready_client(conn)
+    authorized_until = None
+    completion_until = None
     if before_transport is not None:
-        remaining = before_transport()
+        window = before_transport()
         if transport_seconds is not None:
-            transport_seconds = min(transport_seconds, remaining)
+            transport_seconds = min(transport_seconds, window['seconds'])
+            authorized_until = window['authorized_until']
+            completion_until = window['completion_until']
     started = time.monotonic()
     if transport_seconds is not None:
         from .event_report_transport import complete as bounded_complete
         response = bounded_complete(_join_url(provider["base_url"], "/chat/completions"),
-            headers, payload, provider, seconds=transport_seconds, stage=JOB_TYPE)
+            headers, payload, provider, seconds=transport_seconds, stage=JOB_TYPE,
+            authorized_until=authorized_until, completion_until=completion_until)
         response["transport_elapsed_ms"] = int((time.monotonic()-started)*1000)
         return response
     response = _http_request("POST", _join_url(provider["base_url"], "/chat/completions"),
@@ -725,14 +730,9 @@ def call(conn, run_id, phase, system, data, response_schema, *, complete=None, c
         try:
             current = _load(conn, run_id)
             _fresh(conn, current)
-            if 'autonomous_policy' in current['snapshot']:
-                # Full freshness includes queries/hashing that can cross expiry.
-                # Recheck cheap authority last, after all potentially slow work.
-                from .event_report_v2_policy import policy, active
-                final_policy = policy()
-                if final_policy != current['snapshot']['autonomous_policy']:
-                    raise ValueError('event_report_v2_policy_changed')
-                active(final_policy)
+            remaining = None
+            authorized_until = None
+            completion_until = None
             if transport_seconds is not None:
                 from datetime import datetime, timezone
                 from .event_report_transport import policy as transport_policy
@@ -744,10 +744,25 @@ def call(conn, run_id, phase, system, data, response_schema, *, complete=None, c
                 origin = datetime.fromisoformat(str(first).replace('Z', '+00:00'))
                 if origin.tzinfo is None:
                     origin = origin.replace(tzinfo=timezone.utc)
-                remaining = pinned['overall_seconds'] - (datetime.now(timezone.utc) - origin).total_seconds()
+                completion_until = origin.timestamp() + pinned['overall_seconds']
+                authorized_until = completion_until
+                remaining = authorized_until - datetime.now(timezone.utc).timestamp()
                 if remaining <= 0:
                     raise ValueError('event_report_transport_budget_exhausted')
-                return min(transport_seconds, remaining)
+                remaining = min(transport_seconds, remaining)
+            if 'autonomous_policy' in current['snapshot']:
+                # Freshness AND the overall-window query may cross expiry or
+                # disablement. Cheap authority must be the last parent guard.
+                from .event_report_v2_policy import policy, active, utc
+                final_policy = policy()
+                if final_policy != current['snapshot']['autonomous_policy']:
+                    raise ValueError('event_report_v2_policy_changed')
+                if authorized_until is not None:
+                    authorized_until = min(authorized_until,
+                        utc(final_policy['expires_at']).timestamp())
+                active(final_policy)
+            return None if remaining is None else {'seconds': remaining, 'authorized_until': authorized_until,
+                'completion_until': completion_until}
         except Exception as cause:
             failure = PreTransportFailure()
             failure.proof.update(kind='instrumented_authority', failure_stage='authority_recheck')

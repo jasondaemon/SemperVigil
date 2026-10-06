@@ -487,6 +487,10 @@ def _call_ollama_native(
     return content
 
 
+class PreHTTPDeadlineExpired(ValueError):
+    """Local last-boundary proof that this invocation sent no HTTP."""
+
+
 def _http_request(
     method: str,
     url: str,
@@ -538,6 +542,12 @@ def _http_request(
         )
     while True:
         try:
+            deadline = context.get('authorized_start_deadline')
+            if deadline is not None:
+                import math
+                if (type(deadline) not in (int, float) or not math.isfinite(deadline)
+                    or time.time() >= deadline):
+                    raise PreHTTPDeadlineExpired('authorization expired before HTTP')
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 raw = response.read().decode("utf-8")
                 status_code = response.getcode()

@@ -52,3 +52,95 @@ def test_new_same_model_policy_does_not_relax_legacy_autonomous_guard(setup,monk
     monkeypatch.setattr(reports,'configuration',lambda _:({'id':'r','model_name':reports.MODEL,'max_context':128000},{'id':'p'},'b'*64))
     with pytest.raises(ValueError,match='independent_models_required'):reports.submit(s.conn,'evt_test',trigger='evidence_change')
     assert not s.calls
+
+
+@pytest.mark.parametrize('change', ['expiry', 'generation_disabled', 'autonomous_disabled'])
+@pytest.mark.parametrize('boundary', [1, 2])
+def test_policy_change_during_overall_deadline_query_never_transports(setup, monkeypatch, change, boundary):
+    from datetime import datetime, timedelta
+    from sempervigil import event_report_v2_policy as policy, event_report_transport as transport
+    s = setup
+    profile = {'workflow': editor.WORKFLOW, 'model': 'fixture-editor', 'reasoning_effort': 'high',
+               'max_completion_tokens': 12000, 'context_overrides': {}}
+    monkeypatch.setenv(editor.CONFIG_ENV, json.dumps(profile))
+    s.conn.execute("INSERT INTO llm_models VALUES('e','p','fixture-editor',1)")
+    s.conn.commit()
+    from sempervigil.services import ai_service
+    monkeypatch.setattr(ai_service, 'get_model', lambda *a: {'id': 'e', 'model_name': 'fixture-editor', 'max_context': 128000})
+    monkeypatch.setattr(reports, 'configuration', lambda _: ({'id': 'w', 'model_name': 'fixture-writer', 'max_context': 128000}, {'id': 'p'}, 'b'*64))
+    rid = reports.submit(s.conn, 'evt_test')['run_id']
+    queries = []
+    class Conn:
+        def __getattr__(self, name): return getattr(s.conn, name)
+        def execute(self, sql, *args, **kwargs):
+            cursor = s.conn.execute(sql, *args, **kwargs)
+            if str(sql).startswith('SELECT min(created_at) FROM event_source_report_calls'):
+                queries.append(sql)
+                if len(queries) == boundary:
+                    if change == 'expiry':
+                        # Keep the pinned policy unchanged; only its window ends
+                        # while the new query runs, after full freshness passed.
+                        class ExpiredClock(datetime):
+                            @classmethod
+                            def now(cls, tz=None): return datetime.now(tz) + timedelta(hours=2)
+                        monkeypatch.setattr(policy, 'datetime', ExpiredClock)
+                    elif change == 'generation_disabled':
+                        monkeypatch.setenv('SV_EVENT_REPORT_V2_GENERATION_ENABLED', '0')
+                    else:
+                        monkeypatch.setenv('SV_EVENT_REPORT_V2_AUTONOMOUS', '0')
+            return cursor
+    # Exercise both parent guards: after the durable journal, and after client
+    # credential preparation immediately before the real transport boundary.
+    monkeypatch.setattr(reports, 'ready_client', lambda _: ({'base_url': 'https://example.invalid/v1'}, {}))
+    monkeypatch.setattr(transport, 'complete', lambda *a, **k: pytest.fail('HTTP after expired/disabled query'))
+    job = SimpleNamespace(job_type=reports.JOB_TYPE, queue_name='openai', status='running',
+                          max_attempts=1, payload={'run_id': rid})
+    result = reports.run(Conn(), job)
+    assert result['status'] == 'held'
+    assert len(queries) == boundary
+    assert s.conn.execute("SELECT revision_id FROM event_public_pointers WHERE event_id='evt_test'").fetchone()[0] == s.old
+    row = s.conn.execute('SELECT status,error,reservation,response_json FROM event_source_report_calls WHERE run_id=%s', (rid,)).fetchone()
+    assert row[0] == 'failed' and row[2] > 0 and row[3] is None
+    proof = json.loads(row[1])['proof']
+    assert proof['kind'] == 'instrumented_authority' and proof['failure_stage'] == 'authority_recheck'
+    record = reports._load(s.conn, rid)
+    assert record['reserved_tokens'] == 0 and record['charged_tokens'] == 0
+    assert not s.calls
+    # The attempted journal and lifetime cohort admission survive; no paid retry.
+    assert record['budget_tokens'] == 32000
+    assert reports.run(Conn(), job)['reused']
+    assert len(queries) == boundary
+
+
+
+def test_delayed_child_start_holds_durable_journal_as_proven_zero_http(setup, monkeypatch):
+    import time
+    from sempervigil import event_report_transport as transport
+    s = setup
+    profile = {'workflow': editor.WORKFLOW, 'model': 'fixture-editor', 'reasoning_effort': 'high',
+               'max_completion_tokens': 12000, 'context_overrides': {}}
+    monkeypatch.setenv(editor.CONFIG_ENV, json.dumps(profile))
+    s.conn.execute("INSERT INTO llm_models VALUES('e','p','fixture-editor',1)")
+    s.conn.commit()
+    from sempervigil.services import ai_service
+    monkeypatch.setattr(ai_service, 'get_model', lambda *a: {'id': 'e', 'model_name': 'fixture-editor', 'max_context': 128000})
+    monkeypatch.setattr(reports, 'configuration', lambda _: ({'id': 'w', 'model_name': 'fixture-writer', 'max_context': 128000}, {'id': 'p'}, 'b'*64))
+    rid = reports.submit(s.conn, 'evt_test')['run_id']
+    monkeypatch.setattr(reports, 'ready_client', lambda _: ({'type': 'fixture', 'base_url': 'http://127.0.0.1:1/v1'}, {}))
+    original = transport.complete
+    def delayed(*args, **kwargs):
+        kwargs['authorized_until'] = time.time() + 0.05
+        return original(*args, **kwargs)
+    monkeypatch.setattr(transport, 'complete', delayed)
+    monkeypatch.setattr(transport, '_CHILD', 'import time; time.sleep(0.2)\n' + transport._CHILD)
+    job = SimpleNamespace(job_type=reports.JOB_TYPE, queue_name='openai', status='running',
+                          max_attempts=1, payload={'run_id': rid})
+    assert reports.run(s.conn, job)['status'] == 'held'
+    row = s.conn.execute('SELECT status,error,reservation,response_json FROM event_source_report_calls WHERE run_id=%s', (rid,)).fetchone()
+    assert row[0] == 'failed' and row[2] > 0 and row[3] is None
+    proof = json.loads(row[1])['proof']
+    assert proof['kind'] == 'instrumented_authority' and proof['failure_stage'] == 'child_authorization_deadline'
+    record = reports._load(s.conn, rid)
+    assert record['reserved_tokens'] == 0 and record['charged_tokens'] == 0
+    assert s.conn.execute("SELECT revision_id FROM event_public_pointers WHERE event_id='evt_test'").fetchone()[0] == s.old
+    assert reports.run(s.conn, job)['reused']

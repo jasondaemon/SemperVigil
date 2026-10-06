@@ -9,6 +9,7 @@ import time
 
 POLICY_ENV = 'SV_EVENT_REPORT_V2_TRANSPORT_POLICY'
 WORKFLOW = 'narrative-hard-transport-deadline-v1'
+CHILD_ENV_KEYS = ('LANG', 'LC_ALL', 'LC_CTYPE', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'TIKTOKEN_CACHE_DIR')
 DEFAULT = {'workflow': WORKFLOW, 'writer_seconds': 180, 'editor_seconds': 240,
            'overall_seconds': 600}
 
@@ -55,18 +56,37 @@ sys.stdout.write(json.dumps(result))
 """
 
 
-def complete(url, headers, payload, provider, *, seconds, stage):
+def complete(url, headers, payload, provider, *, seconds, stage, authorized_until=None, completion_until=None):
     """Kill/reap a timed-out transport; provider completion and usage stay unknown."""
     if not isinstance(seconds, (int, float)) or not math.isfinite(seconds) or not 0 < seconds <= 240:
         raise ValueError('event_report_transport_budget_exhausted')
+    if completion_until is not None:
+        if type(completion_until) not in (int, float) or not math.isfinite(completion_until):
+            raise ValueError('event_report_completion_deadline_invalid')
+        seconds = min(seconds, completion_until - time.time())
+        if seconds <= 0:
+            from .event_source_reports_v2 import PreTransportFailure
+            failure = PreTransportFailure()
+            failure.proof.update(kind='instrumented_authority', failure_stage='completion_deadline_before_spawn')
+            raise failure
     started = time.monotonic()
-    env = dict(os.environ)
-    env['PYTHONPATH'] = str(Path(__file__).resolve().parent.parent) + os.pathsep + env.get('PYTHONPATH', '')
-    child = subprocess.Popen([sys.executable, '-c', _CHILD], stdin=subprocess.PIPE,
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    # Deliberately exclude DB credentials, master keys, proxies and log targets.
+    # Native auth is explicitly scoped through stdin, never inherited env.
+    env = {key: os.environ[key] for key in CHILD_ENV_KEYS if key in os.environ}
+    env.update(PYTHONPATH=str(Path(__file__).resolve().parent.parent),
+               PYTHONIOENCODING='utf-8', PYTHONUTF8='1')
+    absolute_deadline = time.time() + seconds
+    if authorized_until is not None:
+        if type(authorized_until) not in (int, float) or not math.isfinite(authorized_until):
+            raise ValueError('event_report_authorization_deadline_invalid')
+        absolute_deadline = min(absolute_deadline, authorized_until)
+    # Serialize before spawn: invalid metadata must leave no waiting child.
     request = json.dumps({'url': url, 'headers': headers, 'payload': payload,
                           'provider': {**provider, 'timeout_s': math.ceil(seconds)},
-                          'context': {'stage': stage, 'no_retry': True}}).encode()
+                          'context': {'stage': stage, 'no_retry': True,
+                                      'authorized_start_deadline': absolute_deadline}}).encode()
+    child = subprocess.Popen([sys.executable, '-c', _CHILD], stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     try:
         remaining = seconds - (time.monotonic() - started)
         if remaining <= 0:
@@ -83,6 +103,11 @@ def complete(url, headers, payload, provider, *, seconds, stage):
     if child.returncode:
         raise ValueError('event_report_transport_process_failed_unknown_usage')
     result = json.loads(raw)
+    if result.get('error_type') == 'PreHTTPDeadlineExpired':
+        from .event_source_reports_v2 import PreTransportFailure
+        failure = PreTransportFailure()
+        failure.proof.update(kind='instrumented_authority', failure_stage='child_authorization_deadline')
+        raise failure
     if 'response' not in result:
         # Once the child starts, never claim zero HTTP or free an unknown charge.
         raise ValueError('event_report_transport_failed_unknown_usage')
