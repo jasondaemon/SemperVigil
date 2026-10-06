@@ -1,0 +1,456 @@
+{
+  "scope": "Retained actual model response. Replay only proves structural acceptance and preserved observed misses; no new model evaluation.",
+  "candidate_commit": "c91bcecb927fa079b1725d6e743134b8145f76c0",
+  "response": {
+    "results": [
+      {
+        "ready": true,
+        "issues": [],
+        "locator_warnings": [],
+        "case_id": "C1"
+      },
+      {
+        "ready": false,
+        "issues": [
+          {
+            "item_id": "P202",
+            "reason": "The assessment overstates the evidence with the general claim that segmentation and rapid containment 'cannot by themselves prevent damage after a privileged application server is compromised.' The sources establish that data access and exfiltration occurred before deeper movement was stopped, but they do not support a categorical limit on what segmentation or containment can prevent in all such circumstances. The cited material also describes response actions after detection, not necessarily 'rapid containment' as an independently established fact. Bound the conclusion to this incident and distinguish the observed outcome from the broader generalization.",
+            "source_ids": [
+              "S36444",
+              "S36518",
+              "S36617"
+            ]
+          }
+        ],
+        "locator_warnings": [],
+        "case_id": "C2"
+      },
+      {
+        "ready": true,
+        "issues": [],
+        "locator_warnings": [],
+        "case_id": "C3"
+      },
+      {
+        "ready": true,
+        "issues": [],
+        "locator_warnings": [],
+        "case_id": "C4"
+      }
+    ]
+  },
+  "challenge": {
+    "cases": [
+      {
+        "case_id": "C1",
+        "context_items": [
+          {
+            "attack_mappings": [],
+            "citations": [
+              {
+                "quote": "The first is a session hijacking vulnerability that leads to remote code execution as the zammad user.",
+                "source_id": "S36518"
+              },
+              {
+                "quote": "It affects Zammad versions 6.3.0 through 6.5.4 in an exploitable state; it is present in versions 7.0.0 through 7.1.3 but not exploitable due to environment conditions.",
+                "source_id": "S36518"
+              },
+              {
+                "quote": "The second is a local privilege escalation that enables the zammad user to escalate to root.",
+                "source_id": "S36518"
+              },
+              {
+                "quote": "This flaw affects all Zammad versions, including the latest alpha.",
+                "source_id": "S36518"
+              }
+            ],
+            "claim_type": "finding",
+            "confidence": null,
+            "date_label": "September 30, 2026 disclosure",
+            "date_sort": "2026-09-30",
+            "id": "P105",
+            "rationale": "",
+            "section": "attack_vector",
+            "text": "The reported entry chain comprised CVE-2026-102489 and CVE-2026-102490. Forkast described CVE-2026-102489 as session hijacking leading to remote code execution as the Zammad user, exploitable in versions 6.3.0 through 6.5.4; it said the flaw was present in 7.0.0 through 7.1.3 but not exploitable under their environment conditions. It described CVE-2026-102490 as a local privilege-escalation flaw affecting all Zammad versions, including the latest alpha, and enabling escalation from the Zammad user to root."
+          },
+          {
+            "attack_mappings": [],
+            "citations": [
+              {
+                "quote": "We urge everyone using any version of Zammad to update to version 7 or take it offline as soon as possible.",
+                "source_id": "S36617"
+              },
+              {
+                "quote": "The first is a session hijacking vulnerability that leads to remote code execution as the zammad user. It affects Zammad versions 6.3.0 through 6.5.4 in an exploitable state; it is present in versions 7.0.0 through 7.1.3 but not exploitable due to environment conditions.",
+                "source_id": "S36518"
+              },
+              {
+                "quote": "The second is a local privilege escalation that enables the zammad user to escalate to root. This flaw affects all Zammad versions, including the latest alpha.",
+                "source_id": "S36518"
+              }
+            ],
+            "claim_type": "finding",
+            "confidence": null,
+            "date_label": "September 30, 2026 guidance",
+            "date_sort": "2026-09-30",
+            "id": "P110",
+            "rationale": "",
+            "section": "mitigations",
+            "text": "DIVD urged operators of any Zammad version to update to version 7 or take the instance offline immediately. The reporting also says CVE-2026-102490 affects all versions, while version-specific environment conditions limited exploitability of CVE-2026-102489 in 7.0.0 through 7.1.3."
+          }
+        ],
+        "target_item": {
+          "attack_mappings": [],
+          "citations": [
+            {
+              "quote": "We urge everyone using any version of Zammad to update to version 7 or take it offline as soon as possible.",
+              "source_id": "S36617"
+            },
+            {
+              "quote": "The first is a session hijacking vulnerability that leads to remote code execution as the zammad user. It affects Zammad versions 6.3.0 through 6.5.4 in an exploitable state; it is present in versions 7.0.0 through 7.1.3 but not exploitable due to environment conditions.",
+              "source_id": "S36518"
+            },
+            {
+              "quote": "The second is a local privilege escalation that enables the zammad user to escalate to root. This flaw affects all Zammad versions, including the latest alpha.",
+              "source_id": "S36518"
+            }
+          ],
+          "claim_type": "finding",
+          "confidence": null,
+          "date_label": "September 30, 2026 guidance",
+          "date_sort": "2026-09-30",
+          "id": "P201",
+          "rationale": "",
+          "section": "mitigations",
+          "text": "DIVD urged operators of any Zammad version to update to version 7 or take the instance offline immediately. The reporting also says CVE-2026-102490 affects all versions, while version-specific environment conditions limited exploitability of CVE-2026-102489 in 7.0.0 through 7.1.3. Because those statements concern different flaws and exploitability conditions, operators should not interpret the reported limitation on the first flaw as evidence that every version 7 deployment is unaffected by the second."
+        }
+      },
+      {
+        "case_id": "C2",
+        "context_items": [
+          {
+            "attack_mappings": [],
+            "citations": [
+              {
+                "quote": "The first is a session hijacking vulnerability that leads to remote code execution as the zammad user.",
+                "source_id": "S36518"
+              },
+              {
+                "quote": "It affects Zammad versions 6.3.0 through 6.5.4 in an exploitable state; it is present in versions 7.0.0 through 7.1.3 but not exploitable due to environment conditions.",
+                "source_id": "S36518"
+              },
+              {
+                "quote": "The second is a local privilege escalation that enables the zammad user to escalate to root.",
+                "source_id": "S36518"
+              },
+              {
+                "quote": "This flaw affects all Zammad versions, including the latest alpha.",
+                "source_id": "S36518"
+              }
+            ],
+            "claim_type": "finding",
+            "confidence": null,
+            "date_label": "September 30, 2026 disclosure",
+            "date_sort": "2026-09-30",
+            "id": "P105",
+            "rationale": "",
+            "section": "attack_vector",
+            "text": "The reported entry chain comprised CVE-2026-102489 and CVE-2026-102490. Forkast described CVE-2026-102489 as session hijacking leading to remote code execution as the Zammad user, exploitable in versions 6.3.0 through 6.5.4; it said the flaw was present in 7.0.0 through 7.1.3 but not exploitable under their environment conditions. It described CVE-2026-102490 as a local privilege-escalation flaw affecting all Zammad versions, including the latest alpha, and enabling escalation from the Zammad user to root."
+          },
+          {
+            "attack_mappings": [],
+            "citations": [
+              {
+                "quote": "We urge everyone using any version of Zammad to update to version 7 or take it offline as soon as possible.",
+                "source_id": "S36617"
+              },
+              {
+                "quote": "The first is a session hijacking vulnerability that leads to remote code execution as the zammad user. It affects Zammad versions 6.3.0 through 6.5.4 in an exploitable state; it is present in versions 7.0.0 through 7.1.3 but not exploitable due to environment conditions.",
+                "source_id": "S36518"
+              },
+              {
+                "quote": "The second is a local privilege escalation that enables the zammad user to escalate to root. This flaw affects all Zammad versions, including the latest alpha.",
+                "source_id": "S36518"
+              }
+            ],
+            "claim_type": "finding",
+            "confidence": null,
+            "date_label": "September 30, 2026 guidance",
+            "date_sort": "2026-09-30",
+            "id": "P110",
+            "rationale": "",
+            "section": "mitigations",
+            "text": "DIVD urged operators of any Zammad version to update to version 7 or take the instance offline immediately. The reporting also says CVE-2026-102490 affects all versions, while version-specific environment conditions limited exploitability of CVE-2026-102489 in 7.0.0 through 7.1.3."
+          }
+        ],
+        "target_item": {
+          "attack_mappings": [],
+          "citations": [
+            {
+              "quote": "all actions performed in a matter of seconds, thanks to AI automation.",
+              "source_id": "S36444"
+            },
+            {
+              "quote": "Thanks to proper network segmentation and the actions of our IT and incident response team after detection, we were able to stop the attackers from going deeper into our systems and network",
+              "source_id": "S36617"
+            },
+            {
+              "quote": "Network segmentation and incident response limited the depth of lateral movement.",
+              "source_id": "S36518"
+            }
+          ],
+          "claim_type": "assessment",
+          "confidence": "moderate",
+          "date_label": "Assessment based on reporting through October 2, 2026",
+          "date_sort": "2026-10-02",
+          "id": "P202",
+          "rationale": "Sources report machine-speed exploitation and post-exploitation alongside successful containment through segmentation and rapid response. This supports an assessment that control boundaries reduced scope even though they did not prevent initial compromise or data theft. Confidence is moderate because no detailed network architecture, dwell-time data or complete forensic chronology is available.",
+          "section": "analyst_assessment",
+          "text": "The incident indicates that segmentation and rapid containment can materially restrict the scope of machine-speed intrusions, but cannot by themselves prevent damage after a privileged application server is compromised. In this case, data access and exfiltration occurred before deeper movement was stopped."
+        }
+      },
+      {
+        "case_id": "C3",
+        "context_items": [
+          {
+            "attack_mappings": [],
+            "citations": [
+              {
+                "quote": "The first is a session hijacking vulnerability that leads to remote code execution as the zammad user.",
+                "source_id": "S36518"
+              },
+              {
+                "quote": "It affects Zammad versions 6.3.0 through 6.5.4 in an exploitable state; it is present in versions 7.0.0 through 7.1.3 but not exploitable due to environment conditions.",
+                "source_id": "S36518"
+              },
+              {
+                "quote": "The second is a local privilege escalation that enables the zammad user to escalate to root.",
+                "source_id": "S36518"
+              },
+              {
+                "quote": "This flaw affects all Zammad versions, including the latest alpha.",
+                "source_id": "S36518"
+              }
+            ],
+            "claim_type": "finding",
+            "confidence": null,
+            "date_label": "September 30, 2026 disclosure",
+            "date_sort": "2026-09-30",
+            "id": "P105",
+            "rationale": "",
+            "section": "attack_vector",
+            "text": "The reported entry chain comprised CVE-2026-102489 and CVE-2026-102490. Forkast described CVE-2026-102489 as session hijacking leading to remote code execution as the Zammad user, exploitable in versions 6.3.0 through 6.5.4; it said the flaw was present in 7.0.0 through 7.1.3 but not exploitable under their environment conditions. It described CVE-2026-102490 as a local privilege-escalation flaw affecting all Zammad versions, including the latest alpha, and enabling escalation from the Zammad user to root."
+          },
+          {
+            "attack_mappings": [],
+            "citations": [
+              {
+                "quote": "We urge everyone using any version of Zammad to update to version 7 or take it offline as soon as possible.",
+                "source_id": "S36617"
+              },
+              {
+                "quote": "The first is a session hijacking vulnerability that leads to remote code execution as the zammad user. It affects Zammad versions 6.3.0 through 6.5.4 in an exploitable state; it is present in versions 7.0.0 through 7.1.3 but not exploitable due to environment conditions.",
+                "source_id": "S36518"
+              },
+              {
+                "quote": "The second is a local privilege escalation that enables the zammad user to escalate to root. This flaw affects all Zammad versions, including the latest alpha.",
+                "source_id": "S36518"
+              }
+            ],
+            "claim_type": "finding",
+            "confidence": null,
+            "date_label": "September 30, 2026 guidance",
+            "date_sort": "2026-09-30",
+            "id": "P110",
+            "rationale": "",
+            "section": "mitigations",
+            "text": "DIVD urged operators of any Zammad version to update to version 7 or take the instance offline immediately. The reporting also says CVE-2026-102490 affects all versions, while version-specific environment conditions limited exploitability of CVE-2026-102489 in 7.0.0 through 7.1.3."
+          }
+        ],
+        "target_item": {
+          "attack_mappings": [],
+          "citations": [
+            {
+              "quote": "The first is a session hijacking vulnerability that leads to remote code execution as the zammad user. It affects Zammad versions 6.3.0 through 6.5.4 in an exploitable state; it is present in versions 7.0.0 through 7.1.3 but not exploitable due to environment conditions.",
+              "source_id": "S36518"
+            },
+            {
+              "quote": "The second is a local privilege escalation that enables the zammad user to escalate to root. This flaw affects all Zammad versions, including the latest alpha.",
+              "source_id": "S36518"
+            }
+          ],
+          "claim_type": "assessment",
+          "confidence": "moderate",
+          "date_label": "Undated analyst assessment",
+          "date_sort": null,
+          "id": "P203",
+          "rationale": "The cited reporting describes separate session-hijacking and privilege-escalation flaws with different reported version conditions. This assessment cautions against transferring a limitation from one flaw to the other. It does not independently establish patch completeness, configuration-specific exploitability, or the safety of any deployment.",
+          "section": "analyst_assessment",
+          "text": "Because those statements concern different flaws and exploitability conditions, operators should not interpret the reported limitation on the first flaw as evidence that every version 7 deployment is unaffected by the second."
+        }
+      },
+      {
+        "case_id": "C4",
+        "context_items": [
+          {
+            "attack_mappings": [],
+            "citations": [
+              {
+                "quote": "The first is a session hijacking vulnerability that leads to remote code execution as the zammad user.",
+                "source_id": "S36518"
+              },
+              {
+                "quote": "It affects Zammad versions 6.3.0 through 6.5.4 in an exploitable state; it is present in versions 7.0.0 through 7.1.3 but not exploitable due to environment conditions.",
+                "source_id": "S36518"
+              },
+              {
+                "quote": "The second is a local privilege escalation that enables the zammad user to escalate to root.",
+                "source_id": "S36518"
+              },
+              {
+                "quote": "This flaw affects all Zammad versions, including the latest alpha.",
+                "source_id": "S36518"
+              }
+            ],
+            "claim_type": "finding",
+            "confidence": null,
+            "date_label": "September 30, 2026 disclosure",
+            "date_sort": "2026-09-30",
+            "id": "P105",
+            "rationale": "",
+            "section": "attack_vector",
+            "text": "The reported entry chain comprised CVE-2026-102489 and CVE-2026-102490. Forkast described CVE-2026-102489 as session hijacking leading to remote code execution as the Zammad user, exploitable in versions 6.3.0 through 6.5.4; it said the flaw was present in 7.0.0 through 7.1.3 but not exploitable under their environment conditions. It described CVE-2026-102490 as a local privilege-escalation flaw affecting all Zammad versions, including the latest alpha, and enabling escalation from the Zammad user to root."
+          },
+          {
+            "attack_mappings": [],
+            "citations": [
+              {
+                "quote": "We urge everyone using any version of Zammad to update to version 7 or take it offline as soon as possible.",
+                "source_id": "S36617"
+              },
+              {
+                "quote": "The first is a session hijacking vulnerability that leads to remote code execution as the zammad user. It affects Zammad versions 6.3.0 through 6.5.4 in an exploitable state; it is present in versions 7.0.0 through 7.1.3 but not exploitable due to environment conditions.",
+                "source_id": "S36518"
+              },
+              {
+                "quote": "The second is a local privilege escalation that enables the zammad user to escalate to root. This flaw affects all Zammad versions, including the latest alpha.",
+                "source_id": "S36518"
+              }
+            ],
+            "claim_type": "finding",
+            "confidence": null,
+            "date_label": "September 30, 2026 guidance",
+            "date_sort": "2026-09-30",
+            "id": "P110",
+            "rationale": "",
+            "section": "mitigations",
+            "text": "DIVD urged operators of any Zammad version to update to version 7 or take the instance offline immediately. The reporting also says CVE-2026-102490 affects all versions, while version-specific environment conditions limited exploitability of CVE-2026-102489 in 7.0.0 through 7.1.3."
+          }
+        ],
+        "target_item": {
+          "attack_mappings": [],
+          "citations": [
+            {
+              "quote": "We urge everyone using any version of Zammad to update to version 7 or take it offline as soon as possible.",
+              "source_id": "S36617"
+            },
+            {
+              "quote": "The first is a session hijacking vulnerability that leads to remote code execution as the zammad user. It affects Zammad versions 6.3.0 through 6.5.4 in an exploitable state; it is present in versions 7.0.0 through 7.1.3 but not exploitable due to environment conditions.",
+              "source_id": "S36518"
+            },
+            {
+              "quote": "The second is a local privilege escalation that enables the zammad user to escalate to root. This flaw affects all Zammad versions, including the latest alpha.",
+              "source_id": "S36518"
+            }
+          ],
+          "claim_type": "finding",
+          "confidence": null,
+          "date_label": "September 30, 2026 guidance",
+          "date_sort": "2026-09-30",
+          "id": "P204",
+          "rationale": "",
+          "section": "mitigations",
+          "text": "DIVD urged operators of any Zammad version to update to version 7 or take the instance offline immediately. The reporting also says CVE-2026-102490 affects all versions, while version-specific environment conditions limited exploitability of CVE-2026-102489 in 7.0.0 through 7.1.3."
+        }
+      }
+    ],
+    "scope": "All full common source bodies; target cases are independent focused review tasks, not a single contemporaneous published report.",
+    "sources": [
+      {
+        "article_id": 36444,
+        "content_hash": "cfd8dd5b104e54e89595168b6f3f1f2fd1ef983d9621c19e15a098970486d905",
+        "duplicates": [
+          {
+            "article_id": 36519,
+            "url": "https://www.bleepingcomputer.com/news/security/divd-says-zammad-zero-days-enabled-ai-driven-network-breach"
+          }
+        ],
+        "id": "S36444",
+        "published_at": "2026-09-30T19:49:15+00:00",
+        "retrieved_at": "2026-09-30T20:27:01.425357+00:00",
+        "text": "DIVD says Zammad zero-days enabled AI-driven network breach By Bill Toulas September 30, 2026 03:49 PM 0 The Dutch Institute for Vulnerability Disclosure (DIVD) says that the breach of its network was possible by exploiting a chain of two zero-day vulnerabilities in the open-source Zammad ticketing system. Previously, the nonprofit organization of volunteer security researchers said the attack was “loud and very, very messy,” driven by an AI agent that moved autonomously and decided its next steps without external intervention or direction. DIVD retrieved extensive details about the attack because the AI agent left behind clear explanations of its decisions, allowing the organization to reconstruct the incident. According to the cybersecurity nonprofit, the two flaws, now identified as CVE-2026-102489 and CVE-2026-102490, enabled session hijacking, remote code execution, and escalation to root privileges. After exploiting the vulnerabilities, the attacker was able to access other services, read and exfiltrate data from DIVD's systems, all actions performed in a matter of seconds, thanks to AI automation. “Used together, they allowed the attackers to hijack sessions, run code remotely, and escalate privileges from the Zammad user to root, in seconds, due to the agentic part of this hack,” DIVD says . Due to network segmentation and incident response actions, the threat actor did not move deeper into the network. However, the investigation is still underway. Zammad is an open-source AI-powered helpdesk and support ticketing platform used to manage customer inquiries, IT support requests, and internal ticketing. The solution is available as a self-hosted or hosted service, and Zammad claims on its website that it has over 2,000 customers and 55,000 users, including De’Longhi, Amnesty International, and NextCloud. DIVD discovered the zero-day vulnerabilities in collaboration with Merlon Security. The organization notified Zammad about the issue and is alerting other users of vulnerable instances. The nonprofit recommends that Zammad users upgrade to version 7, which is considered safe, or take the instance offline as soon as possible. DIVD has promised to share additional updates about the incident tomorrow. Build your security blueprint for AI-powered attacks Join Mikko Hyppönen and security leaders from the NFL, CHANEL, and Atlassian for a two-hour digital summit on what AI-speed attacks change, what defenders should stop doing, and how to validate, decide, fix, and re-validate at machine speed. Save your seat Related Articles: Automated AI agent used to breach cybersecurity nonprofit DIVD Spain's data agency gets first report of AI-powered data breach Hackers build AI frameworks for widescale credential theft AI's Third Wave: Coworkers Break the Security Model That Worked for Agents OpenAI hacked Australian Medicare govt site, probed data providers",
+        "title": "DIVD says Zammad zero-days enabled AI-driven network breach",
+        "url": "https://www.bleepingcomputer.com/news/security/divd-says-zammad-zero-days-enabled-ai-driven-network-breach/"
+      },
+      {
+        "article_id": 36517,
+        "content_hash": "1bca5cfebd3a9570aa37ab711b3707c91cec24c041d6d7df39e25dd2f7835832",
+        "duplicates": [],
+        "id": "S36517",
+        "published_at": "2026-09-29T15:39:19+00:00",
+        "retrieved_at": "2026-10-01T14:21:14.167912+00:00",
+        "text": "Automated AI agent used to breach cybersecurity nonprofit DIVD By Bill Toulas September 29, 2026 11:39 AM 0 The Dutch Institute for Vulnerability Disclosure (DIVD) suffered an AI-driven cyberattack that the organization described as “loud and very, very messy.” Evidence uncovered during the ongoing investigation indicates the attacker exploited a vulnerability, but the attack's purpose and impact remain unclear at this stage. DIVD is a nonprofit organization of volunteer security researchers that scans the internet for systems affected by known vulnerabilities, notifies their owners, and provides information on how to mitigate the risks. Late last week, the organization said it had been hacked after seven years of uneventful operations, with the intrusion carried out autonomously by an AI agent. The organization described the attack as “loud and very very messy,” leaving plenty of evidence to help them reconstruct what happened, but the incident was serious nonetheless. “This is an attack we have not seen before. Not because it’s our first, but because the modus operandi indicates that this is an agentic AI-powered attack,” DIVD explained . The organization launched an investigation and informed the police, the Autoriteit Persoonsgegevens (data protection), and the National Cyber Security Center (NCSC). In an update on Monday, DIVD provided additional information about the incident but withheld full details to avoid influencing the investigation or putting more victims at risk. \"The attack itself was loud and very very messy. We could see the agent working automated, because after every action it decided the next step itself, at the speed of light and sloppy logic or pattern,\" DIVD said . The threat actor exploited a “technical vulnerability” in an undisclosed system, which DIVD specifically said was not Citrix NetScaler, and then used an automated AI agent to perform post-exploitation activities. According to the researchers, the AI agent did \"some pretty dumb things,\" including interfering with its own adversary-in-the-middle attack via password spraying. The agent worked autonomously on DIVD’s network, deciding the next step itself, and over-explaining its decisions in its comments. DIVD believes that the agent was poorly trained and configured for such operations, leaving behind sufficient information to help researchers with reverse-engineering the incident. The organization promised to provide a more detailed update on October 1, and to notify other possible victims of the same vulnerability as soon as they can. BleepingComputer has contacted DIVD to learn more about the type and patch state of the undisclosed flaw leveraged in this attack, but we have not heard back as of publication. Build your security blueprint for AI-powered attacks Join Mikko Hyppönen and security leaders from the NFL, CHANEL, and Atlassian for a two-hour digital summit on what AI-speed attacks change, what defenders should stop doing, and how to validate, decide, fix, and re-validate at machine speed. Save your seat Related Articles: DIVD says Zammad zero-days enabled AI-driven network breach OpenAI hacked Australian Medicare govt site, probed data providers Spain's data agency gets first report of AI-powered data breach Hackers build AI frameworks for widescale credential theft AI's Third Wave: Coworkers Break the Security Model That Worked for Agents",
+        "title": "Automated AI agent used to breach cybersecurity nonprofit DIVD",
+        "url": "https://www.bleepingcomputer.com/news/security/automated-ai-agent-used-to-breach-cybersecurity-nonprofit-divd"
+      },
+      {
+        "article_id": 36518,
+        "content_hash": "21bc509e054e79f61ca1a6fb5d1fc69bcccc135ab31f5423e18f2fc7cb2a538d",
+        "duplicates": [],
+        "id": "S36518",
+        "published_at": "2026-10-01T07:35:49+00:00",
+        "retrieved_at": "2026-10-01T14:21:24.378503+00:00",
+        "text": "On September 21, 2026, the Dutch Institute for Vulnerability Disclosure (DIVD), a nonprofit that scans the internet for security flaws and notifies system owners, was breached through its own infrastructure. The organization disclosed the intrusion on September 24, characterizing it as an agentic AI -powered attack. On September 30, DIVD identified the attack vector: two previously unknown vulnerabilities in the open-source Zammad ticketing system. The flaws are tracked as CVE-2026-102489 and CVE-2026-102490. Both carry a CVSS score of 9.4. The first is a session hijacking vulnerability that leads to remote code execution as the zammad user. It affects Zammad versions 6.3.0 through 6.5.4 in an exploitable state; it is present in versions 7.0.0 through 7.1.3 but not exploitable due to environment conditions. The second is a local privilege escalation that enables the zammad user to escalate to root. This flaw affects all Zammad versions, including the latest alpha. Used together, they allowed the attacker to hijack sessions, run code remotely, and escalate from the Zammad user to root—in seconds, thanks to the agentic part of the operation. The agent’s behavior left a detailed trace. DIVD researchers observed it making decisions at machine speed, leaving behind clear explanations of its logic in code comments. The execution was, in DIVD’s words, “loud and very, very messy.” The agent performed “some pretty dumb things,” including disrupting its own adversary-in-the-middle operation through password spraying. DIVD characterized the agent as “poorly trained and configured for such operations.” The sloppiness was operationally significant: it left sufficient evidence for DIVD and Merlon Security, who collaborated on the investigation, to reconstruct the full incident. Network segmentation and incident response limited the depth of lateral movement. The investigation is ongoing, but DIVD is already scanning for other vulnerable Zammad instances and advising users to upgrade to version 7. The exposure is not small. Zammad is an open-source helpdesk and ticketing platform with over 2,000 customers and 55,000 users, including De’Longhi, Amnesty International, and NextCloud. Advertisement DIVD reported the breach to the Autoriteit Persoonsgegevens, the National Cyber Security Centre, and police. The case reference is DIVD-2026-00015, discovered during the investigation of DIVD-2026-00014 (the breach itself). Ten researchers across DIVD and Merlon Security are credited. DIVD is actively notifying owners of vulnerable instances. The incident extends a pattern Forkast has tracked across multiple recent developments. OpenAI’s DNS sandbox escape revealed that automatic safety shutdowns can fail—the model ran for 2.5 hours after monitoring flagged suspicious behavior. CARBONATO was the first documented botnet using an AI agent as its command-and-control engine. Anthropic’s provable-inference deadline passed silently on the same day as this disclosure, underscoring the gap between safety commitments and operational reality. And PraisonAI’s default-off authentication showed how trust-through-defaults persists at the framework layer. The DIVD breach is different from each of these: it is not a sandbox escape, not a botnet, and not a framework flaw. It is an autonomous agent successfully chaining zero-days against a live vulnerability-disclosure organization. A self-report caveat is warranted. DIVD is both the victim and the primary source of information regarding this incident. BleepingComputer provided secondary verification. The organization characterizes the attack as autonomous—meaning the agent decided each step without external intervention—but the full extent of human direction remains unestablished. The identity of the agent, including whether it was a known commercial model or a custom-configured system, has not been disclosed.",
+        "title": "An Autonomous AI Agent Just Breached a Vulnerability Disclosure Nonprofit by Chaining Two Zammad Zero-Days",
+        "url": "https://forkast.news/an-autonomous-ai-agent-just-breached-a-vulnerability-disclosure-nonprofit-by-chaining-two-zammad-zero-days"
+      },
+      {
+        "article_id": 36617,
+        "content_hash": "a226901b3256be91976296aed89fe8378870b6b96734cce142a9a5fb2b9fd27f",
+        "duplicates": [],
+        "id": "S36617",
+        "published_at": "2026-10-02T08:25:00+00:00",
+        "retrieved_at": "2026-10-02T08:43:15.333664+00:00",
+        "text": "A Dutch cybersecurity non-profit has revealed how it was compromised in an agentic AI attack that exploited two zero-day flaws in its helpdesk platform. The Dutch Institute for Vulnerability Disclosure (DIVD) is staffed by volunteers and dedicated to ethically disclosing flaws it finds in systems to “make the digital world safer.” However, it became a target itself last week after noticing suspicious activity on September 24. In a LinkedIn post on September 30, the organization revealed that its attackers exploited two zero-days in Zammad. “Used together, they allowed the attackers to hijack sessions, run code remotely and escalate privileges from the Zammad user to root, in seconds, due to the agentic part of this hack,” it said. “From there they were able to access other services and read and exfiltrate data. We urge everyone using any version of Zammad to update to version 7 or take it offline as soon as possible.” The vulnerabilities exploited in the attack are remote code execution bug CVE-2026-102489 and elevation of privileges flaw CVE-2026-102490, both of which have a CVSS score of 9.4 when chained. Read more on agentic AI attacks: Threat Actors Uses Agentic AI to Rapidly Compromise Cloud Target Fortunately, DIVD’s security expertise meant it was able to contain the threat. “Thanks to proper network segmentation and the actions of our IT and incident response team after detection, we were able to stop the attackers from going deeper into our systems and network,” it explained. “Unfortunately, some of the damage was already done.” A separate casefile on the incident explained that volunteer data including DIVD email addresses and possibly contact details was compromised, increasing the risk that malicious actors may try to impersonate DIVD staff. AI Agent to Blame On investigating, it became clear that AI was used in the attack, DIVD continued. “[Logs] show the attacker’s scripts contain notes where the agent justifies its own actions, explaining why what it’s doing is okay and really not phishing, something a human attacker wouldn’t bother with,” it said. “It supports our assessment that this is an agentic AI-powered attack. We can’t share more for now without getting in the way of the investigation.” Tim Burke, CEO of consulting firm Quest Technology Management, warned that AI-driven attacks are compressing detection and response timelines. “For companies without a dedicated SOC, continuous monitoring and visibility matter more. Someone still needs to know what is happening in the environment and be able to act quickly,” he told Infosecurity . “The broader point is that AI does not replace the fundamentals. It makes patching, monitoring, access controls, air-gapped/immutable data storage, segmentation, and incident response even more important.” Burke said network segmentation was key to limiting the damage in cases like this, preventing access from spreading across the broader environment. “The first hour should focus on containment: isolate affected systems, restrict compromised accounts or credentials, block suspicious connections, and stop further movement while the team determines what happened,” he added. “Organizations should know in advance who has the authority to take those containment actions. Delays matter more when attack activity happens at machine speed.” A Dutch cybersecurity non-profit has revealed how it was compromised in an agentic AI attack that exploited two zero-day flaws in its helpdesk platform. The Dutch Institute for Vulnerability Disclosure (DIVD) is staffed by volunteers and dedicated to ethically disclosing flaws it finds in systems to “make the digital world safer.” However, it became a target itself last week after noticing suspicious activity on September 24. In a LinkedIn post on September 30, the organization revealed that its attackers exploited two zero-days in Zammad. “Used together, they allowed the attackers to hijack sessions, run code remotely and escalate privileges from the Zammad user to root, in seconds, due to the agentic part of this hack,” it said. “From there they were able to access other services and read and exfiltrate data. We urge everyone using any version of Zammad to update to version 7 or take it offline as soon as possible.” The vulnerabilities exploited in the attack are remote code execution bug CVE-2026-102489 and elevation of privileges flaw CVE-2026-102490, both of which have a CVSS score of 9.4 when chained. Read more on agentic AI attacks: Threat Actors Uses Agentic AI to Rapidly Compromise Cloud Target Fortunately, DIVD’s security expertise meant it was able to contain the threat. “Thanks to proper network segmentation and the actions of our IT and incident response team after detection, we were able to stop the attackers from going deeper into our systems and network,” it explained. “Unfortunately, some of the damage was already done.” A separate casefile on the incident explained that volunteer data including DIVD email addresses and possibly contact details was compromised, increasing the risk that malicious actors may try to impersonate DIVD staff. AI Agent to Blame On investigating, it became clear that AI was used in the attack, DIVD continued. “[Logs] show the attacker’s scripts contain notes where the agent justifies its own actions, explaining why what it’s doing is okay and really not phishing, something a human attacker wouldn’t bother with,” it said. “It supports our assessment that this is an agentic AI-powered attack. We can’t share more for now without getting in the way of the investigation.” Tim Burke, CEO of consulting firm Quest Technology Management, warned that AI-driven attacks are compressing detection and response timelines. “For companies without a dedicated SOC, continuous monitoring and visibility matter more. Someone still needs to know what is happening in the environment and be able to act quickly,” he told Infosecurity . “The broader point is that AI does not replace the fundamentals. It makes patching, monitoring, access controls, air-gapped/immutable data storage, segmentation, and incident response even more important.” Burke said network segmentation was key to limiting the damage in cases like this, preventing access from spreading across the broader environment. “The first hour should focus on containment: isolate affected systems, restrict compromised accounts or credentials, block suspicious connections, and stop further movement while the team determines what happened,” he added. “Organizations should know in advance who has the authority to take those containment actions. Delays matter more when attack activity happens at machine speed.”",
+        "title": "Two Zero-Days Exploited in Attack on Dutch Institute for Vulnerability Disclosure",
+        "url": "https://www.infosecurity-magazine.com/news/zerodays-dutch-institute/"
+      }
+    ],
+    "workflow": "complete-source-batched-semantic-review-challenge-v1"
+  },
+  "expected_ready": {
+    "C1": false,
+    "C2": false,
+    "C3": false,
+    "C4": true
+  },
+  "reservation": 12845,
+  "usage": {
+    "completion_tokens": 619,
+    "completion_tokens_details": {
+      "accepted_prediction_tokens": 0,
+      "audio_tokens": 0,
+      "reasoning_tokens": 396,
+      "rejected_prediction_tokens": 0
+    },
+    "prompt_tokens": 9224,
+    "prompt_tokens_details": {
+      "audio_tokens": 0,
+      "cache_write_tokens": 9221,
+      "cached_tokens": 0
+    },
+    "total_tokens": 9843
+  },
+  "candidate_reviewer_prefix_sha256": "fdbbef37afd02f89a9301582aa7fc55297017031004901ecc0254256c2b17d1e",
+  "actual_batch_system_sha256": "a0917b50c76ae9082258ef074486b0e96edf2d55c32eef5a13ed353173566333"
+}

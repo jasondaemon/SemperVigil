@@ -164,17 +164,21 @@ def schema(source_ids):
                              "quote": {"type": "string", "minLength": 12, "maxLength": 1600}})
     common = {"id": {"type": "string", "pattern": "^P[0-9]{2,3}$"},
         "section": {"type": "string", "enum": list(SECTIONS)},
-        "text": {"type": "string", "minLength": 1, "maxLength": 2400},
+        "text": {"type": "string", "minLength": 1, "maxLength": 2400,
+                 "description": "A developed coherent paragraph, potentially several sentences, whose conclusion has the declared epistemic role. Preserve attribution and qualifications."},
         "date_label": string, "date_sort": {"type": ["string", "null"]},
         "citations": {"type": "array", "minItems": 1, "maxItems": 6, "items": citation}}
     # Enforce valid metadata combinations in the provider schema as well as locally.
     finding = object_schema({**common,
-        "claim_type": {"type": "string", "enum": ["finding"]},
+        "claim_type": {"type": "string", "enum": ["finding"],
+                       "description": "Source-supported reporting or attributed source advice; excludes the analyst own causal inference or recommendation."},
         "confidence": {"type": "null"}, "rationale": {"type": "string", "enum": [""]}})
     assessment = object_schema({**common,
-        "claim_type": {"type": "string", "enum": ["assessment", "intelligence_gap"]},
+        "claim_type": {"type": "string", "enum": ["assessment", "intelligence_gap"],
+                       "description": "Assessment includes evidence-backed analyst explanation or guidance with premises and limits; intelligence_gap identifies a bounded unresolved question."},
         "confidence": {"type": "string", "enum": ["high", "moderate", "low"]},
-        "rationale": {"type": "string", "minLength": 10, "maxLength": 1600}})
+        "rationale": {"type": "string", "minLength": 10, "maxLength": 1600,
+                      "description": "Connect cited premises to the inference or guidance, stating material uncertainty, applicability and limits. Do not invent factual premises."}})
     return object_schema({"title": {"type": "string", "minLength": 1, "maxLength": 220},
         "kind": {"type": "string", "enum": ["breach", "compromise", "ransomware",
           "vulnerability", "campaign", "supply_chain", "law_enforcement", "other"]},
@@ -427,19 +431,43 @@ owning item ID in the existing review schema; do not add repair calls or rewrite
 """
 
 
-SEMANTIC_REGRESSION_EXPECTATIONS = """
-Mandatory whole-source review examples (expectations, not automated semantic proof):
-P110: A paragraph that combines attributed Zammad version advice and a reasoned
-operator caution must not be typed entirely as a finding. Separate source findings
-from analyst assessment, each with its own cited premises and bounded rationale.
-P113: Reporting that an attacker stopped does not establish rapid containment or
-that ordinary controls categorically cannot prevent damage from autonomous agents.
-Hold unsupported causal certainty, universal control-limit claims, and implied
-verified containment; an exact quote somewhere in the source is not entailment.
-P115: 'first flaw'/'second flaw' references can reverse when preceding sentences
-mention CVE-2026-102490 and CVE-2026-102489 in reverse order. Hold ambiguous CVE
-references; require unambiguous explicit identifiers and supported version scope.
-Version-7 upgrade advice does not establish every version-7 deployment is safe.
+EPISTEMIC_PARAGRAPH_RULES = """
+A developed paragraph may contain several related sentences. Choose its epistemic
+role from the conclusion it asks the reader to accept, not from its first sentence.
+A finding reports source-supported events, observations or attributed statements;
+an attributed source recommendation remains a finding about that recommendation.
+Your own explanation, causal inference or proposed action is an assessment: retain
+its cited factual premises, then state the inference or action, confidence, rationale,
+conditions and uncertainty. Guidance uses claim_type assessment and an appropriate
+section such as mitigations; do not disguise it as an observed finding. Intelligence
+gaps identify bounded unresolved questions, not proof that an event did not occur.
+An assessment may include attributed premises in the same coherent paragraph. Split
+paragraph items when separate findings and analysis have independent conclusions
+or materially different attribution; do not split every sentence or strip the
+premises from the analysis. Never elevate a source's belief into a confirmed fact.
+Name entities or identifiers when relative references could have multiple antecedents
+in neighboring paragraphs. Preserve the source's scope, dates and conditions.
 """
-WRITER += SEMANTIC_REGRESSION_EXPECTATIONS
-REVIEWER += SEMANTIC_REGRESSION_EXPECTATIONS
+REVIEW_DECISION_CHECKLIST = """
+Apply this decision checklist to EVERY item, including all sentences of a paragraph:
+1. Classify its conclusion: reported finding, analyst assessment, analyst guidance,
+   or intelligence gap. Compare that role with claim_type and placement. Source
+   advice reported with attribution is a finding; your own normative conclusion
+   is an assessment requiring confidence and rationale. Supported premises inside
+   an explicitly typed assessment are allowed; developed paragraphs are encouraged.
+2. Check each material premise and qualification against complete cited sources.
+   Identify who asserts it and whether it is observed, believed, intended or uncertain.
+3. For each causal or normative inference, check that cited premises support the
+   conclusion at its stated scope. Check conditions, uncertainty and limits; a
+   particular outcome does not prove a universal rule or an unreported response time.
+4. Resolve pronouns and relative references against neighboring paragraphs as well
+   as the cited sources. Hold materially ambiguous or reversed antecedents; exact
+   source quotes cannot fix an unclear referent in the report narrative.
+5. Return each substantive failure under the exact offending item ID and supporting
+   source IDs. If a relationship spans items, identify the affected items without
+   demanding that every sentence become its own item. Keep locator improvements
+   nonblocking; ready is true only when no substantive issues remain.
+Do not output this checklist or rewrite prose; return only the requested review JSON.
+"""
+WRITER += EPISTEMIC_PARAGRAPH_RULES
+REVIEWER += EPISTEMIC_PARAGRAPH_RULES + REVIEW_DECISION_CHECKLIST

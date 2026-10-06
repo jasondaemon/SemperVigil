@@ -1,0 +1,490 @@
+[
+  {
+    "case_id": "intrusion",
+    "kind": "compromise",
+    "sources": [
+      {
+        "id": "S1",
+        "text": "Acme reported unauthorized access to a server. The affected data scope remains under investigation.",
+        "title": "Synthetic intrusion",
+        "url": "https://example.org/intrusion"
+      }
+    ],
+    "neighboring_context": [
+      {
+        "id": "P01",
+        "text": "Acme reported unauthorized access to a server. The affected data scope remains under investigation."
+      }
+    ],
+    "positive": {
+      "item": {
+        "id": "P02",
+        "section": "impact",
+        "claim_type": "finding",
+        "confidence": null,
+        "rationale": "",
+        "text": "Acme reported unauthorized server access. It said the affected data scope remains under investigation.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "Acme reported unauthorized access to a server. The affected data scope remains under investigation."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": true,
+      "why": "Qualified reporting or explicitly typed bounded analysis with cited premises."
+    },
+    "negative": {
+      "item": {
+        "id": "P02",
+        "section": "impact",
+        "claim_type": "finding",
+        "confidence": null,
+        "rationale": "",
+        "text": "Acme reported unauthorized server access. Operators should therefore rebuild every server immediately.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "Acme reported unauthorized access to a server. The affected data scope remains under investigation."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": false,
+      "expected_issue": "Own guidance is appended to a finding without rationale, applicability or uncertainty."
+    },
+    "scope": "Human-authored semantic expectation fixture. Offline schema/ID tests cannot establish model detection."
+  },
+  {
+    "case_id": "ransomware",
+    "kind": "ransomware",
+    "sources": [
+      {
+        "id": "S1",
+        "text": "The operator reported encrypted workstations. Network isolation stopped further spread. The report does not give containment duration.",
+        "title": "Synthetic ransomware",
+        "url": "https://example.org/ransomware"
+      }
+    ],
+    "neighboring_context": [
+      {
+        "id": "P01",
+        "text": "The operator reported encrypted workstations. Network isolation stopped further spread. The report does not give containment duration."
+      }
+    ],
+    "positive": {
+      "item": {
+        "id": "P02",
+        "section": "analyst_assessment",
+        "claim_type": "assessment",
+        "confidence": "moderate",
+        "rationale": "The cited report supplies the stated premises. Scope and unreported mechanisms or outcomes limit this inference and any proposed action.",
+        "text": "Isolation may have reduced the observed spread in this incident. The report describes stopped spread after isolation, but does not establish how quickly it occurred or whether isolation guarantees containment elsewhere.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "The operator reported encrypted workstations. Network isolation stopped further spread. The report does not give containment duration."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": true,
+      "why": "Qualified reporting or explicitly typed bounded analysis with cited premises."
+    },
+    "negative": {
+      "item": {
+        "id": "P02",
+        "section": "analyst_assessment",
+        "claim_type": "assessment",
+        "confidence": "moderate",
+        "rationale": "The cited report supplies the stated premises. Scope and unreported mechanisms or outcomes limit this inference and any proposed action.",
+        "text": "Rapid isolation guarantees that ransomware cannot damage critical systems.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "The operator reported encrypted workstations. Network isolation stopped further spread. The report does not give containment duration."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": false,
+      "expected_issue": "Unreported response speed and universal preventive guarantee."
+    },
+    "scope": "Human-authored semantic expectation fixture. Offline schema/ID tests cannot establish model detection."
+  },
+  {
+    "case_id": "advisory",
+    "kind": "vulnerability",
+    "sources": [
+      {
+        "id": "S1",
+        "text": "Flaw Alpha enables code execution in component Red. Flaw Beta enables local privilege escalation in component Blue. Only Flaw Alpha has a published fixed release.",
+        "title": "Synthetic advisory",
+        "url": "https://example.org/advisory"
+      }
+    ],
+    "neighboring_context": [
+      {
+        "id": "P01",
+        "text": "Flaw Beta affects component Blue; Flaw Alpha affects component Red."
+      }
+    ],
+    "positive": {
+      "item": {
+        "id": "P02",
+        "section": "analyst_assessment",
+        "claim_type": "assessment",
+        "confidence": "moderate",
+        "rationale": "The cited report supplies the stated premises. Scope and unreported mechanisms or outcomes limit this inference and any proposed action.",
+        "text": "The published fix for Flaw Alpha does not establish remediation of Flaw Beta. Operators assessing component Blue should verify remediation for Flaw Beta separately; the source does not name a fixed release for it.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "Flaw Alpha enables code execution in component Red. Flaw Beta enables local privilege escalation in component Blue. Only Flaw Alpha has a published fixed release."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": true,
+      "why": "Qualified reporting or explicitly typed bounded analysis with cited premises."
+    },
+    "negative": {
+      "item": {
+        "id": "P02",
+        "section": "analyst_assessment",
+        "claim_type": "assessment",
+        "confidence": "moderate",
+        "rationale": "The cited report supplies the stated premises. Scope and unreported mechanisms or outcomes limit this inference and any proposed action.",
+        "text": "The second flaw is safe after applying the first fix.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "Flaw Alpha enables code execution in component Red. Flaw Beta enables local privilege escalation in component Blue. Only Flaw Alpha has a published fixed release."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": false,
+      "expected_issue": "Ambiguous referents transfer remediation scope between distinct flaws."
+    },
+    "scope": "Human-authored semantic expectation fixture. Offline schema/ID tests cannot establish model detection."
+  },
+  {
+    "case_id": "cloud_identity",
+    "kind": "compromise",
+    "sources": [
+      {
+        "id": "S1",
+        "text": "The provider reported theft of one service account token. That account had read access to one storage bucket. No other account access was established.",
+        "title": "Synthetic cloud_identity",
+        "url": "https://example.org/cloud_identity"
+      }
+    ],
+    "neighboring_context": [
+      {
+        "id": "P01",
+        "text": "The provider reported theft of one service account token. That account had read access to one storage bucket. No other account access was established."
+      }
+    ],
+    "positive": {
+      "item": {
+        "id": "P02",
+        "section": "analyst_assessment",
+        "claim_type": "assessment",
+        "confidence": "moderate",
+        "rationale": "The cited report supplies the stated premises. Scope and unreported mechanisms or outcomes limit this inference and any proposed action.",
+        "text": "The reported token theft creates a reason to review that account and bucket permissions. Wider tenant compromise remains unestablished, so this guidance does not assume that every account must be replaced.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "The provider reported theft of one service account token. That account had read access to one storage bucket. No other account access was established."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": true,
+      "why": "Qualified reporting or explicitly typed bounded analysis with cited premises."
+    },
+    "negative": {
+      "item": {
+        "id": "P02",
+        "section": "impact",
+        "claim_type": "finding",
+        "confidence": null,
+        "rationale": "",
+        "text": "The provider reported one stolen token. Every tenant credential is compromised and must be replaced.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "The provider reported theft of one service account token. That account had read access to one storage bucket. No other account access was established."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": false,
+      "expected_issue": "A scoped finding becomes unsupported universal attribution and analyst guidance."
+    },
+    "scope": "Human-authored semantic expectation fixture. Offline schema/ID tests cannot establish model detection."
+  },
+  {
+    "case_id": "fraud",
+    "kind": "other",
+    "sources": [
+      {
+        "id": "S1",
+        "text": "Investigators reported fraudulent transfers after an employee approved changed banking details. They did not establish how the employee was contacted.",
+        "title": "Synthetic fraud",
+        "url": "https://example.org/fraud"
+      }
+    ],
+    "neighboring_context": [
+      {
+        "id": "P01",
+        "text": "Investigators reported fraudulent transfers after an employee approved changed banking details. They did not establish how the employee was contacted."
+      }
+    ],
+    "positive": {
+      "item": {
+        "id": "P02",
+        "section": "analyst_assessment",
+        "claim_type": "assessment",
+        "confidence": "moderate",
+        "rationale": "The cited report supplies the stated premises. Scope and unreported mechanisms or outcomes limit this inference and any proposed action.",
+        "text": "Verification through an independently obtained contact channel may reduce exposure to unauthorized banking changes. This recommendation rests on the reported approval sequence; it does not establish email phishing as the incident mechanism.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "Investigators reported fraudulent transfers after an employee approved changed banking details. They did not establish how the employee was contacted."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": true,
+      "why": "Qualified reporting or explicitly typed bounded analysis with cited premises."
+    },
+    "negative": {
+      "item": {
+        "id": "P02",
+        "section": "impact",
+        "claim_type": "finding",
+        "confidence": null,
+        "rationale": "",
+        "text": "Investigators confirmed email phishing caused the transfers.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "Investigators reported fraudulent transfers after an employee approved changed banking details. They did not establish how the employee was contacted."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": false,
+      "expected_issue": "An unknown contact mechanism is promoted to a confirmed causal finding."
+    },
+    "scope": "Human-authored semantic expectation fixture. Offline schema/ID tests cannot establish model detection."
+  },
+  {
+    "case_id": "supply_chain",
+    "kind": "supply_chain",
+    "sources": [
+      {
+        "id": "S1",
+        "text": "A vendor advised customers to disable connector Echo pending investigation. The advisory does not establish malware deployment or the number of affected customers.",
+        "title": "Synthetic supply_chain",
+        "url": "https://example.org/supply_chain"
+      }
+    ],
+    "neighboring_context": [
+      {
+        "id": "P01",
+        "text": "A vendor advised customers to disable connector Echo pending investigation. The advisory does not establish malware deployment or the number of affected customers."
+      }
+    ],
+    "positive": {
+      "item": {
+        "id": "P02",
+        "section": "impact",
+        "claim_type": "finding",
+        "confidence": null,
+        "rationale": "",
+        "text": "The vendor advised disabling connector Echo pending investigation. It did not report a confirmed customer count or malware deployment.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "A vendor advised customers to disable connector Echo pending investigation. The advisory does not establish malware deployment or the number of affected customers."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": true,
+      "why": "Qualified reporting or explicitly typed bounded analysis with cited premises."
+    },
+    "negative": {
+      "item": {
+        "id": "P02",
+        "section": "impact",
+        "claim_type": "finding",
+        "confidence": null,
+        "rationale": "",
+        "text": "Disable all vendor products permanently because every customer is compromised.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "A vendor advised customers to disable connector Echo pending investigation. The advisory does not establish malware deployment or the number of affected customers."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": false,
+      "expected_issue": "Analyst action has invented premises, expanded scope and unjustified permanence."
+    },
+    "scope": "Human-authored semantic expectation fixture. Offline schema/ID tests cannot establish model detection."
+  },
+  {
+    "case_id": "notification",
+    "kind": "breach",
+    "sources": [
+      {
+        "id": "S1",
+        "text": "The company believes certain personal records may have been accessed. Notifications are planned after the affected population is identified.",
+        "title": "Synthetic notification",
+        "url": "https://example.org/notification"
+      }
+    ],
+    "neighboring_context": [
+      {
+        "id": "P01",
+        "text": "The company believes certain personal records may have been accessed. Notifications are planned after the affected population is identified."
+      }
+    ],
+    "positive": {
+      "item": {
+        "id": "P02",
+        "section": "impact",
+        "claim_type": "finding",
+        "confidence": null,
+        "rationale": "",
+        "text": "The company believes certain personal records may have been accessed. It plans notifications after identifying the affected population; completed notification is not reported.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "The company believes certain personal records may have been accessed. Notifications are planned after the affected population is identified."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": true,
+      "why": "Qualified reporting or explicitly typed bounded analysis with cited premises."
+    },
+    "negative": {
+      "item": {
+        "id": "P02",
+        "section": "impact",
+        "claim_type": "finding",
+        "confidence": null,
+        "rationale": "",
+        "text": "All personal records were stolen and every affected customer has been notified.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "The company believes certain personal records may have been accessed. Notifications are planned after the affected population is identified."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": false,
+      "expected_issue": "Belief and possible access become confirmed theft; planned action becomes completed."
+    },
+    "scope": "Human-authored semantic expectation fixture. Offline schema/ID tests cannot establish model detection."
+  },
+  {
+    "case_id": "law_enforcement",
+    "kind": "law_enforcement",
+    "sources": [
+      {
+        "id": "S1",
+        "text": "Authorities seized two domains used by a fraud campaign. The operator identities and remaining infrastructure are unknown.",
+        "title": "Synthetic law_enforcement",
+        "url": "https://example.org/law_enforcement"
+      }
+    ],
+    "neighboring_context": [
+      {
+        "id": "P01",
+        "text": "Authorities seized two domains used by a fraud campaign. The operator identities and remaining infrastructure are unknown."
+      }
+    ],
+    "positive": {
+      "item": {
+        "id": "P02",
+        "section": "analyst_assessment",
+        "claim_type": "assessment",
+        "confidence": "moderate",
+        "rationale": "The cited report supplies the stated premises. Scope and unreported mechanisms or outcomes limit this inference and any proposed action.",
+        "text": "The seizures may interrupt activity through those domains. They do not establish that all infrastructure is disabled or identify every operator, so continued activity remains a specific unresolved question.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "Authorities seized two domains used by a fraud campaign. The operator identities and remaining infrastructure are unknown."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": true,
+      "why": "Qualified reporting or explicitly typed bounded analysis with cited premises."
+    },
+    "negative": {
+      "item": {
+        "id": "P02",
+        "section": "analyst_assessment",
+        "claim_type": "assessment",
+        "confidence": "moderate",
+        "rationale": "The cited report supplies the stated premises. Scope and unreported mechanisms or outcomes limit this inference and any proposed action.",
+        "text": "The seizures eliminated the campaign and identified all operators.",
+        "date_label": "Undated",
+        "date_sort": null,
+        "citations": [
+          {
+            "source_id": "S1",
+            "quote": "Authorities seized two domains used by a fraud campaign. The operator identities and remaining infrastructure are unknown."
+          }
+        ],
+        "attack_mappings": []
+      },
+      "expected_ready": false,
+      "expected_issue": "Scoped action is overstated as complete disruption and certain attribution."
+    },
+    "scope": "Human-authored semantic expectation fixture. Offline schema/ID tests cannot establish model detection."
+  }
+]

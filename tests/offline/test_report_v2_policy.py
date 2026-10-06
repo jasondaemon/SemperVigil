@@ -48,10 +48,11 @@ def test_expiry_and_rollback_disable(monkeypatch):
  with pytest.raises(ValueError,match='inactive'):policy.active(active)
 
 
-def test_missed_semantic_cases_are_explicit_contract_expectations():
- for text in ['P110','P113','P115','rapid containment','categorically','reverse order']:
-  assert text in contract.WRITER and text in contract.REVIEWER
- # This is contract coverage, not proof that any model obeys it.
+def test_epistemic_contract_is_general_and_paragraph_coherent():
+ assert contract.EPISTEMIC_PARAGRAPH_RULES in contract.WRITER
+ assert contract.REVIEW_DECISION_CHECKLIST in contract.REVIEWER
+ assert all(identifier not in contract.WRITER+contract.REVIEWER for identifier in ('P110:', 'P113:', 'P115:', 'CVE-2026-102489', 'CVE-2026-102490'))
+ # Coverage is not proof that any model follows these instructions.
 
 
 def test_legacy_pilot_cohort_cannot_be_reused(monkeypatch):

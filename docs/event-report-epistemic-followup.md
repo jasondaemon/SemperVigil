@@ -1,0 +1,27 @@
+# Epistemic review follow-up: offline proposal
+
+Cleanup and developed report prose are live. Autonomous ATT&CK remains disabled following the observed candidate batch-review miss and the absence of a validated real positive mapping. This is a quality checkpoint, not an access or permission blocker. The existing Microsoft/Astrana v1 successor pilot is separately scoped and unchanged. No hosted retry, rollout, publication or new cohort enablement accompanies this proposal.
+
+## Verified scope and cause
+
+The retained batch used the exact c91bcec reviewer prefix plus a focused-case wrapper. Per-case ready/issues/locator_warnings fields matched the normal schema except added case_id; the top-level results array differed. All four complete source bodies were shared once, but only each target and two preceding paragraphs were present. It was not whole-report review and omitted the normal evidence/report/citation_provenance envelope. Neither deployed reviewer system matched exactly. Batching, attention and antecedent context can contribute; their effects were not isolated. Do not describe this as a demonstrated miss by the deployed whole-report reviewer.
+
+The model accepted the mixed finding/analyst-guidance paragraph, rejected unsupported response speed/universal control limits, and accepted the supported finding-only control. It also accepted the context-dependent first/second reference. That failed the frozen ambiguity criterion, but a source-relative interpretation can be technically correct. The mixed-role defect alone requires stopping. Source quotes, taxonomy IDs and schema validity do not prove semantic entailment.
+
+## General contract proposal
+
+Replace event-specific IDs, products, CVEs and versions with paragraph rules and a compact per-item decision checklist. A paragraph may have several related sentences. Its conclusion determines its role: observations and attributed source advice are findings; analyst explanation or guidance are assessments with confidence, rationale, cited premises, applicability and limits. An assessment can retain attributed premises in its coherent paragraph. Separate independently concluded findings and analysis without imposing one-sentence items.
+
+Review every item's classification and placement, material premises and qualifiers, causal/normative inferences and uncertainty, and referents against neighboring paragraphs as well as sources. Return exact offending item/source IDs using the existing review JSON. Locator improvements stay nonblocking. Writer-schema descriptions reinforce these distinctions without changing wire fields: analyst guidance uses assessment; reported source advice remains finding.
+
+Eight synthetic event families provide developed positive controls and negatives for mixed roles, unsupported mechanisms, overgeneralization, advice scope, belief inflation, intended/completed actions and ambiguous references. Their human-authored expectations are not model predictions. Offline tests deliberately demonstrate that structurally valid unsupported prose still passes mechanical validation. Retained-response replay preserves both actual false-ready decisions; it neither calls a model nor shows the new prompt repairs them.
+
+## Controlled next-test proposal: not tonight
+
+Keep the stopped manifest, source packets, claims, usage and raw response unchanged. No remaining allocation is reset or reused. Independently review this proposal, broad fixture labels and original whole-report context; adjudicate the ambiguous-reference label separately.
+
+Prepare three immutable reviewer-only requests: baseline c91bcec on the complete retained defective report; revised checklist on that identical complete report; revised checklist on the independently approved complete report. All use the normal review envelope, complete cited sources, native schema and original paragraph order. No batch wrapper, extra writer, edited quote, manufactured evidence delta or publication capability. This distinguishes the checklist change from focused batching and tests a supported whole-report control. It is targeted regression evidence, not broad quality or real mapping readiness.
+
+Proposed maximum: three reviewer calls, at most20k reserved each/60k total, only if exact full requests fit after request+schema tokenization plus512 and completion cap. Freeze code/prompt/catalog/source/profile/generation hashes, an expiring manifest and independent whole-source labels before any future transport. This is a proposed protocol, not an exercised allowance or authority to resume overnight testing. Stop on any substantive miss, supported-control rejection, malformed/truncated response, unknown transport or usage overrun. Record raw responses/usage before parsing; no retry, repair or source truncation. Independently adjudicate each model decision against full sources.
+
+Only later reviewed gates may proceed to real mapping-positive and abstention report pairs. Lifecycle approval does not establish semantics or permit autonomous enablement. Migration072 guards must be verified during any separately controlled dormant rollout. These prompt changes also alter generation identity and publication prompt binding: review compatibility with retained published artifacts before rollout. No saved report, review, source, journal or editorial receipt is rewritten.
