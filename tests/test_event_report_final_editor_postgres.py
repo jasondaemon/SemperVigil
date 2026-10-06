@@ -175,3 +175,33 @@ def test_missing_scoped_authority_cannot_reconstruct_same_model_material(setup,m
     record=reports._load(s.conn,rid);record['snapshot'].pop('final_editor_model_policy')
     rows=s.conn.execute('SELECT request_json,response_json FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal',(rid,)).fetchall()
     with pytest.raises(ValueError):editor.derive(*(json.loads(v) for row in rows for v in row),record['snapshot'])
+
+
+def test_expired_overall_window_is_proven_no_http(setup, monkeypatch):
+    from datetime import datetime, timezone, timedelta
+    s = setup
+    admitted = reports.submit(s.conn, 'evt_test', debounce_seconds=0, budget_tokens=64000)
+    rid = admitted['run_id']
+    monkeypatch.setattr(reports, 'utc_now_iso', lambda: (datetime.now(timezone.utc) - timedelta(seconds=601)).isoformat())
+    job = SimpleNamespace(job_type=reports.JOB_TYPE, queue_name='openai', status='running',
+                          max_attempts=1, payload={'run_id': rid})
+    result = reports.run(s.conn, job, complete=lambda _: pytest.fail('HTTP after overall deadline'))
+    assert result['status'] == 'held'
+    row = s.conn.execute('SELECT status,error,reservation FROM event_source_report_calls WHERE run_id=%s', (rid,)).fetchone()
+    assert row[0] == 'failed' and row[2] > 0
+    assert json.loads(row[1])['proof']['kind'] == 'instrumented_authority'
+    assert reports._load(s.conn, rid)['reserved_tokens'] == 0
+    assert len(s.calls) == 0
+
+
+def test_short_editor_profile_rejected_before_journal_or_http(setup, monkeypatch):
+    from sempervigil import event_report_transport as transport
+    s = setup
+    admitted = reports.submit(s.conn, 'evt_test', debounce_seconds=0, budget_tokens=64000)
+    rid = admitted['run_id']
+    monkeypatch.setenv(transport.POLICY_ENV, json.dumps({**transport.DEFAULT, 'editor_seconds': 60}))
+    job = SimpleNamespace(job_type=reports.JOB_TYPE, queue_name='openai', status='running',
+                          max_attempts=1, payload={'run_id': rid})
+    result = reports.run(s.conn, job, complete=lambda _: pytest.fail('HTTP under short profile'))
+    assert result['status'] == 'held'
+    assert s.conn.execute('SELECT count(*) FROM event_source_report_calls WHERE run_id=%s', (rid,)).fetchone()[0] == 0

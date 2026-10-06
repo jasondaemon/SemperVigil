@@ -23,3 +23,41 @@ An explicit case allowance can use `context_overrides:{"evt_e2b587f96d75":32768}
 Synthetic PostgreSQL integration proves structural lifecycle constraints through actual separated admission/promotion roles and a real newly linked fixture article on the same event. It is not hosted-model quality evidence or a production new-article demonstration. The next proposed paid tests use retained CEVA and Zammad drafts, omit mapping arrays only, preserve all prose/citations/sources and make one editor request each without writer regeneration. They test CEVA agency/notification correction and Zammad factual speed/date-precision correction, plus rich useful final prose and explicit uncertainty. Zammad's historical invalid writer remains evaluation input, not a qualified production continuation. All final artifacts need independent full-source adjudication before any deployment decision.
 
 Historical ordinary v2 publications are validated against original generation prompt identity. New runs pin writer/reviewer prompt hashes and generator version inside their immutable input snapshot. Published reads use that original pin rather than today's prompt text; current admission/promotion still requires today's exact prompts. Older pre-pin publications require an exact prompt pair archived from trusted repository ancestor versions AND an authentic non-revoked existing publication. Unknown pairs, changed receipts/pins and unpublished pre-pin artifacts fail closed. This historical-read rule does not confer new publication authority. Ordinary old-generation PostgreSQL regressions cover both pre-pin and pinned reports, unchanged qualification/export, current-admission rejection and prompt tampering; imported continuations are not used for these tests.
+
+### Bounded transport and unknown usage
+
+The narrative workflow pins `narrative-hard-transport-deadline-v1` into the
+snapshot, generation identity and runtime identity. Defaults are 180 seconds for
+the writer, 240 seconds for the final editor and a 600-second overall window
+starting with the first durable call journal. Optional
+`SV_EVENT_REPORT_V2_TRANSPORT_POLICY` accepts exactly `workflow`,
+`writer_seconds`, `editor_seconds`, `overall_seconds`: per-call bounds are
+180–240 seconds and the overall bound is 360–600 seconds. The actual editor
+profile is checked before a call journal or HTTP; the provider's existing
+60-second default cannot silently govern a Sol/high/12,000-token editor.
+
+The native router executes one synchronous Chat Completions request in a
+separate process. Credentials travel through stdin; captured diagnostics are
+never returned. The parent enforces an absolute deadline with process termination
+and reaping, including trickling response bodies, and works in worker threads.
+The remaining overall window is recalculated after credential/freshness checks
+immediately before transport. Native no-retry behavior and immutable journal,
+reservation and publication gates remain in force. Legacy workflows retain their
+existing transport behavior; no global provider timeout is changed.
+
+These limits are conservative engineering bounds, not measured latency
+percentiles: a prior verdict-only Sol/high/6,000 review took 40.215 seconds, while
+the retained full-editor Sol/high/12,000 attempt exhausted the provider's
+60-second socket timeout. A longer deadline has not yet been demonstrated to
+produce an accurate report. Timeout after transport starts retains unknown
+usage and the full outstanding reservation; stopping the client cannot prove
+that the provider stopped generation or incurred no charge. Only the existing
+instrumented pre-HTTP authority boundary can prove zero transport and release
+an outstanding reservation; lifetime admission remains consumed.
+
+Acceptance: reject 60-second actual editor profiles; complete one local normal
+response; terminate header stalls and continually trickling responses under a
+worker thread without retry; clip transport to the remaining overall window;
+hold expired windows before HTTP; retain unknown transport reservations;
+preserve historical exports and same-model workflow restrictions. No production
+enablement or paid evaluation is implied by these tests.

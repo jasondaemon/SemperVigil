@@ -130,6 +130,7 @@ def configuration(conn):
     from .attack_catalog import generation_schema
     from .event_report_final_editor import configuration as editor_configuration, PROMPT as editor_prompt, invocation_policy
     editor = editor_configuration()
+    from .event_report_transport import policy as transport_policy
     code_identity = runtime_code_identity()
     version = _version({"attack": {'enabled': False} if editor else settings(),"code_identity":code_identity,"workflow": contract.WORKFLOW, "model": model["id"],
         "provider": provider["id"], "base_url": provider["base_url"],
@@ -141,7 +142,8 @@ def configuration(conn):
         "projection_policy":contract.PROJECTION_WORKFLOW,
         "fixed_reviewer_model":reviewer_model(),"review_schema":contract.review_schema({'items':[{'id':'P01'}]},['S1']),
         **({'pilot_policy':pilot} if pilot else {}),
-        **({'final_editor': editor, 'final_editor_model_policy': invocation_policy()} if editor else {})})
+        **({'final_editor': editor, 'final_editor_model_policy': invocation_policy(),
+           'transport_policy': transport_policy()} if editor else {})})
     return model, provider, version
 
 
@@ -152,7 +154,7 @@ def runtime_code_identity():
             for name in ('event_source_reports_v2.py', 'event_report_contract_v2.py',
                          'attack_catalog.py', 'attack_catalog_runtime.py',
                          'event_source_report_publication_v2.py', 'event_report_continuation_import.py',
-                         'event_report_final_editor.py',
+                         'event_report_final_editor.py', 'event_report_transport.py',
                          'event_report_generation_identity.py', 'data/event_report_v2_prompt_history.json',
                          'event_report_editorial.py', 'event_report_v2_policy.py', 'event_report_v2_integrity.py')}
 
@@ -161,11 +163,13 @@ def runtime_identity():
     """Code/catalog/options proof readable by the separate publication role."""
     from .attack_catalog_runtime import settings
     from .event_report_final_editor import configuration as editor_configuration, invocation_policy
+    from .event_report_transport import policy as transport_policy
     return _version({'code': runtime_code_identity(), 'attack': {'enabled': False} if editor_configuration() else settings(),
                      'phase_settings': phase_settings(),
                      'writer_model': os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL') or MODEL,
                      'reviewer_model': reviewer_model(),
-                     **({'final_editor': editor_configuration(), 'final_editor_model_policy': invocation_policy()}
+                     **({'final_editor': editor_configuration(), 'final_editor_model_policy': invocation_policy(),
+                        'transport_policy': transport_policy()}
                         if editor_configuration() else {})})
 
 
@@ -489,6 +493,8 @@ def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
     if editor:
         snap['final_editor'] = editor
         snap['final_editor_model_policy'] = invocation_policy()
+        from .event_report_transport import policy as transport_policy
+        snap['transport_policy'] = transport_policy()
     from .event_report_generation_identity import identity as prompt_identity
     from .event_report_final_editor import PROMPT as editor_prompt
     snap['generation_prompt_identity'] = prompt_identity(
@@ -619,13 +625,21 @@ def ready_client(conn):
     return provider,headers
 
 
-def _complete(conn, payload, *, before_transport=None):
+def _complete(conn, payload, *, before_transport=None, transport_seconds=None):
     import time
     from .llm.router import _http_request, _join_url
     provider,headers = ready_client(conn)
     if before_transport is not None:
-        before_transport()
+        remaining = before_transport()
+        if transport_seconds is not None:
+            transport_seconds = min(transport_seconds, remaining)
     started = time.monotonic()
+    if transport_seconds is not None:
+        from .event_report_transport import complete as bounded_complete
+        response = bounded_complete(_join_url(provider["base_url"], "/chat/completions"),
+            headers, payload, provider, seconds=transport_seconds, stage=JOB_TYPE)
+        response["transport_elapsed_ms"] = int((time.monotonic()-started)*1000)
+        return response
     response = _http_request("POST", _join_url(provider["base_url"], "/chat/completions"),
         headers,
         payload, provider, context={"stage": JOB_TYPE,"no_retry":True})
@@ -666,6 +680,14 @@ def call(conn, run_id, phase, system, data, response_schema, *, complete=None, c
     if record['snapshot'].get('final_editor'):
         if (type(model.get('max_context')) is not int or reservation > model['max_context']):
             raise ValueError('event_final_editor_model_context_exceeded')
+    transport_seconds = None
+    if record['snapshot'].get('final_editor'):
+        from .event_report_transport import policy as transport_policy, preflight
+        pinned_transport = record['snapshot'].get('transport_policy')
+        if pinned_transport != transport_policy():
+            raise ValueError('event_report_transport_policy_changed')
+        transport_seconds = preflight(payload, pinned_transport[
+            'editor_seconds' if phase == 'review' else 'writer_seconds'])
     conn.execute("SELECT run_id FROM event_source_report_runs WHERE run_id=%s FOR UPDATE", (run_id,))
     if allowance and phase in {'correction','verification'}:
         spent = conn.execute("SELECT COALESCE(SUM(reservation),0) FROM event_source_report_calls WHERE run_id=%s AND phase IN ('correction','verification')",(run_id,)).fetchone()[0]
@@ -711,13 +733,29 @@ def call(conn, run_id, phase, system, data, response_schema, *, complete=None, c
                 if final_policy != current['snapshot']['autonomous_policy']:
                     raise ValueError('event_report_v2_policy_changed')
                 active(final_policy)
+            if transport_seconds is not None:
+                from datetime import datetime, timezone
+                from .event_report_transport import policy as transport_policy
+                pinned = current['snapshot'].get('transport_policy')
+                if pinned != transport_policy():
+                    raise ValueError('event_report_transport_policy_changed')
+                first = conn.execute('SELECT min(created_at) FROM event_source_report_calls WHERE run_id=%s',
+                                     (run_id,)).fetchone()[0]
+                origin = datetime.fromisoformat(str(first).replace('Z', '+00:00'))
+                if origin.tzinfo is None:
+                    origin = origin.replace(tzinfo=timezone.utc)
+                remaining = pinned['overall_seconds'] - (datetime.now(timezone.utc) - origin).total_seconds()
+                if remaining <= 0:
+                    raise ValueError('event_report_transport_budget_exhausted')
+                return min(transport_seconds, remaining)
         except Exception as cause:
             failure = PreTransportFailure()
             failure.proof.update(kind='instrumented_authority', failure_stage='authority_recheck')
             raise failure from cause
     try:
         before_transport()  # Journal is durable, but no transport has occurred.
-        response = complete(payload) if complete else _complete(conn, payload, before_transport=before_transport)
+        response = complete(payload) if complete else _complete(conn, payload, before_transport=before_transport,
+            **({"transport_seconds": transport_seconds} if transport_seconds is not None else {}))
     except Exception as exc:
         conn.rollback()  # Journal was committed; recover from a failed guard query.
         error = type(exc).__name__
