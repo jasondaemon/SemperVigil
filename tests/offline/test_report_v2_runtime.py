@@ -48,3 +48,19 @@ def test_scope_generation_remains_default_off(monkeypatch):
  monkeypatch.setenv('SV_EVENT_REPORT_V2_ENABLED','1');monkeypatch.setenv('SV_EVENT_REPORT_V2_EVENT_IDS','evt_test')
  monkeypatch.delenv('SV_EVENT_REPORT_V2_GENERATION_ENABLED',raising=False)
  with pytest.raises(PermissionError,match='generation_disabled'):reports.submit(None,'evt_test')
+
+
+def test_v2_identity_covers_mapping_prompts_schema_and_pinned_catalog(monkeypatch):
+ from sempervigil import event_source_reports_v2 as reports
+ from sempervigil.services import ai_service
+ class Cursor:
+  def fetchone(self):return ('provider','model')
+ class Connection:
+  def execute(self,*args):return Cursor()
+ monkeypatch.setattr(ai_service,'get_provider',lambda *a:{'id':'provider','base_url':'https://example.org/v1'})
+ monkeypatch.setattr(ai_service,'get_model',lambda *a:{'id':'model'})
+ first=reports.configuration(Connection())[2]
+ monkeypatch.setattr(contract,'ATTACK_WRITER',contract.ATTACK_WRITER+' Changed mapping semantics.')
+ second=reports.configuration(Connection())[2];assert first!=second
+ monkeypatch.setenv('SV_EVENT_REPORT_V2_ATTACK_DOMAIN','mobile')
+ assert second!=reports.configuration(Connection())[2]

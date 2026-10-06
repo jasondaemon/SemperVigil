@@ -117,10 +117,17 @@ def configuration(conn):
         raise ValueError("event_source_report_model_missing")
     provider, model = get_provider(conn, row[0]), get_model(conn, row[1])
     from .attack_catalog_runtime import settings
-    version = _version({"attack":settings(),"workflow": contract.WORKFLOW, "model": model["id"],
+    from .attack_catalog import generation_schema
+    from pathlib import Path
+    import hashlib
+    code_identity={name:hashlib.sha256((Path(__file__).parent/name).read_bytes()).hexdigest()
+                   for name in ('event_source_reports_v2.py','event_report_contract_v2.py',
+                                'attack_catalog.py','attack_catalog_runtime.py',
+                                'event_source_report_publication_v2.py','event_report_continuation_import.py')}
+    version = _version({"attack":settings(),"code_identity":code_identity,"workflow": contract.WORKFLOW, "model": model["id"],
         "provider": provider["id"], "base_url": provider["base_url"],
-        "writer": contract.WRITER, "reviewer": contract.REVIEWER,
-        "schema": contract.schema(["S1"]), "phase_settings":phase_settings(),
+        "writer": contract.WRITER+contract.ATTACK_WRITER, "reviewer": contract.REVIEWER+contract.ATTACK_REVIEWER,
+        "schema": generation_schema(["S1"],["T1110.003"],{}), "phase_settings":phase_settings(),
         "tokenizer": "o200k_base", "context_tokens": 24000,
         "update_context": "published-evidence-delta-v4-membership-baseline", "cohort_policy":"serialized-reservation-v1",
         "projection_policy":contract.PROJECTION_WORKFLOW,
