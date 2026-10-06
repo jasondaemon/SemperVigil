@@ -40,8 +40,11 @@ precision and qualify relative dates instead of inventing calendar anchors. Do n
 infer source independence from different domains. What changed must compare the
 previous report with new evidence, distinguishing corrections from new developments.
 Return the requested JSON. Use unique item IDs; quotes must be exact substrings of
-source text. Source IDs may only name the supplied articles. Confidence is null and
-rationale empty for findings; assessments and gaps require both. No outside facts.
+source text. Source IDs may only name the supplied articles.
+Keep the original initial letter case when extracting a clause as a citation;
+do not capitalize its first word to make it read as a standalone sentence.
+Confidence is null and rationale empty for findings; assessments and gaps require
+both. No outside facts.
 update_reason and evidence_delta are application-owned revision provenance. For a
 generator_upgrade, omit what_changed entirely: the application supplies the notice.
 For evidence_change, substantive changes must cite actually new or corrected sources;
@@ -234,7 +237,8 @@ def resolve_citation(source, quote):
     """Resolve provenance, not claim truth; never modify model prose or quotations.
 
     Only separator punctuation/whitespace may differ. Internal punctuation stays
-    significant (numbers, contractions, identifiers), as do case and all words.
+    significant (numbers, contractions, identifiers), as do case and all words,
+    except sentence-initial capitalization of a closed set of function words.
     A normalized match must name exactly one original source passage.
     """
     text = source["text"]
@@ -250,6 +254,16 @@ def resolve_citation(source, quote):
         values = [m.group() for m in original]
         matches = [i for i in range(len(values)-len(requested)+1)
                    if requested and values[i:i+len(requested)] == requested]
+        policy = "unique-separator-punctuation-whitespace-v1"
+        if not matches and requested and requested[0] in {
+                "The", "A", "An", "This", "These", "Those", "It", "Its"}:
+            # Extracting a clause as a sentence can capitalize its opening word.
+            # Never case-fold names, acronyms, identifiers or subsequent tokens.
+            opening = requested[0][0].lower() + requested[0][1:]
+            matches = [i for i in range(len(values)-len(requested)+1)
+                       if values[i] == opening and
+                       values[i+1:i+len(requested)] == requested[1:]]
+            policy = "unique-initial-function-word-capitalization-v1"
         if len(matches) != 1:
             raise ValueError("event_report_quote_not_in_source")
         first = matches[0]
@@ -263,7 +277,7 @@ def resolve_citation(source, quote):
         if quote and quote[-1] in punctuation:
             while end < len(text) and text[end] in punctuation:
                 end += 1
-        mapping = {"policy": "unique-separator-punctuation-whitespace-v1",
+        mapping = {"policy": policy,
                    "generated_quote": quote, "original_span": text[start:end],
                    "meaning_validation": "not performed; whole-context review required"}
     span = {"source_id": source["id"], "start": start, "end": end,
@@ -355,7 +369,10 @@ In attack_path items, include attack_mappings only for defensible behavior match
 against the supplied official attack_reference definitions. The catalog is trusted
 TAXONOMY, not incident evidence. Choose technique_id, origin, behavior_status,
 rationale, limitations and supporting source_ids; the application owns names,
-URLs, parents and possible tactics. Use origin source_supplied only if cited
+URLs, parents and possible tactics.
+Every mapping source_id must also have an exact passage citation on its owning
+item. Do not add a supporting source to the mapping without citing it there.
+Use origin source_supplied only if cited
 article text explicitly supplies that ID, otherwise analyst_applied. Distinguish
 reported, attempted and inferred behavior; an attempted phone call is not proof
 that a victim granted access. Inferred behavior belongs in an assessment item
