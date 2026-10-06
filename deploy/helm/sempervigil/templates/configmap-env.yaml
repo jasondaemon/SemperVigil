@@ -96,3 +96,8 @@ data:
   SV_LLM_MAX_INFLIGHT: {{ .Values.env.SV_LLM_MAX_INFLIGHT | quote }}
   SV_LLM_MAX_TIMEOUT_RETRIES: {{ .Values.env.SV_LLM_MAX_TIMEOUT_RETRIES | quote }}
   SV_GRAFANA_LOGS_URL: {{ .Values.env.SV_GRAFANA_LOGS_URL | quote }}
+  # Scoped successor is dormant until explicitly enabled and rolled out.
+  SV_EVENT_REPORT_V2_ENABLED: {{ .Values.env.SV_EVENT_REPORT_V2_ENABLED | default "0" | quote }}
+  SV_EVENT_REPORT_V2_EVENT_IDS: {{ .Values.env.SV_EVENT_REPORT_V2_EVENT_IDS | default "" | quote }}
+  SV_EVENT_REPORT_V2_GENERATION_ENABLED: {{ .Values.env.SV_EVENT_REPORT_V2_GENERATION_ENABLED | default "0" | quote }}
+  SV_EVENT_REPORT_V2_ATTACK_DOMAIN: {{ .Values.env.SV_EVENT_REPORT_V2_ATTACK_DOMAIN | default "enterprise" | quote }}
