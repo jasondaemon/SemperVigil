@@ -75,7 +75,13 @@ def current_material(conn, run_id, *, lock=False, published=False, derivative=No
 
 
 def apply_editorial(material, editorial, evidence):
-    """Caller must independently authenticate the human reviewer; no authority is minted."""
+    """Authenticate the independent authorized reviewer; no authority is minted.
+
+    A separately attributable authorized review agent may review content. The
+    existing human-approval switch gates explicit operator admission, not the
+    reviewer's species. Receipt strings do not prove identity or completed work;
+    the caller must authenticate the actual reviewer and original-only scope.
+    """
     if (not isinstance(editorial, dict) or set(editorial) != {'proposal','review','confirmation'}
             or editorial['confirmation'] != EDITORIAL_CONFIRMATION):
         raise ValueError('event_source_report_editorial_confirmation_required')
