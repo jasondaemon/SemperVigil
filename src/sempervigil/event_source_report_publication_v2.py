@@ -79,8 +79,11 @@ def current_material(conn, run_id, *, lock=False, published=False, derivative=No
         validated=validate_retained(audit['continuation'],writer_request,writer_response,review_request,review_response)
         if record['generator_version']!=validated['generator_version'] or record['snapshot'].get('runtime_generation_at_import')!=audit['runtime_generation_at_import']:
             raise ValueError('event_source_report_continuation_identity_changed')
-    elif writer_request['messages'][0]['content']!=contract.WRITER+contract.ATTACK_WRITER or review_request['messages'][0]['content']!=contract.REVIEWER+contract.ATTACK_REVIEWER:
-        raise ValueError('event_source_report_prompt_integrity')
+    else:
+        from .event_report_generation_identity import validate as validate_original_prompts
+        validate_original_prompts(conn, record, writer_request, review_request, published=published,
+                                  current_writer=contract.WRITER+contract.ATTACK_WRITER,
+                                  current_reviewer=contract.REVIEWER+contract.ATTACK_REVIEWER)
     material = {**record,'resolved_mappings':resolved,'mapping_derivation':{'workflow':'optional-mapping-projection-v1',
             'input_version':audit['input_version'],'removed':[{'item_id':v['item_id'],'technique_id':v['mapping']['technique_id'],'reason':v['reason']} for v in removed]},'derivation':audit.get('continuation_lineage')}
     required = audit.get('required_editorial_proposal_version')

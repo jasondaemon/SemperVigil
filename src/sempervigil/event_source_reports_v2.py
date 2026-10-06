@@ -153,6 +153,7 @@ def runtime_code_identity():
                          'attack_catalog.py', 'attack_catalog_runtime.py',
                          'event_source_report_publication_v2.py', 'event_report_continuation_import.py',
                          'event_report_final_editor.py',
+                         'event_report_generation_identity.py', 'data/event_report_v2_prompt_history.json',
                          'event_report_editorial.py', 'event_report_v2_policy.py', 'event_report_v2_integrity.py')}
 
 
@@ -488,6 +489,11 @@ def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
     if editor:
         snap['final_editor'] = editor
         snap['final_editor_model_policy'] = invocation_policy()
+    from .event_report_generation_identity import identity as prompt_identity
+    from .event_report_final_editor import PROMPT as editor_prompt
+    snap['generation_prompt_identity'] = prompt_identity(
+        contract.WRITER if editor else contract.WRITER + contract.ATTACK_WRITER,
+        editor_prompt if editor else contract.REVIEWER + contract.ATTACK_REVIEWER, generation)
     predecessor, prior = previous(conn, event_id)
     old, prior_generation = published_baseline(conn,event_id,snap)
     if pilot:
