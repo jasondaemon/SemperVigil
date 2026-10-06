@@ -138,7 +138,7 @@ def runtime_code_identity():
             for name in ('event_source_reports_v2.py', 'event_report_contract_v2.py',
                          'attack_catalog.py', 'attack_catalog_runtime.py',
                          'event_source_report_publication_v2.py', 'event_report_continuation_import.py',
-                         'event_report_editorial.py', 'event_report_v2_policy.py')}
+                         'event_report_editorial.py', 'event_report_v2_policy.py', 'event_report_v2_integrity.py')}
 
 
 def runtime_identity():
@@ -489,7 +489,7 @@ def _load(conn, run_id):
 
 
 def _fresh(conn, record):
-    if record["snapshot"].get("autonomous_policy"):
+    if "autonomous_policy" in record["snapshot"]:
         from .event_report_v2_policy import check_run
         check_run(conn, record, record["run_id"])
         from .attack_catalog_runtime import settings
@@ -532,10 +532,12 @@ def ready_client(conn):
     return provider,headers
 
 
-def _complete(conn, payload):
+def _complete(conn, payload, *, before_transport=None):
     import time
     from .llm.router import _http_request, _join_url
     provider,headers = ready_client(conn)
+    if before_transport is not None:
+        before_transport()
     started = time.monotonic()
     response = _http_request("POST", _join_url(provider["base_url"], "/chat/completions"),
         headers,
@@ -548,7 +550,7 @@ def call(conn, run_id, phase, system, data, response_schema, *, complete=None, c
     if completion_cap is not None and (phase!='correction' or type(completion_cap) is not int or not 1<=completion_cap<=3200):
         raise ValueError('event_source_report_completion_cap_invalid')
     record = _load(conn, run_id); _fresh(conn, record)
-    if record['snapshot'].get('autonomous_policy'):
+    if 'autonomous_policy' in record['snapshot']:
         prior_phases = [row[0] for row in conn.execute(
             'SELECT phase FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal', (run_id,)).fetchall()]
         if (phase not in {'writer', 'review'} or len(prior_phases) >= 2
@@ -584,6 +586,16 @@ def call(conn, run_id, phase, system, data, response_schema, *, complete=None, c
     if record["snapshot"].get("report_contract")==contract.WORKFLOW:
         reserved_calls=conn.execute("SELECT COALESCE(SUM(reservation),0) FROM event_source_report_calls WHERE run_id=%s",(run_id,)).fetchone()[0]
         if reserved_calls+reservation>record["budget_tokens"]:raise ValueError("event_report_v2_reservation_exhausted")
+    # Locks may have waited across expiry or an evidence/authority change.
+    record = _load(conn, run_id)
+    _fresh(conn, record)
+    if 'autonomous_policy' in record['snapshot']:
+        prior_phases = [row[0] for row in conn.execute(
+            'SELECT phase FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal', (run_id,)).fetchall()]
+        if (phase not in {'writer', 'review'} or len(prior_phases) >= 2
+            or phase != ('writer' if not prior_phases else 'review')
+            or prior_phases not in ([], ['writer'])):
+            raise ValueError('event_report_v2_two_call_limit')
     ordinal = conn.execute("SELECT count(*) FROM event_source_report_calls WHERE run_id=%s", (run_id,)).fetchone()[0]+1
     if record['snapshot'].get('pilot'):
         reserved_calls=conn.execute('SELECT COALESCE(SUM(reservation),0) FROM event_source_report_calls WHERE run_id=%s',(run_id,)).fetchone()[0]
@@ -597,12 +609,25 @@ def call(conn, run_id, phase, system, data, response_schema, *, complete=None, c
        reservation,created_at) VALUES(%s,%s,%s,%s,'started',%s,%s)""",
        (run_id,ordinal,phase,contract.encode(payload),reservation,utc_now_iso()))
     conn.commit()  # Reserve attempt BEFORE sending; interrupted requests cannot replay.
+    def before_transport():
+        try:
+            _fresh(conn, _load(conn, run_id))
+        except Exception as cause:
+            failure = PreTransportFailure()
+            failure.proof.update(kind='instrumented_authority', failure_stage='authority_recheck')
+            raise failure from cause
     try:
-        response = (complete or (lambda p: _complete(conn,p)))(payload)
+        before_transport()  # Journal is durable, but no transport has occurred.
+        response = complete(payload) if complete else _complete(conn, payload, before_transport=before_transport)
     except Exception as exc:
+        conn.rollback()  # Journal was committed; recover from a failed guard query.
         error = type(exc).__name__
         if isinstance(exc,PreTransportFailure):
             error = contract.encode({"type":error,"proof":{**exc.proof,"request_version":_version(payload)}})
+        if isinstance(exc, PreTransportFailure) and exc.proof['kind'] == 'instrumented_authority':
+            # Only this local boundary proves zero HTTP. Lifetime admission and
+            # call reservations stay consumed; only outstanding transport clears.
+            conn.execute("UPDATE event_source_report_runs SET reserved_tokens=reserved_tokens-%s WHERE run_id=%s", (reservation, run_id))
         conn.execute("UPDATE event_source_report_calls SET status='failed',error=%s WHERE run_id=%s AND ordinal=%s",
                      (error,run_id,ordinal)); conn.commit()
         raise
@@ -946,9 +971,11 @@ def tick(conn):
             except Exception as exc:
                 conn.rollback()
                 reason = safe_reason(exc)
-                conn.execute("UPDATE event_source_report_runs SET status='held',reason=%s WHERE run_id=%s", (reason, rid))
-                conn.commit()
-                results.append({'run_id': rid, 'status': 'held', 'reason': reason})
+                # Publication failure does not invalidate accepted generation.
+                # A concurrent promoter may already have published this run.
+                # Keep content state intact; expose the isolated admission hold
+                # through the tick receipt rather than withdrawing public data.
+                results.append({'run_id': rid, 'status': 'publication_held', 'reason': reason})
         for event_id in p['events']:
             try:
                 receipt = submit(conn, event_id)

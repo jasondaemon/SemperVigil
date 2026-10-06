@@ -76,7 +76,17 @@ def locked_rows(conn, p, *, lock=True):
     return rows
 
 
+def require_integrity(conn):
+    guards = conn.execute("""SELECT count(*) FROM pg_trigger
+        WHERE tgrelid='event_source_report_runs'::regclass AND NOT tgisinternal
+          AND tgenabled IN ('O','A') AND tgname IN
+          ('event_report_v2_admission_guard','event_report_v2_admission_truncate_guard')""").fetchone()[0]
+    if guards != 2:
+        raise ValueError('event_report_v2_admission_integrity_required')
+
+
 def admit(conn, p, event_id, generation, predecessor, baseline):
+    require_integrity(conn)
     active(p)
     if event_id not in p['events'] or generation != p['generator_version']:
         raise ValueError('event_report_v2_policy_changed')
@@ -94,6 +104,7 @@ def admit(conn, p, event_id, generation, predecessor, baseline):
 
 
 def check_run(conn, record, run_id, *, publication=False):
+    require_integrity(conn)
     p = policy()
     if not p or record['snapshot'].get('autonomous_policy') != p:
         raise ValueError('event_report_v2_policy_changed')
@@ -114,11 +125,12 @@ def check_run(conn, record, run_id, *, publication=False):
         calls = conn.execute('SELECT phase,status,request_json FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal', (run_id,)).fetchall()
         requests = [json.loads(r[2]) for r in calls]
         if (record['status'] != 'accepted' or record['reserved_tokens'] != 0
-            or record['review'] != {'ready': True, 'issues': [], 'locator_warnings': []}
+            or not record['review'] or record['review'].get('ready') is not True or record['review'].get('issues') != []
             or [(r[0], r[1]) for r in calls] != [('writer', 'completed'), ('review', 'completed')]
             or requests[0]['model'] == requests[1]['model']):
             raise ValueError('event_report_v2_not_independently_ready')
         from . import event_report_contract_v2 as contract
+        contract.validate_review(record['review'], record['report'], contract.context(record['snapshot']))
         from .event_source_reports_v2 import MODEL, phase_settings
         models = [os.environ.get('SV_EVENT_SOURCE_REPORT_WRITER_MODEL'), MODEL]
         prompts = [contract.WRITER + contract.ATTACK_WRITER, contract.REVIEWER + contract.ATTACK_REVIEWER]

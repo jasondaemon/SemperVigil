@@ -12,6 +12,8 @@ from sempervigil import event_source_report_publication_v2 as publication,event_
 @pytest.fixture
 def setup(database,monkeypatch):
  conn,factory,namespace=database
+ from sempervigil.event_report_v2_integrity import SCHEMA
+ conn.execute(SCHEMA)
  monkeypatch.setenv('SV_EVENT_REPORT_V2_ENABLED','1');monkeypatch.setenv('SV_EVENT_REPORT_V2_EVENT_IDS','evt_test');monkeypatch.setenv('SV_EVENT_REPORT_V2_GENERATION_ENABLED','1')
  monkeypatch.setattr(reports,'configuration',lambda _:({'id':'m','model_name':'fixture-writer'},{'id':'p'},'b'*64))
  monkeypatch.setenv('SV_EVENT_SOURCE_REPORT_WRITER_MODEL','fixture-writer')
@@ -23,6 +25,7 @@ def setup(database,monkeypatch):
  admission='adm_'+namespace;promotion='pro_'+namespace
  for role in (admission,promotion):
   conn.execute(f'CREATE ROLE "{role}"');conn.execute(f'GRANT USAGE ON SCHEMA "{namespace}" TO "{role}"');conn.execute(f'GRANT SELECT ON ALL TABLES IN SCHEMA "{namespace}" TO "{role}"');conn.execute(f'GRANT UPDATE ON events,articles,event_articles,event_source_report_runs TO "{role}"')
+ conn.execute(f'GRANT DELETE ON event_source_report_runs TO "{admission}"') # Disposable fixture matches existing scheduler DELETE.
  conn.execute(f'GRANT INSERT ON jobs,event_quote_qualifications,event_review_approvals TO "{admission}"');conn.execute(f'GRANT INSERT,UPDATE ON event_public_revisions,event_public_pointers TO "{promotion}"')
  for role in (admission,promotion):conn.execute(f'REVOKE SELECT ON llm_models,llm_providers FROM "{role}"')
  conn.commit()

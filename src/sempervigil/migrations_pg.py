@@ -718,6 +718,12 @@ def apply_migrations_pg(conn) -> None:
             conn.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(%s,%s)",
                          ("pg_event_source_report_allowance_071",utc_now_iso()))
             conn.commit()
+        if "pg_event_report_v2_admission_integrity_072" not in applied:
+            from .event_report_v2_integrity import SCHEMA as admission_schema
+            conn.execute(admission_schema)
+            conn.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(%s,%s)",
+                         ("pg_event_report_v2_admission_integrity_072",utc_now_iso()))
+            conn.commit()
         return
     _bootstrap_schema(conn)
     conn.execute(
@@ -1154,6 +1160,11 @@ def apply_migrations_pg(conn) -> None:
     conn.commit()
     conn.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(%s,%s)",
                  ("pg_event_source_report_allowance_071",utc_now_iso()))
+    conn.commit()
+    from .event_report_v2_integrity import SCHEMA as admission_schema
+    conn.execute(admission_schema)
+    conn.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(%s,%s)",
+                 ("pg_event_report_v2_admission_integrity_072",utc_now_iso()))
     conn.commit()
 
 

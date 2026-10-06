@@ -174,7 +174,8 @@ def submit(conn, run_id, *, factory=None, automatic=False, editorial=None):
             raise PermissionError('event_source_report_independent_human_review_required')
     initial = current_material(conn,run_id,editorial=editorial)
     check_scope(initial["event_id"])
-    if automatic:
+    guarded = automatic or ("autonomous_policy" in initial["snapshot"])
+    if guarded:
         from .event_source_reports_v2 import _fresh
         _fresh(conn,initial)
     factory = factory or connection_factory("SV_EVENT_APPROVAL_DB_URL")
@@ -192,7 +193,7 @@ def submit(conn, run_id, *, factory=None, automatic=False, editorial=None):
                     "qualification":q,"predecessor":record["predecessor"]}
         if editorial is not None:
             approval['editorial']=editorial
-        if automatic:
+        if guarded:
             from .event_report_v2_policy import check_run
             approval['automatic_approval']=check_run(authority,record,run_id,publication=True)
         from .event_approval import MAX_APPROVAL_BYTES
@@ -298,6 +299,8 @@ def run_approval(approval, *, qualification_id, factory=None):
         if 'editorial' in approval and 'automatic_approval' in approval:
             raise ValueError('event_source_report_editorial_automatic_approval_forbidden')
         record = current_material(conn,approval["run_id"],lock=True,editorial=approval.get('editorial'))
+        if 'autonomous_policy' in record['snapshot'] and 'automatic_approval' not in approval:
+            raise ValueError('event_source_report_autonomous_approval_required')
         if 'automatic_approval' in approval:
             from .event_report_v2_policy import check_run
             if approval['automatic_approval']!=check_run(conn,record,approval['run_id'],publication=True):
