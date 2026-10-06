@@ -49,7 +49,11 @@ def check_current(conn, bundle: dict) -> None:
             from .event_source_report_publication_v2 import current_material, bundle_for
         else:
             from .event_source_report_publication import current_material, bundle_for
-        current = current_material(conn,bundle["run_id"],lock=True,published=True)
+        if bundle['workflow']=='event-source-report-public-v2':
+            from .event_source_report_publication_v2 import published_material
+            current = published_material(conn,bundle,lock=True)
+        else:
+            current = current_material(conn,bundle["run_id"],lock=True,published=True)
         if bundle_for(current,bundle["run_id"],bundle["qualification"],bundle["predecessor"])!=bundle:
             raise ValueError("stale_revision_snapshot")
         return

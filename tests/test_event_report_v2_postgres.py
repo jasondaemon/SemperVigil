@@ -58,4 +58,86 @@ def test_v2_two_call_mapping_and_restricted_publication(database,monkeypatch,map
   with pytest.raises(ValueError,match='evidence_changed'):publication.current_material(conn,rid,published=True)
  finally:
   for role in (admission,promotion):conn.execute(f'DROP OWNED BY "{role}"');conn.execute(f'DROP ROLE "{role}"')
+ conn.commit()
+
+
+@pytest.mark.parametrize('decision',['accepted','self_review','old_hash','not_ready','automatic','stale'])
+def test_editorial_derivative_keeps_model_review_original_and_normal_gates(database,monkeypatch,decision):
+ conn,factory,namespace=database
+ monkeypatch.setenv('SV_EVENT_REPORT_V2_ENABLED','1');monkeypatch.setenv('SV_EVENT_REPORT_V2_EVENT_IDS','evt_test');monkeypatch.setenv('SV_EVENT_REPORT_V2_GENERATION_ENABLED','1')
+ monkeypatch.setattr(reports,'configuration',lambda _:({'id':'m','model_name':'fixture-only'},{'id':'p'},'b'*64))
+ value=generated()
+ for item in value['items']:item['attack_mappings']=[]
+ value['items'][0]['text']='Acme reported possible patient-record exposure. This does not establish that all patient records were exposed.'
+ ready={'ready':True,'issues':[],'locator_warnings':[]};calls=[]
+ admitted=reports.submit(conn,'evt_test',debounce_seconds=0)
+ def complete(payload):calls.append(payload);return response(value if len(calls)==1 else ready)
+ job=SimpleNamespace(job_type=reports.JOB_TYPE,queue_name='openai',status='running',max_attempts=1,payload={'run_id':admitted['run_id']})
+ assert reports.run(conn,job,complete=complete)['status']=='accepted'
+ rid=admitted['run_id'];base=publication.current_material(conn,rid)
+ evidence=json.loads(conn.execute('SELECT projection_json FROM event_source_report_derivatives WHERE run_id=%s',(rid,)).fetchone()[0])['projection']['evidence']
+ from sempervigil.event_report_editorial import prepare,CHECKS
+ from sempervigil.attack_catalog_runtime import catalog_for
+ first=copy.deepcopy(value['items'][0]);first['text']='Acme reported possible patient-record exposure.'
+ last=copy.deepcopy(first);last.update(id='P03',text='This does not establish that all patient records were exposed.',section='analyst_assessment',claim_type='assessment',confidence='moderate',rationale='The source reports possible exposure only. Scope has not been established.',date_label='Undated analyst assessment',date_sort=None)
+ proposal=prepare(base['report'],evidence,base['review'],[{'item_id':'P01','parts':[first,last]}],editor='synthetic editor',catalog=catalog_for(evidence['attack_reference']['catalog']))
+ review={'workflow':'event-report-independent-editorial-review-v1','ready':True,'reviewer':'synthetic independent reviewer',
+         'source_review':'DISPOSABLE TEST ONLY: complete fixture source supports qualified scope; not live approval.',
+         **{k:proposal[k] for k in ['report_version','evidence_version','original_report_version','original_review_version']},'checks':{k:True for k in CHECKS}}
+ editorial={'proposal':proposal,'review':review,'confirmation':publication.EDITORIAL_CONFIRMATION}
+ frozen=conn.execute('SELECT report_json,review_json,spans_json FROM event_source_report_runs WHERE run_id=%s',(rid,)).fetchone()
+ frozen_calls=conn.execute('SELECT request_json,response_json FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal',(rid,)).fetchall()
+ monkeypatch.setenv('SV_EVENT_REPORT_V2_GENERATION_ENABLED','0')
+ if decision=='self_review':review['reviewer']=proposal['editor']
+ if decision=='old_hash':review['report_version']=proposal['original_report_version']
+ if decision=='not_ready':review['ready']=False
+ if decision=='stale':conn.execute("UPDATE articles SET content_text=content_text||' Material source update.' WHERE id=1");conn.commit()
+ if decision!='accepted':
+  with pytest.raises((ValueError,PermissionError)):
+   publication.submit(conn,rid,editorial=editorial,automatic=decision=='automatic')
+  assert conn.execute('SELECT count(*) FROM event_review_approvals').fetchone()[0]==0
+  assert len(calls)==2
+  return
+ admission='adm_'+namespace;promotion='pro_'+namespace
+ for role in (admission,promotion):
+  conn.execute(f'CREATE ROLE "{role}"');conn.execute(f'GRANT USAGE ON SCHEMA "{namespace}" TO "{role}"');conn.execute(f'GRANT SELECT ON ALL TABLES IN SCHEMA "{namespace}" TO "{role}"');conn.execute(f'GRANT UPDATE ON events,articles,event_articles,event_source_report_runs TO "{role}"')
+ conn.execute(f'GRANT INSERT ON jobs,event_quote_qualifications,event_review_approvals TO "{admission}"');conn.execute(f'GRANT INSERT,UPDATE ON event_public_revisions,event_public_pointers TO "{promotion}"');conn.commit()
+ try:
+  with pytest.raises(PermissionError,match='admission_role_required'):
+   publication.submit(conn,rid,editorial=editorial,factory=factory)
+  queued=publication.submit(conn,rid,editorial=editorial,factory=lambda:factory(admission))
+  from sempervigil.event_approval import run
+  promoted=run({'approval_id':queued['approval_id']},factory=lambda:factory(promotion))
+  bundle=json.loads(conn.execute('SELECT bundle_json FROM event_public_revisions WHERE revision_id=%s',(promoted['revision_id'],)).fetchone()[0])
+  assert bundle['report']==proposal['report']
+  assert publication.current_material(conn,rid)['report']==base['report']
+  assert publication.published_material(conn,bundle)['report']==proposal['report']
+  lineage=bundle['qualification']['derivation']
+  assert lineage['automated_review_scope']=='original_report_only'
+  assert lineage['original_review_version']==proposal['original_review_version']
+  assert lineage['independent_review_version']==reports._version(review)
+  assert 'original_report' not in lineage and 'reviewer' not in lineage
+  changed_review=copy.deepcopy(editorial)
+  changed_review['review']['source_review']+=' A different synthetic approval must recheck predecessor.'
+  with pytest.raises(ValueError,match='predecessor_conflict'):
+   publication.submit(conn,rid,editorial=changed_review,factory=lambda:factory(admission))
+  from sempervigil.event_render import render
+  _,html=render(bundle,event_id='evt_test',expected_revision=promoted['revision_id'])
+  assert 'Analyst assessment' in html and 'moderate' not in html and 'Confidence' not in html and 'Rationale' not in html
+  from sempervigil.event_publication_store import load_export
+  from sempervigil.event_release import check_current
+  def export_factory():
+   session=factory();session.commit();return session
+  assert load_export(export_factory,['evt_test'])['qualified_revisions']['evt_test']==bundle
+  check_current(conn,bundle);conn.rollback()
+  assert conn.execute('SELECT report_json,review_json,spans_json FROM event_source_report_runs WHERE run_id=%s',(rid,)).fetchone()==frozen
+  assert conn.execute('SELECT request_json,response_json FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal',(rid,)).fetchall()==frozen_calls
+  assert len(calls)==2
+  conn.execute('UPDATE event_quote_qualifications SET revoked_at=%s WHERE event_id=%s AND qualification_id=%s',('2026-10-06','evt_test',reports._version(bundle['qualification'])));conn.commit()
+  with pytest.raises(ValueError,match='qualification_unavailable'):publication.published_material(conn,bundle)
+  conn.rollback()
+  assert load_export(export_factory,['evt_test'])['withdrawn']['evt_test']=='qualification_revoked'
+ finally:
+  conn.rollback()
+  for role in (admission,promotion):conn.execute(f'DROP OWNED BY "{role}"');conn.execute(f'DROP ROLE "{role}"')
   conn.commit()

@@ -12,7 +12,8 @@ from .attack_catalog import validate_report
 WORKFLOW = 'event-report-editorial-split-v1'
 CHECKS = {'complete_sources', 'all_findings_supported', 'inference_premises_and_limits',
           'correct_epistemic_types', 'no_added_facts', 'provenance_preserved',
-          'whole_derivative_reviewed'}
+          'whole_derivative_reviewed', 'source_conflicts_resolved_or_qualified',
+          'referents_identifiers_and_dates_checked'}
 
 
 def prepare(report, evidence, review, operations, *, editor, catalog):
@@ -88,9 +89,9 @@ def validate_manual_review(artifact, review, evidence, *, catalog):
     if (not isinstance(review, dict) or set(review) != required or
         review['workflow'] != 'event-report-independent-editorial-review-v1' or
         review['ready'] is not True or not isinstance(review['reviewer'], str) or
-        not review['reviewer'].strip() or review['reviewer'] == artifact['editor'] or
+        not review['reviewer'].strip() or review['reviewer'].strip().casefold() == artifact['editor'].strip().casefold() or
         not isinstance(review['source_review'], str) or not review['source_review'].strip() or
-        set(review['checks']) != CHECKS or any(v is not True for v in review['checks'].values()) or
+        not isinstance(review['checks'],dict) or set(review['checks']) != CHECKS or any(v is not True for v in review['checks'].values()) or
         any(review[k] != artifact[k] for k in
             ['report_version', 'evidence_version', 'original_report_version', 'original_review_version'])):
         raise ValueError('editorial_independent_review_required')

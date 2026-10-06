@@ -53,12 +53,18 @@ def validate_retained(audit,writer_request,writer_response,review_request,review
             'report':report,'review':parsed,'spans':spans,'projection':projection,'raw':raw}
 
 
-def import_reviewed(conn,audit,*,manual_review):
+def import_reviewed(conn,audit,*,manual_review,editorial=None):
     from . import event_source_reports_v2 as reports
     parent=audit['parent_manifest'];event_id=parent['event_id'];reports.check_scope(event_id)
     validated=validate_retained(audit,audit['parent_writer_journal']['request'],audit['parent_writer_journal']['response'],audit['review_journal']['request'],audit['review_journal']['response'])
-    if not isinstance(manual_review,dict) or manual_review.get('ready') is not True or not manual_review.get('authority') or not manual_review.get('source_review'):
+    if not isinstance(manual_review,dict) or not manual_review.get('authority') or not manual_review.get('source_review'):
         raise ValueError('retained_continuation_manual_review_required')
+    if editorial is None and manual_review.get('ready') is not True:
+        raise ValueError('retained_continuation_manual_review_required')
+    if editorial is not None:
+        from .event_source_report_publication_v2 import apply_editorial
+        apply_editorial({'report':validated['report'],'review':validated['review']},
+                       editorial,validated['projection']['evidence'])
     conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',('source-report:'+event_id,))
     current=reports.snapshot(conn,event_id,lock=True);predecessor=reports.previous(conn,event_id)[0]
     if predecessor!=parent['predecessor']:raise ValueError('publication_predecessor_conflict')
@@ -77,7 +83,7 @@ def import_reviewed(conn,audit,*,manual_review):
     existing=conn.execute('SELECT status FROM event_source_report_runs WHERE run_id=%s',(run_id,)).fetchone()
     if existing:
         from .event_source_report_publication_v2 import current_material
-        current_material(conn,run_id);return {'run_id':run_id,'status':existing[0],'reused':True}
+        current_material(conn,run_id,editorial=editorial);return {'run_id':run_id,'status':existing[0],'reused':True}
     runtime=reports.configuration(conn)[2]
     snap={**original,'report_contract':contract.WORKFLOW,'publication_freshness_source_version':current['source_version'],'runtime_generation_at_import':runtime}
     writer=audit['parent_writer_journal'];review=audit['review_journal'];charged=writer['usage']['total_tokens']+review['usage']['total_tokens']
@@ -89,8 +95,10 @@ def import_reviewed(conn,audit,*,manual_review):
     artifact={'workflow':'optional-mapping-projection-v1','input_version':_version(validated['raw']),'snapshot_version':_version(snap),'projection':validated['projection'],
               'continuation':audit,'manual_review':manual_review,'runtime_generation_at_import':runtime,
               'continuation_lineage':{'workflow':'retained-reviewed-continuation-v1','parent_manifest_id':parent['id'],'continuation_id':audit['continuation_manifest']['id'],'generator_version':validated['generator_version'],'raw_writer_version':_version(validated['raw']),'projection_version':_version(validated['projection']),'removed_mapping_reasons':[v['reason'] for v in validated['projection']['removed']]}}
+    if editorial is not None:
+        artifact['required_editorial_proposal_version']=_version(editorial['proposal'])
     conn.execute('INSERT INTO event_source_report_derivatives VALUES(%s,%s,%s)',(run_id,contract.encode(artifact),utc_now_iso()))
     from .event_source_report_publication_v2 import current_material
-    current_material(conn,run_id,lock=True)
+    current_material(conn,run_id,lock=True,editorial=editorial)
     conn.commit()
     return {'run_id':run_id,'status':'accepted','imported_calls':2,'new_model_calls':0,'charged_tokens':charged,'publication':'not_requested'}

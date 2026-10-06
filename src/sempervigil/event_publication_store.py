@@ -182,7 +182,11 @@ This snapshot is not a lease: build activation still needs revocation coordinati
                 else:
                     from .event_source_report_publication import current_material, bundle_for
                 try:
-                    current = current_material(conn,bundle["run_id"],published=True)
+                    if bundle['workflow']=='event-source-report-public-v2':
+                        from .event_source_report_publication_v2 import published_material
+                        current = published_material(conn,bundle)
+                    else:
+                        current = current_material(conn,bundle["run_id"],published=True)
                     if bundle_for(current,bundle["run_id"],qualification,bundle["predecessor"])!=bundle:
                         raise ValueError("event_source_report_bundle_changed")
                 except ValueError:

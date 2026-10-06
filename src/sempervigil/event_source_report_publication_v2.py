@@ -9,9 +9,11 @@ from .storage import enqueue_job
 from .utils import utc_now_iso
 
 APPROVAL_WORKFLOW = "event-source-report-approval-v2"
+EDITORIAL_CONFIRMATION = "APPROVE_EDITORIAL_DERIVATIVE"
+EDITORIAL_LINEAGE = "independently-reviewed-editorial-split-v1"
 
 
-def current_material(conn, run_id, *, lock=False, published=False, derivative=None):
+def current_material(conn, run_id, *, lock=False, published=False, derivative=None, editorial=None):
     if lock:
         conn.execute('SELECT run_id FROM event_source_report_runs WHERE run_id=%s FOR SHARE NOWAIT',(run_id,))
     record=_load(conn,run_id)
@@ -64,8 +66,67 @@ def current_material(conn, run_id, *, lock=False, published=False, derivative=No
             raise ValueError('event_source_report_continuation_identity_changed')
     elif writer_request['messages'][0]['content']!=contract.WRITER+contract.ATTACK_WRITER or review_request['messages'][0]['content']!=contract.REVIEWER+contract.ATTACK_REVIEWER:
         raise ValueError('event_source_report_prompt_integrity')
-    return {**record,'resolved_mappings':resolved,'mapping_derivation':{'workflow':'optional-mapping-projection-v1',
+    material = {**record,'resolved_mappings':resolved,'mapping_derivation':{'workflow':'optional-mapping-projection-v1',
             'input_version':audit['input_version'],'removed':[{'item_id':v['item_id'],'technique_id':v['mapping']['technique_id'],'reason':v['reason']} for v in removed]},'derivation':audit.get('continuation_lineage')}
+    required = audit.get('required_editorial_proposal_version')
+    if required and (editorial is None or _version(editorial.get('proposal')) != required):
+        raise ValueError('event_source_report_editorial_review_required')
+    return apply_editorial(material, editorial, evidence) if editorial is not None else material
+
+
+def apply_editorial(material, editorial, evidence):
+    """Caller must independently authenticate the human reviewer; no authority is minted."""
+    if (not isinstance(editorial, dict) or set(editorial) != {'proposal','review','confirmation'}
+            or editorial['confirmation'] != EDITORIAL_CONFIRMATION):
+        raise ValueError('event_source_report_editorial_confirmation_required')
+    from .event_report_editorial import validate_manual_review
+    from .attack_catalog_runtime import catalog_for
+    proposal = editorial['proposal']
+    if proposal['original_report'] != material['report'] or proposal['original_review'] != material['review']:
+        raise ValueError('event_source_report_editorial_original_changed')
+    receipt = validate_manual_review(proposal, editorial['review'], evidence,
+                                    catalog=catalog_for(evidence['attack_reference']['catalog']))
+    lineage = {'workflow':EDITORIAL_LINEAGE, 'original_derivation':material.get('derivation'),
+               'original_report_version':proposal['original_report_version'],
+               'original_review_version':proposal['original_review_version'],
+               'derivative_report_version':proposal['report_version'],
+               'editorial_proposal_version':_version(proposal),
+               'independent_review_version':receipt['review_version'],
+               'evidence_version':proposal['evidence_version'],
+               'automated_review_scope':'original_report_only'}
+    return {**material, 'report':proposal['report'], 'spans':proposal['spans'],
+            'resolved_mappings':proposal['resolved_mappings'], 'derivation':lineage}
+
+
+def published_material(conn, bundle, *, lock=False):
+    """Recover the immutable private editorial approval for export/activation."""
+    q = bundle['qualification']
+    lineage = q.get('derivation') or {}
+    editorial = None
+    if lineage.get('workflow') == EDITORIAL_LINEAGE:
+        rows = conn.execute('SELECT approval_id,approval_json FROM event_review_approvals '
+                            'WHERE event_id=%s AND qualification_id=%s',
+                            (bundle['event_id'],_version(q))).fetchall()
+        candidates=[]
+        for aid, raw in rows:
+            approval=json.loads(raw)
+            if (aid == _version(approval) and approval.get('workflow') == APPROVAL_WORKFLOW
+                    and approval.get('run_id') == bundle['run_id'] and approval.get('qualification') == q
+                    and approval.get('predecessor') == bundle['predecessor']
+                    and 'editorial' in approval and 'automatic_approval' not in approval):
+                candidates.append(approval)
+        if len(candidates) != 1:
+            raise ValueError('event_source_report_editorial_approval_unavailable')
+        row=conn.execute('SELECT qualification_json,revoked_at FROM event_quote_qualifications '
+                         'WHERE event_id=%s AND qualification_id=%s',
+                         (bundle['event_id'],_version(q))).fetchone()
+        if not row or row[1] is not None or json.loads(row[0]) != q:
+            raise ValueError('qualification_unavailable')
+        editorial=candidates[0]['editorial']
+    material=current_material(conn,bundle['run_id'],lock=lock,published=True,editorial=editorial)
+    if qualification(material,bundle['run_id']) != q:
+        raise ValueError('event_source_report_qualification_invalid')
+    return material
 
 
 def qualify_generator_refresh(conn, run_id):
@@ -90,11 +151,15 @@ def qualification(record, run_id):
     return result
 
 
-def submit(conn, run_id, *, factory=None, automatic=False):
+def submit(conn, run_id, *, factory=None, automatic=False, editorial=None):
     from .event_source_reports_v2 import enabled,check_scope
     if not enabled():
         raise PermissionError("event_source_report_disabled")
-    initial = current_material(conn,run_id)
+    if editorial is not None:
+        from .event_approval import enabled as human_enabled
+        if automatic or not human_enabled():
+            raise PermissionError('event_source_report_independent_human_review_required')
+    initial = current_material(conn,run_id,editorial=editorial)
     check_scope(initial["event_id"])
     if automatic:
         from .event_source_reports_v2 import _fresh
@@ -108,15 +173,20 @@ def submit(conn, run_id, *, factory=None, automatic=False):
         if writable:
             raise PermissionError("approval_admission_role_required")
         authority.execute("SELECT id FROM events WHERE id=%s FOR UPDATE NOWAIT",(initial["event_id"],))
-        record = current_material(authority,run_id,lock=True)
+        record = current_material(authority,run_id,lock=True,editorial=editorial)
         q = qualification(record,run_id)
         approval = {"workflow":APPROVAL_WORKFLOW,"event_id":record["event_id"],"run_id":run_id,
                     "qualification":q,"predecessor":record["predecessor"]}
+        if editorial is not None:
+            approval['editorial']=editorial
         if automatic:
             from .event_source_report_pilot import policy,check_run
             p=policy()
             if not p:raise ValueError('event_source_report_pilot_required')
             approval['automatic_approval']=check_run(authority,record,run_id,p,publication=True)
+        from .event_approval import MAX_APPROVAL_BYTES
+        if len(contract.encode(approval).encode()) > MAX_APPROVAL_BYTES:
+            raise ValueError('event_approval_too_large')
         aid,qid = _version(approval),_version(q)
         prior = authority.execute("SELECT job_id FROM event_review_approvals WHERE approval_id=%s",(aid,)).fetchone()
         if prior:
@@ -214,7 +284,9 @@ def run_approval(approval, *, qualification_id, factory=None):
         if not guarded:
             raise ValueError("qualification_revocation_guard_required")
         conn.execute("SELECT id FROM events WHERE id=%s FOR UPDATE NOWAIT",(approval["event_id"],))
-        record = current_material(conn,approval["run_id"],lock=True)
+        if 'editorial' in approval and 'automatic_approval' in approval:
+            raise ValueError('event_source_report_editorial_automatic_approval_forbidden')
+        record = current_material(conn,approval["run_id"],lock=True,editorial=approval.get('editorial'))
         if 'automatic_approval' in approval:
             from .event_source_report_pilot import policy,check_run
             p=policy()

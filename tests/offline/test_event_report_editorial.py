@@ -60,12 +60,14 @@ def test_rejects_added_facts_quotes_mappings_and_id_collisions(change):
     with pytest.raises(ValueError):prepare(report, evidence, review, ops, editor='editor', catalog=cat)
 
 
-@pytest.mark.parametrize('change', ['self_review', 'old_content', 'false_check', 'not_ready', 'old_model_review'])
+@pytest.mark.parametrize('change', ['self_review', 'self_review_case', 'old_content', 'false_check', 'invalid_checks', 'not_ready', 'old_model_review'])
 def test_independent_receipt_requires_derivative_binding_and_all_checks(change):
     cat, evidence, a = proposal();r = receipt(a)
     if change == 'self_review':r['reviewer'] = a['editor']
+    if change == 'self_review_case':r['reviewer'] = ' EDITOR '
     if change == 'old_content':r['report_version'] = a['original_report_version']
     if change == 'false_check':r['checks']['whole_derivative_reviewed'] = False
+    if change == 'invalid_checks':r['checks'] = []
     if change == 'not_ready':r['ready'] = False
     if change == 'old_model_review':r = a['original_review']
     with pytest.raises(ValueError, match='independent_review_required'):
