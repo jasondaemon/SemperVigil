@@ -1,5 +1,6 @@
 """Reader-facing rendering of qualified source-span reports."""
 from html import escape
+import re
 
 from . import event_report_contract as contract
 from .event_source_report_publication import validate_bundle
@@ -38,7 +39,6 @@ def render(bundle, *, event_id, expected_revision):
     sources = {s["id"]:s for s in bundle["sources"]}
     numbers = {s["id"]:i for i,s in enumerate(bundle["sources"],1)}
     lines = [f'<section id="sv-event-coverage" class="event-report" data-event-id="{escape(event_id)}" data-event-revision="{expected_revision}">',
-        '<p class="event-evidence-note">Maintained from attributed reporting. Findings and analyst assessments link to their supporting sources.</p>',
         '<div class="event-report-sections">']
     provenance = bundle.get("revision_provenance") or {}
     if provenance.get("notice"):
@@ -54,11 +54,16 @@ def render(bundle, *, event_id, expected_revision):
         for item in items:
             seen = list(dict.fromkeys(c["source_id"] for c in item["citations"]))
             links = " ".join(f'<a class="event-source" href="{escape(sources[s]["url"],quote=True)}" target="_blank" rel="noopener" aria-label="Source {numbers[s]}">[{numbers[s]}]</a>' for s in seen)
-            if item["claim_type"]!="finding":
-                lines.append(f'<p class="event-claim-state">{escape(item["claim_type"].replace("_"," ").title())} · {escape(item["confidence"])} confidence</p>')
-            if item["date_label"]: lines.append(f'<p><time>{escape(item["date_label"])}</time></p>')
+            if item["claim_type"] != "finding" and section not in {"analyst_assessment", "open_questions"}:
+                lines.append(f'<p class="event-claim-state">{escape(item["claim_type"].replace("_"," ").title())}</p>')
+            # These labels describe the report process rather than the incident.
+            # Keep source-status dates, incident milestones and temporal caveats.
+            process_date = (item["claim_type"] != "finding" and
+                            re.match(r"^(?:Analyst assessment as of|Outstanding as of|As of)\s+", item["date_label"], re.I))
+            if item["date_label"] and not process_date:
+                lines.append(f'<p><time>{escape(item["date_label"])}</time></p>')
             lines.append(f'<p>{escape(item["text"])} {links}</p>')
-            if item["rationale"]: lines.append(f'<p class="event-assessment-rationale">{escape(item["rationale"])}</p>')
+            # Full rationales and process confidence remain in the immutable audit bundle.
         lines.append('</section>')
     lines.append('</div></section>')
     return metadata,"\n".join(lines)

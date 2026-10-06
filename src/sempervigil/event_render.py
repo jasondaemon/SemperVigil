@@ -134,8 +134,6 @@ def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict
         lines = [f'<section id="sv-event-coverage" class="event-report" '
                  f'data-event-id="{escape(event_id, quote=True)}" '
                  f'data-event-revision="{expected_revision}">',
-                 '<p class="event-evidence-note">This deconstruction is maintained from attributed reporting. '
-                 'Claims link to the source material used to support them.</p>',
                  '<div class="event-report-sections">']
         # Stored composition JSON is canonicalized with sorted keys. Presentation
         # order is editorial, not an implementation detail of JSON serialization.
@@ -162,9 +160,8 @@ def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict
                 badge = (f'<span class="event-claim-state event-claim-state--{state.lower()}">{state}</span>'
                          if state and section != "overview" else "")
                 if item.get("claim_type") == "analyst_assessment":
-                    confidence = escape(str(item.get("confidence") or "unknown").title())
                     badge += (f'<span class="event-claim-state event-claim-state--assessment">'
-                              f'Analyst assessment · {confidence} confidence</span>')
+                              f'Analyst assessment</span>')
                 if section == "timeline":
                     lines.append(f'<li><time>{escape(item["date_text"])}</time><div>{badge}<p>{text} {citations}</p></div></li>')
                 elif section == "overview":
