@@ -17,15 +17,13 @@ def current_material(conn, run_id, *, lock=False, published=False, derivative=No
     record = _load(conn,run_id)
     if not record["review"]:
         raise ValueError("event_source_report_not_reviewed")
-    current = snapshot(conn,record["event_id"],lock=lock)
     if published:
-        # New uncited sources should queue a successor, not withdraw a valid report.
-        present = {s["article_id"]:s for s in current["sources"]}
-        for source in record["snapshot"]["sources"]:
-            if source["article_id"] not in present or present[source["article_id"]]["content_hash"]!=source["content_hash"]:
-                raise ValueError("event_source_report_evidence_changed")
-    elif current["source_version"] != record["source_version"]:
-        raise ValueError("event_source_report_sources_changed")
+        from .event_report_retained_evidence import require_retained
+        require_retained(conn, record, lock=lock)
+    else:
+        current = snapshot(conn,record["event_id"],lock=lock)
+        if current["source_version"] != record["source_version"]:
+            raise ValueError("event_source_report_sources_changed")
     packet = contract.context(record["snapshot"])
     spans = contract.validate(record["report"],packet)
     # Preserve exact legacy span storage/bundle identity. Only the newly added
@@ -38,9 +36,17 @@ def current_material(conn, run_id, *, lock=False, published=False, derivative=No
     contract.validate_review(record["review"],record["report"],packet)
     # Verify persisted model output matches the accepted report; no unchecked
     # report_json edits may substitute for the independently reviewed response.
-    calls = conn.execute("""SELECT phase,response_json FROM event_source_report_calls
+    calls = conn.execute("""SELECT phase,response_json,request_json FROM event_source_report_calls
         WHERE run_id=%s AND status='completed' ORDER BY ordinal""",(run_id,)).fetchall()
-    responses = {phase:json.loads(raw) for phase,raw in calls}
+    responses = {phase:json.loads(raw) for phase,raw,_ in calls}
+    writer = next((json.loads(req) for phase,_,req in calls if phase == 'writer'), None)
+    original = json.loads(writer['messages'][1]['content']) if writer else {}
+    # Authorized legacy derivatives may change application-owned revision
+    # metadata. Bind immutable evidence, not that later continuity metadata.
+    evidence_keys = ('event_id', 'title', 'sources', 'membership',
+                     'excluded_article_ids', 'source_version')
+    if not writer or any(original.get(k) != packet.get(k) for k in evidence_keys):
+        raise ValueError('event_source_report_input_integrity')
     def body(phase):
         return json.loads(responses[phase]['choices'][0]['message']['content'])
     write_phase = "correction" if "correction" in responses else "writer"

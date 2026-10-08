@@ -29,7 +29,7 @@ def test_separate_branch_preserves_url_and_excludes_all_legacy_content(database,
     bundle, identity = approved_fixture(database)
     path = Path(write(tmp_path, bundle, identity)[0])
     text = path.read_text()
-    assert path.name == "stable-url.md"
+    assert path.name == "event.md"
     assert "Source-backed coverage" in text and identity in text
     assert "contact system" in text and "Source title" in text
     for forbidden in ["Reported disruption", "Source reports a disruption", "A reported fact",

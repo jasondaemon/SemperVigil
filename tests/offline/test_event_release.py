@@ -14,7 +14,7 @@ pytestmark = pytest.mark.offline
 
 
 def candidate(tmp_path, bundle, revision):
-    page = tmp_path / "events/stable/index.html"
+    page = tmp_path / "events/event/index.html"
     page.parent.mkdir(parents=True)
     fragment = render(bundle, event_id="event", expected_revision=revision)[1]
     page.write_text("<!doctype html><html><body><article>" + fragment + "</article></body></html>")
@@ -22,11 +22,11 @@ def candidate(tmp_path, bundle, revision):
     index.parent.mkdir(parents=True)
     entry = index_entry(bundle, event_id="event", expected_revision=revision)
     history = [{"event_revision": revision, "published_at": "2026-09-21T12:00:00Z"}]
-    entry.update({"url": "/events/stable/", "revision_published_at": "2026-09-21T12:00:00Z",
+    entry.update({"url": "/events/event/", "revision_published_at": "2026-09-21T12:00:00Z",
                   "publication_history": history})
     index.write_text(json.dumps([entry]))
     manifest = {"workflow": "event-release-authorization-v2", "revisions": {"event": revision}, "withdrawn": {},
-        "pages": {"event": "stable"}, "fragments": {"event": release.fragment_identity(fragment)},
+        "pages": {"event": "event"}, "fragments": {"event": release.fragment_identity(fragment)},
         "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest()}
     return manifest, page, index
 
@@ -39,6 +39,14 @@ def test_candidate_binds_rendered_html_and_index(database, tmp_path):
     release.verify_release(tmp_path, manifest, {"event": bundle}, {"event": history})
     page.write_text(page.read_text().replace('\n', '').replace('data-event-id="event"', 'data-event-id=event'))
     release.verify_release(tmp_path, manifest, {"event": bundle}, {"event": history})
+
+
+def test_activation_manifest_rejects_a_title_alias_for_qualified_event(database, tmp_path):
+    bundle, revision = approved_fixture(database)
+    manifest, _, _ = candidate(tmp_path, bundle, revision)
+    manifest['pages']['event'] = 'changed-title-alias'
+    with pytest.raises(ValueError, match='invalid_event_activation_manifest'):
+        validate_manifest(manifest)
 
 
 @pytest.mark.parametrize("fault", ["quote", "duplicate", "missing", "index", "wrong_id", "withdrawal", "path", "unbound"])
@@ -81,9 +89,12 @@ def test_builder_preparation_and_unchanged_reuse(database, tmp_path, monkeypatch
     monkeypatch.setattr(storage, "get_event", lambda *a: {"id": "event", "site_slug": "stable"})
     config = SimpleNamespace(paths=SimpleNamespace(output_dir=str(tmp_path / "content/posts")))
     assert release.prepare_site(None, config, None)["published"] == 1
-    files = [tmp_path / "content/events/stable.md", tmp_path / "static" / release.INDEX_PATH,
+    files = [tmp_path / "content/events/event.md", tmp_path / "static" / release.INDEX_PATH,
              tmp_path / "static" / release.MANIFEST]
     before = [(f.read_bytes(), f.stat().st_mtime_ns) for f in files]
+    assert json.loads(files[2].read_text())["pages"] == {"event": "event"}
+    assert json.loads(files[1].read_text())[0]["url"] == "/events/event/"
+    monkeypatch.setattr(storage, "get_event", lambda *a: {"id": "event", "site_slug": "changed-title"})
     release.prepare_site(None, config, None)
     assert before == [(f.read_bytes(), f.stat().st_mtime_ns) for f in files]
 

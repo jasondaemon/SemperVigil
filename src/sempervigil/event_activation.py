@@ -47,6 +47,7 @@ def validate_manifest(value: dict) -> dict:
         raise ValueError("invalid_event_activation_manifest")
     if version == "event-release-authorization-v2":
         if (type(value["pages"]) is not dict or set(value["pages"]) != identities
+                or any(key != slug for key, slug in value["pages"].items())
                 or any(type(s) is not str or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,200}", s)
                        or s.lower() == "_index" for s in value["pages"].values())
                 or len({s.casefold() for s in value["pages"].values()}) != len(identities)

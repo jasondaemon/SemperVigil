@@ -356,7 +356,10 @@ def context(packet, *, max_tokens=None):
         max_tokens = 24000 if not profile else profile['context_overrides'].get(packet['event_id'], 24000)
     if type(max_tokens) is not int or not 1 <= max_tokens <= 200000:
         raise ValueError('event_report_context_limit_invalid')
-    result = {**packet, "coverage": {"mode": "complete", "omitted_source_ids": []}}
+    # Capture history is immutable private provenance, not a second copy of the
+    # same publisher article in the model's evidence or token budget.
+    model_packet = {k:v for k,v in packet.items() if k != 'capture_history'}
+    result = {**model_packet, "coverage": {"mode": "complete", "omitted_source_ids": []}}
     if tokens(encode(result)) <= max_tokens:
         return result
     if packet.get('final_editor'):
@@ -368,7 +371,7 @@ def context(packet, *, max_tokens=None):
     retained = [s for s in packet["sources"] if s["content_hash"] not in prior_hashes
                 or s["article_id"] in relevant]
     omitted = [s["id"] for s in packet["sources"] if s not in retained]
-    result = {**packet, "sources": retained,
+    result = {**model_packet, "sources": retained,
               "coverage": {"mode": "delta_with_prior_evidence", "omitted_source_ids": omitted}}
     if not retained or tokens(encode(result)) > max_tokens:
         raise ValueError("event_report_context_over_budget")

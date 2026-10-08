@@ -505,6 +505,10 @@ def advance(conn, event_id: str) -> dict:
         if status == "failed":
             return _hold(conn, event_id, "fact curation failed: " + error)
         if status == "succeeded":
+            from .job_admission_observer import was_job_admitted
+            if was_job_admitted(job_id):
+                return {"status": status, "event_id": event_id, "job_id": job_id,
+                        "action": "fact_curation_completed_after_admission"}
             continue
         return {"status": "queued", "event_id": event_id, "job_id": job_id,
                 "action": "fact_curation_queued"}
@@ -631,6 +635,12 @@ def advance(conn, event_id: str) -> dict:
                 job_id = submit(conn, repairable[0], decision)
                 status, error = _job_state(conn, job_id)
                 if status == "failed":
+                    from .job_admission_observer import was_job_admitted
+                    if was_job_admitted(job_id):
+                        # Keep the case active: a later tick may derive an eligible
+                        # fallback from this retained failure without resubmission.
+                        return {"status": "pending", "event_id": event_id, "job_id": job_id,
+                                "action": "composition_repair_failed_after_admission"}
                     from .event_composition_repair_jobs import REASONING_LENGTH_ERROR
                     if error in {"input_size", REASONING_LENGTH_ERROR}:
                         composition_json = conn.execute(
@@ -658,6 +668,12 @@ def advance(conn, event_id: str) -> dict:
 
 
 def tick(conn) -> list[dict]:
+    from .job_admission_observer import observe_committed_jobs
+    with observe_committed_jobs() as admitted:
+        return _tick(conn, admitted)
+
+
+def _tick(conn, admitted) -> list[dict]:
     if not enabled():
         return []
     selected = scope()
@@ -671,8 +687,9 @@ def tick(conn) -> list[dict]:
                         _resume_transient_composition_hold, _resume_audited_fallback):
             recovery = recover(conn)
             if recovery:
+                if admitted: recovery = {**recovery, 'admitted_job_ids': list(admitted)}
                 results.append(recovery)
-                if recovery['status'] not in {'held', 'unchanged', 'pending', 'deferred'}:
+                if admitted or recovery['status'] not in {'held', 'unchanged', 'pending', 'deferred'}:
                     return results
     from .storage import set_setting
     rows = conn.execute(
@@ -697,8 +714,9 @@ def tick(conn) -> list[dict]:
         except (ValueError, PermissionError, OSError, psycopg.Error) as exc:
             conn.rollback()
             result = _hold(conn, event_id, str(exc) if isinstance(exc, ValueError) else type(exc).__name__)
+        if admitted: result = {**result, 'admitted_job_ids': list(admitted)}
         results.append(result)
         set_setting(conn, CHECKED_PREFIX + event_id, {'observed_at': utc_now_iso()})
-        if result["status"] not in {"held", "unchanged", "deferred", "pending"}:
+        if admitted or result["status"] not in {"held", "unchanged", "deferred", "pending"}:
             break
     return results

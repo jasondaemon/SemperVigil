@@ -34,25 +34,26 @@ def current_material(conn, run_id, *, lock=False, published=False, derivative=No
     record=_load(conn,run_id)
     if record['snapshot'].get('report_contract')!=contract.WORKFLOW or record['status']!='accepted' or not record['review']:
         raise ValueError('event_source_report_not_accepted')
-    current=snapshot(conn,record['event_id'],lock=lock)
-    if not published and current['source_version']!=record['snapshot'].get('publication_freshness_source_version',record['source_version']):
-        raise ValueError('event_source_report_sources_changed')
     if published:
-        membership={m['article_id']:m for m in current['membership']}
-        for source in record['snapshot']['sources']:
-            m=membership.get(source['article_id'])
-            if not m or m['suppressed'] or m['title']!=source['title'] or m['url']!=source['url'] or m['text_hash']!=contract.digest(source['text']):
-                raise ValueError('event_source_report_evidence_changed')
+        from .event_report_retained_evidence import require_retained
+        require_retained(conn, record, lock=lock)
+    else:
+        current=snapshot(conn,record['event_id'],lock=lock)
+        if current['source_version']!=record['snapshot'].get('publication_freshness_source_version',record['source_version']):
+            raise ValueError('event_source_report_sources_changed')
     calls=conn.execute('SELECT phase,request_json,response_json,status FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal',(run_id,)).fetchall()
     if [(v[0],v[3]) for v in calls]!=[('writer','completed'),('review','completed')]:
         raise ValueError('event_source_report_response_integrity')
     values={phase:(json.loads(req),json.loads(res)) for phase,req,res,status in calls}
     writer_request,writer_response=values['writer'];review_request,review_response=values['review']
     def body(response):
-        choice=response['choices'][0]
-        if choice.get('finish_reason')!='stop' or choice['message'].get('refusal'):
-            raise ValueError('event_source_report_incomplete_response')
-        return json.loads(choice['message']['content'])
+        try:
+            choice=response['choices'][0]
+            if choice.get('finish_reason')!='stop' or choice['message'].get('refusal'):
+                raise ValueError('event_source_report_incomplete_response')
+            return json.loads(choice['message']['content'])
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ValueError('event_source_report_response_integrity') from exc
     raw=body(writer_response);input_packet=json.loads(writer_request['messages'][1]['content'])
     if input_packet['sources']!=record['snapshot']['sources']:
         raise ValueError('event_source_report_input_integrity')
@@ -164,6 +165,11 @@ def apply_editorial(material, editorial, evidence):
 def published_material(conn, bundle, *, lock=False):
     """Recover the immutable private editorial approval for export/activation."""
     q = bundle['qualification']
+    row=conn.execute('SELECT qualification_json,revoked_at FROM event_quote_qualifications '
+                     'WHERE event_id=%s AND qualification_id=%s',
+                     (bundle['event_id'],_version(q))).fetchone()
+    if not row or row[1] is not None or json.loads(row[0]) != q:
+        raise ValueError('qualification_unavailable')
     lineage = q.get('derivation') or {}
     editorial = None
     if lineage.get('workflow') in {EDITORIAL_LINEAGE,EDITORIAL_REMOVAL_LINEAGE}:

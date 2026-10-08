@@ -152,8 +152,8 @@ def prepare_site(conn, config, logger) -> dict:
     authorization = load_export(database, list(pointers))
     if set(authorization["managed_event_ids"]) != set(pointers):
         raise ValueError("event_publication_inventory_changed")
-    # A stale managed report must not block unrelated daily news publication.
-    # Remove only that report until a fresh qualified revision is available.
+    # Ordinary article refreshes retain qualified immutable evidence. Explicit
+    # withdrawal or integrity failure removes only the affected report.
     authorization["withdrawn"].update(authorization["withheld"])
     authorization["withheld"] = {}
     events, _ = _collect_published_events(conn)
@@ -163,7 +163,7 @@ def prepare_site(conn, config, logger) -> dict:
         event = get_event(conn, event_id)
         if event is None:
             raise ValueError("managed_event_record_unavailable")
-        slug = str(event.get("site_slug") or event_id)
+        slug = event_id
         if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,200}", slug) or slug.lower() == "_index":
             raise ValueError("invalid_event_release_slug")
         slugs[event_id] = slug

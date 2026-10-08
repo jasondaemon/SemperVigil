@@ -16,6 +16,7 @@ def initial(setup, monkeypatch):
     s.conn.execute("""INSERT INTO articles VALUES(3,'Acme EHR disclosure','https://example.org/initial',
         'Acme said certain patient records may be affected. The company rotated credentials. The legacy EHR breach occurred in January 2025.',
         '2026-10-01','2026-10-01','{}'); INSERT INTO event_articles VALUES('evt_initial',3)""")
+    s.conn.execute('ALTER TABLE articles ADD COLUMN has_full_content INTEGER DEFAULT 1')
     s.conn.execute("INSERT INTO llm_models VALUES('e','p','fixture-editor',1)"); s.conn.commit()
     from sempervigil.services import ai_service
     monkeypatch.setattr(ai_service, 'get_model', lambda *_: {'id': 'e', 'model_name': 'fixture-editor', 'max_context': 128000})
@@ -29,7 +30,8 @@ def initial(setup, monkeypatch):
     p = {**s.p, 'max_runs': 1, 'run_tokens': 70000, 'admission_kind': 'initial_report',
          'incident_identity': {'event_id': 'evt_initial', 'entity': 'Acme', 'system': 'legacy EHR',
             'incident_window': 'January 2025', 'source_anchors': [{'source_id': 'S3',
-                'quote': 'The legacy EHR breach occurred in January 2025.'}]}}
+                'quote': 'The legacy EHR breach occurred in January 2025.'}],
+            'query_terms': ['legacy', 'EHR'], 'incident_year': 2025}}
     monkeypatch.setenv('SV_EVENT_REPORT_V2_POLICY', json.dumps(p))
     value = editor.narrative(copy.deepcopy(s.value))
     for item in value['items']:
@@ -117,8 +119,16 @@ def test_initial_report_two_calls_and_separate_role_first_publication(initial, m
     with pytest.raises(ValueError, match='initial_draft_required'): reports.submit(t.s.conn, 'evt_initial')
     t.s.conn.rollback()
     assert len(t.calls) == 2
-    # Historical prose remains renderable; changed evidence still withholds export.
-    assert load_export(dedicated, ['evt_initial'])['withdrawn']['evt_initial'] == 'evidence_unavailable'
+    # Ordinary updates preserve the last qualified report at the same event URL.
+    assert load_export(dedicated, ['evt_initial'])['qualified_revisions']['evt_initial'] == bundle
+    authorize_and_activate(dedicated, manifest, lambda: switched.append(True), release=tmp_path)
+    assert switched == [True, True]
+    # Research identity comes from qualified original evidence after the bounded
+    # initial cohort closes, even if the live publisher body has been refreshed.
+    from sempervigil.event_report_initial import research_identity
+    monkeypatch.setenv('SV_EVENT_REPORT_V2_GENERATION_ENABLED', '0')
+    monkeypatch.delenv('SV_EVENT_REPORT_V2_POLICY')
+    assert research_identity(t.s.conn, 'evt_initial') == t.p['incident_identity']
 
 
 @pytest.mark.parametrize('change, count', [('entity', 1), ('source', 1), ('unknown', 1), ('empty', 2)])
@@ -133,6 +143,46 @@ def test_initial_changed_or_failed_run_holds_without_retry_or_publication(initia
     assert t.s.conn.execute("SELECT count(*) FROM event_source_report_runs WHERE event_id='evt_initial'").fetchone()[0] == 1
     if change == 'unknown': assert record['reserved_tokens'] > 0
     if change == 'empty': assert record['charged_tokens'] == 12309 and record['reserved_tokens'] == 0
+
+
+def test_first_report_duplicate_publisher_url_counts_and_packs_one_source(initial):
+    t = initial
+    t.s.conn.execute('''INSERT INTO articles(id,title,original_url,content_text,published_at,ingested_at,meta_json,has_full_content)
+        SELECT 4,'Older feed capture','https://example.org/initial/',content_text||' Old page footer.',
+        '2026-10-01','2026-09-30','{}',1 FROM articles WHERE id=3''')
+    t.s.conn.execute("INSERT INTO event_articles VALUES('evt_initial',4)"); t.s.conn.commit()
+    rid, result = execute(t)
+    assert result['status'] == 'accepted' and len(t.calls) == 2, result
+    packet = reports._load(t.s.conn, rid)['snapshot']
+    assert len(packet['sources']) == 1 and len(packet['membership']) == 2
+    assert len(packet['capture_history'][0]['captures']) == 2
+    for request in t.calls:
+        model = json.loads(request['messages'][1]['content'])
+        if 'evidence' in model: model = model['evidence']
+        assert len(model['sources']) == 1 and 'capture_history' not in model
+    _, promoted = t.s.publish(rid, automatic=True)
+    public = json.loads(t.s.conn.execute('SELECT bundle_json FROM event_public_revisions WHERE revision_id=%s',
+                                         (promoted['revision_id'],)).fetchone()[0])
+    from sempervigil.event_source_report_render_v2 import index_entry
+    assert index_entry(public, event_id='evt_initial', expected_revision=promoted['revision_id'])['counts']['articles'] == 1
+    assert t.s.conn.execute("SELECT count(*) FROM event_articles WHERE event_id='evt_initial'").fetchone()[0] == 2
+
+
+def test_successor_research_identity_is_verified_from_qualified_predecessor(initial, monkeypatch):
+    t = initial; rid, result = execute(t)
+    assert result['status'] == 'accepted'; t.s.publish(rid, automatic=True)
+    t.s.conn.execute("UPDATE articles SET content_text=content_text||' Additional reporting.' WHERE id=3"); t.s.conn.commit()
+    monkeypatch.setenv('SV_EVENT_REPORT_V2_POLICY', json.dumps(t.s.p))
+    monkeypatch.setenv('SV_EVENT_REPORT_V2_COHORT_ID', 'fixture-successor-identity')
+    monkeypatch.setenv('SV_EVENT_REPORT_V2_COHORT_TOKENS', '64000')
+    t.calls.clear(); successor, result = execute(t)
+    assert result['status'] == 'accepted', result
+    assert 'incident_identity' not in reports._load(t.s.conn, successor)['snapshot']
+    t.s.publish(successor, automatic=True)
+    from sempervigil.event_report_initial import research_identity
+    monkeypatch.delenv('SV_EVENT_REPORT_V2_POLICY')
+    assert research_identity(t.s.conn, 'evt_initial') == t.p['incident_identity']
+    assert len(t.calls) == 2
 
 
 @pytest.mark.parametrize('change', ['expired', 'disabled', 'entity', 'state', 'anchor', 'withdrawn_history'])

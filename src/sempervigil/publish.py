@@ -221,6 +221,8 @@ def events_index_payload(events: Iterable[dict[str, object]], *,
                           or site_slug.casefold() == "_index"
                           or len(site_slug.encode("utf-8")) > 240):
             raise ValueError("invalid_event_slug")
+        if event_id in qualified_revisions:
+            site_slug = event_id
         event_url = f"/events/{site_slug}/" if site_slug else ""
         revision_published_at = (event.get("_publication_updated_at")
                                  or event.get("updated_at") or event.get("published_at"))
@@ -374,6 +376,8 @@ def write_events_markdown(
             raise ValueError("event_id_required")
         site_slug = str(event.get("site_slug") or "").strip()
         if not site_slug:
+            site_slug = event_id
+        if event_id in qualified_revisions:
             site_slug = event_id
         if (not re.fullmatch(r"[\w][\w.-]*", site_slug)
                 or site_slug.casefold() == "_index" or len(site_slug.encode("utf-8")) > 240

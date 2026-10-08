@@ -1775,6 +1775,8 @@ def enqueue_job(
     )
     if commit:
         conn.commit()
+        from .job_admission_observer import record_committed_job
+        record_committed_job(job_id)
     return job_id
 
 

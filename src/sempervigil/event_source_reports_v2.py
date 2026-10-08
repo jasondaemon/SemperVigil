@@ -159,7 +159,8 @@ def runtime_code_identity():
                          'event_report_presentation.py', 'event_source_report_render_v2.py', 'event_report_value.py',
                          'data/event_report_v2_prompt_history.json',
                          'event_report_editorial.py', 'event_report_v2_policy.py', 'event_report_v2_integrity.py',
-                         'event_report_initial.py')}
+                         'event_report_initial.py', 'event_report_retained_evidence.py',
+                         'event_report_captures.py', 'enrichment/query.py')}
 
 
 def runtime_identity():
@@ -187,7 +188,9 @@ def snapshot(conn, event_id, *, lock=False):
     links = conn.execute("SELECT article_id FROM event_articles WHERE event_id=%s ORDER BY article_id"+suffix,
                          (event_id,)).fetchall()
     ids = [r[0] for r in links]
-    articles = conn.execute("""SELECT id,title,original_url,content_text,published_at,ingested_at,meta_json
+    articles = conn.execute("""SELECT id,title,original_url,content_text,published_at,ingested_at,meta_json,
+      COALESCE(to_jsonb(articles)->>'content_fetched_at',ingested_at),
+      to_jsonb(articles)->>'has_full_content',to_jsonb(articles)->>'content_error'
       FROM articles WHERE id=ANY(%s) ORDER BY id"""+suffix, (ids,)).fetchall()
     return _source_material(event_id, row[1], articles, ids)
 
@@ -196,8 +199,9 @@ def _source_material(event_id, title, articles, ids):
     """Freeze every membership; deduplicate only the bodies packed for the model."""
     if len(ids) != len(set(ids)) or {r[0] for r in articles} != set(ids):
         raise ValueError("event_source_report_sources_missing")
-    sources, excluded, membership, bodies = [], [], [], {}
-    for aid, article_title, url, text, published, retrieved, rawmeta in sorted(articles, key=lambda r: r[0]):
+    sources, excluded, membership, bodies, eligible = [], [], [], {}, []
+    for row in sorted(articles, key=lambda r: r[0]):
+        aid, article_title, url, text, published, retrieved, rawmeta = row[:7]
         meta = json.loads(rawmeta) if isinstance(rawmeta, str) and rawmeta else (rawmeta or {})
         membership.append({"article_id": aid, "title": article_title, "url": url,
                            "text_hash": contract.digest(text or ""), "suppressed": bool(meta.get("suppressed")),
@@ -209,19 +213,31 @@ def _source_material(event_id, title, articles, ids):
         from urllib.parse import urlparse
         if urlparse(url).scheme not in {"http", "https"}:
             raise ValueError("event_source_report_url_invalid")
+        eligible.append(row)
+    from .event_report_captures import select, WORKFLOW as CAPTURE_WORKFLOW
+    selected, aliases, history = select(eligible, membership)
+    member_by_id = {m['article_id']: m for m in membership}
+    for row in selected:
+        aid, article_title, url, text, published, retrieved, _ = row[:7]
         content_hash = contract.digest(" ".join(text.split()))
         if content_hash in bodies:
-            bodies[content_hash]["duplicates"].append(dict(membership[-1]))
+            bodies[content_hash]["duplicates"].extend([member_by_id[aid], *aliases[aid]])
             continue
         source = {"id": "S"+str(aid), "article_id": aid, "title": article_title or "Source article",
                   "url": url, "text": text, "content_hash": content_hash,
                   "published_at": str(published) if published else None,
-                  "retrieved_at": str(retrieved) if retrieved else None, "duplicates": []}
+                  "retrieved_at": str(retrieved) if retrieved else None, "duplicates": list(aliases[aid])}
         sources.append(source); bodies[content_hash] = source
     if not sources or len(articles) != len(ids):
         raise ValueError("event_source_report_sources_missing")
     material = {"event_id": event_id, "title": title, "sources": sources,
                 "membership": membership, "excluded_article_ids": excluded}
+    if history:
+        material.update(capture_history=history, capture_policy={
+            'workflow': CAPTURE_WORKFLOW, 'selection': 'latest successfully stored full publisher capture',
+            'retained_history': 'Private original bodies and memberships; not duplicate model evidence.',
+            'independence': 'Not established by URL, capture count or publisher count.',
+            'selected_article_ids': [s['article_id'] for s in sources]})
     return {**material, "source_version": _version(material),
             "evidence_version": _version(sorted(bodies))}
 

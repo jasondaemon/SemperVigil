@@ -10,7 +10,8 @@ pytestmark = pytest.mark.offline
 def identity():
     return {'event_id': 'evt_test', 'entity': 'Acme', 'system': 'legacy EHR',
             'incident_window': 'January 2025; discovery February 2025',
-            'source_anchors': [{'source_id': 'S1', 'quote': 'Acme reported access to legacy EHR data.'}]}
+            'query_terms': ['legacy', 'EHR'], 'incident_year': 2025,
+            'source_anchors': [{'source_id': 'S1', 'quote': 'Acme reported access to legacy EHR data in January 2025.'}]}
 
 
 def configure(monkeypatch):
@@ -128,6 +129,7 @@ def test_enrichment_retains_every_filter_outcome_without_extra_fetch(monkeypatch
     from sempervigil import worker
     event = {'id': 'evt_test', 'kind': 'breach', 'entity': 'Acme', 'title': 'Acme breach'}
     monkeypatch.setattr(worker, 'get_event', lambda *_: event)
+    monkeypatch.setattr(initial, 'research_identity', lambda *_: None)
     monkeypatch.setattr(worker, 'searxng_search', lambda *a, **k: [
         {'title': 'No URL'}, {'url': 'https://example.org/low', 'title': 'Low'},
         {'url': 'https://user:secret@example.org/good?token=private', 'title': 'Good'}])

@@ -7218,7 +7218,10 @@ def _handle_enrich_event_from_web(
     event = get_event(conn, event_id)
     if not event:
         raise ValueError("event_not_found")
-    query = str(payload.get("query") or "").strip() or build_event_enrich_query(event)
+    query = str(payload.get("query") or "").strip()
+    if not query:
+        from .event_report_initial import research_identity
+        query = build_event_enrich_query(event, incident_identity=research_identity(conn, event_id))
     searx_url = os.getenv("SV_SEARXNG_URL", "").strip()
     timeout_s = int(os.getenv("SV_SEARXNG_TIMEOUT_S", "20"))
     max_results = int(payload.get("max_results") or os.getenv("SV_SEARXNG_MAX_RESULTS", "10"))
