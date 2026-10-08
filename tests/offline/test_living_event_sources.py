@@ -40,6 +40,34 @@ def test_latest_failed_capture_does_not_replace_last_complete_body():
         reports._source_material('evt_test', 'Legacy EHR incident', values, [1, 2])
 
 
+def test_new_capture_of_same_publisher_has_changed_current_citation_id():
+    old = reports._source_material('evt_test', 'Legacy EHR incident', rows()[:1], [1])
+    current = reports._source_material('evt_test', 'Legacy EHR incident', rows(), [1, 2])
+    original = copy.deepcopy(old)
+    result = contract.update_context(current, 'evidence_change', old)
+    assert result['evidence_delta'] == {'baseline': 'known', 'new': [], 'changed': ['S2'], 'removed': []}
+    assert result['sources'][0]['id'] == 'S2'
+    assert result['capture_history'] == current['capture_history']
+    assert old == original
+    same = rows(); same[1] = (*same[1][:3], same[0][3], *same[1][4:])
+    unchanged = reports._source_material('evt_test', 'Legacy EHR incident', same, [1, 2])
+    assert contract.update_context(unchanged, 'evidence_change', old)['evidence_delta']['changed'] == []
+
+
+@pytest.mark.parametrize('urls', [
+    ('https://publisher.test/story;id=1', 'https://publisher.test/story;id=2'),
+    ('https://publisher.test/story?id=1&id=2', 'https://publisher.test/story?id=2&id=1'),
+    ('https://publisher.test/story#first', 'https://publisher.test/story#second'),
+])
+def test_resource_significant_url_components_preserve_distinct_evidence(urls):
+    values = rows()
+    values = [(*r[:2], url, *r[3:]) for r, url in zip(values, urls)]
+    packet = reports._source_material('evt_test', 'Legacy EHR incident', values, [1, 2])
+    assert [s['id'] for s in packet['sources']] == ['S1', 'S2']
+    assert packet.get('capture_history', []) == []
+    assert [s['text'] for s in packet['sources']] == [r[3] for r in values]
+
+
 def identity():
     return {'event_id': 'evt_test', 'entity': 'Acme', 'system': 'legacy EHR',
             'incident_window': 'January 2025', 'incident_year': 2025, 'query_terms': ['legacy', 'EHR'],

@@ -110,6 +110,28 @@ def test_qualified_successor_replaces_content_at_one_canonical_permalink(setup, 
     assert s.conn.execute('SELECT count(*) FROM event_public_revisions').fetchone()[0] == 2
 
 
+def test_same_publisher_new_capture_passes_normal_successor_publication(setup):
+    s = setup
+    original = publication.published_material(s.conn, bundle(s))['snapshot']
+    s.conn.execute("UPDATE articles SET original_url='https://example.org/incident/' WHERE id=2")
+    s.conn.commit()
+    for item in s.value['items']:
+        for citation in item['citations']:
+            citation['source_id'] = 'S2'
+    rid = reports.submit(s.conn, 'evt_test')['run_id']
+    snapshot = reports._load(s.conn, rid)['snapshot']
+    assert not s.calls  # Delta admission is checked before either synthetic call.
+    assert snapshot['evidence_delta'] == {'baseline': 'known', 'new': [], 'changed': ['S2'], 'removed': []}
+    assert [source['id'] for source in snapshot['sources']] == ['S2']
+    assert [capture['article_id'] for capture in snapshot['capture_history'][0]['captures']] == [1, 2]
+    assert s.execute(rid)['status'] == 'accepted' and len(s.calls) == 2
+    _, promoted = s.publish(rid, automatic=True)
+    assert promoted['revision_id'] != s.old
+    assert publication.published_material(s.conn, bundle(s))['snapshot'] == original
+    current = publication.published_material(s.conn, bundle(s, promoted['revision_id']))
+    assert current['snapshot']['sources'][0]['id'] == 'S2'
+
+
 def test_legacy_retained_report_binds_original_evidence_and_preserves_derivative_metadata(database):
     from test_event_source_reports_postgres import execute, generated
     from sempervigil import event_source_report_publication as legacy_publication

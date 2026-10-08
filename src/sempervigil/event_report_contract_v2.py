@@ -382,16 +382,10 @@ def update_context(packet, reason, baseline=None):
     """Separate evidence novelty from additions to the report's coverage."""
     if reason not in {"generator_upgrade", "evidence_change"}:
         raise ValueError("event_report_update_reason_invalid")
-    old = {s["article_id"]: s for s in (baseline or {}).get("sources", [])}
-    current = {s["article_id"]: s for s in packet["sources"]}
     delta = {"baseline": "known" if baseline is not None else "unknown",
              "new": [], "changed": [], "removed": []}
-    if baseline is not None:
-        delta.update(new=[s["id"] for aid,s in current.items() if aid not in old],
-                     changed=[s["id"] for aid,s in current.items() if aid in old
-                              and s["content_hash"] != old[aid]["content_hash"]],
-                     removed=[s["id"] for aid,s in old.items() if aid not in current])
     membership_delta = None
+    changed_members = set()
     if baseline is not None and "membership" in baseline and "membership" in packet:
         before = {m["article_id"]: m for m in baseline["membership"]}
         after = {m["article_id"]: m for m in packet["membership"]}
@@ -402,20 +396,35 @@ def update_context(packet, reason, baseline=None):
         membership_delta = {"new": sorted(after.keys() - before.keys()),
                             "changed": sorted(changed_members),
                             "removed": sorted(before.keys() - after.keys())}
+    if baseline is not None:
+        from .event_report_captures import publisher_identity
         def members(source):
-            return {source["article_id"], *(d["article_id"] for d in source.get("duplicates", []))}
+            return {source['article_id'], *(d['article_id'] for d in source.get('duplicates', []))}
+        def publishers(source):
+            return {publisher_identity(d['url']) for d in [source, *source.get('duplicates', [])]}
         original_sources = baseline["sources"]
         original_ids = set().union(*(members(s) for s in original_sources))
         current_ids = set().union(*(members(s) for s in packet["sources"]))
         hashes = {s["content_hash"] for s in original_sources}
         current_hashes = {s["content_hash"] for s in packet["sources"]}
-        # Packed source IDs can change when an identical lower-ID alias arrives.
-        # Membership changes must not be described as new event evidence.
+        prior_versions = {}
+        for source in original_sources:
+            for url in publishers(source):
+                prior_versions.setdefault(url, set()).add(source['content_hash'])
+        current_publishers = set().union(*(publishers(s) for s in packet['sources']))
+        # Canonical capture IDs may rotate when a publisher updates one URL.
+        # Compare publisher identity and body version, but return the current
+        # selected source ID so provenance and citations still address its body.
         delta.update(new=[s["id"] for s in packet["sources"]
-                          if s["content_hash"] not in hashes and not members(s) & original_ids],
-                     changed=[s["id"] for s in packet["sources"] if members(s) & changed_members],
+                          if s["content_hash"] not in hashes and not members(s) & original_ids
+                          and not publishers(s) & prior_versions.keys()],
+                     changed=[s["id"] for s in packet["sources"]
+                              if members(s) & changed_members or any(
+                                  s['content_hash'] not in prior_versions[url]
+                                  for url in publishers(s) & prior_versions.keys())],
                      removed=[s["id"] for s in original_sources
-                              if s["content_hash"] not in current_hashes and not members(s) & current_ids])
+                              if s["content_hash"] not in current_hashes and not members(s) & current_ids
+                              and not publishers(s) & current_publishers])
     return {**packet, "update_reason": reason, "evidence_delta": delta,
             "previous_report_coverage": "Continuity, not evidence; added coverage is not new event facts.",
             **({"membership_delta": membership_delta} if membership_delta is not None else {})}

@@ -1,13 +1,31 @@
 """One complete publisher capture per normalized URL; private reversible history."""
 from datetime import datetime, timezone
-from .enrichment.url import normalize_url
+from urllib.parse import urlsplit, urlunsplit, unquote
 
-WORKFLOW = 'normalized-publisher-captures-v1'
+WORKFLOW = 'conservative-publisher-captures-v2'
+
+
+def publisher_identity(url):
+    """Capture identity, not search canonicalization: preserve resource semantics."""
+    parsed = urlsplit(url.strip())
+    # Keep raw non-tracking query fields in original order, including repeats,
+    # empty fields and their encoding. URL path parameters stay inside the path.
+    tracking = {'gclid', 'fbclid', 'mc_cid', 'mc_eid'}
+    fields = [field for field in parsed.query.split('&')
+              if not (unquote(field.split('=', 1)[0]).startswith('utm_')
+                      or unquote(field.split('=', 1)[0]) in tracking)]
+    query = '&'.join(fields)
+    path = parsed.path or '/'
+    if path != '/' and path.endswith('/') and ';' not in path and not query:
+        path = path[:-1]
+    # Host names are case-insensitive; do not alter potential userinfo spelling.
+    authority = parsed.netloc if '@' in parsed.netloc else parsed.netloc.lower()
+    return urlunsplit((parsed.scheme.lower(), authority, path, query, parsed.fragment))
 
 
 def select(rows, membership):
     groups = {}
-    for row in rows: groups.setdefault(normalize_url(row[2]), []).append(row)
+    for row in rows: groups.setdefault(publisher_identity(row[2]), []).append(row)
     members = {m['article_id']: m for m in membership}
     selected, aliases, history = [], {}, []
     def rank(row):
