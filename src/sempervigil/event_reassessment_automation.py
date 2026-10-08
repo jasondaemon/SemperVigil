@@ -10,6 +10,21 @@ import psycopg
 from .utils import utc_now_iso
 
 WORKFLOW = "event-reassessment-automation-v1"
+TERMINAL_PREFIX = "event.reassessment.recovery_terminal.v1:"
+CHECKED_PREFIX = "event.reassessment.checked.v1:"
+
+
+def scope():
+    """Absent preserves legacy admission; [] pauses this paid coordinator."""
+    raw = os.environ.get("SV_EVENT_REASSESSMENT_AUTOMATION_EVENT_IDS")
+    if raw is None:
+        return None
+    value = json.loads(raw)
+    if (not isinstance(value, list) or len(value) > 100
+            or any(not isinstance(e, str) or not e.startswith('evt_') for e in value)
+            or len(set(value)) != len(value)):
+        raise ValueError('invalid_event_reassessment_automation_scope')
+    return sorted(value)
 
 
 def enabled() -> bool:
@@ -68,17 +83,19 @@ def _resume_transient_composition_hold(conn) -> dict | None:
 def _resume_audited_fallback(conn) -> dict | None:
     """Finish one audited fallback once; an immutable child permanently closes it."""
     row = conn.execute(
-        """SELECT c.event_id,x.composition_id,x.composition_json,j.result_json
+        """SELECT c.event_id,x.composition_id,x.composition_json,j.result_json,j.id
              FROM event_reassessment_cases c
              JOIN event_ledger_compositions x ON x.ledger_id=c.ledger_id
              JOIN LATERAL (
-                 SELECT result_json FROM jobs
+                 SELECT id,result_json FROM jobs
                   WHERE job_type='event_composition_audit' AND status='succeeded'
                     AND payload_json::jsonb->>'composition_id'=x.composition_id
                   ORDER BY finished_at DESC,id DESC LIMIT 1
              ) j ON true
             WHERE c.status IN ('active','held') AND x.status='held'
               AND x.composition_json::jsonb ? 'fallback'
+              AND NOT EXISTS (SELECT 1 FROM settings s WHERE s.key=
+                  'event.reassessment.recovery_terminal.v1:' || x.composition_id || ':' || j.id)
               AND NOT EXISTS (
                 SELECT 1 FROM event_ledger_compositions child
                  WHERE child.composition_json::jsonb #>> '{derivation,parent,composition_id}'
@@ -96,6 +113,14 @@ def _resume_audited_fallback(conn) -> dict | None:
     from .event_composition_audit_jobs import remediate_fallback
     remediation = remediate_fallback(conn, row[1], composition, ledger["ledger"], decision)
     if remediation["status"] == "held":
+        # Failure creates no child. Retain a terminal identity as well as the hold,
+        # so an unchanged audited artifact never consumes another scheduler turn.
+        conn.execute("""INSERT INTO settings(key,value,updated_at) VALUES(%s,%s,%s)
+            ON CONFLICT(key) DO NOTHING""", (
+            TERMINAL_PREFIX + row[1] + ':' + row[4],
+            json.dumps({'workflow': WORKFLOW, 'event_id': row[0],
+                        'composition_id': row[1], 'audit_job_id': row[4],
+                        'status': 'held', 'reason': remediation['reason']}), utc_now_iso()))
         return _hold(conn, row[0], remediation["reason"])
     conn.execute(
         """UPDATE event_reassessment_cases SET status='active',decision_reason=NULL,updated_at=%s
@@ -635,21 +660,28 @@ def advance(conn, event_id: str) -> dict:
 def tick(conn) -> list[dict]:
     if not enabled():
         return []
-    recovery = _resume_curator_version_hold(conn)
-    if recovery:
-        return [recovery]
-    recovery = _resume_detail_filter_hold(conn)
-    if recovery:
-        return [recovery]
-    recovery = _resume_transient_composition_hold(conn)
-    if recovery and recovery["status"] != "held":
-        return [recovery]
-    recovery = _resume_audited_fallback(conn)
-    if recovery:
-        return [recovery]
+    selected = scope()
+    if selected == []:
+        return []
+    results = []
+    # Global historical recovery is deliberately unavailable in scoped mode.
+    # A bounded new-event test must not restart unrelated held compositions.
+    if selected is None:
+        for recover in (_resume_curator_version_hold, _resume_detail_filter_hold,
+                        _resume_transient_composition_hold, _resume_audited_fallback):
+            recovery = recover(conn)
+            if recovery:
+                results.append(recovery)
+                if recovery['status'] not in {'held', 'unchanged', 'pending', 'deferred'}:
+                    return results
+    from .storage import set_setting
     rows = conn.execute(
-        """SELECT c.event_id FROM event_reassessment_cases c WHERE c.status='active'
-            ORDER BY CASE
+        """SELECT c.event_id FROM event_reassessment_cases c
+            LEFT JOIN settings checked ON checked.key=
+                'event.reassessment.checked.v1:' || c.event_id
+            WHERE c.status='active'
+            AND (%s::text[] IS NULL OR c.event_id=ANY(%s))
+            ORDER BY checked.updated_at NULLS FIRST, CASE
               WHEN EXISTS (
                 SELECT 1 FROM event_ledger_compositions x
                  WHERE x.ledger_id=c.ledger_id AND x.status='unreviewed') THEN 0
@@ -657,9 +689,8 @@ def tick(conn) -> list[dict]:
                 SELECT 1 FROM event_ledger_revisions r
                  WHERE r.ledger_id=c.ledger_id AND r.status IN ('proposed','accepted')) THEN 1
               ELSE 2 END,
-              c.priority,c.updated_at,c.event_id LIMIT 25"""
+              c.priority,c.event_id LIMIT 25""", (selected, selected)
     ).fetchall()
-    results = []
     for (event_id,) in rows:
         try:
             result = advance(conn, event_id)
@@ -667,6 +698,7 @@ def tick(conn) -> list[dict]:
             conn.rollback()
             result = _hold(conn, event_id, str(exc) if isinstance(exc, ValueError) else type(exc).__name__)
         results.append(result)
-        if result["status"] not in {"unchanged", "deferred", "pending"}:
+        set_setting(conn, CHECKED_PREFIX + event_id, {'observed_at': utc_now_iso()})
+        if result["status"] not in {"held", "unchanged", "deferred", "pending"}:
             break
     return results

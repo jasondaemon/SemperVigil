@@ -19,6 +19,9 @@ def policy():
     p = json.loads(os.environ.get('SV_EVENT_REPORT_V2_POLICY', '{}'))
     keys = {'starts_at', 'expires_at', 'max_runs', 'max_concurrent', 'run_tokens',
             'debounce_seconds', 'generator_version'}
+    initial = isinstance(p, dict) and p.get('admission_kind') == 'initial_report'
+    if initial:
+        keys |= {'admission_kind', 'incident_identity'}
     if not cohort or not isinstance(p, dict) or set(p) != keys:
         raise ValueError('event_report_v2_policy_required')
     from .event_source_report_pilot import policy as legacy_policy
@@ -28,6 +31,12 @@ def policy():
     events = sorted(scope())
     if not events:
         raise ValueError('event_report_v2_scope_required')
+    if initial:
+        from .event_report_initial import validate
+        from .event_report_final_editor import configuration as editor_configuration
+        validate(p['incident_identity'], events)
+        if not editor_configuration() or p['max_runs'] != 1 or p['max_concurrent'] != 1:
+            raise ValueError('event_report_initial_bounded_editor_required')
     for key, low, high in [('max_runs', 1, 100), ('max_concurrent', 1, 10),
                            ('run_tokens', 1, 200000), ('debounce_seconds', 0, 86400)]:
         if type(p[key]) is not int or not low <= p[key] <= high:
@@ -90,11 +99,18 @@ def admit(conn, p, event_id, generation, predecessor, baseline):
     active(p)
     if event_id not in p['events'] or generation != p['generator_version']:
         raise ValueError('event_report_v2_policy_changed')
-    # Initial enrollments/backfill and generator-only upgrades are deliberately absent.
-    if not predecessor or baseline is None:
-        raise ValueError('event_report_v2_successor_required')
-    from .event_source_reports_v2 import require_qualified_predecessor
-    require_qualified_predecessor(conn,event_id,predecessor)
+    # Initial reports require separate explicit authority; successors retain their
+    # qualified predecessor requirement. Generator-only upgrades are not admitted.
+    if p.get('admission_kind') == 'initial_report':
+        if predecessor is not None or baseline is not None:
+            raise ValueError('event_report_initial_draft_required')
+        from .event_report_initial import require_draft
+        require_draft(conn, p, event_id)
+    else:
+        if not predecessor or baseline is None:
+            raise ValueError('event_report_v2_successor_required')
+        from .event_source_reports_v2 import require_qualified_predecessor
+        require_qualified_predecessor(conn,event_id,predecessor)
     rows = locked_rows(conn, p)
     if len(rows) >= p['max_runs']:
         raise ValueError('event_report_v2_run_limit')
@@ -111,6 +127,12 @@ def check_run(conn, record, run_id, *, publication=False):
     if not p or record['snapshot'].get('autonomous_policy') != p:
         raise ValueError('event_report_v2_policy_changed')
     active(p)
+    initial = p.get('admission_kind') == 'initial_report'
+    if initial:
+        from .event_report_initial import require_draft
+        if (record['predecessor'] is not None or
+                record['snapshot'].get('initial_identity_version') != require_draft(conn, p, record['event_id'])):
+            raise ValueError('event_report_initial_identity_changed')
     from .event_source_reports_v2 import runtime_identity
     if record['snapshot'].get('autonomous_runtime_version') != runtime_identity():
         raise ValueError('event_report_v2_runtime_changed')
@@ -125,7 +147,8 @@ def check_run(conn, record, run_id, *, publication=False):
         raise ValueError('event_report_v2_policy_changed')
     if publication:
         from .event_source_reports_v2 import require_qualified_predecessor
-        require_qualified_predecessor(conn,record['event_id'],record['predecessor'])
+        if not initial:
+            require_qualified_predecessor(conn,record['event_id'],record['predecessor'])
         calls = conn.execute('SELECT phase,status,request_json FROM event_source_report_calls WHERE run_id=%s ORDER BY ordinal', (run_id,)).fetchall()
         requests = [json.loads(r[2]) for r in calls]
         from .event_report_final_editor import same_model_allowed
@@ -147,7 +170,12 @@ def check_run(conn, record, run_id, *, publication=False):
                 or any(request.get(k) != value for k, value in options.items())):
                 raise ValueError('event_report_v2_request_identity_changed')
         delta = record['snapshot'].get('evidence_delta', {})
-        if delta.get('baseline') != 'known' or not any(delta.get(k) for k in ('new', 'changed', 'removed')):
+        if initial:
+            if (delta != {'baseline': 'initial', 'new': [s['id'] for s in record['snapshot']['sources']],
+                          'changed': [], 'removed': []}
+                    or record['snapshot'].get('previous_report') is not None):
+                raise ValueError('event_report_initial_provenance_invalid')
+        elif delta.get('baseline') != 'known' or not any(delta.get(k) for k in ('new', 'changed', 'removed')):
             raise ValueError('event_report_v2_no_evidence_delta')
         return {'workflow': WORKFLOW, 'policy': p, 'policy_version': _version(p),
                 'run_id': run_id, 'generator_version': record['generator_version'],

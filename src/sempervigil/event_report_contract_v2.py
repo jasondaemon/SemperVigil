@@ -229,7 +229,7 @@ def publication_projection(report, review, packet):
 
 def generation_schema(source_ids, packet):
     value = schema(source_ids)
-    if packet.get("update_reason") == "generator_upgrade":
+    if packet.get("update_reason") in {"generator_upgrade", "initial_report"}:
         for branch in value["properties"]["items"]["items"]["anyOf"]:
             branch["properties"]["section"]["enum"] = [s for s in SECTIONS if s != "what_changed"]
     return value
@@ -308,7 +308,8 @@ def resolve_citation(source, quote):
 
 def validate(report, packet):
     sources = {s["id"]: s for s in packet["sources"]}
-    jsonschema.validate(report, schema(list(sources)))
+    jsonschema.validate(report, generation_schema(list(sources), packet)
+                        if packet.get('update_reason') == 'initial_report' else schema(list(sources)))
     ids, prose, spans, dates = set(), set(), {}, []
     for item in report["items"]:
         if item["id"] in ids:

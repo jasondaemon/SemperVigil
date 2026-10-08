@@ -158,7 +158,8 @@ def runtime_code_identity():
                          'event_report_generation_identity.py', 'event_report_final_editor_import.py',
                          'event_report_presentation.py', 'event_source_report_render_v2.py', 'event_report_value.py',
                          'data/event_report_v2_prompt_history.json',
-                         'event_report_editorial.py', 'event_report_v2_policy.py', 'event_report_v2_integrity.py')}
+                         'event_report_editorial.py', 'event_report_v2_policy.py', 'event_report_v2_integrity.py',
+                         'event_report_initial.py')}
 
 
 def runtime_identity():
@@ -537,6 +538,13 @@ def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
         snap["attack_reference"]=reference(snap["sources"])
     if autonomous:
         autonomous_admit(conn, autonomous, event_id, generation, predecessor, old)
+        if autonomous.get('admission_kind') == 'initial_report':
+            from .event_report_initial import require_draft
+            snap.update(initial_identity_version=require_draft(conn, autonomous, event_id),
+                        incident_identity=autonomous['incident_identity'], previous_report=None,
+                        update_reason='initial_report',
+                        evidence_delta={'baseline': 'initial', 'new': [s['id'] for s in snap['sources']],
+                                        'changed': [], 'removed': []})
         snap["autonomous_policy"] = autonomous
         snap["autonomous_runtime_version"] = runtime_identity()
     cohort = ({"id": autonomous["id"], "limit": autonomous["limit"]} if autonomous else None)
@@ -597,7 +605,8 @@ def _fresh(conn, record):
         raise ValueError("event_source_report_sources_changed")
     if previous(conn, record["event_id"])[0] != record["predecessor"]:
         raise ValueError("event_source_report_predecessor_changed")
-    if "autonomous_policy" in record["snapshot"]:
+    if ("autonomous_policy" in record["snapshot"]
+            and record['snapshot']['autonomous_policy'].get('admission_kind') != 'initial_report'):
         require_qualified_predecessor(conn,record["event_id"],record["predecessor"])
     if configuration(conn)[2] != record["snapshot"].get("runtime_generation_at_import",record["generator_version"]):
         raise ValueError("event_source_report_configuration_changed")
@@ -1181,5 +1190,5 @@ def tick(conn):
 
 
 def safe_reason(value):
-    match = re.match(r'event_(?:source_report|report_v2)_[a-z_]+', str(value or ''))
+    match = re.match(r'event_(?:source_report|report_v2|report_initial)_[a-z_]+', str(value or ''))
     return match.group(0) if match else 'unclassified_failure'

@@ -165,6 +165,7 @@ def test_zero_output_repair_fallback_requires_successful_empty_run(monkeypatch):
 
 
 def test_tick_skips_waiting_case_but_stops_after_one_advancement(monkeypatch):
+    monkeypatch.setattr('sempervigil.storage.set_setting', lambda *_args: None)
     class TickConn:
         def execute(self, sql, params=()):
             assert "FROM event_reassessment_cases c" in sql

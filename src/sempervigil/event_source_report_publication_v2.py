@@ -272,6 +272,8 @@ def bundle_for(record,run_id,q,predecessor):
     if packet.get("update_reason") == "generator_upgrade":
         notice = (contract.GENERATOR_NOTICE if delta == {"baseline":"known","new":[],"changed":[],"removed":[]}
                   else "Report revised using the supplied source set; the prior evidence-change baseline is unavailable.")
+    elif packet.get('update_reason') == 'initial_report':
+        notice = 'Initial source-backed incident report; source publication dates are not incident dates.'
     provenance = {"workflow":"event-report-revision-provenance-v1","update_reason":packet.get("update_reason","evidence_change"),
                   "evidence_delta":delta,"notice":notice,"derivation":record.get("derivation")}
     return {"workflow":contract.PUBLIC_WORKFLOW,"event_id":record["event_id"],"run_id":run_id,
@@ -322,6 +324,12 @@ def validate_bundle(bundle, *, event_id, expected_revision=None):
     if provenance:
         if provenance.get("workflow") != "event-report-revision-provenance-v1":
             raise ValueError("event_source_report_provenance_invalid")
+        if provenance.get('update_reason') == 'initial_report':
+            if (bundle['predecessor'] is not None
+                    or provenance['evidence_delta'] != {'baseline': 'initial',
+                        'new': [s['id'] for s in bundle['sources']], 'changed': [], 'removed': []}
+                    or provenance.get('notice') != 'Initial source-backed incident report; source publication dates are not incident dates.'):
+                raise ValueError('event_report_initial_provenance_invalid')
         if provenance["update_reason"] == "generator_upgrade":
             if any(x["section"]=="what_changed" for x in bundle["report"]["items"]):
                 raise ValueError("event_source_report_generated_upgrade_metadata")

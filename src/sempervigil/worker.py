@@ -7254,22 +7254,33 @@ def _handle_enrich_event_from_web(
     promoted = 0
     promoted_queued = 0
     auto_queued = 0
-    scored_results: list[tuple[int, dict[str, object], dict[str, int]]] = []
-    for item in results:
+    from .enrichment import diagnostics
+    decisions = []
+    counts = {}
+    scored_results = []
+    for rank, item in enumerate(results, 1):
+        diagnostic = diagnostics.result(rank, item)
+        decisions.append(diagnostic)
         url_value = str(item.get("url") or "").strip()
         if not url_value:
+            counts['missing_url'] = counts.get('missing_url', 0) + 1
             continue
         item["domain"] = urlparse(url_value).netloc.lower()
         score, reasons = score_web_result(event, item)
-        scored_results.append((score, item, reasons))
+        diagnostic.update(score=score, score_reasons=reasons)
+        scored_results.append((score, item, reasons, diagnostic))
     replaced = 0
     if replace_existing:
         replaced = clear_event_web_sources(conn, event_id, keep_promoted=True)
-    for score, item, reasons in scored_results:
+    for score, item, reasons, diagnostic in scored_results:
         if score < min_score and not keep_low:
+            diagnostic['reason'] = 'blocked_domain' if reasons.get('blocked_domain') else 'below_min_score'
+            counts[diagnostic['reason']] = counts.get(diagnostic['reason'], 0) + 1
             continue
         source_id = upsert_event_web_source(conn, event_id, item, score, reasons)
         if source_id:
+            diagnostic.update(outcome='saved', reason='score_admitted', source_id=source_id)
+            counts['saved'] = counts.get('saved', 0) + 1
             saved += 1
             if promote_on_enrich:
                 # Route through validation/fetch instead of direct promote so event reports
@@ -7289,6 +7300,9 @@ def _handle_enrich_event_from_web(
                     dedupe=True,
                 )
                 auto_queued += 1
+        else:
+            diagnostic['reason'] = 'source_not_stored'
+            counts['source_not_stored'] = counts.get('source_not_stored', 0) + 1
     return {
         "event_id": event_id,
         "query": query,
@@ -7298,6 +7312,10 @@ def _handle_enrich_event_from_web(
         "promoted_queued": promoted_queued,
         "auto_queued": auto_queued,
         "replaced": replaced,
+        "diagnostics": {'workflow': 'event-enrichment-result-decisions-v1',
+                        'min_score': min_score, 'keep_low': keep_low,
+                        'counts': counts, 'results': decisions[:diagnostics.LIMIT],
+                        'omitted_results': max(0, len(decisions)-diagnostics.LIMIT)},
     }
 
 
@@ -8036,6 +8054,12 @@ def _handle_event_report_llm(
     event_id = str(payload.get("event_id") or "").strip()
     if not event_id:
         raise ValueError("event_id is required")
+    from .event_report_initial import manages_legacy
+    if manages_legacy(event_id):
+        # The normal scheduler admits the frozen two-call report. Legacy summary
+        # generation must not compete with its first-publication authority.
+        return {'status': 'skipped', 'event_id': event_id,
+                'reason': 'bounded_initial_narrative_managed'}
     event = get_event(conn, event_id)
     if not event:
         raise ValueError("event_not_found")
