@@ -1,0 +1,10 @@
+.git
+.env*
+.cache
+.venv
+.pytest_cache
+**/__pycache__
+**/*.pyc
+data
+build
+.DS_Store

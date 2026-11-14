@@ -37,6 +37,12 @@ No Event flags or production image tags were changed in this pass.
 - PostgreSQL search now matches article and CVE text without case sensitivity.
 - Helm lint with platform values and a chart render passed. The Hugo application
   build path, content, commands, and concurrency were not modified.
+- A local image-build check exposed a 3.2 GB untracked cache in the Docker build
+  context, mostly eleven obsolete 283 MB ingest-image archives from September.
+  Those specific archives were removed; the documented MCP environment and
+  review artifacts were retained. `.dockerignore` now excludes local caches,
+  `.env` files, and generated state while keeping application sources, packaging
+  inputs, tests, tools, and chart files. Both image builds passed locally.
 
 ## Open gates
 
