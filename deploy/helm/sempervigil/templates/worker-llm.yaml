@@ -12,6 +12,8 @@ metadata:
     app.kubernetes.io/component: worker-llm
 spec:
   replicas: {{ .Values.workerLlm.replicaCount }}
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "sempervigil.selectorLabels" . | nindent 6 }}
@@ -83,6 +85,8 @@ spec:
               value: "1"
             - name: SV_WORKER_CONCURRENCY
               value: "1"
+            - name: SV_ARTICLE_APPLICABILITY_REVIEW_ENABLED
+              value: {{ ternary "1" "0" .Values.workerLlm.articleApplicabilityReviewEnabled | quote }}
             - name: SV_LLM_LOG_HTTP
               value: "1"
             - name: SEMPERVIGIL_MASTER_KEY

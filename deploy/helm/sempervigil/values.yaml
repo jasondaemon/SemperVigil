@@ -224,6 +224,7 @@ workerLlm:
   image: {}
   enabled: true
   replicaCount: 1
+  articleApplicabilityReviewEnabled: false
   resources: {}
 
 workerOpenai:

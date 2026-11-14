@@ -103,3 +103,26 @@ def test_worker_image_override_is_isolated(override):
         for container in spec["initContainers"] + spec["containers"]:
             if container["image"].startswith("sempervigil-ingest:"):
                 assert container["image"] == "sempervigil-ingest:" + expected
+
+
+@pytest.mark.skipif(not shutil.which("helm"), reason="Helm is not installed")
+@pytest.mark.parametrize("enabled", [False, True])
+def test_private_applicability_flag_is_worker_only(enabled):
+    chart = Path(__file__).resolve().parents[2] / "deploy/helm/sempervigil"
+    raw = subprocess.check_output([
+        "helm", "template", "test", str(chart),
+        "--set", f"workerLlm.articleApplicabilityReviewEnabled={str(enabled).lower()}",
+    ], text=True)
+    deployments = {doc["metadata"]["name"]: doc for doc in yaml.safe_load_all(raw)
+                   if doc and doc.get("kind") == "Deployment"}
+    worker = deployments["sempervigil-worker-llm"]
+    assert worker["spec"]["strategy"]["type"] == "Recreate"
+    for name, deployment in deployments.items():
+        env = deployment["spec"]["template"]["spec"]["containers"][0].get("env", [])
+        flags = [item for item in env
+                 if item["name"] == "SV_ARTICLE_APPLICABILITY_REVIEW_ENABLED"]
+        if name == "sempervigil-worker-llm":
+            assert flags == [{"name": "SV_ARTICLE_APPLICABILITY_REVIEW_ENABLED",
+                              "value": "1" if enabled else "0"}]
+        else:
+            assert not flags
