@@ -229,6 +229,7 @@ WORKER_JOB_TYPES = [
     "event_report_llm",
     "event_review_private",
     "article_review_private",
+    "article_applicability_private",
     "event_ledger_compose",
     "event_source_report",
     "event_fact_curate",
@@ -273,6 +274,7 @@ QUEUE_WORKER_TYPES = {
         "event_report_llm",
         "event_review_private",
         "article_review_private",
+        "article_applicability_private",
         "enrich_event_summary_llm",
         "article_products_backfill",
         "article_threat_actors_backfill",
@@ -326,6 +328,7 @@ HANDLED_JOB_TYPES = {
     "event_report_llm",
     "event_review_private",
     "article_review_private",
+    "article_applicability_private",
     "event_ledger_compose",
     "event_fact_curate",
     "event_composition_audit",
@@ -466,6 +469,7 @@ def _looks_like_thn_teaser(source_id: str | None, content_text: str | None) -> b
 _LLM_JOB_TYPES = {
     "event_source_report",
     "article_review_private",
+    "article_applicability_private",
     "summarize_article_llm",
     "summarize_article_context_llm",
     "cve_enrich_llm",
@@ -606,6 +610,7 @@ def _resolve_profile_ids_for_job(conn, job) -> list[str]:
         profile_ids.append(payload_profile)
     stage_map = {
         "article_review_private": ["article_context_pack"],
+        "article_applicability_private": ["article_context_pack"],
         "summarize_article_llm": ["summarize_article_llm"],
         "summarize_article_context_llm": ["article_context_pack"],
         "cve_enrich_llm": ["cve_enrich_products"],
@@ -10216,6 +10221,9 @@ def run_claimed_job(conn, config, job, logger: logging.Logger) -> dict[str, obje
         return run(job.payload or {}) if completion is None else run(job.payload or {}, complete=completion)
     if job.job_type == "article_review_private":
         from .article_review_jobs import run
+        return run(conn, job)
+    if job.job_type == "article_applicability_private":
+        from .article_applicability_jobs import run
         return run(conn, job)
     if job.job_type == "event_ledger_compose":
         from .event_composition_jobs import run

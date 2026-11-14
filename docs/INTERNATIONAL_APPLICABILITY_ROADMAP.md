@@ -1,0 +1,36 @@
+# International coverage and article applicability
+
+Status: private comparison contract implemented in source, disabled by default and not deployed or model-evaluated. Source admission, article output, daily JSON, Event decisions, and publication are unchanged.
+
+## Current implementation boundary
+
+`article_applicability_private` accepts an explicit cohort of one to three retained article IDs only when `SV_ARTICLE_APPLICABILITY_REVIEW_ENABLED=1`. It runs on the existing single `llm_local` lane, records a versioned private result and model usage, and never writes to article classifications, entity tables, Events, or public output. The schema requires exact retained passage IDs for article kind, jurisdiction, and organization-role assertions. It does not yet establish semantic accuracy: passage-ID validity is not proof that the cited passage supports the claim. The job is not automatically admitted for new articles, has no admin submission control or public consumer, and must not be mistaken for a production classifier. The local-LLM queue had 162 queued jobs and one running when this slice was checked; no live canary was started. The offline suite passed (1,297 passed, two skipped).
+
+## Principle
+
+The source's home country is provenance, not article applicability. Store an article's affected jurisdictions, legal jurisdiction, and geographic location of an incident as separate, evidence-backed fields. Use `unknown` when the reporting does not establish a scope; never infer scope solely from a publisher's address or top-level domain. A global technical advisory and a country-specific enforcement decision require different classifications.
+
+## Data contract
+
+- Add a versioned article-classification sidecar keyed by article ID, source-content fingerprint, extractor profile, and schema version. It must not replace current summaries, topical tags, product tables, or Event evidence.
+- Classify `incident_report`, `threat_advisory`, `vulnerability_advisory`, `regulatory_change`, `regulatory_enforcement`, `analysis`, and `other`, allowing multiple types when supported. Record publisher provenance separately.
+- Record jurisdiction assertions with role (`affected`, `legal_scope`, `incident_location`, or `reporting_authority`), ISO country/region code, evidence span, confidence, and explicit unknown/ambiguous status. Country of the source is only a weak retrieval hint.
+- Record organization mentions with roles such as `victim`, `affected_customer`, `product_vendor`, `regulator`, `threat_actor`, and `publisher`. Link vendors/products through the existing canonical tables, not topical tags. A victim is not automatically a vendor.
+- Preserve source text and exact supporting passages. No unsupported classification, organization link, or jurisdiction may be promoted to an Event or public claim.
+
+## Staged implementation
+
+1. **Baseline and evaluation set (next).** Sample retained domestic and international articles, including non-incidents, cross-border incidents, vendor advisories, regulatory fines, and stories with no clear location. Run candidate prompts privately against this fixed sample and compare their output with source text and the existing records. Label role and applicability errors as well as omissions. These articles are test fixtures only: do not replace their summaries, links, classifications, or public output. Do not infer a quality gain from a model upgrade alone; existing checked or linked articles are not automatically reprocessed.
+2. **Private Qwen sidecar (partial).** The bounded, versioned, operator-submitted comparison job and structural validator exist but are disabled and not deployed. Next, validate actual Qwen 3.5 output on the labeled set without disturbing the single local LLM lane; add admission for new articles only after queue delay and accuracy pass. Do not feed the source-country hint as an answer. No public or Event consumer in this stage.
+3. **Entity quality.** Correct product/vendor prompts and validation using the evaluation set, then apply the improved version only to newly acquired articles after a shadow canary. Do not overload vendor records with victims. Compare before/after precision and recall for victim, vendor, product, actor, and applicability. Existing article/product associations remain intact; no historical backfill is planned.
+4. **Selective OpenAI review.** Use the existing OpenAI runner for ambiguous scope, conflicting entity roles, high-impact Event candidates, and final Event composition/audit, not every article. Pin model/profile/schema; send only the bounded source passages needed for the decision. Use structured output and preserve usage receipts. Add an application-side monthly hard cap below the available allowance, an admission reserve for in-flight calls, per-job token caps, and a stop-on-budget-exhaustion state. Validate actual account billing/credit treatment before rollout. Asynchronous Batch may suit offline evaluation or future explicitly approved reprocessing, not time-sensitive Event publication.
+5. **International source pilot.** Preview UK NCSC news/threat reports and Germany CERT-Bund WID first; both supplied valid RSS from the fetch environment. Measure duplicate rate, extraction success, source freshness, article volume, and local-LLM queue delay. Add ACSC and regulator listings only after endpoint, rights, and parser validation. Route regulatory material to its own content class; a fine or rule change is not a cyber incident by itself.
+6. **Consumer rollout.** First expose private classification diagnostics in admin. Then publish a small versioned classification sidecar keyed by the existing daily JSON article IDs; keep `/feed/days/YYYY-MM-DD.json` byte-compatible for downstream consumers. The compact homepage can keep News and CVEs and add Regulatory once classification coverage is reliable. Regulatory contains only positively classified articles; unknowns stay in News. Add a region filter within News and Regulatory, not one tab per country; multi-region articles can appear under each supported applicability, and source location alone never qualifies. Only after labeled acceptance tests should Event correlation use verified victim/incident roles. Any later daily-JSON field addition requires an explicit versioned contract and downstream regression tests.
+
+## Release gates
+
+- Evaluation includes false positives, missed entities, cross-border scope, multilingual articles, and explicit `unknown` cases. Measure by field and source; do not use one aggregate score to hide victim-role errors.
+- No increase in unsupported Event publication, duplicate Events, or incorrectly classified regulatory actions. Existing event corroboration and source-evidence requirements remain in force.
+- Normal articles continue through acquisition, summary, daily JSON, build, and publication during the private pilot. No new source is globally enabled until a bounded canary passes and queue capacity is observed.
+- OpenAI use is opt-in by decision type, deduplicated by input/version, logged with token and cost estimates, and stopped before the monthly application cap. The nominal monthly API allowance is a ceiling, not a target.
+- Historical articles remain unchanged. Evaluation reruns are private, immutable comparison artifacts, not a replay of the normal article pipeline.

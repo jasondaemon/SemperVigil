@@ -253,6 +253,7 @@ _DASHBOARD_LLM_JOB_TYPES = [
     "event_report_llm",
     "event_review_private",
     "article_review_private",
+    "article_applicability_private",
     "event_ledger_compose",
     "event_fact_curate",
     "event_composition_audit",
