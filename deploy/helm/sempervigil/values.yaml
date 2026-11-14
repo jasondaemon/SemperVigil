@@ -222,9 +222,11 @@ workerFetchPublic:
 workerLlm:
   # Optional independent release; empty values inherit the shared image.
   image: {}
+  imagePullSecrets: []
   enabled: true
   replicaCount: 1
   articleApplicabilityReviewEnabled: false
+  terminationGracePeriodSeconds: 1800
   resources: {}
 
 workerOpenai:

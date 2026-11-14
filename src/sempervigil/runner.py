@@ -3,9 +3,12 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import signal
 import subprocess
 import sys
+import threading
 import time
+from collections.abc import Callable
 from .storage import claim_next_job, complete_job, fail_job, heartbeat_job, init_db, is_job_canceled
 from .utils import configure_logging, log_event
 
@@ -123,7 +126,13 @@ def _build_command(runner_id: str) -> list[str]:
     ]
 
 
-def run_once(runner_id: str, runner_type: str) -> int:
+def run_once(
+    runner_id: str,
+    runner_type: str,
+    shutdown_requested: Callable[[], bool] | None = None,
+) -> int:
+    if shutdown_requested is not None and shutdown_requested():
+        return _RUNNER_IDLE
     logger = _setup_logging()
     runner_cfg = _RUNNER_TYPES[runner_type]
     conn = init_db()
@@ -199,13 +208,21 @@ def run_once(runner_id: str, runner_type: str) -> int:
     return 1
 
 
-def run_loop(runner_id: str, runner_type: str, sleep_seconds: int) -> int:
+def run_loop(
+    runner_id: str,
+    runner_type: str,
+    sleep_seconds: int,
+    shutdown_event: threading.Event | None = None,
+) -> int:
     logger = _setup_logging()
     log_event(logger, logging.INFO, "runner_loop_start", runner_id=runner_id, runner_type=runner_type)
-    while True:
-        result = run_once(runner_id, runner_type)
+    shutdown_event = shutdown_event or threading.Event()
+    while not shutdown_event.is_set():
+        result = run_once(runner_id, runner_type, shutdown_event.is_set)
         if result == _RUNNER_IDLE:
-            time.sleep(sleep_seconds)
+            shutdown_event.wait(sleep_seconds)
+    log_event(logger, logging.INFO, "runner_loop_stopped", runner_id=runner_id, runner_type=runner_type)
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -228,7 +245,10 @@ def main() -> int:
     if args.once:
         result = run_once(args.runner_id, args.runner)
         return 0 if result == _RUNNER_IDLE else result
-    return run_loop(args.runner_id, args.runner, args.sleep)
+    shutdown_event = threading.Event()
+    if args.runner == "llm_local":
+        signal.signal(signal.SIGTERM, lambda _signum, _frame: shutdown_event.set())
+    return run_loop(args.runner_id, args.runner, args.sleep, shutdown_event)
 
 
 if __name__ == "__main__":

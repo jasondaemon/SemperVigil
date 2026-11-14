@@ -117,6 +117,10 @@ def test_private_applicability_flag_is_worker_only(enabled):
                    if doc and doc.get("kind") == "Deployment"}
     worker = deployments["sempervigil-worker-llm"]
     assert worker["spec"]["strategy"]["type"] == "Recreate"
+    assert worker["spec"]["template"]["spec"]["terminationGracePeriodSeconds"] == 1800
+    assert "exec env PYTHONPATH=/app/src python -m sempervigil.runner" in (
+        worker["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    )
     for name, deployment in deployments.items():
         env = deployment["spec"]["template"]["spec"]["containers"][0].get("env", [])
         flags = [item for item in env
@@ -126,3 +130,27 @@ def test_private_applicability_flag_is_worker_only(enabled):
                               "value": "1" if enabled else "0"}]
         else:
             assert not flags
+
+
+@pytest.mark.skipif(not shutil.which("helm"), reason="Helm is not installed")
+def test_registry_pull_secret_is_worker_scoped():
+    chart = Path(__file__).resolve().parents[2] / "deploy/helm/sempervigil"
+    raw = subprocess.check_output([
+        "helm", "template", "test", str(chart),
+        "--set", "workerLlm.image.repository=git.example.test/owner/ingest",
+        "--set", "workerLlm.image.tag=sha-abc123",
+        "--set", "workerLlm.image.digest=sha256:abc123",
+        "--set", "workerLlm.image.pullPolicy=IfNotPresent",
+        "--set", "workerLlm.imagePullSecrets[0].name=registry-readonly",
+    ], text=True)
+    deployments = {doc["metadata"]["name"]: doc for doc in yaml.safe_load_all(raw)
+                   if doc and doc.get("kind") == "Deployment"}
+    for name, deployment in deployments.items():
+        spec = deployment["spec"]["template"]["spec"]
+        if name == "sempervigil-worker-llm":
+            assert spec["imagePullSecrets"] == [{"name": "registry-readonly"}]
+            for container in spec["containers"] + spec["initContainers"]:
+                assert container["image"] == "git.example.test/owner/ingest@sha256:abc123"
+                assert container["imagePullPolicy"] == "IfNotPresent"
+        else:
+            assert "imagePullSecrets" not in spec

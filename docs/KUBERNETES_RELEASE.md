@@ -1,5 +1,10 @@
 # Kubernetes source-only release
 
+The node-import procedure below remains the current production path. A worker-first
+private-registry replacement is prepared but not deployed; see
+`REGISTRY_RELEASE.md`. Do not switch release methods until its pull credential,
+digest, scoped diff, and rollback gates are verified.
+
 SemperVigil production is Kubernetes (K3s/containerd), not Docker Compose. The
 current source-only release path uses an approved cluster packaging node because
 it retains the verified dependency layers. Docker on that node only constructs

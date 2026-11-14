@@ -3,6 +3,10 @@
 {{- $imageRepository := default .Values.image.repository $workerImage.repository }}
 {{- $imageTag := default .Values.image.tag $workerImage.tag }}
 {{- $imagePullPolicy := default .Values.image.pullPolicy $workerImage.pullPolicy }}
+{{- $imageRef := printf "%s:%s" $imageRepository $imageTag }}
+{{- if $workerImage.digest }}
+{{- $imageRef = printf "%s@%s" $imageRepository $workerImage.digest }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -25,9 +29,14 @@ spec:
         app.kubernetes.io/component: worker-llm
     spec:
       serviceAccountName: {{ include "sempervigil.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.workerLlm.terminationGracePeriodSeconds }}
+      {{- with .Values.workerLlm.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       initContainers:
         - name: sempervigil-fix-perms
-          image: "{{ $imageRepository }}:{{ $imageTag }}"
+          image: "{{ $imageRef }}"
           imagePullPolicy: {{ $imagePullPolicy }}
           securityContext:
             runAsUser: 0
@@ -54,7 +63,7 @@ spec:
               mountPath: /site
       containers:
         - name: {{ include "sempervigil.componentFullname" (list . "worker-llm") }}
-          image: "{{ $imageRepository }}:{{ $imageTag }}"
+          image: "{{ $imageRef }}"
           imagePullPolicy: {{ $imagePullPolicy }}
           securityContext:
             runAsUser: {{ .Values.env.SV_UID | int }}
@@ -65,7 +74,7 @@ spec:
               set -e;
               umask {{ .Values.env.SV_UMASK | quote }};
               sh /app/tools/ensure-dirs.sh;
-              PYTHONPATH=/app/src python -m sempervigil.runner --runner llm_local --sleep 5
+              exec env PYTHONPATH=/app/src python -m sempervigil.runner --runner llm_local --sleep 5
           envFrom:
             - configMapRef:
                 name: {{ include "sempervigil.fullname" . }}-env
