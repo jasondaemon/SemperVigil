@@ -106,7 +106,7 @@ def test_composition_bundle_renders_reproducible_page_and_index():
     assert entry["counts"]["articles"] == 1
 
 
-def test_v11_renders_assessment_confidence_and_cited_revision_delta():
+def test_v11_renders_assessment_type_and_cited_revision_delta_without_process_confidence():
     event_id, bundle = _bundle()
     bundle["composition"]["workflow"] = "event-ledger-composition-v11"
     for section in ("overview", "attack_vector", "impact"):
@@ -124,7 +124,8 @@ def test_v11_renders_assessment_confidence_and_cited_revision_delta():
     bundle["qualification"]["composition_id"] = bundle["composition_id"]
     revision = _version({"workflow": PUBLIC_WORKFLOW, "bundle": bundle})
     _, page = render(bundle, event_id=event_id, expected_revision=revision)
-    assert "Analyst assessment · Moderate confidence" in page
+    assert "Analyst assessment" in page
+    assert "Moderate confidence" not in page
     assert "What changed" in page and "Added evidence" in page
     assert "WaterPlum infected devices." in page
     assert "https://example.test/report" in page

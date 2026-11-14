@@ -37,6 +37,8 @@ def database(monkeypatch):
        '2026-10-01','2026-10-01', '{}');
       INSERT INTO event_articles VALUES('evt_test',1);""")
     admin.execute(reports.SCHEMA);admin.execute(PUBLIC_SCHEMA);admin.execute(APPROVAL_SCHEMA)
+    from sempervigil.event_report_v2_integrity import SCHEMA as ADMISSION_SCHEMA
+    admin.execute(ADMISSION_SCHEMA)
     admin.commit()
     monkeypatch.setenv("SV_EVENT_SOURCE_REPORT_ENABLED","1")
     monkeypatch.setenv("SV_EVENT_HUMAN_APPROVAL_ENABLED","1")

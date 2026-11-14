@@ -44,9 +44,16 @@ def publication_history(conn, event_ids: list[str], pointers: dict[str, str],
 
 def check_current(conn, bundle: dict) -> None:
     """Short activation-time source lock window; the event row is already locked."""
-    if bundle.get("workflow") == "event-source-report-public-v1":
-        from .event_source_report_publication import current_material, bundle_for
-        current = current_material(conn,bundle["run_id"],lock=True,published=True)
+    if bundle.get("workflow") in {"event-source-report-public-v1","event-source-report-public-v2"}:
+        if bundle["workflow"]=="event-source-report-public-v2":
+            from .event_source_report_publication_v2 import current_material, bundle_for
+        else:
+            from .event_source_report_publication import current_material, bundle_for
+        if bundle['workflow']=='event-source-report-public-v2':
+            from .event_source_report_publication_v2 import published_material
+            current = published_material(conn,bundle,lock=True)
+        else:
+            current = current_material(conn,bundle["run_id"],lock=True,published=True)
         if bundle_for(current,bundle["run_id"],bundle["qualification"],bundle["predecessor"])!=bundle:
             raise ValueError("stale_revision_snapshot")
         return
@@ -145,8 +152,8 @@ def prepare_site(conn, config, logger) -> dict:
     authorization = load_export(database, list(pointers))
     if set(authorization["managed_event_ids"]) != set(pointers):
         raise ValueError("event_publication_inventory_changed")
-    # A stale managed report must not block unrelated daily news publication.
-    # Remove only that report until a fresh qualified revision is available.
+    # Ordinary article refreshes retain qualified immutable evidence. Explicit
+    # withdrawal or integrity failure removes only the affected report.
     authorization["withdrawn"].update(authorization["withheld"])
     authorization["withheld"] = {}
     events, _ = _collect_published_events(conn)
@@ -156,7 +163,7 @@ def prepare_site(conn, config, logger) -> dict:
         event = get_event(conn, event_id)
         if event is None:
             raise ValueError("managed_event_record_unavailable")
-        slug = str(event.get("site_slug") or event_id)
+        slug = event_id
         if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,200}", slug) or slug.lower() == "_index":
             raise ValueError("invalid_event_release_slug")
         slugs[event_id] = slug

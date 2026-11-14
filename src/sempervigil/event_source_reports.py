@@ -303,6 +303,10 @@ def _reserve_cohort(conn, cohort, reservation):
 
 def submit(conn, event_id, *, trigger="evidence_change", budget_tokens=24000,
            debounce_seconds=300, allow_correction=False, analyst_question=None):
+    from .attack_catalog_runtime import selected
+    if selected(event_id):
+        from .event_source_reports_v2 import submit as successor_submit
+        return successor_submit(conn,event_id,trigger=trigger,budget_tokens=budget_tokens,debounce_seconds=debounce_seconds,allow_correction=allow_correction,analyst_question=analyst_question)
     if not enabled():
         raise PermissionError("event_source_report_disabled")
     check_scope(event_id)
@@ -731,6 +735,9 @@ def run(conn, job, *, complete=None):
     run_id = job.payload["run_id"]
     conn.execute("SELECT run_id FROM event_source_report_runs WHERE run_id=%s FOR UPDATE",(run_id,))
     record = _load(conn,run_id)
+    if record["snapshot"].get("report_contract")=="event-source-report-v2":
+        from .event_source_reports_v2 import run as successor_run
+        return successor_run(conn,job,complete=complete)
     check_scope(record["event_id"])
     if record["status"] != "queued":
         if record["status"] == "running":
@@ -796,6 +803,10 @@ def _legacy_tick(conn):
     for event_id in enrolled:
         if not isinstance(event_id,str):
             raise ValueError("event_source_report_enrollment_invalid")
+        from .attack_catalog_runtime import selected
+        if selected(event_id):
+            # Scoped v2 events belong only to the independently bounded v2 tick.
+            continue
         # Suppress concurrent evidence/config requests even when articles arrive
         # during debounce. A stale queued snapshot holds before spending any tokens.
         pending = conn.execute("SELECT 1 FROM event_source_report_runs WHERE event_id=%s AND status IN ('queued','running') LIMIT 1",
@@ -806,7 +817,7 @@ def _legacy_tick(conn):
     return []
 
 
-def tick(conn):
+def _v1_tick(conn):
     """Isolate report policy failures from core ingestion/build admission."""
     from .event_source_report_pilot import policy,active,safe_reason
     from .storage import set_setting
@@ -849,3 +860,10 @@ def tick(conn):
         except Exception:
             conn.rollback()
         return [result]
+
+
+def tick(conn):
+    results = _v1_tick(conn)
+    # V2 scheduler is independently default-off; no enrollment or policy mutation.
+    from .event_source_reports_v2 import tick as v2_tick
+    return results + v2_tick(conn)

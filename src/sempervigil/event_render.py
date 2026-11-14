@@ -37,6 +37,9 @@ def literal(value: str) -> str:
 
 
 def resolve(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict, dict]:
+    if bundle.get("workflow") == "event-source-report-public-v2":
+        from .event_source_report_render_v2 import resolve as source_resolve
+        return source_resolve(bundle,event_id=event_id,expected_revision=expected_revision)
     if bundle.get("workflow") == "event-source-report-public-v1":
         from .event_source_report_render import resolve as source_resolve
         return source_resolve(bundle,event_id=event_id,expected_revision=expected_revision)
@@ -69,10 +72,15 @@ def resolve(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dic
     entity = next(f["quote"] for f in bundle["scope"]["focus"] if f["role"] == "entity")
     metadata = {"title": entity + " | Incident coverage", "event_revision": expected_revision,
                 "event_report_format": projection["workflow"]}
+    from .event_report_presentation import quotation_report_metadata
+    metadata.update(quotation_report_metadata(projection))
     return metadata, projection
 
 
 def index_entry(bundle: dict, *, event_id: str, expected_revision: str) -> dict:
+    if bundle.get("workflow") == "event-source-report-public-v2":
+        from .event_source_report_render_v2 import index_entry as source_index
+        return source_index(bundle,event_id=event_id,expected_revision=expected_revision)
     if bundle.get("workflow") == "event-source-report-public-v1":
         from .event_source_report_render import index_entry as source_index
         return source_index(bundle,event_id=event_id,expected_revision=expected_revision)
@@ -103,6 +111,9 @@ def index_entry(bundle: dict, *, event_id: str, expected_revision: str) -> dict:
 
 
 def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict, str]:
+    if bundle.get("workflow") == "event-source-report-public-v2":
+        from .event_source_report_render_v2 import render as source_render
+        return source_render(bundle,event_id=event_id,expected_revision=expected_revision)
     if bundle.get("workflow") == "event-source-report-public-v1":
         from .event_source_report_render import render as source_render
         return source_render(bundle,event_id=event_id,expected_revision=expected_revision)
@@ -132,8 +143,6 @@ def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict
         lines = [f'<section id="sv-event-coverage" class="event-report" '
                  f'data-event-id="{escape(event_id, quote=True)}" '
                  f'data-event-revision="{expected_revision}">',
-                 '<p class="event-evidence-note">This deconstruction is maintained from attributed reporting. '
-                 'Claims link to the source material used to support them.</p>',
                  '<div class="event-report-sections">']
         # Stored composition JSON is canonicalized with sorted keys. Presentation
         # order is editorial, not an implementation detail of JSON serialization.
@@ -160,9 +169,8 @@ def render(bundle: dict, *, event_id: str, expected_revision: str) -> tuple[dict
                 badge = (f'<span class="event-claim-state event-claim-state--{state.lower()}">{state}</span>'
                          if state and section != "overview" else "")
                 if item.get("claim_type") == "analyst_assessment":
-                    confidence = escape(str(item.get("confidence") or "unknown").title())
                     badge += (f'<span class="event-claim-state event-claim-state--assessment">'
-                              f'Analyst assessment · {confidence} confidence</span>')
+                              f'Analyst assessment</span>')
                 if section == "timeline":
                     lines.append(f'<li><time>{escape(item["date_text"])}</time><div>{badge}<p>{text} {citations}</p></div></li>')
                 elif section == "overview":

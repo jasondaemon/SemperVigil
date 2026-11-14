@@ -1,0 +1,123 @@
+# Scoped analyst report successor
+
+## Current operational status — October 6, 2026
+
+This section supersedes operational-status statements in the chronological history below; those statements are retained as history. Deployed runtime remains **6065f8cd9787737d0619bab21022c8bfba9d12c9**, Hugo **6d1f91ff17955b21a2ba97dd506fa119caab5e2b**, the report's first guarded activation **20261006042206** (ordinary scheduled builds may advance the site release ID without changing the report revision), image/platform reconciliation **f0a9954590a0e89ef152b3642b6cdb847c7cedf3**. Hugo's exact deployed commit is preserved on remote branch `codex/event-presentation-release-20261006`. Independently reviewed Zammad revision **cfb2dc5dc5c23d6376edea7d0912e5128e4b06f89dd3226c5228f26aee51956b** is live: 12 items, 39 citations, four full sources, no ATT&CK mappings. Report content hash **6c9d4a244c4a57eb0d3928fb097daa31ba7a6a543075aa3f60ff1603d1e465fc**, independent receipt **a9bd527091888d4fed5c4f2ce82716861115359917241142af3abf9294b9145d**. Reporting is frozen through October 2; current patch safety and underlying logs are not independently verified. The original automated review applies only to original content. Actual independent review rejected unsupported P113 and ambiguous P115, and approved the exact 12-item derivative after their removal and P110's prose-preserving split.
+
+Presentation/full-prose upgrade is live. Catalog/retrieval/mapping capability is deployed dormant: v2 scope=0, empty event list, generation=0. No positive mapping has passed semantic validation on real evidence. Microsoft/Astrana's separate legacy pilot remains unchanged through October 7 22:08:44 UTC, with zero successor-cohort calls/runs at the final October 6 audit.
+
+**New autonomous lifecycle engineering in this branch is not deployed or enabled.** It requires independent code review and later explicitly budgeted real evaluation. See [bounded policy and readiness criteria](event-report-v2-autonomy.md). Synthetic fixture successes establish persistence and guard behavior, not model semantic accuracy.
+
+## Historical implementation and review checkpoints
+
+The active Microsoft/Astrana successor pilot continues to use the original v1 contract and configuration identity. The existing contract and pilot module bytes are unchanged. New dispatch branches apply only to explicit v2 event scope and v2-tagged runs/bundles. V2 is disabled by default; enabling requires `SV_EVENT_REPORT_V2_ENABLED=1` and an explicit `SV_EVENT_REPORT_V2_EVENT_IDS` list. Overlap with an active pilot's events is rejected. Generation additionally requires `SV_EVENT_REPORT_V2_GENERATION_ENABLED=1`; deployment alone must not incur model spending or start a backfill.
+
+V2 includes the independently tested source-membership baseline reconstruction, developed nonrepetitive narrative contract, citation initial function-word capitalization normalization, pinned official ATT&CK catalogs and mapping-aware writer/reviewer/schema/bundle/rendering. Catalogs for Enterprise/Mobile/ICS v19.2 are packaged as deterministic gzip copies with exact raw digests, immutable upstream commit, copyright/license and usage guidance. Historical release locks/files remain available to readers. Runtime access is offline; no live model-memory or automatic taxonomy network lookup is authoritative.
+
+Retrieval searches every complete article in deterministic overlapping windows, ranks canonical definitions with name/definition overlap and word-form normalization, and includes only whole definitions within an exact 3,200-token reference budget. Diagnostic source IDs indicate where lexical retrieval matched, never semantic support or authorization to map. Same-name voice-phishing techniques have different objectives; a web session alone is not a remote-service session. Generic/extraneous candidates can still appear. IDs/names/parents/tactics/status are validated against official data; independent complete-source review owns semantic fit and abstention. This bounded lexical retriever is not an accuracy benchmark or guarantee of coverage.
+
+Mappings remain optional, at most three on attack_path items, with technique_id, origin, behavior_status, rationale, limitations and source_ids. Each mapping's source IDs must be cited on the owning item. No extra mapping-model call is introduced. Invalid optional mapping metadata can be removed with an immutable exact-reason artifact, preserving all prose/citations and complete evidence. Invalid report schema or citation provenance still holds. If removing metadata would leave an explicit taxonomy assertion in prose, projection holds instead. Valid mappings remain subject to whole-source review; taxonomy existence/source-ID ownership does not establish truth. Attempted/inferred behavior must preserve qualification. The normal two-phase path enforces summed reservation limits and no correction loop.
+
+Public bundles have an explicit v2 workflow and canonical catalog/mapping metadata. Names/URLs/parent/tactic membership are resolved by code, escaped in rendering and hashed into immutable revision identity. Public rendering never presents possible taxonomy tactics as an observed sequence. Removed mapping details remain in private immutable audit artifacts; public lineage exposes only removed technique ID and reason, not its unsupported rationale. Reader/export/approval/activation dispatch is versioned, with old bytes and old publication identities preserved.
+
+An operator-only retained-continuation importer makes no hosted call and creates no generation job. It validates immutable parent/child manifest identities, linked raw writer/reviewer journals, request/code/projection hashes, exact model/cap/reservation/usage accounting, complete source/context identity, ready review/schema, source freshness, original immutable evidence baseline and unchanged predecessor. It requires an affirmative independent manual source-review record. Imported calls represent already incurred spending, not new requests; they are inserted completed and remain protected by existing artifact triggers. The derivative preserves original source_version and explicit canary generator lineage while separately recording the current publication freshness and runtime identity. It does not pretend the retained writer used a new production prompt. Normal separated approval and promotion roles, qualification revocation, predecessor checks, guarded export and activation still own publication.
+
+The real bounded canary contains no retained ATT&CK mapping. Its only T1068 annotation had a source binding defect; no real mapping passed review. Exactly two calls used 24,602 actual tokens/30,988 reservation and that allowance is exhausted. The independent reviewer accepted the unmodified prose after the optional annotation was removed, but manual review identifies P110 as a mixed finding/analyst-guidance item. It must not be published merely to demonstrate progress. Existing Zammad publication remains unchanged pending a properly typed, reviewed candidate or an explicit documented resolution of that manual gate; do not edit the archived report or spend another call without separately accounted authority.
+
+Acceptance checks include default-off/no catalog loading, required scope/active-pilot overlap rejection, late-body retrieval/full definitions/exact budgets, all-domain/historical hashes, valid and invalid synthetic mappings, semantic-review holds, invalid mapping projection without editing claims, explicit-prose taxonomy holds, immutable projection/snapshot/input reconstruction, actual source freshness/suppression, separated publication roles, old workflow regression and retained two-call continuation accounting. Synthetic provider responses test mechanics, not real-world model accuracy. A disposable replay can test the real retained lineage through normal roles with a simulated manual approval; it does not authorize live publication.
+
+Helm exposes the four `SV_EVENT_REPORT_V2_*` controls with explicit dormant defaults. Runtime scope/generation changes require draining affected jobs and rolling the required admission/generation pods after the ConfigMap change; ConfigMap edits alone do not refresh a running process environment. Publication readers resolve the stored catalog identity independently of current feature activation.
+
+## Verified dormant rollout, October 6
+
+Runtime overlay commit `1a23304dfeb15d5c5762015075a289168c43b79a` is deployed to admin, fetch, hosted-model worker, builder and orchestrator. Ingest image `ed367b2-v21a23304`, builder `1a23304-hugo6d1f91ff`, existing Hugo `6d1f91ff`; public fetch/LLM/web roles are unchanged. Later source commit `693e82e` adds dormant Helm controls/documentation only. Platform main reconciliation `e506e2ba0efafc5c5ea6ab02ac3d0ef3d40b39ab` is pushed. All five deployment pod specs differ from preflight only in explicitly mapped images; all desired replicas are ready. ConfigMap data exactly matches the reconciled hash, including four explicit dormant controls. Original pilot generation identity is `72b8241f2f6f992f493ea80029795985ea6c438fb8bfa823301fe3ec5d68848b`.
+
+The first candidate rollout rolled back after a harness type mismatch (`scope()` returns an empty set; assertion compared it to an empty list). Exact candidate image reproduced that always-false assertion offline. The harness now checks emptiness and separately enforces generation-disabled; failure diagnostics are retained. Image compilation, unchanged v1 contract/pilot bytes and three catalog hashes were reverified before retry. The corrected rollout passed exact generation, contract, pilot, all-public-pointer/bundle and all-report-call continuity checks independently in hosted-model, fetch and builder roles before orchestrator admission resumed. No model call, report import or publication mutation occurred during deployment.
+
+Validation: 1,386 offline tests passed, two skipped, five existing warnings; 83 disposable PostgreSQL tests passed. The real retained Zammad lineage passed disposable import and normal separated-role publication mechanics only with simulated independent manual approval. Real manual approval remains false because P110 mixes sourced findings and operator guidance under a single finding type. Ready automated review does not remove that hold. Zero real mappings passed and no extra canary allowance remains.
+
+## Offline editorial split proposal
+
+`event_report_editorial.py` prepares a general immutable split proposal. It requires byte-identical concatenated prose, unchanged untouched items, inherited original IDs/new collision-free IDs, only exact original citations with complete citation coverage, strict typed schema, full-source provenance reconstruction and no mappings on split items. Raw report/review/evidence inputs remain unchanged; original automated review is scoped explicitly to original content. Each proposal carries original/new report, original review and complete-evidence hashes plus operations and reconstructed spans. No DB/model/job/publication action or runtime dispatch is added. It is an offline workbench, not publication authority.
+
+An independent editorial receipt must bind the derivative and original hashes, name a reviewer distinct from the editor, review the complete report/sources, and explicitly affirm supported findings, inference premises/limits, correct types, no added facts and provenance. Missing/false checks, self-review, old-content approval and original model-review substitution fail validation. Caller authentication/separation must come from existing approval authorities; arbitrary receipt strings grant no role.
+
+The actual retained P110 can be split word for word: first two sentences remain a mitigation finding with the original three citations/date; the final caution becomes P115 analyst assessment with the original two Forkast premise citations, moderate confidence, an undated label and a bounded rationale. Its substance is a supported inference about distinct flaws, not independently verified deployment safety. Proposal hash `10343c65da4b15e4c01a8c7abc5441425ac08c910a6a4ace417668db99ea96b4`; original reviewed report hash `9241d62e7b713f34b1321babed784d08baf9679a0a16736be9dab5050cd2782c`. Independent review remains pending. Current production `current_material` deliberately rejects changed text against the original automated review. Before live publication, a separately tested editorial adapter must verify the original immutable canary lineage/review and independent authenticated derivative approval, bind both scopes into qualification and revision lineage, then use existing freshness/predecessor/revocation/separated promotion/export/activation gates. Do not relabel the old ready review as approval of edited content. No production image change or new paid call is part of this proposal.
+
+## General editorial publication adapter (implemented offline; live held)
+
+The versioned v2 adapter now accepts an explicit editorial envelope only under the existing human approval enablement and separated admission/promotion roles; automatic pilot approval of an edited report is rejected. The caller must authenticate a genuinely independent authorized reviewer before invoking admission. Receipt strings, different names and database credentials alone do not establish that a review occurred. No new endpoint, credential, role, grant or permission is introduced.
+
+Original report/review/spans and the two raw calls stay unchanged in their existing immutable/audited records. An editorial import may preserve an original manual hold only when its typed derivative has an independently approved envelope; the imported run then requires that exact proposal hash, so an unedited/default submission cannot publish the held original. A private immutable approval stores the proposal and separate receipt. Public qualification/revision lineage includes original/new report hashes, original model-review hash, independent review hash, proposal/evidence hashes and an explicit original-only automated-review scope. Full evidence and private review text are not inserted into public lineage.
+
+Promotion revalidates both original canary/model provenance and the independent derivative receipt. Export and activation recover the exact immutable private approval using qualification identity, verify approval/content hashes and qualification revocation, reconstruct complete-source spans and the typed derivative, and compare the resulting bundle byte-for-byte. Existing source freshness, predecessor conflict, role separation and activation guards remain in force. Public confidence and rationale labels remain hidden. No accepted ATT&CK mapping exists in this retained output.
+
+The actual 14-item/four-full-source retained record passed import, normal restricted-role promotion, guarded export, activation-time currentness and renderer checks in disposable PostgreSQL, using a clearly labeled SIMULATED receipt solely to test mechanics. The original held base cannot publish without its reviewed derivative; old model review remains original-only; no new model call occurs. This test is not independent live editorial approval.
+
+Live status: existing dormant runtime1a23304 remains unchanged; adapter code is not deployed and Zammad is not imported/published. Only the author/splitter is available in the current execution tree. Existing authenticated admin review uses a generic authenticated-admin identity and quote selection; no distinct actor has supplied a completed derivative/full-source review. The configured automated reviewer would require another hosted call, which is prohibited by the exhausted allowance. No identity/approval was fabricated or external reviewer contacted. A private complete-source review packet is prepared for a genuine authorized reviewer. P105 identifies the first/second flaws in CVE order, but P110 lists the version conditions in the reverse mention order; the unchanged P115 pronouns require explicit clarity review before approval. Parent agreement with the split is not that approval.
+
+Adapter validation: 1,399 offline tests passed/two skipped/five existing warnings; 89 disposable PostgreSQL tests passed. Tests cover self-review and normalized same identity, old-content approval, missing/false checks, automatic approval rejection, source freshness, changed predecessor, immutable original calls/report/review, existing admission/promotion role restrictions, bound private approval recovery, qualification revocation, export/activation reconstruction and hidden public confidence. Complete actual retained-source replay used zero new calls and a clearly simulated fixture reviewer. Read-only production check confirms Zammad revision `3254cef6a7796691d6b3520c8c8df0d4f5dbf902f7c3dff21371aa7414b2a86f`, no retained import run, v2 scope0/generation0, and original successor pilot0runs/spend/alerts at03:22:25Z.
+
+Reviewer clarification: the independent editorial receipt schema has no human-only reviewer type. A genuine authorized independent review agent, distinct from the author/splitter, can supply content review with its actual stable agent/task identity and explicitly agent-attributed source review. This grants no persistent access or publication authority. The existing `SV_EVENT_HUMAN_APPROVAL_ENABLED` switch gates explicit operator admission; it does not establish that the content reviewer is human. Existing separated admission/promotion/activation roles remain responsible for authenticated recording and publication. No config, credential, permission or validation behavior changes are needed for an agent content reviewer. The caller must authenticate the actual independent actor and bind its completed whole-source review; a fabricated name, parent agreement, shared credentials or the original model ready result cannot substitute. A documentation-only clarification corrects the earlier imprecise human-reviewer docstring. A private Library packet now contains the complete report/evidence/hash bindings and unresolved antecedent issue for a separate reviewer; it remains unapproved.
+
+## Conservative optional assessment removal
+
+General `event-report-editorial-removal-v1` proposals support auditable removal of unmapped assessment/intelligence-gap items with explicit unsupported/ambiguous reason codes. Findings cannot be dropped through this policy. Operations replay the unchanged original report and any earlier exact split; removed full items/reasons stay private, with parent report/proposal hashes. All other items and evidence remain exact. Legacy split-only artifacts retain their original workflow/shape/hashes. New public lineage uses `independently-reviewed-editorial-derivative-v1`, parent hashes and removed IDs/reason codes, without unsupported deleted prose. Normal independent receipt and publication gates remain mandatory.
+
+The separately identified reviewer `/root/review_zammad_source_evidence` held the 14-item proposal: P115 ordinal-CVE references were ambiguous/reversed relative to P110, and P113 asserted unsupported rapid containment and a categorical control-limit generalization. The parent supplied that result; full held receipt is awaited. A new proposal removes only P113/P115. Remaining 12 items/39 citations/canonical spans are byte-identical to the held parent, and all four full source bodies are unchanged. New report hash `6c9d4a244c4a57eb0d3928fb097daa31ba7a6a543075aa3f60ff1603d1e465fc`; proposal hash `03830a4ee5a524de2087ad3ed58f1fc6bc3de1d9a70d337939edba20ca12b77b`; complete evidence hash unchanged `3247130120e37dbd7ad33cd1f9c2ff44c8fead15d19131fa9f9b1d44497993c8`. No independent approval of this new proposal is fabricated.
+
+A new private complete Library packet `libfile_9078fff0426081919a7a3523322aec9f` / `file_000000000a8c81f59f42695332b2b6b3` contains exact new/parent/original reports, sources, citation mapping, removal reasons and unapproved same-reviewer receipt template. No credentials/internal infrastructure. Offline suite1401passed/2skipped. Actual retained removal replay passed normal restricted-role import/promotion/export/activation/rendering in disposable PostgreSQL with an explicitly SIMULATED receipt, zero new model calls, zero mappings and hidden public confidence/rationale. Production remains unchanged and held for the same independent reviewer's final approval.
+
+### Retained final editor intake
+
+`event_report_final_editor_import.import_reviewed` is an operator-only intake for
+already completed, immutable whole-source final editing. It verifies both exact
+historical journals/manifests, full source text, final structured output and an
+independent content approval bound to the new narrative/evidence/raw response.
+It cannot call a model, transfer the older draft's approval, or publish directly.
+An unchanged-source report is recorded as a generator upgrade. Current qualified
+predecessor, sources and runtime identity must still match before separate
+approval, promotion, export and guarded activation. Historical usage is imported
+with its authentic response IDs; it is not new spending. Global generation and
+v2 autonomy remain disabled. Same-model source checking claims no model diversity.
+
+Retained publication checks provider/model configuration through the normal
+application connection in an explicitly read-only transaction when the separate
+admission/promotion role lacks those table privileges. Publication writes stay
+on the restricted connection; unavailable configuration access fails closed.
+Regression tests exercise both restricted roles, reject reader writes, preserve
+their existing model-table denial and hold publication when the reader is absent.
+
+### Complete runtime packaging and bounded narrative value receipts
+
+`scripts/build_runtime_overlay.py` copies every committed tracked package file,
+not a baseline-relative Git diff. Both ingest and builder images receive the same
+source manifest, including transitive presentation helpers. The exact images
+must match every manifest hash, import all publication/renderer modules and read
+real qualified CEVA/Zammad predecessors through temporary read-only probes.
+Original pilot/contract bytes and generator remain protected; no role grant is
+added. This fixes a presentation helper missing only from inherited ingest bases.
+
+A narrative cohort can use the observed capable Sol high final editor in a small
+explicit scope, without claiming broad reliability from one approved case.
+Empty/length/invalid output is terminal for that event; failed cost remains in the
+ledger, lifetime capacity stays consumed and the old public report is preserved.
+Use one event, one lifetime run, two calls maximum, one concurrent run and a finite
+expiry. Admission requires a qualified predecessor and meaningful evidence delta;
+unchanged-source generator upgrades and backfill are not autonomous triggers.
+Writer/editor hard deadlines are180/240seconds, with a600second episode window.
+Every serialized request gets an exact token reservation before HTTP. Evidence is
+never omitted to fit a budget; a later budget hold includes any writer cost.
+
+`event_report_value.record_cohort` writes durable per-run/cohort receipts into the
+existing settings store, backed by immutable native calls and publication records.
+Receipts include actual tokens, outstanding unknown reservations, lifetime budget,
+models/caps, measured transport/job duration, source delta, report size/citations,
+review readiness and separate promoted-versus-guarded-activation evidence. Only a
+successful guarded builder records activation; later ticks preserve that historic
+receipt. Draft size is not counted as accepted report value. Failed calls count.
+No verified pricing has been supplied, so rates and monetary estimates stay null,
+never zero. Retained imports/private R&D are excluded from the ongoing cohort.
+The authenticated read-only `narrative-status` endpoint exposes this separate
+cohort, expiry, last tick and per-update receipts. Metrics failures do not block
+publication or ingestion and are exposed in the tick/build log.
