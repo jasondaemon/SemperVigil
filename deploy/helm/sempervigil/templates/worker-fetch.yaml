@@ -11,6 +11,10 @@ metadata:
     app.kubernetes.io/component: worker-fetch
 spec:
   replicas: {{ .Values.workerFetch.replicaCount }}
+  {{- with .Values.workerFetch.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "sempervigil.selectorLabels" . | nindent 6 }}
@@ -26,6 +30,10 @@ spec:
       serviceAccountName: {{ include "sempervigil.serviceAccountName" . }}
       {{- with .Values.workerFetch.nodeSelector }}
       nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.workerFetch.affinity }}
+      affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       initContainers:
@@ -59,6 +67,13 @@ spec:
         - name: sempervigil-vpn
           image: {{ .Values.workerFetch.vpn.image | quote }}
           imagePullPolicy: IfNotPresent
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "wget -qO- -T 3 http://127.0.0.1:9999 >/dev/null"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           securityContext:
             capabilities:
               add: ["NET_ADMIN"]

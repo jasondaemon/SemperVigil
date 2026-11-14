@@ -27,6 +27,10 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.workerFetchPublic.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       initContainers:
         - name: sempervigil-fix-perms
           image: "{{ $imageRepository }}:{{ $imageTag }}"
