@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import date
 from typing import Any
 
 
@@ -10,6 +11,7 @@ DEFAULT_DISCOVERY = {
     "mode": "default",
     "allowlist_regex": None,
     "blocklist_regex": None,
+    "not_before": None,
 }
 
 DEFAULT_CONTENT = {
@@ -61,6 +63,7 @@ def normalize_source_overrides(
         ),
         "allowlist_regex": _normalize_optional_str(discovery_raw.get("allowlist_regex")),
         "blocklist_regex": _normalize_optional_str(discovery_raw.get("blocklist_regex")),
+        "not_before": _normalize_not_before(discovery_raw.get("not_before")),
     }
     content = {
         **DEFAULT_CONTENT,
@@ -88,6 +91,19 @@ def normalize_source_overrides(
         "http_headers": _normalize_dict(fetch_raw.get("http_headers")),
     }
     return {"discovery": discovery, "content": content, "fetch": fetch}
+
+
+def _normalize_not_before(value: Any) -> str | None:
+    if value is None or value == "":
+        return None
+    text = str(value).strip()
+    try:
+        parsed = date.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError("discovery.not_before must be a YYYY-MM-DD date") from exc
+    if parsed.isoformat() != text:
+        raise ValueError("discovery.not_before must be a YYYY-MM-DD date")
+    return text
 
 
 def get_http_fetch_settings(

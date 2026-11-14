@@ -5,6 +5,7 @@ import logging
 import time
 import re
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urljoin, urlparse
@@ -134,6 +135,7 @@ def evaluate_entry(
     seen_ids: set[str],
     fetched_at: str,
     ignore_dedupe: bool = False,
+    not_before: date | None = None,
 ) -> tuple[Decision, Article | None]:
     title = (entry.get("title") or "").strip()
     link = entry.get("link") or entry.get("id")
@@ -167,6 +169,23 @@ def evaluate_entry(
         tracking_params=list(url_norm_cfg.get("tracking_params", [])),
     )
     stable_id = stable_id_from_url(normalized_url)
+    date_cfg = policy.get("date", {})
+    published_at, published_at_source = extract_published_at(
+        entry,
+        fetched_at,
+        strategy=str(date_cfg.get("strategy", "published_then_updated")),
+        allow_dc_date=bool(date_cfg.get("allow_dc_date", True)),
+    )
+    if not_before and (
+        published_at_source == "guessed"
+        or date.fromisoformat(published_at[:10]) < not_before
+    ):
+        return Decision(
+            decision="SKIP", reasons=["before_source_start"],
+            normalized_url=normalized_url, stable_id=stable_id,
+            published_at=published_at, published_at_source=published_at_source,
+            title=title or normalized_url, original_url=link, tags=derived_tags,
+        ), None
 
     denied_matches = _keyword_match(combined_text, config.ingest.filters.deny_keywords)
     allowed_matches = (
@@ -199,13 +218,6 @@ def evaluate_entry(
             skip_reasons.append("duplicate")
 
     accepted = not skip_reasons
-    date_cfg = policy.get("date", {})
-    published_at, published_at_source = extract_published_at(
-        entry,
-        fetched_at,
-        strategy=str(date_cfg.get("strategy", "published_then_updated")),
-        allow_dc_date=bool(date_cfg.get("allow_dc_date", True)),
-    )
     decision = Decision(
         decision="ACCEPT" if accepted else "SKIP",
         reasons=reasons,
@@ -250,6 +262,7 @@ def process_source(
         source.overrides, logger=logger, source_id=source.id, source_name=source.name
     )
     discovery_cfg = overrides.get("discovery", {})
+    not_before = date.fromisoformat(discovery_cfg["not_before"]) if discovery_cfg.get("not_before") else None
     allow_re = compile_pattern(discovery_cfg.get("allowlist_regex"), logger, "discovery.allowlist_regex")
     block_re = compile_pattern(discovery_cfg.get("blocklist_regex"), logger, "discovery.blocklist_regex")
     if not tactics:
@@ -313,6 +326,7 @@ def process_source(
             discovery_cfg=discovery_cfg,
             allow_re=allow_re,
             block_re=block_re,
+            not_before=not_before,
             test_mode=test_mode,
             ignore_dedupe=ignore_dedupe,
         )
@@ -341,6 +355,7 @@ def _run_tactic(
     discovery_cfg: dict[str, Any],
     allow_re: re.Pattern | None,
     block_re: re.Pattern | None,
+    not_before: date | None,
     test_mode: bool,
     ignore_dedupe: bool,
 ) -> tuple[SourceResult, dict[str, Any]]:
@@ -562,6 +577,7 @@ def _run_tactic(
                 seen_ids,
                 fetched_at,
                 ignore_dedupe=ignore_dedupe,
+                not_before=not_before,
             )
             if logger.isEnabledFor(logging.DEBUG) and total_entries:
                 log_event(
@@ -585,6 +601,7 @@ def _run_tactic(
             if decision.decision == "SKIP" and (
                 any(reason.startswith("deny_keywords") for reason in decision.reasons)
                 or "allow_keywords:miss" in decision.reasons
+                or "before_source_start" in decision.reasons
             ):
                 skipped_filters += 1
             if decision.decision == "SKIP" and "duplicate" in decision.reasons:
@@ -786,6 +803,7 @@ def _run_tactic(
             seen_ids,
             fetched_at,
             ignore_dedupe=ignore_dedupe,
+            not_before=not_before,
         )
         if logger.isEnabledFor(logging.DEBUG) and total_entries:
             log_event(
@@ -809,6 +827,7 @@ def _run_tactic(
         if decision.decision == "SKIP" and (
             any(reason.startswith("deny_keywords") for reason in decision.reasons)
             or "allow_keywords:miss" in decision.reasons
+            or "before_source_start" in decision.reasons
         ):
             skipped_filters += 1
         if decision.decision == "SKIP" and "duplicate" in decision.reasons:

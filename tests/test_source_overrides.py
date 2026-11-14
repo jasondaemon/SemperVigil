@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import pytest
 
 from sempervigil.pipelines.content_fetch import extract_content_from_html
 from sempervigil.source_overrides import normalize_source_overrides, should_allow_url
@@ -47,3 +48,9 @@ def test_discovery_mode_rss_only_defaults() -> None:
 def test_discovery_mode_unknown_defaults() -> None:
     overrides = normalize_source_overrides({"discovery": {"mode": "typo_value"}})
     assert overrides["discovery"]["mode"] == "default"
+
+
+def test_discovery_not_before_requires_iso_date() -> None:
+    assert normalize_source_overrides({"discovery": {"not_before": "2026-11-14"}})["discovery"]["not_before"] == "2026-11-14"
+    with pytest.raises(ValueError, match="discovery.not_before"):
+        normalize_source_overrides({"discovery": {"not_before": "11/14/2026"}})

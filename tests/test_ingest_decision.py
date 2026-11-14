@@ -1,4 +1,5 @@
 import copy
+from datetime import date
 
 from sempervigil.config import DEFAULT_CONFIG, load_runtime_config, set_runtime_config
 from sempervigil.ingest import evaluate_entry
@@ -44,6 +45,31 @@ def test_decision_missing_url(tmp_path):
     assert decision.decision == "SKIP"
     assert "missing_url" in decision.reasons
     assert article is None
+
+
+def test_new_source_start_date_skips_old_and_undated_entries(tmp_path):
+    config = _make_config(tmp_path)
+    conn = init_db()
+    source = Source(
+        id="s-start", name="Source", enabled=True, base_url="https://example.com",
+        topic_key=None, default_frequency_minutes=60, pause_until=None,
+        paused_reason=None, robots_notes=None,
+    )
+    fetched_at = "2026-11-14T12:00:00+00:00"
+    for entry in (
+        {"title": "Old", "link": "https://example.com/old", "published": "2026-11-12T00:00:00+00:00"},
+        {"title": "Undated", "link": "https://example.com/undated"},
+    ):
+        decision, article = evaluate_entry(entry, source, {}, config, conn, set(), fetched_at, not_before=date(2026, 11, 13))
+        assert decision.decision == "SKIP"
+        assert "before_source_start" in decision.reasons
+        assert article is None
+    decision, article = evaluate_entry(
+        {"title": "New", "link": "https://example.com/new", "published": "2026-11-13T00:00:00+00:00"},
+        source, {}, config, conn, set(), fetched_at, not_before=date(2026, 11, 13),
+    )
+    assert decision.decision == "ACCEPT"
+    assert article is not None
 
 
 def test_decision_deny_keyword(tmp_path):
