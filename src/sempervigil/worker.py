@@ -1328,7 +1328,7 @@ ARCHIVE_SCHEMA_VERSION = 3
 
 def _feed_schema_version(day_key: str) -> int:
     start = os.environ.get("SV_REGULATORY_FEED_START_DAY", "").strip()
-    return ARCHIVE_SCHEMA_VERSION + int(bool(start and day_key >= start))
+    return ARCHIVE_SCHEMA_VERSION + (2 if start and day_key >= start else 0)
 
 
 def _feed_day_state_key(
@@ -1383,10 +1383,17 @@ def _build_feed_day_payload(
     ]
     article_ids = [int(article["id"]) for article in articles if article.get("id") is not None]
     regulatory_start = os.environ.get("SV_REGULATORY_FEED_START_DAY", "").strip()
-    regulatory_items = []
-    if regulatory_start and day_key >= regulatory_start:
+    sectioned_day = bool(regulatory_start and day_key >= regulatory_start)
+    regulatory_by_article = {}
+    if sectioned_day:
         from .article_hosted_jobs import regulatory_rows
-        regulatory_items = regulatory_rows(conn, article_ids=article_ids)
+        regulatory_by_article = {
+            int(row["article_id"]): {
+                "kind": row["kind"],
+                "jurisdictions": row["jurisdictions"],
+            }
+            for row in regulatory_rows(conn, article_ids=article_ids)
+        }
     event_keys_map = list_event_keys_for_articles(conn, article_ids) if article_ids else {}
     cve_tags_map = list_article_cve_tags(conn, article_ids) if article_ids else {}
     article_items = [
@@ -1401,6 +1408,13 @@ def _build_feed_day_payload(
         )
         for article in articles
     ]
+    for item in article_items:
+        if sectioned_day:
+            item["sections"] = ["news"]
+        regulatory = regulatory_by_article.get(int(item["article_id"]))
+        if regulatory:
+            item["sections"].append("regulatory")
+            item["regulatory"] = regulatory
     article_items.sort(key=lambda item: item["_sort"], reverse=True)
     for item in article_items:
         item.pop("_sort", None)
@@ -1412,7 +1426,10 @@ def _build_feed_day_payload(
         if not cve_id or str(cve_id) in seen_cves:
             continue
         seen_cves.add(str(cve_id))
-        cve_items.append(_serialize_feed_cve_item(conn, cve, tz_name=tz_name))
+        item = _serialize_feed_cve_item(conn, cve, tz_name=tz_name)
+        if sectioned_day:
+            item["sections"] = ["cve"]
+        cve_items.append(item)
     items = article_items + cve_items
     items.sort(key=lambda item: int(item.get("published_epoch") or 0), reverse=True)
     payload = {
@@ -1423,8 +1440,6 @@ def _build_feed_day_payload(
             "cve": len(cve_items),
         },
     }
-    if regulatory_start and day_key >= regulatory_start:
-        payload["regulatory"] = {"items": regulatory_items, "count": len(regulatory_items)}
     return payload
 
 

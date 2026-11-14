@@ -79,8 +79,9 @@ def test_day_contract_counts_order_and_cve_deduplication(evidence, monkeypatch, 
     )
     assert payload["day"] == "2026-09-18"
     assert payload["counts"] == {"article": 1, "cve": 1}
-    assert payload["regulatory"] == {"items": [], "count": 0}
+    assert "regulatory" not in payload
     assert [i["kind"] for i in payload["items"]] == ["cve", "article"]
+    assert [i["sections"] for i in payload["items"]] == [["cve"], ["news"]]
     assert all("_sort" not in i for i in payload["items"])
     assert json.loads(json.dumps(payload, allow_nan=False)) == payload
 
@@ -117,7 +118,7 @@ def test_full_day_excludes_suppressed_articles(evidence, monkeypatch, tmp_path):
     assert [item["article_id"] for item in payload["items"]] == [7]
 
 
-def test_regulatory_section_is_additive_and_scoped_to_public_articles(evidence, monkeypatch, tmp_path):
+def test_regulatory_identifier_is_on_public_news_item_once(evidence, monkeypatch, tmp_path):
     article, _ = evidence
     monkeypatch.setattr(worker, "list_articles_for_day", lambda *a: [
         article, dict(article, id=8, source_id="web_enrich"),
@@ -128,15 +129,20 @@ def test_regulatory_section_is_additive_and_scoped_to_public_articles(evidence, 
     calls = []
     def regulatory(_conn, *, article_ids):
         calls.append(article_ids)
-        return [{"article_id": 7, "kind": "regulatory_guidance"}]
+        return [{"article_id": 7, "kind": "regulatory_guidance", "jurisdictions": [{"code": "EU", "role": "legal_scope"}]}]
     monkeypatch.setattr(article_hosted_jobs, "regulatory_rows", regulatory)
     payload = worker._build_feed_day_payload(
         None, day_key="2026-09-18", site_root=str(tmp_path), tz=timezone.utc, tz_name="UTC",
     )
     assert calls == [[7]]
-    assert payload["regulatory"] == {"items": [{"article_id": 7, "kind": "regulatory_guidance"}], "count": 1}
+    assert "regulatory" not in payload
     assert payload["counts"] == {"article": 1, "cve": 0}
     assert len(payload["items"]) == 1
+    assert payload["items"][0]["kind"] == "article"
+    assert payload["items"][0]["sections"] == ["news", "regulatory"]
+    assert payload["items"][0]["regulatory"] == {
+        "kind": "regulatory_guidance", "jurisdictions": [{"code": "EU", "role": "legal_scope"}],
+    }
 
 
 def test_regulatory_section_does_not_change_historical_json(evidence, monkeypatch, tmp_path):
@@ -150,6 +156,8 @@ def test_regulatory_section_does_not_change_historical_json(evidence, monkeypatc
         None, day_key="2026-09-18", site_root=str(tmp_path), tz=timezone.utc, tz_name="UTC",
     )
     assert "regulatory" not in payload
+    assert "regulatory" not in payload["items"][0]
+    assert "sections" not in payload["items"][0]
 
 
 def test_full_day_excludes_event_research_articles(evidence, monkeypatch, tmp_path):

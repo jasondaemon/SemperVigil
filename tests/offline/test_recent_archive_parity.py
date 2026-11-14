@@ -132,8 +132,27 @@ def test_regulatory_schema_refreshes_only_forward_days(export_case, monkeypatch)
     monkeypatch.setenv("SV_FEED_ARCHIVE_BACKGROUND_DAYS", "0")
     refresh()
 
-    assert json.loads(path.read_text())["regulatory"] == {"items": [], "count": 0}
+    assert "regulatory" not in json.loads(path.read_text())
     assert (old_path.read_bytes(), old_path.stat().st_mtime_ns) == before
+
+
+def test_flat_regulatory_schema_rewrites_previous_recent_shape(export_case, monkeypatch):
+    day, path, source, refresh, stats = export_case
+    current_version = worker._feed_schema_version
+    monkeypatch.setattr(worker, "_feed_schema_version", lambda _day: 4)
+    refresh()
+    previous = json.loads(path.read_text())
+    previous["regulatory"] = {"items": [{"article_id": 7}], "count": 1}
+    path.write_text(json.dumps(previous))
+    manifest_path = path.parent.parent / "day-manifest.json"
+    old_entry = json.loads(manifest_path.read_text())["days"][day]
+    monkeypatch.setattr(worker, "_feed_schema_version", current_version)
+    refresh()
+
+    assert "regulatory" not in json.loads(path.read_text())
+    assert json.loads(path.read_text())["items"][1]["sections"] == ["news"]
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["days"][day]["signature"] != old_entry["signature"]
 
 
 def test_refresh_does_not_rebuild_unrelated_history_on_version_change(export_case, monkeypatch):
