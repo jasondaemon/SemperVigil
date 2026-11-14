@@ -66,6 +66,9 @@ spec:
             - configMapRef:
                 name: {{ include "sempervigil.fullname" . }}-env
           env:
+            # The init container repairs ownership once; recurring builds only need mkdir.
+            - name: SV_FIX_SITE_PERMS
+              value: "0"
             {{- if .Values.eventPublication.existingSecret }}
             - name: SV_EVENT_ACTIVATION_DB_URL
               valueFrom:
