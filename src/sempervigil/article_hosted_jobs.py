@@ -102,12 +102,13 @@ def analyze(conn, article_id: int) -> dict:
     snapshot = {field: article.get(field) for field in ("id", "title", "content_text")}
     payload, valid_ids = contract.source_payload(snapshot)
     source_version = payload["source_version"]
-    existing = conn.execute("""SELECT status,applicability_json FROM article_hosted_analyses
+    existing = conn.execute("""SELECT status,applicability_json,brief_json FROM article_hosted_analyses
         WHERE article_id=%s AND source_version=%s AND generation=%s""",
         (article_id, source_version, generation())).fetchone()
     if existing and existing[0] == "published":
         return {"status": "already_published", "article_id": article_id,
-                "kind": existing[1]["kinds"][0]["type"]}
+                "kind": existing[1]["kinds"][0]["type"],
+                "event_seed": existing[2]["event_seed"]}
     provider, secret = _provider(conn)
     usage = {}
     brief = None
@@ -143,6 +144,7 @@ def analyze(conn, article_id: int) -> dict:
         _store(conn, article_id, source_version, status, brief, validated["result"], usage, None)
         conn.execute("RELEASE SAVEPOINT hosted_article_analysis")
         return {"status": status, "article_id": article_id, "kind": kinds[0]["type"],
+                "event_seed": brief["event_seed"],
                 "elapsed_s": round(time.monotonic() - started, 2)}
     except Exception as exc:
         conn.execute("ROLLBACK TO SAVEPOINT hosted_article_analysis")

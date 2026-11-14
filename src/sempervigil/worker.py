@@ -5878,7 +5878,7 @@ def _handle_summarize_article_llm(
     hosted_article_id = (job.payload or {}).get("article_id")
     hosted_article = get_article_by_id(conn, int(hosted_article_id)) if hosted_article_id else None
     if _hosted_for_article(hosted_article):
-        from .article_hosted_jobs import REGULATORY_KINDS, analyze
+        from .article_hosted_jobs import analyze
         try:
             hosted = analyze(conn, int((job.payload or {})["article_id"]))
         except Exception as exc:
@@ -5895,7 +5895,7 @@ def _handle_summarize_article_llm(
                 update_event_summary_from_articles(conn, event_id_text)
                 enqueue_job(conn, "event_report_llm", {"event_id": event_id_text}, dedupe=True)
             _maybe_enqueue_event_article_review(conn, article_id, logger)
-            if (hosted.get("kind") not in REGULATORY_KINDS
+            if (hosted.get("event_seed", {}).get("is_event") is True
                     and not list_event_ids_for_article(conn, article_id)
                     and not has_pending_article_job(
                         conn, "derive_events_from_articles", article_id

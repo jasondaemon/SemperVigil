@@ -58,6 +58,7 @@ def test_hosted_analysis_writes_existing_summary_and_context_contract(monkeypatc
     conn = _setup(monkeypatch)
     result = jobs.analyze(conn, 99)
     assert result["status"] == "published"
+    assert result["event_seed"]["is_event"] is False
     update = next(params for sql, params in conn.queries if "UPDATE articles SET" in sql)
     assert json.loads(update[0])["summary"] == "The regulator proposed a new reporting rule."
     assert json.loads(update[3])["facts"] == ["The rule is proposed."]
