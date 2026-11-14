@@ -45,10 +45,11 @@ No Event flags or production image tags were changed in this pass.
   `tests/test_fetch_pipeline.py` fails even when isolated. This is test debt,
   not evidence that the live article pipeline failed. Do not claim all database
   tests pass.
-- Run the new PR verification workflow on the pushed branch. Review its checks,
-  compare the 415-commit branch against `main`, and scan for sensitive data
-  before a mainline merge. Do not deploy unreviewed chart or application changes
-  merely to complete the merge.
+- Run the new verification workflow on the pushed branch and review its checks.
+  The connected GitHub account could not create a PR (`must be a collaborator`),
+  so a PR is not currently available. Compare the 415-commit branch against
+  `main` and scan for sensitive data before a mainline merge. Do not deploy
+  unreviewed chart or application changes merely to complete the merge.
 - After merge, separately deploy the narrow worker-chart annotation when the
   platform deployment is ready. The manual worker restart already restored the
   current production routing value.
