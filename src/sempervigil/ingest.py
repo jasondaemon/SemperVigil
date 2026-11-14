@@ -126,6 +126,14 @@ def _normalize_entry_title(title: str, link: str | None) -> str:
     return clean
 
 
+def _resolve_feed_entry_link(entry: Any, feed_url: str) -> None:
+    link = entry.get("link")
+    if not isinstance(link, str) or not link.strip():
+        return
+    if not urlparse(link).scheme:
+        entry["link"] = urljoin(feed_url, link)
+
+
 def evaluate_entry(
     entry: Any,
     source: Source,
@@ -780,6 +788,7 @@ def _run_tactic(
     fetched_at = utc_now_iso()
     total_entries = len(entries)
     for index, entry in enumerate(entries, start=1):
+        _resolve_feed_entry_link(entry, feed_url)
         link = entry.get("link") or entry.get("id")
         if link:
             allowed, reason = should_allow_url(link, allow_re, block_re)

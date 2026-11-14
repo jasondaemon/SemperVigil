@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from sempervigil.ingest import evaluate_entry
+from sempervigil.ingest import _resolve_feed_entry_link, evaluate_entry
 from sempervigil.models import Source
 from sempervigil.source_overrides import normalize_source_overrides
 
@@ -30,6 +30,15 @@ def test_start_date_validation():
     assert normalize_source_overrides({"discovery": {"not_before": "2026-11-14"}})["discovery"]["not_before"] == "2026-11-14"
     with pytest.raises(ValueError, match="discovery.not_before"):
         normalize_source_overrides({"discovery": {"not_before": "11/14/2026"}})
+
+
+def test_relative_rss_link_resolves_against_feed_origin():
+    entry = {"link": "/en/opc-news/news-and-announcements/2026/story/"}
+    _resolve_feed_entry_link(entry, "https://www.priv.gc.ca/en/rss/news/")
+    assert entry["link"] == "https://www.priv.gc.ca/en/opc-news/news-and-announcements/2026/story/"
+    absolute = {"link": "https://publisher.example/story"}
+    _resolve_feed_entry_link(absolute, "https://www.priv.gc.ca/en/rss/news/")
+    assert absolute["link"] == "https://publisher.example/story"
 
 
 @pytest.mark.parametrize(
