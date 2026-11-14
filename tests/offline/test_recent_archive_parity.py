@@ -117,6 +117,25 @@ def test_recent_refresh_reuses_unchanged_day(export_case, monkeypatch):
     assert (path.read_bytes(), path.stat().st_mtime_ns) == before
 
 
+def test_regulatory_schema_refreshes_only_forward_days(export_case, monkeypatch):
+    day, path, source, refresh, stats = export_case
+    monkeypatch.delenv("SV_REGULATORY_FEED_START_DAY")
+    refresh()
+    assert "regulatory" not in json.loads(path.read_text())
+
+    old_path = path.parent / "1990-05-01.json"
+    old_path.write_text('{"day":"1990-05-01","items":[],"counts":{"article":0,"cve":1}}')
+    stats.append(dict(day="1990-05-01", article_count=0, article_updated_at="",
+                      cve_count=1, cve_updated_at="2026-01-01T00:00:00Z"))
+    before = (old_path.read_bytes(), old_path.stat().st_mtime_ns)
+    monkeypatch.setenv("SV_REGULATORY_FEED_START_DAY", day)
+    monkeypatch.setenv("SV_FEED_ARCHIVE_BACKGROUND_DAYS", "0")
+    refresh()
+
+    assert json.loads(path.read_text())["regulatory"] == {"items": [], "count": 0}
+    assert (old_path.read_bytes(), old_path.stat().st_mtime_ns) == before
+
+
 def test_refresh_does_not_rebuild_unrelated_history_on_version_change(export_case, monkeypatch):
     monkeypatch.setenv("SV_FEED_ARCHIVE_BACKGROUND_DAYS", "0")
     day, path, source, refresh, stats = export_case

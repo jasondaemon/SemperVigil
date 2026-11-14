@@ -1326,15 +1326,21 @@ def _serialize_feed_cve_item(
 ARCHIVE_SCHEMA_VERSION = 3
 
 
+def _feed_schema_version(day_key: str) -> int:
+    start = os.environ.get("SV_REGULATORY_FEED_START_DAY", "").strip()
+    return ARCHIVE_SCHEMA_VERSION + int(bool(start and day_key >= start))
+
+
 def _feed_day_state_key(
     *,
     article_count: int,
     article_updated_at: str,
     cve_count: int,
     cve_updated_at: str,
+    schema_version: int = ARCHIVE_SCHEMA_VERSION,
 ) -> str:
     payload = {
-        "schema_version": ARCHIVE_SCHEMA_VERSION,
+        "schema_version": schema_version,
         "article_count": int(article_count or 0),
         "article_updated_at": str(article_updated_at or ""),
         "cve_count": int(cve_count or 0),
@@ -1476,10 +1482,11 @@ def _refresh_feed_archive_days_locked(
     skipped = 0
 
     def _entry_state(row: dict[str, object]) -> dict[str, object]:
+        schema_version = _feed_schema_version(str(row["day"]))
         if row.get("content_signature"):
             return {
                 "content_signature": row["content_signature"],
-                "schema_version": ARCHIVE_SCHEMA_VERSION,
+                "schema_version": schema_version,
                 "timezone": tz_name,
             }
         return {
@@ -1492,6 +1499,7 @@ def _refresh_feed_archive_days_locked(
                 article_updated_at=str(row.get("article_updated_at") or ""),
                 cve_count=int(row.get("cve_count") or 0),
                 cve_updated_at=str(row.get("cve_updated_at") or ""),
+                schema_version=schema_version,
             ),
         }
 
