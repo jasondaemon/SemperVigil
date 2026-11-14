@@ -8,9 +8,12 @@ from sempervigil.storage import enqueue_job, get_build_state, init_db, mark_buil
 def _seed_runtime_config(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     monkeypatch.setenv("SV_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("SV_HUGO_SOURCE_DIR", str(tmp_path / "site-src"))
+    monkeypatch.setenv("SV_HUGO_OUTPUT_DIR", str(tmp_path / "site-public"))
     conn = init_db()
     config = copy.deepcopy(DEFAULT_CONFIG)
     config["paths"]["data_dir"] = str(data_dir)
+    config["paths"]["logs_dir"] = str(tmp_path / "logs")
     config["paths"]["output_dir"] = str(tmp_path / "site" / "content" / "posts")
     config["paths"]["run_reports_dir"] = str(data_dir / "reports")
     config["publishing"]["json_index_path"] = str(

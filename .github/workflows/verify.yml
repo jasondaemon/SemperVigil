@@ -1,0 +1,57 @@
+name: Verify
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -e '.[test]'
+      - run: python -m compileall -q src
+      - run: pytest -q tests/offline
+
+  database-smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test_file:
+          - tests/test_admin_content_search.py
+          - tests/test_admin_ai_api.py
+          - tests/test_admin_danger.py
+          - tests/test_builder_job.py
+          - tests/test_feed_facets.py
+          - tests/test_fresh_postgres_bootstrap.py
+          - tests/test_vendor_product_home_data.py
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_PASSWORD: svtest
+          POSTGRES_DB: sempervigil_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sempervigil_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SV_TEST_DB_URL: postgresql://postgres:svtest@127.0.0.1:5432/sempervigil_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -e '.[test]'
+      - run: pytest --run-db-tests -q "${{ matrix.test_file }}"

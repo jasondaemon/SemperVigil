@@ -1190,6 +1190,10 @@ def apply_migrations_pg(conn) -> None:
                  ("pg_article_hosted_073", utc_now_iso()))
     conn.commit()
 
+    # The bootstrap path records its initial versions above. Reconcile the
+    # remaining versioned migrations through the same path used by upgrades.
+    apply_migrations_pg(conn)
+
 
 def _bootstrap_schema(conn) -> None:
     conn.execute(
@@ -1307,7 +1311,6 @@ def _bootstrap_schema(conn) -> None:
         )
         """
     )
-    _create_article_product_tables(conn)
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS settings (
@@ -1569,6 +1572,7 @@ def _bootstrap_schema(conn) -> None:
         )
         """
     )
+    _create_article_product_tables(conn)
     _create_threat_actor_tables(conn)
     conn.execute(
         """

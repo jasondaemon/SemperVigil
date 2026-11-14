@@ -24,6 +24,8 @@ spec:
       app.kubernetes.io/component: worker-llm
   template:
     metadata:
+      annotations:
+        sempervigil.io/article-inference-routing: {{ printf "%s|%s" (.Values.env.SV_ARTICLE_INFERENCE_BACKEND | default "local") (.Values.env.SV_REGULATORY_FEED_START_DAY | default "") | sha256sum | quote }}
       labels:
         {{- include "sempervigil.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: worker-llm

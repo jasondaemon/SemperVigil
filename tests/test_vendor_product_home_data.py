@@ -8,7 +8,7 @@ from pathlib import Path
 
 from sempervigil.storage import init_db
 from sempervigil.utils import utc_now_iso
-from sempervigil.worker import _write_article_data_files
+from sempervigil.worker import _refresh_feed_data_files
 
 
 def _ensure_article_tags_table(conn) -> None:
@@ -81,7 +81,7 @@ def test_article_data_ignores_vendor_product_tags(tmp_path: Path) -> None:
         paths=SimpleNamespace(output_dir=str(output_dir)),
         app=SimpleNamespace(timezone="UTC"),
     )
-    _write_article_data_files(conn, config, logging.getLogger("test"))
+    _refresh_feed_data_files(conn, config, logging.getLogger("test"))
     recent_path = tmp_path / "site" / "data" / "articles" / "recent.json"
     payload = json.loads(recent_path.read_text(encoding="utf-8"))
     assert payload

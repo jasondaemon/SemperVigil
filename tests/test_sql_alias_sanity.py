@@ -26,7 +26,7 @@ def test_sql_c_alias_references_have_from():
     storage_path = Path(__file__).resolve().parents[1] / "src" / "sempervigil" / "storage.py"
     text = storage_path.read_text()
     sql_blocks = []
-    sql_blocks += re.findall(r""""(.*?)"""", text, flags=re.DOTALL)
+    sql_blocks += re.findall(r'"""(.*?)"""', text, flags=re.DOTALL)
     sql_blocks += re.findall(r"'''(.*?)'''", text, flags=re.DOTALL)
     requires_alias = ("c.published_at", "c.description_text", "c.preferred_", "c.last_modified_at")
     allowed_alias = (

@@ -8411,13 +8411,13 @@ def search_articles(
     params: list[object] = []
     if query:
         like = f"%{query}%"
-        parts = ["a.title LIKE %s"]
+        parts = ["a.title ILIKE %s"]
         params.append(like)
         if "content_text" in columns:
-            parts.append("a.content_text LIKE %s")
+            parts.append("a.content_text ILIKE %s")
             params.append(like)
         if "summary_llm" in columns:
-            parts.append("a.summary_llm LIKE %s")
+            parts.append("a.summary_llm ILIKE %s")
             params.append(like)
         where.append("(" + " OR ".join(parts) + ")")
     if source_id:
@@ -8845,7 +8845,7 @@ def search_cves(
     if query:
         like = f"%{query}%"
         where.append(
-            "(cve_id LIKE %s OR description_text LIKE %s OR LOWER(affected_products_json) LIKE %s OR LOWER(affected_cpes_json) LIKE %s)"
+            "(cve_id ILIKE %s OR description_text ILIKE %s OR LOWER(affected_products_json) LIKE %s OR LOWER(affected_cpes_json) LIKE %s)"
         )
         params.extend([like, like, like.lower(), like.lower()])
     if severities:
