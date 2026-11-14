@@ -1,10 +1,17 @@
 # Registry-based SemperVigil worker releases
 
-Status: source and platform tooling prepared; production still runs node-local images. No registry cutover has been applied.
+Status: source and platform tooling prepared. The node-local worker release path is available without new registry credentials. No registry cutover has been applied.
 
 ## Why this exists
 
-The current release builds an image on a packaging host, exports it, and imports it into containerd on every schedulable node. That is a distribution workaround, not an application requirement. The platform already operates a private container registry for other applications. The first migration target is only `sempervigil-worker-llm`, not Hugo, the builder, admin, or other workers.
+The current release builds an image on a packaging host, exports it, and imports it into containerd on every schedulable node. That is a distribution workaround, not an application requirement. A scoped, verified node-local path avoids requiring new credentials merely to make worker releases repeatable. The platform also has a private registry for other applications, but its use for SemperVigil is optional and separate. The first release target is only `sempervigil-worker-llm`, not Hugo, the builder, admin, or other workers.
+
+## Node-local worker release
+
+1. Commit and test the application source. From `k8s-platform`, run `bash apps/sempervigil/prepare-worker-image.sh prepare`. The helper packages the exact clean application HEAD from a verified retained base, assigns `sha-<12-character-commit>-local`, and verifies one image digest on every Ready schedulable node. It reuses an existing built tag rather than rebuilding on retry. Run `verify sha-<commit>-local` independently before cutover.
+2. Set only `workerLlm.image.tag` in platform values to that verified tag, leaving `pullPolicy: IfNotPresent` and the applicability-review flag disabled. Run `bash apps/sempervigil/release-component.sh check worker-llm` and inspect the server-side diff. Commit the platform values and release scripts.
+3. At an idle `llm_local` job boundary, run `bash apps/sempervigil/release-component.sh apply worker-llm`. Apply repeats the all-node digest verification, renders only that Deployment, and waits for rollout. The previous live runner has no graceful SIGTERM handling, so the idle check matters for this first replacement.
+4. Verify exactly one ready LLM worker, queue progress, a normal completed summary job, and unchanged public site and daily JSON. The worker release does not change Hugo, feed generation, or article classification. Retain the previous tag and values for a scoped rollback.
 
 ## One-time prerequisites
 
