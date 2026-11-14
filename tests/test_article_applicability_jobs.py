@@ -37,7 +37,7 @@ def test_private_run_only_updates_own_job_result(monkeypatch):
     )
     raw = ('{"kinds":[{"type":"regulatory_enforcement","passage_ids":["p001"]}],'
            '"jurisdictions":[{"code":"AU","role":"legal_scope",'
-           '"passage_ids":["p001"]}],"organizations":[]}')
+           '"passage_ids":["p001"]}],"organizations":[],"products":[]}')
     result = jobs.run(None, job, generate=lambda request: raw)
     assert result["public_eligible"] is False
     assert result["attempts"] == 1
