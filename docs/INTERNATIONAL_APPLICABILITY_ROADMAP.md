@@ -2,6 +2,12 @@
 
 Status: the local Qwen canary remains disabled after its quality hold. A separate read-only, bounded OpenAI comparison established a promising Terra baseline, but no production classification consumer is enabled. Source admission, article output, daily JSON, Event decisions, and publication are unchanged.
 
+The subsequent [private two-pass article evaluation](ARTICLE_TWO_PASS_EVAL.md)
+tested ten complete retained texts plus five final-contract repeats. It favors
+Luna for the briefing and cited evidence inventory and a focused Terra pass for
+applicability roles. The measured cost is promising, but a shared monthly
+OpenAI cap and source-version-bound shadow consumer are required before rollout.
+
 ## November 14 hosted comparison
 
 The same six source-version-pinned articles were compared privately with Luna and Terra using the existing OpenAI provider credential in memory. Both returned schema-valid JSON, but the first prompt over-extracted background incidents and organizations. Terra was more selective than Luna on that baseline. Prompt and taxonomy revisions then distinguished nonbinding regulatory guidance from enacted changes, attacker origin from affected jurisdiction, generic classes from named organizations, and a primary policy story from its historical incident example. The comparison harness is read-only, permits at most six explicit article IDs per run, disables retries, caps output tokens, and writes results only to ignored local evaluation files. It does not submit a job, update the database, or publish anything.
