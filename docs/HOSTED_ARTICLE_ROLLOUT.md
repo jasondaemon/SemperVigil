@@ -8,9 +8,13 @@ reader narrative, alternate bullets, passage-linked context, primary kind and
 an Event seed. Terra independently classifies the primary kind, jurisdiction,
 organization and product roles. Both passes receive the complete *retained*
 article text through numbered passages; this does not prove the original website
-was completely scraped. Refusals, incomplete output, invalid passage IDs, a
-changed source version, or a primary-kind disagreement hold the hosted result
-and invoke the existing local article path. The local backend remains available
+was completely scraped. When the two passes disagree on primary kind, one
+bounded Terra call sees only the headline, lead, and passages cited by the two
+classifiers. Its evidence-linked choice resolves the stored primary kind while
+preserving both original labels and its rationale in the analysis record. If
+that call cannot resolve the disagreement, the analysis stays held without a
+Qwen fallback. Refusals, incomplete output, invalid passage IDs, or a changed
+source version still invoke the existing local article path. The local backend remains available
 by setting `SV_ARTICLE_INFERENCE_BACKEND=local` and rolling the article worker.
 
 The live summary/context fields keep their existing public shapes. Event

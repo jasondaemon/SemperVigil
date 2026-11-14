@@ -5901,9 +5901,14 @@ def _handle_summarize_article_llm(
     hosted_article_id = (job.payload or {}).get("article_id")
     hosted_article = get_article_by_id(conn, int(hosted_article_id)) if hosted_article_id else None
     if _hosted_for_article(hosted_article):
-        from .article_hosted_jobs import analyze
+        from .article_hosted_jobs import HostedKindUnresolved, analyze
         try:
             hosted = analyze(conn, int((job.payload or {})["article_id"]))
+        except HostedKindUnresolved as exc:
+            log_event(logger, logging.WARNING, "hosted_article_kind_held",
+                      job_id=job.id, article_id=(job.payload or {}).get("article_id"),
+                      reason=str(exc))
+            return {"status": "hosted_kind_held", "reason": str(exc)}
         except Exception as exc:
             hosted_failed = True
             log_event(logger, logging.WARNING, "hosted_article_fallback_local",
@@ -9871,6 +9876,11 @@ def _maybe_enqueue_auto_catchup(
                 article_id = int(article_id)
                 if has_pending_article_job(conn, "summarize_article_llm", article_id):
                     continue
+                if os.environ.get("SV_ARTICLE_INFERENCE_BACKEND", "local") == "hosted":
+                    from .article_hosted_jobs import has_unresolved_kind_hold
+                    article = get_article_by_id(conn, article_id)
+                    if article and has_unresolved_kind_hold(conn, article):
+                        continue
                 enqueue_job(conn, "summarize_article_llm", {"article_id": article_id}, dedupe=True)
                 queued_total += 1
                 _bump("summarize_article_llm")

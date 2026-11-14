@@ -67,9 +67,25 @@ def test_hosted_analysis_writes_existing_summary_and_context_contract(monkeypatc
     assert json.loads(stored[5])["kinds"][0]["type"] == "regulatory_proposal"
 
 
-def test_primary_kind_disagreement_holds_without_public_write(monkeypatch):
+def test_primary_kind_disagreement_uses_cited_adjudication(monkeypatch):
     conn = _setup(monkeypatch, focused_kind="incident_report")
-    with pytest.raises(ValueError, match="primary_kind_disagreement"):
+    calls = iter([(_brief("regulatory_proposal"), {}),
+                  (_focused("incident_report"), {}),
+                  ({"kind": "regulatory_proposal", "passage_ids": ["p001"],
+                    "rationale": "The proposal is the main story."}, {})])
+    monkeypatch.setattr(jobs, "_complete", lambda *args: next(calls))
+    assert jobs.analyze(conn, 99)["status"] == "published"
+    stored = next(params for sql, params in conn.queries if "INSERT INTO article_hosted_analyses" in sql)
+    assert json.loads(stored[5])["kinds"][0]["type"] == "regulatory_proposal"
+    assert json.loads(stored[6])["kind_adjudication"]["terra_kind"] == "incident_report"
+
+
+def test_unresolved_kind_disagreement_holds_without_local_write(monkeypatch):
+    conn = _setup(monkeypatch, focused_kind="incident_report")
+    calls = iter([(_brief("regulatory_proposal"), {}),
+                  (_focused("incident_report"), {})])
+    monkeypatch.setattr(jobs, "_complete", lambda *args: next(calls))
+    with pytest.raises(jobs.HostedKindUnresolved):
         jobs.analyze(conn, 99)
     assert not any("UPDATE articles SET" in sql for sql, _ in conn.queries)
     stored = next(params for sql, params in conn.queries if "INSERT INTO article_hosted_analyses" in sql)
