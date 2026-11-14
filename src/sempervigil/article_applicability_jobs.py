@@ -157,7 +157,8 @@ def run(conn, job, *, generate=None) -> dict:
             row = contract.validate(raw, article, generation)
         except Exception as exc:
             row = {"article_id": article["id"], "source_version": request["source_version"],
-                   "status": "held", "error": type(exc).__name__}
+                   "status": "held", "error": str(exc) if isinstance(exc, ValueError)
+                   else type(exc).__name__}
         else:
             row["status"] = "private_comparison"
         result["articles"].append(row)

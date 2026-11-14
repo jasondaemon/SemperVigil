@@ -37,7 +37,13 @@ Use passage IDs from the supplied source for each assertion. Preserve uncertaint
 omit a jurisdiction or organization when its role is not supported; do not guess.
 Use an ISO 3166-1 alpha-2 country code or EU only when the supplied passages
 support that scope. Global scope is not inferred from a widely used product.
-Return one JSON object matching the supplied schema, with no commentary.
+Return exactly one JSON object with four array keys: kinds, jurisdictions,
+organizations, products. Each kind has type and passage_ids; each jurisdiction
+has code, role, passage_ids; each organization has name, role, passage_ids; each
+product has name, vendor_name (string or null), role, passage_ids. Use only
+the enum values and field names in the supplied schema. Use empty arrays when
+there is no supported assertion. Do not add explanations, alternate keys, or
+other fields.
 This is an unreviewed private classification, not publication authority."""
 
 

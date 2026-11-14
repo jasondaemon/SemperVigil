@@ -76,7 +76,7 @@ def test_invalid_model_output_is_held_not_published(monkeypatch):
     )
     result = jobs.run(None, job, generate=lambda request: "not json")
     assert result["articles"][0]["status"] == "held"
-    assert result["articles"][0]["error"] == "ValueError"
+    assert result["articles"][0]["error"] == "article_applicability_invalid_shape"
 
 
 def test_transport_failure_stops_private_cohort(monkeypatch):
