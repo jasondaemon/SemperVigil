@@ -1,6 +1,6 @@
 # Registry-based SemperVigil worker releases
 
-Status: the node-local worker release path is live without new registry credentials. The worker-only cutover succeeded on November 14, 2026; no registry cutover has been applied. Article-summary completion on the new image remains to be observed.
+Status: the node-local worker release path is live without new registry credentials. The worker-only cutover succeeded on November 14, 2026, followed by successful article and context summaries. No registry cutover has been applied.
 
 ## Why this exists
 
