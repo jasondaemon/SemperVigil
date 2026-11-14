@@ -30,8 +30,12 @@ the original-source link. It does not present the material as original reporting
 The Hugo builder also writes `data/regulatory.json` for the page.
 
 Daily `/feed/days/YYYY-MM-DD.json` retains the existing `items` and `counts`
-contracts. Starting on the configured ISO day, it adds
-`regulatory: {items: [...], count: N}`. Earlier days retain their existing shape.
+contracts. Starting on the configured ISO day, each item has a `sections` array:
+ordinary articles carry `news`, CVEs carry `cve`, and a qualifying article
+carries both `news` and `regulatory`. That article appears once in `items` and
+has a small `regulatory` object with its kind and evidenced jurisdictions.
+The existing `kind` discriminator is unchanged for downstream consumers.
+Earlier days retain their existing shape.
 No all-history rewrite is required. The recent canary is limited to explicitly
 chosen article IDs from November 11-14, 2026; the normal pipeline processes new
 articles going forward. A changed article updates only its dirty day and the
@@ -59,7 +63,7 @@ below the account's absolute spend ceiling.
 
 To roll back article inference, change the platform value to `local` and roll
 only the local article worker. Do not delete hosted analysis rows or republish
-historical JSON. If the regulatory page or additive JSON section proves wrong,
+historical JSON. If the regulatory page or section membership proves wrong,
 leave the original feed intact, disable the menu/page in the Hugo source, and
 rebuild only affected recent days after correcting the classification policy.
 
