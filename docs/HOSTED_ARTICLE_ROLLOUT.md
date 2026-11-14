@@ -14,11 +14,12 @@ and invoke the existing local article path. The local backend remains available
 by setting `SV_ARTICLE_INFERENCE_BACKEND=local` and rolling the article worker.
 
 The live summary/context fields keep their existing public shapes. Event
-publication and correlation gates are not replaced by a model seed. The current
-local product/actor enrichment and Event-derivation jobs remain independent
-consumers until their destination contracts are separately validated. A
-regulatory primary kind agreed by both models is not sent through incident
-derivation. This is not a switch of every inference task in SemperVigil.
+publication and correlation gates are not replaced by a model seed. A positive
+evidence-backed Event seed is required before the existing Event-derivation job
+is queued; a broad incident label alone is insufficient. Current local
+product/actor enrichment and Event derivation remain independent consumers
+until their destination contracts are separately validated. This is not a
+switch of every inference task in SemperVigil.
 
 ## Regulatory data
 
@@ -35,6 +36,12 @@ No all-history rewrite is required. The recent canary is limited to explicitly
 chosen article IDs from November 11-14, 2026; the normal pipeline processes new
 articles going forward. A changed article updates only its dirty day and the
 normal Hugo release path.
+
+The incremental archive uses a separate schema fingerprint for days on or after
+the configured start date. This regenerates a recent day once for the additive
+field without changing the signature or bytes of earlier days. The production
+canary explicitly refreshed November 11-14 only, under the normal archive lock;
+November 10 retained its original SHA-256 and three-field JSON shape.
 
 ## Budget and rollback
 
