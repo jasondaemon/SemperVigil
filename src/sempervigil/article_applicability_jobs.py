@@ -145,6 +145,15 @@ def run(conn, job, *, generate=None) -> dict:
             raise ValueError("article_applicability_job_not_running")
         try:
             raw = generate(request)
+        except Exception as exc:
+            row = {"article_id": article["id"], "source_version": request["source_version"],
+                   "status": "transport_failed", "error": type(exc).__name__}
+            result["articles"].append(row)
+            result["status"] = "stopped"
+            if not update_job_result(conn, job.id, result):
+                raise ValueError("article_applicability_job_not_running")
+            return result
+        try:
             row = contract.validate(raw, article, generation)
         except Exception as exc:
             row = {"article_id": article["id"], "source_version": request["source_version"],

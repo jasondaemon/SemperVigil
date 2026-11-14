@@ -79,6 +79,32 @@ def test_invalid_model_output_is_held_not_published(monkeypatch):
     assert result["articles"][0]["error"] == "ValueError"
 
 
+def test_transport_failure_stops_private_cohort(monkeypatch):
+    monkeypatch.setenv("SV_ARTICLE_APPLICABILITY_REVIEW_ENABLED", "1")
+    monkeypatch.setattr(jobs, "configuration", lambda conn: ({}, {}, {}, GENERATION))
+    second = {**ARTICLE, "id": 18}
+    monkeypatch.setattr(jobs, "snapshot", lambda conn, article_id: {
+        17: ARTICLE, 18: second,
+    }[article_id])
+    monkeypatch.setattr(jobs, "update_job_result", lambda conn, job_id, value: True)
+    job = SimpleNamespace(
+        id="job_test", job_type=jobs.JOB_TYPE, result=None, attempt_count=0,
+        max_attempts=1, queue_name="llm_local", status="running",
+        payload={"workflow": contract.WORKFLOW, "generation": GENERATION,
+                 "articles": [ARTICLE, second]},
+    )
+    calls = []
+
+    def fail(request):
+        calls.append(request)
+        raise TimeoutError("private canary timeout")
+
+    result = jobs.run(None, job, generate=fail)
+    assert len(calls) == 1
+    assert result["status"] == "stopped"
+    assert result["articles"][0]["status"] == "transport_failed"
+
+
 def test_replay_and_changed_source_refused_before_model_call(monkeypatch):
     monkeypatch.setenv("SV_ARTICLE_APPLICABILITY_REVIEW_ENABLED", "1")
     monkeypatch.setattr(jobs, "configuration", lambda conn: ({}, {}, {}, GENERATION))

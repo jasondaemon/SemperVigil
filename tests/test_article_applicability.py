@@ -51,6 +51,19 @@ def test_unknown_scope_is_empty_not_source_country_guess():
     assert result["result"]["jurisdictions"] == []
 
 
+def test_proposed_rule_and_regulated_entity_are_distinct_from_incident():
+    result = applicability.validate(json.dumps({
+        "kinds": [{"type": "regulatory_proposal", "passage_ids": ["p001"]}],
+        "jurisdictions": [{"code": "GB", "role": "legal_scope",
+                           "passage_ids": ["p001"]}],
+        "organizations": [{"name": "Acme", "role": "regulated_entity",
+                           "passage_ids": ["p001"]}],
+        "products": [],
+    }), ARTICLE, GENERATION)
+    assert result["result"]["kinds"][0]["type"] == "regulatory_proposal"
+    assert result["result"]["organizations"][0]["role"] == "regulated_entity"
+
+
 @pytest.mark.parametrize("passage_ids", [["p999"], ["p001", "p001"]])
 def test_rejects_invalid_evidence_references(passage_ids):
     raw = json.dumps({"kinds": [{"type": "analysis", "passage_ids": passage_ids}],
