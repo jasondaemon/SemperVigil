@@ -29,6 +29,9 @@ data:
   SV_LOG_DIR: /log
   SV_EVENT_REVIEW_ENABLED: {{ .Values.env.SV_EVENT_REVIEW_ENABLED | quote }}
   SV_ARTICLE_REVIEW_ENABLED: {{ .Values.env.SV_ARTICLE_REVIEW_ENABLED | default "0" | quote }}
+  SV_ARTICLE_INFERENCE_BACKEND: {{ .Values.env.SV_ARTICLE_INFERENCE_BACKEND | default "local" | quote }}
+  SV_OPENAI_MONTHLY_BUDGET_USD: {{ .Values.env.SV_OPENAI_MONTHLY_BUDGET_USD | default "" | quote }}
+  SV_REGULATORY_FEED_START_DAY: {{ .Values.env.SV_REGULATORY_FEED_START_DAY | default "" | quote }}
   SV_EVENT_LEDGER_COMPOSITION_ENABLED: {{ .Values.env.SV_EVENT_LEDGER_COMPOSITION_ENABLED | default "0" | quote }}
   SV_EVENT_SOURCE_REPORT_ENABLED: {{ .Values.env.SV_EVENT_SOURCE_REPORT_ENABLED | default "0" | quote }}
   SV_EVENT_SOURCE_REPORT_EVENT_IDS: {{ .Values.env.SV_EVENT_SOURCE_REPORT_EVENT_IDS | default "" | quote }}

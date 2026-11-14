@@ -718,6 +718,18 @@ def apply_migrations_pg(conn) -> None:
             conn.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(%s,%s)",
                          ("pg_event_source_report_allowance_071",utc_now_iso()))
             conn.commit()
+        if "pg_openai_budget_072" not in applied:
+            from .openai_budget import SCHEMA as budget_schema
+            conn.execute(budget_schema)
+            conn.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(%s,%s)",
+                         ("pg_openai_budget_072", utc_now_iso()))
+            conn.commit()
+        if "pg_article_hosted_073" not in applied:
+            from .article_hosted_jobs import SCHEMA as hosted_schema
+            conn.execute(hosted_schema)
+            conn.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(%s,%s)",
+                         ("pg_article_hosted_073", utc_now_iso()))
+            conn.commit()
         return
     _bootstrap_schema(conn)
     conn.execute(
@@ -1154,6 +1166,16 @@ def apply_migrations_pg(conn) -> None:
     conn.commit()
     conn.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(%s,%s)",
                  ("pg_event_source_report_allowance_071",utc_now_iso()))
+    conn.commit()
+    from .openai_budget import SCHEMA as budget_schema
+    conn.execute(budget_schema)
+    conn.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(%s,%s)",
+                 ("pg_openai_budget_072", utc_now_iso()))
+    conn.commit()
+    from .article_hosted_jobs import SCHEMA as hosted_schema
+    conn.execute(hosted_schema)
+    conn.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(%s,%s)",
+                 ("pg_article_hosted_073", utc_now_iso()))
     conn.commit()
 
 

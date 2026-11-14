@@ -495,6 +495,8 @@ def _http_request(
     provider: dict[str, Any],
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    from .. import openai_budget
+
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     request = urllib.request.Request(url, data=data, method=method)
     request.add_header("Content-Type", "application/json")
@@ -518,6 +520,15 @@ def _http_request(
     started_at = time.time()
     context = dict(context or {})
     request_metrics = _estimate_request_metrics(payload)
+    endpoint = urllib.parse.urlsplit(url)
+    official_openai = endpoint.hostname == "api.openai.com"
+    budget_call = None
+    if official_openai and method == "POST" and endpoint.path in {
+        "/v1/chat/completions", "/v1/responses"
+    }:
+        if not isinstance(payload, dict):
+            raise ValueError("openai_budget_payload_required")
+        budget_call = openai_budget.reserve(payload, str(context.get("stage") or "unknown"))
     if log_http:
         log_event(
             logger,
@@ -551,6 +562,8 @@ def _http_request(
             raw = exc.read().decode("utf-8", errors="ignore")
             status_code = exc.code
             resp_headers = dict(exc.headers.items()) if exc.headers else {}
+            if budget_call and 400 <= exc.code < 500:
+                openai_budget.finish(budget_call, None, definitive_failure=True)
             if log_http:
                 redacted_headers = {
                     k: ("REDACTED" if k.lower() == "authorization" else v)
@@ -718,7 +731,13 @@ def _http_request(
             response_total_tokens=response_metrics["total_tokens"],
         )
     try:
-        return json.loads(raw)
+        parsed = json.loads(raw)
+        if official_openai and isinstance(parsed, dict):
+            if budget_call:
+                openai_budget.finish(budget_call, parsed)
+            elif method == "GET" and endpoint.path.startswith("/v1/responses/"):
+                openai_budget.finish(None, parsed, response_id=endpoint.path.rsplit("/", 1)[-1])
+        return parsed
     except json.JSONDecodeError:
         return {"raw": raw}
 

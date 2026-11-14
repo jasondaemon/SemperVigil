@@ -2,7 +2,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from sempervigil import admin, storage
+from sempervigil import admin, openai_budget, storage
 
 pytestmark = pytest.mark.offline
 
@@ -44,7 +44,9 @@ def test_counter_only_payload_has_all_jobs_and_unknown_need(monkeypatch):
     monkeypatch.setattr(admin, "get_dashboard_metrics", metrics)
     monkeypatch.setattr(admin, "get_build_state", lambda c: {})
     monkeypatch.setattr(admin, "get_build_status", Mock(side_effect=AssertionError("full metrics queried")))
-    conn = object()
+    monkeypatch.setattr(openai_budget, "status", lambda c: {"period": "2026-09"})
+    conn = Mock()
+    conn.execute.return_value.fetchall.return_value = []
     result = admin._build_dashboard_metrics_payload(conn, include_backlog=False)
     metrics.assert_called_once_with(conn, include_backlog=False)
     assert {"legacy-job", "event_review_private", "build_daily_brief"} <= set(result["job_types"])

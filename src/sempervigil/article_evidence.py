@@ -1,8 +1,7 @@
-"""Private article-enrichment contract; no inference, storage or public writes.
+"""Source-version and passage boundaries shared by article inference paths.
 
-Exact source references establish provenance, not factual entailment. This module
-is deliberately not called by the live article handlers until a shadow canary
-and source-version write boundary have been verified.
+Exact source references establish provenance, not factual entailment. The hosted
+path checks source freshness and independent primary-kind agreement before use.
 """
 import json
 import re

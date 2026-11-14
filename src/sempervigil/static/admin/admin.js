@@ -438,6 +438,16 @@ function wireDashboard() {
         data.queueable_by_job_type || {},
         data.build_state || {}
       );
+      const hostedStatus = document.getElementById("dashboard-hosted-status");
+      if (hostedStatus) {
+        const counts = data.hosted_articles || {};
+        const budget = data.openai_budget || {};
+        hostedStatus.textContent = `Last 30 days: ${counts.published || 0} published, ${counts.held || 0} held. `
+          + `OpenAI ${budget.period || "current month"}: $${budget.charged_usd || "0"} charged estimate, `
+          + `$${budget.reserved_usd || "0"} reserved, cap $${budget.configured_cap_usd || "not configured"}.`;
+        const held = Array.isArray(data.hosted_article_held) ? data.hosted_article_held : [];
+        if (held.length) hostedStatus.textContent += ` Recent holds: ${held.map(item => `${item.article_id} (${item.error})`).join(", ")}.`;
+      }
     } finally {
       metricsLoading = false;
     }

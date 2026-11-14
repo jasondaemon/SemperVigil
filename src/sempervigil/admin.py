@@ -674,6 +674,17 @@ def _build_dashboard_metrics_payload(
         metrics["job_types"] = visible_job_types
         metrics["job_groups"] = _dashboard_job_groups(visible_job_types)
         metrics["build_state"] = get_build_state(conn)
+        from .openai_budget import status as openai_budget_status
+        metrics["openai_budget"] = openai_budget_status(conn)
+        hosted_counts = conn.execute("""SELECT status,count(*) FROM article_hosted_analyses
+            WHERE created_at >= now() - interval '30 days' GROUP BY status""").fetchall()
+        metrics["hosted_articles"] = {str(state): int(count) for state, count in hosted_counts}
+        held_rows = conn.execute("""SELECT article_id,error FROM article_hosted_analyses
+            WHERE status='held' ORDER BY created_at DESC LIMIT 5""").fetchall()
+        metrics["hosted_article_held"] = [
+            {"article_id": int(article_id), "error": str(error or "unknown")[:120]}
+            for article_id, error in held_rows
+        ]
         if not include_backlog:
             metrics["queueable_by_job_type"] = {}
             return metrics

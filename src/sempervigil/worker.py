@@ -1376,6 +1376,11 @@ def _build_feed_day_payload(
         if _is_public_feed_article(article)
     ]
     article_ids = [int(article["id"]) for article in articles if article.get("id") is not None]
+    regulatory_start = os.environ.get("SV_REGULATORY_FEED_START_DAY", "").strip()
+    regulatory_items = []
+    if regulatory_start and day_key >= regulatory_start:
+        from .article_hosted_jobs import regulatory_rows
+        regulatory_items = regulatory_rows(conn, article_ids=article_ids)
     event_keys_map = list_event_keys_for_articles(conn, article_ids) if article_ids else {}
     cve_tags_map = list_article_cve_tags(conn, article_ids) if article_ids else {}
     article_items = [
@@ -1404,7 +1409,7 @@ def _build_feed_day_payload(
         cve_items.append(_serialize_feed_cve_item(conn, cve, tz_name=tz_name))
     items = article_items + cve_items
     items.sort(key=lambda item: int(item.get("published_epoch") or 0), reverse=True)
-    return {
+    payload = {
         "day": day_key,
         "items": items,
         "counts": {
@@ -1412,6 +1417,9 @@ def _build_feed_day_payload(
             "cve": len(cve_items),
         },
     }
+    if regulatory_start and day_key >= regulatory_start:
+        payload["regulatory"] = {"items": regulatory_items, "count": len(regulatory_items)}
+    return payload
 
 
 @contextmanager
@@ -1811,6 +1819,10 @@ def _refresh_feed_data_files(conn, config, logger: logging.Logger) -> dict[str, 
 
     (data_dir / "today.json").write_text(json.dumps(today_items, indent=2), encoding="utf-8")
     (data_dir / "recent.json").write_text(json.dumps(recent_items, indent=2), encoding="utf-8")
+    from .article_hosted_jobs import regulatory_rows
+    regulatory_items = [row for row in regulatory_rows(conn)
+                        if _is_public_feed_article(get_article_by_id(conn, row["article_id"]) or {})]
+    _write_json_atomic(Path(data_root) / "regulatory.json", regulatory_items)
 
     cve_dir = Path(data_root) / "cves"
     cve_dir.mkdir(parents=True, exist_ok=True)
@@ -5852,9 +5864,46 @@ def _maybe_enqueue_event_article_review(conn, article_id: int, logger: logging.L
     return job_id
 
 
+def _hosted_for_article(article: dict[str, object] | None) -> bool:
+    start = os.environ.get("SV_REGULATORY_FEED_START_DAY", "").strip()
+    return bool(article and start
+                and os.environ.get("SV_ARTICLE_INFERENCE_BACKEND", "local") == "hosted"
+                and str(article.get("brief_day") or "") >= start)
+
+
 def _handle_summarize_article_llm(
     conn, config, job: Job, logger: logging.Logger
 ) -> dict[str, object]:
+    hosted_failed = False
+    hosted_article_id = (job.payload or {}).get("article_id")
+    hosted_article = get_article_by_id(conn, int(hosted_article_id)) if hosted_article_id else None
+    if _hosted_for_article(hosted_article):
+        from .article_hosted_jobs import REGULATORY_KINDS, analyze
+        try:
+            hosted = analyze(conn, int((job.payload or {})["article_id"]))
+        except Exception as exc:
+            hosted_failed = True
+            log_event(logger, logging.WARNING, "hosted_article_fallback_local",
+                      job_id=job.id, article_id=(job.payload or {}).get("article_id"),
+                      reason=type(exc).__name__)
+        else:
+            article_id = int((job.payload or {})["article_id"])
+            article = get_article_by_id(conn, article_id)
+            mark_build_dirty(conn, reason="article_hosted_analysis")
+            for event_id in list_event_ids_for_article(conn, article_id):
+                event_id_text = str(event_id)
+                update_event_summary_from_articles(conn, event_id_text)
+                enqueue_job(conn, "event_report_llm", {"event_id": event_id_text}, dedupe=True)
+            _maybe_enqueue_event_article_review(conn, article_id, logger)
+            if (hosted.get("kind") not in REGULATORY_KINDS
+                    and not list_event_ids_for_article(conn, article_id)
+                    and not has_pending_article_job(
+                        conn, "derive_events_from_articles", article_id
+                    )):
+                enqueue_job(conn, "derive_events_from_articles", {"article_id": article_id})
+            _maybe_enqueue_article_product_enrich(conn, article_id, article["source_id"], logger)
+            _enqueue_write_from_article(conn, config, article_id, article["source_id"])
+            return hosted
     payload = job.payload or {}
     article_id = payload.get("article_id")
     if not article_id:
@@ -5987,6 +6036,9 @@ def _handle_summarize_article_llm(
         _maybe_enqueue_event_article_review(conn, int(article_id), logger)
         _maybe_enqueue_article_product_enrich(conn, int(article_id), article["source_id"], logger)
         _maybe_enqueue_context_pack(conn, int(article_id), article["source_id"], logger)
+        if hosted_failed:
+            enqueue_job(conn, "summarize_article_context_llm",
+                        {"article_id": int(article_id), "force_local": True}, dedupe=True)
         _enqueue_write_from_article(conn, config, int(article_id), article["source_id"])
         return {"ok": True, "summary": summary_text, "profile_id": profile.get("id")}
     except Exception as exc:  # noqa: BLE001
@@ -6020,6 +6072,8 @@ def _handle_summarize_article_context_llm(
     article = get_article_by_id(conn, int(article_id))
     if not article:
         raise ValueError("article_not_found")
+    if _hosted_for_article(article) and not payload.get("force_local"):
+        return {"status": "covered_by_hosted_article_analysis"}
     profile = None
     reason = "missing_profile"
     payload_profile_id = payload.get("profile_id")
@@ -9751,7 +9805,17 @@ def _maybe_enqueue_auto_catchup(
 
         summary_profile, _summary_reason = get_active_profile_for_stage(conn, "summarize_article")
         if summary_profile and "summarize_article_llm" in allowed_auto_types:
-            for article_id in list_article_ids_ready_for_summary_all(conn):
+            if os.environ.get("SV_ARTICLE_INFERENCE_BACKEND", "local") == "hosted":
+                start = os.environ.get("SV_REGULATORY_FEED_START_DAY", "").strip()
+                summary_ids = [int(row[0]) for row in conn.execute(
+                    """SELECT id FROM articles WHERE brief_day >= %s
+                       AND (summary_llm IS NULL OR summary_llm='')
+                       AND has_full_content=1 ORDER BY ingested_at DESC LIMIT %s""",
+                    (start or "9999-12-31", _AUTO_CATCHUP_BATCH_LIMIT),
+                ).fetchall()]
+            else:
+                summary_ids = list_article_ids_ready_for_summary_all(conn)
+            for article_id in summary_ids:
                 if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:
                     break
                 article_id = int(article_id)
@@ -9770,6 +9834,8 @@ def _maybe_enqueue_auto_catchup(
                     if queued_total >= _AUTO_CATCHUP_BATCH_LIMIT:
                         break
                     article_id = int(article_id)
+                    if _hosted_for_article(get_article_by_id(conn, article_id)):
+                        continue
                     if has_pending_article_job(conn, "summarize_article_context_llm", article_id):
                         continue
                     enqueue_job(
@@ -10432,6 +10498,8 @@ def _maybe_enqueue_context_pack(
         return False
     article = get_article_by_id(conn, article_id)
     if not article:
+        return False
+    if _hosted_for_article(article):
         return False
     if article.get("context_llm"):
         return False

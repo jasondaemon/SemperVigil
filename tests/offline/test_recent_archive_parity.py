@@ -9,12 +9,15 @@ from types import SimpleNamespace
 import pytest
 
 from sempervigil import worker
+from sempervigil import article_hosted_jobs
 
 pytestmark = pytest.mark.offline
 
 
 @pytest.fixture
 def export_case(tmp_path, monkeypatch, request):
+    monkeypatch.setenv("SV_REGULATORY_FEED_START_DAY", "2026-09-08")
+    monkeypatch.setattr(article_hosted_jobs, "regulatory_rows", lambda *a, **kw: [])
     day = "2026-09-08"
     root = tmp_path / "shared" / "feed"
     source = tmp_path / "source"
