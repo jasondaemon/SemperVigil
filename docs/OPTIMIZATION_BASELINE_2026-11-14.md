@@ -48,13 +48,39 @@ The homepage and November 14 JSON returned HTTP 200 afterward; the JSON counts
 remained 13 articles and 18 CVEs with no `web_enrich` item. The active queue
 was empty after verification.
 
+## Follow-up measurement
+
+After the verification build, the new worker container's cgroup v2
+`memory.peak` was 670,556,160 bytes (about 640 MiB) against a 16 GiB limit;
+`memory.events` recorded zero OOMs. This is a pod-lifetime charged-memory peak,
+not a per-build or fleet-wide memory series. `docker46` reported
+`MemoryPressure=False` and the namespace had no OOM-killing Event at the check.
+Do not tighten the limit from one sample.
+
+The next unforced build, `job_438b440a3bf04750ab7f12f959ef82c2`, succeeded
+in **26.68 seconds**. It refreshed one day and skipped 35 unchanged days,
+activating release `20261114224806`. The pod-lifetime cgroup peak then stood
+at 693,751,808 bytes (about 662 MiB), with zero OOM events. `/` returned 200;
+the November 14 JSON still contained 13 articles and 18 CVEs, with unique
+article/CVE identifiers and no `web_enrich` item. These two post-change builds
+support the improvement, but are insufficient for a new median or p95.
+
+The 13 articles present in the November 14 public day JSON had their first
+successful summary jobs 0.5–2.0 minutes after ingestion. The next successful
+build finished 0.2–1.4 minutes after those first summaries. These are
+readiness-to-next-build proxies, **not exact first-publication latencies**:
+the system does not retain a per-article first-public-release timestamp.
+Several `summary_generated_at` values appeared hours late because hosted
+re-analysis replaced an earlier successful local summary; using that mutable
+field alone would misstate initial pipeline latency.
+
 ## Next measurements
 
-Watch several ordinary builds and compare their median and p95 with the
-24-hour baseline. Confirm newly created article data remains writable and
-appears in the daily JSON. Capture build-worker peak memory and
-acquisition-to-publication latency before altering resource policy or build
-cadence. The full-history inventory query is a measured database hotspot, but
+Watch at least ten further ordinary builds and compare their median and p95
+with the 24-hour baseline. Confirm newly created article data remains writable
+and appears in the daily JSON. Preserve the peak-memory and article-latency
+checks above before altering resource policy or build cadence. The full-history
+inventory query is a measured database hotspot, but
 its 32 MB test did not justify a memory change; any redesign must preserve
 changed-day detection and all existing JSON/link contracts. A five-minute
 request bucket would have contained 92 buckets for 125 build requests in the
