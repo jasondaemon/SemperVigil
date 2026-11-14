@@ -25,8 +25,13 @@ The verified branch was fast-forwarded to `main` at `89565cd`; local and remote
   was restarted. Its new pod is ready and has both hosted-routing values.
   Historical articles before the forward-only cutoff may still use Qwen by
   design. The chart now hashes those two values into that worker's pod template
-  so a future Helm value change restarts the affected worker; this chart change
-  is mainline-tested, not deployed.
+  so a future Helm value change restarts the affected worker. On November 14,
+  the rendered worker Deployment was compared with live: the only pod-template
+  difference was this annotation. Only that Deployment was applied. The rollout
+  completed with one ready replica, and the new pod has `hosted` and the
+  `2026-11-11` cutoff. No image, command, resources, or application settings
+  changed in this deployment. The next ordinary scheduled Hugo build succeeded;
+  `/` and `/feed/days/2026-11-14.json` returned HTTP 200 afterward.
 
 ## Verification
 
@@ -62,9 +67,9 @@ The verified branch was fast-forwarded to `main` at `89565cd`; local and remote
   that the push bypassed branch rules because the branch history contains an
   older merge commit. This should be resolved for future PR-based promotions;
   do not treat the bypass as a standard release process.
-- Separately deploy the narrow worker-chart annotation when the platform
-  deployment is ready. The manual worker restart already restored the current
-  production routing value.
+- Continue watching ordinary acquisition, hosted inference, queue drain, daily
+  JSON, and scheduled builds before lifting the Event hold or starting the
+  deferred optimization path.
 
 ## Reproduce
 
