@@ -64,6 +64,14 @@ def test_proposed_rule_and_regulated_entity_are_distinct_from_incident():
     assert result["result"]["organizations"][0]["role"] == "regulated_entity"
 
 
+def test_guidance_has_a_distinct_private_kind():
+    result = applicability.validate(json.dumps({
+        "kinds": [{"type": "regulatory_guidance", "passage_ids": ["p001"]}],
+        "jurisdictions": [], "organizations": [], "products": [],
+    }), ARTICLE, GENERATION)
+    assert result["result"]["kinds"][0]["type"] == "regulatory_guidance"
+
+
 @pytest.mark.parametrize("passage_ids", [["p999"], ["p001", "p001"]])
 def test_rejects_invalid_evidence_references(passage_ids):
     raw = json.dumps({"kinds": [{"type": "analysis", "passage_ids": passage_ids}],
