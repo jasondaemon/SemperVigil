@@ -153,7 +153,7 @@ def check_site(base: str, *, historic_days: list[str], max_age_hours: float,
         parsed = Page(get(url))
         require(parsed.has_title, "Missing HTML title")
         required = {
-            "/": {"front-feed-list", "front-view-news", "front-view-cves", "front-day-prev", "front-day-next"},
+            "/": {"compact-grid", "compact-tab-news", "compact-tab-cves", "compact-prev", "compact-next", "compact-download"},
             "/search/": {"sv-feed-search-form", "sv-feed-search-results"},
         }.get(path, set())
         require(required <= parsed.ids, "Missing expected page controls")

@@ -69,7 +69,7 @@ def fake_site():
     def html(extra=""):
         return (common + extra).encode()
     return {
-        "/": html(''.join(f'<div id="{id}"></div>' for id in ["front-feed-list", "front-view-news", "front-view-cves", "front-day-prev", "front-day-next"])),
+        "/": html(''.join(f'<div id="{id}"></div>' for id in ["compact-grid", "compact-tab-news", "compact-tab-cves", "compact-prev", "compact-next", "compact-download"])),
         "/search/": html('<form id="sv-feed-search-form"></form><div id="sv-feed-search-results"></div>'),
         "/metrics/": html('<svg aria-label="Articles and CVEs per day chart"></svg>'
                           f'<p>Updated from SemperVigil DB at {NOW.isoformat()}.</p>'),
