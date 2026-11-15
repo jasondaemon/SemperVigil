@@ -990,6 +990,9 @@ def list_cves_for_day(conn: Any, day: str, limit: int | None = 200) -> list[dict
     affected_products_json = "c.affected_products_json" if "affected_products_json" in columns else "NULL"
     affected_cpes_json = "c.affected_cpes_json" if "affected_cpes_json" in columns else "NULL"
     reference_domains_json = "c.reference_domains_json" if "reference_domains_json" in columns else "NULL"
+    cve_day_sql, editorial_timezone = _cve_feed_day_sql(
+        "COALESCE(c.published_at, c.last_modified_at)"
+    )
     cursor = conn.execute(
         f"""
         SELECT c.cve_id, c.description_text, c.published_at, c.last_modified_at,
@@ -1001,11 +1004,11 @@ def list_cves_for_day(conn: Any, day: str, limit: int | None = 200) -> list[dict
                {affected_cpes_json},
                {reference_domains_json}
         FROM cves c
-        WHERE DATE(COALESCE(c.published_at, c.last_modified_at)) = %s
+        WHERE {cve_day_sql} = %s
         ORDER BY COALESCE(c.published_at, c.last_modified_at) DESC
         LIMIT %s
         """,
-        (day, limit),
+        (editorial_timezone, day, limit),
     )
     rows = []
     for row in cursor.fetchall():
@@ -4378,12 +4381,32 @@ def _get_article_id(conn: Any, source_id: str, stable_id: str) -> int | None:
     return row[0] if row else None
 
 
-def _brief_day_from(value: str) -> str:
+def _editorial_timezone_name() -> str:
     tz_name = os.environ.get("SV_APP_TIMEZONE") or "America/New_York"
     try:
-        tz = ZoneInfo(tz_name)
+        ZoneInfo(tz_name)
     except Exception:
-        tz = timezone.utc
+        return "UTC"
+    return tz_name
+
+
+def _cve_feed_day_sql(timestamp_expr: str) -> tuple[str, str]:
+    # Keep pre-fix archive dates stable for downstream JSON consumers.
+    day_sql = f"SUBSTR({timestamp_expr}, 1, 10)"
+    utc_timestamp = (
+        f"CASE WHEN {timestamp_expr} ~ '(Z|[+-][0-9]{{2}}:[0-9]{{2}})$' "
+        f"THEN ({timestamp_expr})::timestamptz "
+        f"ELSE ({timestamp_expr})::timestamp AT TIME ZONE 'UTC' END"
+    )
+    return (
+        f"CASE WHEN {day_sql} >= '2026-11-15' "
+        f"THEN timezone(%s, {utc_timestamp})::date::text ELSE {day_sql} END",
+        _editorial_timezone_name(),
+    )
+
+
+def _brief_day_from(value: str) -> str:
+    tz = ZoneInfo(_editorial_timezone_name())
     if value.endswith("Z"):
         value = value.replace("Z", "+00:00")
     try:

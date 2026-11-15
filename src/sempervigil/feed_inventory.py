@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .storage import _brief_day_from, _table_columns, _table_exists
+from .storage import _brief_day_from, _cve_feed_day_sql, _table_columns, _table_exists
 
 
 PUBLIC_FEED_EXCLUDED_SOURCE_IDS = frozenset({"web_enrich"})
@@ -32,7 +32,8 @@ def feed_inventory_query(conn: Any, source_icons: tuple[str, ...] = ()) -> tuple
     """Build SQL using only fixed identifiers; all fallback dates are parameters."""
     ctes = []
     parts = []
-    params: list[object] = []
+    cte_params: list[object] = []
+    fragment_params: list[object] = []
 
     def projection(alias: str, fields: tuple[str, ...], columns: set[str]) -> str:
         return "jsonb_build_array(" + ", ".join(
@@ -58,7 +59,7 @@ def feed_inventory_query(conn: Any, source_icons: tuple[str, ...] = ()) -> tuple
                     ids.append(article_id)
                     days.append(_brief_day_from(str(timestamp)))
             ctes.append("fallback_days AS (SELECT * FROM unnest(%s::bigint[], %s::text[]) AS f(id, day))")
-            params.extend([ids, days])
+            cte_params.extend([ids, days])
             day = "COALESCE(NULLIF(b.brief_day, ''), f.day)"
             extra = "LEFT JOIN fallback_days f ON f.id = b.id"
             excluded_sources = ", ".join(
@@ -70,7 +71,10 @@ def feed_inventory_query(conn: Any, source_icons: tuple[str, ...] = ()) -> tuple
                 if excluded_sources else ""
             )
         else:
-            day = "substr(COALESCE(b.published_at, b.last_modified_at), 1, 10)"
+            day, editorial_timezone = _cve_feed_day_sql(
+                "COALESCE(b.published_at, b.last_modified_at)"
+            )
+            cte_params.append(editorial_timezone)
             extra = ""
             base_where = ""
         ctes.append(
@@ -108,7 +112,7 @@ def feed_inventory_query(conn: Any, source_icons: tuple[str, ...] = ()) -> tuple
                        "JOIN articles a ON a.id=b.owner LEFT JOIN sources s ON s.id=a.source_id",
                        "s.name, a.source_id = ANY(%s::text[])")
             if has_sources:
-                params.append(list(source_icons))
+                fragment_params.append(list(source_icons))
             dependency("tags", ("article_tags",),
                        "JOIN article_tags t ON t.article_id=b.owner", "t.tag")
             dependency("events", ("event_articles", "events"),
@@ -131,7 +135,7 @@ def feed_inventory_query(conn: Any, source_icons: tuple[str, ...] = ()) -> tuple
         FROM fragments WHERE day IS NOT NULL AND day <> ''
         GROUP BY day ORDER BY day
     """
-    return sql, tuple(params)
+    return sql, tuple(cte_params + fragment_params)
 
 
 def list_feed_content_inventory(conn: Any, source_icons: tuple[str, ...] = ()) -> list[dict[str, object]]:
